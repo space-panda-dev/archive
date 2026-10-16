@@ -24,7 +24,10 @@ them unless their behaviour actually differs.
 ## Regenerable state
 
 Loss costs time and computation, not history. Examples: indexes, query
-databases, the "current" projection, views, caches, thumbnails, World's store.
+databases, the "current" projection, views, caches, thumbnails, World's store,
+and the derived-media root of waveform peaks and listening copies
+([ADR 0069](decisions/0069-derived-media.md)), which `enrich/media.py` makes
+again from the content.
 
 Regenerable means rebuildable in principle, not cheaply: rebuilding World may
 take days and need outside data. Regenerable state never changes through Door
@@ -73,7 +76,7 @@ answer, not a disaster-recovery design.
 |---|---|---|
 | Door | proposals in flight, staging | every recorded transition |
 | World | its store and indexes | everything it was built from; rebuilding costs time and perhaps outside downloads |
-| Enrichment | caches, intermediate output | admitted results; the rest is recomputed |
+| Enrichment | caches, intermediate output, derived media | admitted results and the content; the rest is recomputed |
 | Annotation | application state, drafts | accepted annotations |
 | Review | application state, queues | recorded assessments |
 | Policy | evaluations, the "current" projection | every policy revision |

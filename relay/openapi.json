@@ -8,7 +8,7 @@
       "name": "CC0-1.0",
       "identifier": "CC0-1.0"
     },
-    "description": "HTTP over Door's service and World's query (ADR 0056, ADR 0060). Every answer is JSON: {ok, archive, result} or {ok: false, error: {code, message}}. Codes are stable; messages are not. The archive block names the archive, its specification, the relay's role, and the World projection versions it serves."
+    "description": "HTTP over Door's service and World's query (ADR 0056, ADR 0060), and derived media by content digest (ADR 0069). Every answer is JSON: {ok, archive, result} or {ok: false, error: {code, message}}, except a media route's success, which is the derivative's bytes. Codes are stable; messages are not. The archive block names the archive, its specification, the relay's role, and the World projection versions it serves."
   },
   "components": {
     "schemas": {
@@ -76,6 +76,18 @@
             "description": "Relay (411): The request has no Content-Length."
           },
           {
+            "const": "media_forbidden",
+            "description": "Relay (403): Media are served only to the caller bound to the active operator's person, and World names that person once (ADR 0069)."
+          },
+          {
+            "const": "media_not_derived",
+            "description": "Relay (404): The content is known but this derivative has not been made, or the relay has no derived-media root configured."
+          },
+          {
+            "const": "media_unknown_digest",
+            "description": "Relay (404): No Artifact in World's selected generation has this content, or a destroy transition names it."
+          },
+          {
             "const": "method_not_allowed",
             "description": "Relay (405): The route answers another method, named in Allow."
           },
@@ -118,6 +130,10 @@
           {
             "const": "query_too_many_rows",
             "description": "Relay (422): The answer would exceed the relay's row bound; nothing is returned, never a truncated answer."
+          },
+          {
+            "const": "range_not_satisfiable",
+            "description": "Relay (416): The Range starts past the end of the derivative; Content-Range names its size."
           },
           {
             "const": "request_malformed",
@@ -1482,6 +1498,428 @@
           },
           "503": {
             "description": "door_unreachable, archive_unreadable, or outcome_uncertain (send the identical proposal again).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/media/{digest}/peaks": {
+      "get": {
+        "summary": "The waveform peaks (an audiowaveform binary file, version 2, 8-bit, every channel, about ten milliseconds a pixel) of an Artifact's content, by its digest",
+        "description": "Derived media are regenerable, made by enrich/media.py into the relay's derived-media root (ADR 0069). Served only for a digest that is an Artifact's content in World's selected generation and that no destroy transition names, and only to the caller bound to the active operator's person. One byte range is honoured; several ranges, another unit, or an unreadable Range header are ignored and the whole file is sent. If-Range is honoured with the entity tag.",
+        "security": [
+          {
+            "tailnet": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "digest",
+            "in": "path",
+            "required": true,
+            "description": "The content digest, as World projects it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "One range of bytes, bytes=first-last, bytes=first-, or bytes=-suffix."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The entity tag the range was taken from; any other value sends the whole file."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The whole waveform peaks (an audiowaveform binary file, version 2, 8-bit, every channel, about ten milliseconds a pixel).",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "contentMediaType": "application/octet-stream"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Names the content digest and the method version, \"sha256:<hex>/<kind>-<version>\".",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "private, max-age=31536000, immutable.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Ranges": {
+                "description": "bytes.",
+                "schema": {
+                  "type": "string",
+                  "const": "bytes"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "The range of the waveform peaks (an audiowaveform binary file, version 2, 8-bit, every channel, about ten milliseconds a pixel) asked for.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "contentMediaType": "application/octet-stream"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Names the content digest and the method version, \"sha256:<hex>/<kind>-<version>\".",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "private, max-age=31536000, immutable.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Ranges": {
+                "description": "bytes.",
+                "schema": {
+                  "type": "string",
+                  "const": "bytes"
+                }
+              },
+              "Content-Range": {
+                "description": "bytes first-last/size.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request_malformed (the digest is not sha256:<64 lowercase hex>), or query_invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden_identity, forbidden_origin, or media_forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found, media_unknown_digest, media_not_derived, or projection_not_served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "method_not_allowed; Allow names the method.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "range_not_satisfiable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "headers": {
+              "Content-Range": {
+                "description": "bytes */size.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "query_too_many_rows, from World's media lookup under a very small row limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error: World's answer or the derived-media root could not be read.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "world_unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "query_timeout, from World's media lookup.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/media/{digest}/listen": {
+      "get": {
+        "summary": "The listening copy (AAC-LC at 192 kb/s in MP4, index first, at most two channels) of an Artifact's content, by its digest",
+        "description": "Derived media are regenerable, made by enrich/media.py into the relay's derived-media root (ADR 0069). Served only for a digest that is an Artifact's content in World's selected generation and that no destroy transition names, and only to the caller bound to the active operator's person. One byte range is honoured; several ranges, another unit, or an unreadable Range header are ignored and the whole file is sent. If-Range is honoured with the entity tag.",
+        "security": [
+          {
+            "tailnet": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "digest",
+            "in": "path",
+            "required": true,
+            "description": "The content digest, as World projects it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "One range of bytes, bytes=first-last, bytes=first-, or bytes=-suffix."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The entity tag the range was taken from; any other value sends the whole file."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The whole listening copy (AAC-LC at 192 kb/s in MP4, index first, at most two channels).",
+            "content": {
+              "audio/mp4": {
+                "schema": {
+                  "type": "string",
+                  "contentMediaType": "audio/mp4"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Names the content digest and the method version, \"sha256:<hex>/<kind>-<version>\".",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "private, max-age=31536000, immutable.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Ranges": {
+                "description": "bytes.",
+                "schema": {
+                  "type": "string",
+                  "const": "bytes"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "The range of the listening copy (AAC-LC at 192 kb/s in MP4, index first, at most two channels) asked for.",
+            "content": {
+              "audio/mp4": {
+                "schema": {
+                  "type": "string",
+                  "contentMediaType": "audio/mp4"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Names the content digest and the method version, \"sha256:<hex>/<kind>-<version>\".",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "private, max-age=31536000, immutable.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Ranges": {
+                "description": "bytes.",
+                "schema": {
+                  "type": "string",
+                  "const": "bytes"
+                }
+              },
+              "Content-Range": {
+                "description": "bytes first-last/size.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request_malformed (the digest is not sha256:<64 lowercase hex>), or query_invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden_identity, forbidden_origin, or media_forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found, media_unknown_digest, media_not_derived, or projection_not_served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "method_not_allowed; Allow names the method.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "range_not_satisfiable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "headers": {
+              "Content-Range": {
+                "description": "bytes */size.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "query_too_many_rows, from World's media lookup under a very small row limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error: World's answer or the derived-media root could not be read.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "world_unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "query_timeout, from World's media lookup.",
             "content": {
               "application/json": {
                 "schema": {

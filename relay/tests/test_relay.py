@@ -90,13 +90,14 @@ class RelayHarness:
 
     def __init__(self, tmp: Path, archive_root: Path, door_socket: Path, world_store: Path, writes: str = "dry-run",
                  role: str = "shadow", archive_command: str = "archive", query_timeout_seconds: float = 30,
-                 max_rows: int = 10000, query_workers: int = 3, cache_bytes: int = 64 * 1024 * 1024):
+                 max_rows: int = 10000, query_workers: int = 3, cache_bytes: int = 64 * 1024 * 1024,
+                 callers: dict[str, str] | None = None, media_root: Path | None = None):
         self.config = relay.Config(
             host="127.0.0.1", port=0, archive_root=archive_root, door_socket=door_socket,
             world_store=world_store, archive_command=archive_command, staging=private(tmp / "staging"),
-            writes=writes, role=role, origins=frozenset([ORIGIN]), callers={LOGIN: AGENT},
+            writes=writes, role=role, origins=frozenset([ORIGIN]), callers=callers or {LOGIN: AGENT},
             query_timeout_seconds=query_timeout_seconds, max_rows=max_rows, query_workers=query_workers,
-            cache_bytes=cache_bytes)
+            cache_bytes=cache_bytes, media_root=media_root)
         self.relay = relay.Relay(self.config)
         # The server the relay itself runs, so tests see its threading.
         self.server = relay.make_server(self.relay, "127.0.0.1", 0)
@@ -461,6 +462,14 @@ class ConfigChecks(unittest.TestCase):
         }.items():
             with self.subTest(name), self.assertRaises(ValueError):
                 self.load(**changes)
+
+    def test_the_derived_media_root_is_optional(self) -> None:
+        # The deployed relay's configuration predates media and must still load.
+        self.assertIsNone(self.load().media_root)
+        self.assertEqual(self.load(media_root="/m").media_root, Path("/m"))
+        for value in (None, 7, ["/m"]):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.load(media_root=value)
 
     def test_staging_must_be_private(self) -> None:
         staging = self.tmp / "staging"

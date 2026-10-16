@@ -62,6 +62,8 @@ door admit | transition          the only commands that change archival meaning
 door transition (upgrade)        adopting a later, additive specification release
 door serve --socket <path>       the same commands for applications, on a private socket
 relay/relay.py --config <file>   Door's service and World's query over HTTP, for the tailnet
+enrich/media.py --root <dir> --digest <d> <file>
+                                 waveform peaks and a listening copy: regenerable derived media
 door verify                      full verification of HEAD and a fresh checkpoint
 archive init | status | doctor   setup, state, whole-archive check
 archive maintenance repack       coordinated packing of loose Git objects
@@ -110,6 +112,14 @@ third is the work matcher
 `ffmpeg`, `ffprobe`, numpy, and scipy; numpy and scipy are the only libraries
 outside the standard library that `enrich/` uses. The detector's presets and
 the matcher's score limit are the operator's to calibrate.
+
+`enrich/media.py` is different: it proposes nothing and never reads or writes
+an archive. It makes waveform peaks and a listening copy of a recording into a
+derived-media root laid out by content digest
+([ADR 0069](decisions/0069-derived-media.md)). That root is regenerable and
+never admitted. The relay serves it read-only, by digest, to the operator's
+login only, for content World knows as an Artifact's; it reads the layout
+from `enrich/derived.py` and never serves an original's bytes.
 
 World's answers are standard SPARQL results, and what each projection version
 emits is declared in [`world/projection/`](../world/projection/6/projection.json)

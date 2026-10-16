@@ -30,8 +30,8 @@
 
       # World, the relay, enrich, and their tests. pyshacl and owlrl are not
       # in nixpkgs; these are the newest releases that accept its rdflib.
-      # numpy is the span detector's and the work matcher's, scipy the
-      # matcher's (enrich/requirements.txt).
+      # numpy is the span detector's, the work matcher's, and derived
+      # media's; scipy the matcher's (enrich/requirements.txt).
       pythonFor = pkgs: pkgs.python3.withPackages (ps:
         let
           wheel = { pname, version, sha256, dependencies }: ps.buildPythonPackage {
@@ -56,7 +56,8 @@
           };
         in [ ps.pyoxigraph ps.rdflib ps.jsonschema pyshacl ps.numpy ps.scipy ]);
 
-      # The Python parts and commands for World, the relay, and the fixture.
+      # The Python parts and commands for World, the relay, enrichment, and
+      # the fixture. The relay reads enrich/derived.py, the derived-media layout.
       toolsFor = pkgs:
         let
           archive = archiveFor pkgs;
@@ -66,21 +67,21 @@
           cp -r ${self}/world ${self}/relay ${self}/fixture ${self}/enrich ${self}/spec ${self}/LICENSES $out/share/archive/
           chmod -R u+w $out/share/archive
           rm -f $out/share/archive/fixture/test_*.py $out/share/archive/enrich/test_*.py $out/share/archive/enrich/support.py
-          rm -rf $out/share/archive/world/tests $out/share/archive/relay/tests
+          rm -rf $out/share/archive/world/tests $out/share/archive/relay/tests $out/share/archive/enrich/tests
           wrap() {
             makeWrapper ${python}/bin/python3 $out/bin/$1 \
               --add-flags $out/share/archive/$2 \
-              --prefix PATH : ${pkgs.lib.makeBinPath [ archive pkgs.git pkgs.git-annex ]} \
+              --prefix PATH : ${pkgs.lib.makeBinPath [ archive pkgs.git pkgs.git-annex pkgs.ffmpeg-headless ]} \
               --set-default ARCHIVE_GIT_EXECUTABLE ${pkgs.git}/bin/git \
               --set-default ARCHIVE_GIT_ANNEX_EXECUTABLE ${pkgs.git-annex}/bin/git-annex
           }
           wrap world world/world.py
           wrap world-conformance world/conformance.py
           wrap relay relay/relay.py
+          wrap enrich-media enrich/media.py
           wrap archive-fixture fixture/build.py
           wrap archive-fixture-serve fixture/serve.py
           wrap enrich enrich/enrich.py
-          wrapProgram $out/bin/enrich --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.ffmpeg-headless ]}
         '';
     in
     {
@@ -162,6 +163,7 @@
             export ARCHIVE_GIT_ANNEX_EXECUTABLE=${pkgs.git-annex}/bin/git-annex
             python -m unittest discover -s world/tests
             python -m unittest discover -s relay/tests
+            python -m unittest discover -s enrich/tests
             python -m unittest discover -s shadow -p 'test_*.py'
             python -m unittest discover -s migration -p 'test_*.py'
             python -m unittest discover -s fixture -p 'test_*.py'
@@ -182,9 +184,9 @@
               haskell.ghc
               pkgs.git
               pkgs.git-annex
+              pkgs.ffmpeg-headless
               pkgs.perl
               (pythonFor pkgs)
-              pkgs.ffmpeg-headless
               pkgs.which
             ];
           };
