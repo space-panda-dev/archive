@@ -28,8 +28,13 @@ unsupported rather than guess.
   as `arch:Artifact`, `arch:source`, and `prov:SoftwareAgent`. D-6 also asks
   each fragment to define its own payload and role terms, which these three
   cannot do (the `capture_alignment` role `reference` of 0.0.5 is the earlier
-  case). How does World project those roles, and should a later contract
-  version rename them?
+  case). Should a later contract version rename them? Until one does, World
+  projection 6 (revision 3) keeps an `artifact` or `source` reference only as
+  its reified statement, with no direct triple by `arch:Artifact` or
+  `arch:source`, and reaches the same targets through predicates of its own
+  (`arch:audio_stream`, `prov:wasDerivedFrom`); `software` items become
+  `prov:SoftwareAgent` nodes. Whether that is the lasting projection is part
+  of this question.
 - How does an existing archive migrate to a specification version that is not
   additive? (Additive releases are adopted by a transition,
   [ADR 0068](decisions/0068-specification-upgrade.md).)

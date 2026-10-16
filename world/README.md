@@ -62,6 +62,54 @@ Add `?contract a:version "1"` to the first graph pattern to pin a version. To
 leave a contract out, use `FILTER NOT EXISTS` around the link. Both patterns
 are checked against the text matches they replace in World's tests.
 
+### Runs, stream facts, and suggested spans
+
+A machine claim names the derivation run that made it with
+`prov:wasGeneratedBy`, in the records graph and in its own graph. To list the
+suggested spans of a recording, start from the recording's object, reach each
+suggestions claim through the records graph's `prov:wasDerivedFrom` link, and
+read the spans in that claim's graph
+([`examples/suggested-spans-of-recording.sparql`](examples/suggested-spans-of-recording.sparql)):
+
+```sparql
+PREFIX a: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#>
+PREFIX prov: <http://www.w3.org/ns/prov#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT ?suggestions ?position ?start ?end ?class ?rate ?run WHERE {
+  GRAPH <{archive}#world:records> {
+    ?recording a:object_id <{recording}> .
+    ?suggestions prov:wasDerivedFrom ?recording ; a:measured_stream ?stream }
+  GRAPH ?suggestions {
+    ?suggestions a:sample_rate ?rate ; prov:wasGeneratedBy ?run ; a:suggested_spans ?span .
+    ?span rdf:value ?position ; a:start_sample ?start ; a:end_sample ?end ; a:span_class ?class } }
+ORDER BY ?suggestions ?position
+```
+
+The duration of an Artifact comes from its audio stream claims: each hangs a
+stream node from the Artifact revision it describes, and the duration in
+seconds is `sample_count / sample_rate`, an exact `xsd:decimal`
+([`examples/recording-duration.sparql`](examples/recording-duration.sparql)):
+
+```sparql
+PREFIX a: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#>
+PREFIX prov: <http://www.w3.org/ns/prov#>
+SELECT ?recording ?samples ?rate ?seconds ?channels ?claim ?run WHERE {
+  GRAPH <{archive}#world:records> { ?recording a:object_id <{recording}> ; a a:Artifact }
+  GRAPH ?claim {
+    ?recording a:audio_stream ?stream .
+    ?stream a:sample_count ?samples ; a:sample_rate ?rate ; a:channel_count ?channels ;
+            prov:wasGeneratedBy ?run }
+  BIND(?samples / ?rate AS ?seconds) }
+```
+
+Two runs that disagree give two rows, each with its claim and run; World
+chooses neither. A run's own graph types it `prov:Activity`, with its method
+(`a:method`, a node with `dcterms:identifier` and `a:version`),
+`prov:startedAtTime`, `prov:endedAtTime`, each input as `prov:used`, its
+`a:parameters` Artifact, and each reported program as a `prov:SoftwareAgent`
+it `prov:wasAssociatedWith` (`foaf:name`, `a:version`, and its position as
+`rdf:value`).
+
 To use another `archive` executable, pass `--archive-command /path/to/archive`.
 For a captured export, pass `--export-file export.json`; the positional archive
 root is still required so World can enforce that the store lives outside it.
@@ -104,7 +152,17 @@ kinds (as SKOS concepts), ordered artist credits, and session parts stay in
 the graph of the claim that asserted them; and a judgment names the exact
 claim revision it judged, with its verdict. Competing titles or kinds appear
 side by side. Migration translation records remain in the records graph with
-their pins. World does not answer `current` yet.
+their pins. Specification 0.0.7's machine claims (revision 3 of projection 6)
+stay in their own graphs too: a derivation run as a `prov:Activity`; an audio
+stream's facts on the Artifact revision they describe; span suggestions as
+ordered span nodes with their class, measured stream, and run; a version 2
+work match with what it compared (an occurrence as `arch:performance`, or a
+selection), its Work, corpus, decimal score, method, parameters, and run; and
+a version 2 alignment as version 1 projects. An `artifact` or `source`
+reference keeps its reified statement in the records graph but no direct
+triple, because those roles are core terms naming `arch:Artifact` and
+`arch:source` (see the [open questions](../docs/open-questions.md)). World
+does not answer `current` yet.
 
 ## What World emits
 
@@ -153,15 +211,20 @@ The conformance tests build the [fixture archive](../fixture/README.md)
 through the real Door, so they need the two variables; without them they are
 skipped, unless `ARCHIVE_REQUIRE_INTEGRATION` is set, when they fail. They
 require the fixture to cite every contract in the specification's catalog
-except the six that specification 0.0.7 adds, which World does not project
-yet, every served projection of it to conform, and every declared term to appear in
-it.
+except the specification upgrade, which Door refuses, every served
+projection of it to conform, and every declared term to appear in it. The
+derivation tests (`test_derivation.py`) answer the recording examples
+against the same archive with golden rows, check its stream claim against
+the synthetic recording's bytes, refresh incrementally across its runs, and
+refuse each malformed run, stream, suggestion, and match.
 
 The bootstrap export fixture was captured from a synthetic archive created by
 `archive init` and emitted by `archive export`. The Door chain fixture is the
 export of the archive built by Door's World admission test; regenerate it by
 running `cabal test door-test` with `ARCHIVE_TEST_WORLD_EXPORT` set to its
-path. Every example query must return its expected rows against that fixture.
+path. Every example query except the two recording examples must return its
+expected rows against that fixture; the recording examples are answered by
+the fixture archive, since the Door chain holds no derivation runs.
 The same run captures the export at a cut before the review records
 (`ARCHIVE_TEST_WORLD_CUT_EXPORT`, `door-world-chain-cut-export.json`) and the
 export since that cut (`ARCHIVE_TEST_WORLD_SINCE_EXPORT`,

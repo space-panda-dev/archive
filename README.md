@@ -52,7 +52,7 @@ elsewhere and is governed by the specification kept here.
 > ([ADRs 0064](docs/decisions/0064-derivation-runs.md) to
 > [0067](docs/decisions/0067-matches-and-alignments-pin-runs.md); the bundles
 > as proposed are in [0064-contracts](docs/proposals/0064-contracts/)), which
-> Door admits, and the specification upgrade contract of
+> Door admits and World projects, and the specification upgrade contract of
 > [ADR 0068](docs/decisions/0068-specification-upgrade.md), which this Door
 > installs but refuses as an unsupported transition.
 > Per-kind current rules remain open.
