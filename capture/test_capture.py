@@ -59,9 +59,12 @@ def fake_program(directory: Path, name: str, body: str) -> str:
     return str(path)
 
 
-def snapshot(directory: Path) -> dict[str, tuple[int, bytes]]:
-    """Every file under the directory with its modification time and bytes."""
-    return {str(path.relative_to(directory)): (path.stat().st_mtime_ns, path.read_bytes())
+def snapshot(directory: Path) -> dict[str, tuple[int, int, int, bytes]]:
+    """Every file under the directory with its modification time, mode, link
+    count, and bytes: a staged copy that shared the input's inode, or locked
+    it read-only, would change the link count or the mode."""
+    return {str(path.relative_to(directory)): (path.stat().st_mtime_ns, path.stat().st_mode, path.stat().st_nlink,
+                                               path.read_bytes())
             for path in sorted(directory.rglob("*")) if path.is_file()}
 
 
@@ -359,6 +362,30 @@ class CaptureImport(unittest.TestCase):
         code, answer = self.run_import()
         self.assertEqual(code, 1, answer)
         self.assertIn("passed over: .Trashes/, ._010101_120000_TrLR.WAV", answer["detail"])
+
+    def test_a_directory_that_cannot_be_listed_is_refused_not_skipped(self) -> None:
+        card_file(self.card, "010101_120000_TrLR.WAV", music(21))
+        hidden_from_us = self.card / "more"
+        hidden_from_us.mkdir()
+        card_file(hidden_from_us, "010101_130000_TrLR.WAV", music(22))
+        hidden_from_us.chmod(0)
+        self.addCleanup(hidden_from_us.chmod, 0o700)
+        head = support.head(self.root)
+        code, answer = self.run_import()
+        self.assertEqual((code, answer["status"]), (1, "failed"), answer)
+        self.assertIn("more could not be read", answer["detail"])
+        self.assertEqual(support.head(self.root), head)
+        self.assertFalse(self.staging.exists())
+
+    def test_a_file_that_cannot_be_read_is_refused(self) -> None:
+        card_file(self.card, "010101_120000_TrLR.WAV", music(21))
+        locked = card_file(self.card, "010101_130000_TrLR.WAV", music(22))
+        locked.chmod(0)
+        self.addCleanup(locked.chmod, 0o600)
+        code, answer = self.run_import()
+        self.assertEqual((code, answer["status"]), (1, "failed"), answer)
+        self.assertIn("010101_130000_TrLR.WAV could not be read", answer["detail"])
+        self.assertFalse(self.staging.exists())
 
     def test_a_symbolic_link_is_refused(self) -> None:
         target = card_file(self.tmp, "010101_120000_TrLR.WAV", music(21))

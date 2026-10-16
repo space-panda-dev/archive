@@ -121,10 +121,15 @@ def read_directory(directory: Path) -> tuple[list[InputFile], list[str]]:
     the hidden names that were passed over (a card's `.Trashes`, a copy's
     `._` files). A symbolic link or anything else that is not a regular file
     or directory is refused: the importer reads what is on the card, not
-    what a name points to."""
+    what a name points to. A directory that cannot be listed refuses the run
+    too, so no file under it is silently left out."""
     files: list[InputFile] = []
     ignored: list[str] = []
-    for current, directories, names in os.walk(directory):
+
+    def unreadable(exc: OSError) -> None:
+        raise CaptureError(f"{exc.filename} could not be read: {exc.strerror or exc}") from exc
+
+    for current, directories, names in os.walk(directory, onerror=unreadable):
         base = Path(current)
         for name in sorted(directories):
             relative = (base / name).relative_to(directory).as_posix()
@@ -141,7 +146,10 @@ def read_directory(directory: Path) -> tuple[list[InputFile], list[str]]:
                 continue
             if path.is_symlink() or not path.is_file():
                 raise CaptureError(f"{relative} is not a regular file")
-            digest, size = content_digest(path)
+            try:
+                digest, size = content_digest(path)
+            except OSError as exc:
+                raise CaptureError(f"{relative} could not be read: {exc.strerror or exc}") from exc
             files.append(InputFile(relative, path, size, digest))
     files.sort(key=lambda item: item.relative.encode("utf-8", "surrogateescape"))
     return files, sorted(ignored)

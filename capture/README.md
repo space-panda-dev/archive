@@ -36,9 +36,10 @@ staged or proposed.
 
 1. **Hash.** Every regular file under the directory is hashed. Hidden names
    (starting with `.`) are passed over and listed. A symbolic link, or
-   anything else that is not a regular file or directory, refuses the run,
-   and so does a directory with nothing to import: an empty card is more
-   likely a wrong mount than an empty recording.
+   anything else that is not a regular file or directory, refuses the run.
+   So does a directory or file that cannot be read, rather than being left
+   out, and a directory with nothing to import: an empty card is more likely
+   a wrong mount than an empty recording.
 2. **Group.** Each file name is offered to each grammar in turn. A file no
    grammar recognises refuses the run, unless `--session-name` is given:
    then every such file is one source of one session with that label, its
