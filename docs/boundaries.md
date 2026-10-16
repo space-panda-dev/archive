@@ -61,7 +61,7 @@ The decisions behind these boundaries: Archive stands alone
 door admit | transition          the only commands that change archival meaning
 door transition (upgrade)        adopting a later, additive specification release
 door serve --socket <path>       the same commands for applications, on a private socket
-relay/relay.py --config <file>   Door's service and World's query over HTTP, for the tailnet
+relay/relay.py --config <file>   Door's service, World's query, and derived media over HTTP, for the tailnet
 enrich/media.py --root <dir> --digest <d> <file>
                                  waveform peaks and a listening copy: regenerable derived media
 door verify                      full verification of HEAD and a fresh checkpoint
@@ -75,6 +75,7 @@ archive views                    rebuilding browsable views (name unsettled)
 enrich/enrich.py probe           count an Artifact's audio streams and propose the facts to Door
 enrich/enrich.py detect          suggest an audio stream's spans and propose them to Door
 enrich/enrich.py match           score a selection against each Work's linked occurrences and propose matches
+capture/capture.py import        admit a recorder card's new recordings as sessions, then enrich them
 ```
 
 `door serve --socket <path>` runs Door for one archive (the working
@@ -140,9 +141,12 @@ archive ([ADR 0059](decisions/0059-world-read-contract.md)).
 
 `door admit --proposal <directory> --dry-run` predicts the exact revisions an
 admission would create without writing or transferring anything. The proposal
-directory interface is accepted. Persistent admission commits metadata-only
-batches under the archive lock; new content-bearing batches remain explicit
-unsupported behavior until the required git-annex experiment, while complete
+directory interface is accepted. Persistent admission commits each batch once
+under the archive lock. A content-bearing batch obtains its declared content
+from a configured staging remote and verifies it by hashing; the operator
+accepted the real-content git-annex run as meeting the INV-5 gate for content
+admission ([open questions](open-questions.md#door)), and the fixture builder,
+enrichment, and the capture importer all propose such batches. Complete
 retries return without transfer or mutation.
 A specification upgrade is a `door transition` proposal of one
 `archive.transition/specification_upgrade` record, written under the target

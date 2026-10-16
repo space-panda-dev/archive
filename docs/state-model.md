@@ -37,6 +37,11 @@ and is never the only copy of anything above.
 
 Bookkeeping a program keeps to do its job: routine verification results, plans
 in progress, leases, retry counts. It belongs to that program and can be lost.
+The staging repositories that `enrich/` and `capture import` add content to
+before proposing it are operational too: Door copies what it admits into the
+archive, and content a failed admission left staged is only a copy of its
+source ([ADR 0023](decisions/0023-admission-and-staging.md)). A recorder
+card is a source, not staging: it is cleared only by the operator.
 A policy may be evaluated millions of times without writing anything; only a
 consequential transition leaves evidence.
 

@@ -112,7 +112,7 @@ These are boundaries for later phases, not decisions made by this ledger.
 | Four record shapes: V2 decision | rewrite | Ported | Judgment becomes `assessment`; governance becomes a transition claim (ADR 0003, ADR 0005, ADR 0015). |
 | Empty/index insertion and stored-head lookup | translate | Ported | Admission and transition planning index exact committed heads and batch revisions without selecting a domain current (S-10, S-18). |
 | Shape names and filename prefixes | translate | Ported | Keep the four shape names while the centralized layout module constructs every digest-addressed record path (D-1, ADR 0015). |
-| Legacy-spec allow-list and legacy parser | defer | Planned | Archive-to-Archive specification migration is open. |
+| Legacy-spec allow-list and legacy parser | defer | Planned | An additive release is adopted by a transition (ADR 0068); migration to a release that is not additive, which a legacy parser would serve, remains open. |
 | Envelope parser | rewrite | Ported | Distinct closed draft and stored parsers enforce P-2, portable identities, contracts, and Door-owned recording time (D-3, D-7, D-8). |
 | Reference parser | rewrite | Ported | Use `{role,id,revision_id?}`; V2 legacy resolution markers need an accepted migration rule (P-4, INV-24). |
 | Source provenance parser | translate | Planned | Preserve source provenance in envelope/references, not payloads (S-11, ADR 0015). |
@@ -197,7 +197,7 @@ These are boundaries for later phases, not decisions made by this ledger.
 | Canonical contract manifest/catalog bytes | translate | Ported | RFC 8785 bundle bytes determine their SHA-256 paths and citations, and the loader verifies both (D-6, D-8). |
 | Artifact contract | rewrite | Planned | Remove location/annex key and add Archive provenance (S-9, S-11). |
 | Entity contract | translate | Planned | Keep stable subject/name distinction (ADR 0012). |
-| Technical metadata contract | translate | In progress | Derived evidence pins exact inputs and records run configuration (ADR 0006). Specification 0.0.7 installs `derivation_run` and `audio_stream`, and Door admits them with every rule checked (D-15, ADRs 0064 and 0065); World projects runs, stream facts, span suggestions, and version 2 matches (projection 6, revision 3); `enrich probe` counts streams by decoding and proposes them with their run. |
+| Technical metadata contract | translate | Ported | Derived evidence pins exact inputs and records run configuration (ADR 0006). Specification 0.0.7 installs `derivation_run` and `audio_stream`, and Door admits them with every rule checked (D-15, ADRs 0064 and 0065); World projects runs, stream facts, span suggestions, and version 2 matches (projection 6, revision 3); `enrich probe` counts streams by decoding and proposes them with their run. |
 | Label contract | defer | Planned | Representation and current rule remain open. |
 | Transcript contract | defer | Planned | Representation/current rule and remote disclosure adapter remain open. |
 | Selection contract | rewrite | Planned | Preserve ordered pins but replace float seconds with exact boundaries (S-15). |
@@ -238,11 +238,11 @@ These are boundaries for later phases, not decisions made by this ledger.
 | Raw TSV apply | rewrite | Planned | Plans must cite policy/evidence and revalidate before acting (S-28, INV-19). |
 | Safe plan path and strict TSV parser | keep the mechanism | Planned | Retain input hardening below a future bound-plan interface. |
 | Enrichment build configuration | translate | In progress | Configuration stays separate and is recorded as run input (ADR 0006, ADR 0007). The `enrich/` adapter admits a run's parameters as a canonical JSON Artifact and reuses it when the bytes match. |
-| Object+revision derivation stamp | keep the mechanism | Planned | Disposable stamps bind exact evidence and support quiet history (INV-4, INV-5). |
+| Object+revision derivation stamp | keep the mechanism | Ported | The recorded derivation run is the stamp: `enrich` answers `unchanged` before decoding when a run with the same agent, method, software, used revisions, and parameters already has an output, so no stamp file is kept (INV-4, INV-5, ADR 0064). |
 | Desired enrichment discovery | defer | Planned | The policy/mechanism boundary and grammar are open. |
 | Standalone probe/classifier recipes | translate | In progress | Tools take files and propose results through Door (ADR 0006). The probe is ported as `enrich/probe.py` and the work matcher as `enrich/match.py`, a numpy and scipy method under its own identifier (ADR 0067). The whole-file classifier is not; `enrich/detector.py` classes each suggested span `music`, `talk`, `quiet`, or `unknown` instead (ADR 0066). |
 | Unrecorded classifier configuration | rewrite | In progress | Parameters and presets must be recorded as run inputs (ADR 0006); the `enrich/` adapter's `parameters` is where they go. The span detector's `jam` and `show` presets and the matcher's settings and limit are recorded there; the whole-file classifier's configuration is not ported. |
-| Recipe proposal to Door | translate | In progress | Keep the call chain and assert the real dispatcher reaches Door (INV-2). `enrich probe`, `enrich detect`, and `enrich match` propose through `door admit`, and their tests read the committed claims back with `archive show` and World. |
+| Recipe proposal to Door | translate | Ported | Keep the call chain and assert the real dispatcher reaches Door (INV-2). `enrich probe`, `enrich detect`, and `enrich match` propose through `door admit`, and their tests read the committed claims back with `archive show` and World; `capture import` runs the same commands as its chain. |
 | V2 hot placement rule | rewrite | Planned | Desired placement belongs in authorized policy, not annex expressions (ADR 0007). |
 | V2 cold placement rule | rewrite | Planned | Same; no-policy planning yields an empty plan. |
 | Facts copied into annex metadata | delete | Planned | ADR 0008 explicitly rejects the mechanism. |
@@ -361,7 +361,7 @@ row's disposition and reason.
 | managed/unmanaged artifact admissions and URI/key combinations | rewrite | Planned | Location and annex key leave the record (S-9, INV-6). |
 | capture time validation | translate | Planned | Preserve exact/unknown capture time; Door stamps only `at` (P-5). |
 | derived artifact pin, missing pin, wrong target | translate | Planned | Exact derivation provenance is settled (ADR 0006). |
-| technical metadata fields and citation | defer | Planned | The kind contract is open. |
+| technical metadata fields and citation | translate | Ported | `audio_stream` version 1 carries exact decoded stream facts and is cited under its digest (ADR 0065); Door's tests refuse each malformed claim and `enrich/test_probe.py` checks the facts against synthetic files. |
 | ordered selection; swapped-order identity; span/negative/string bounds; refs/citations | rewrite | Planned | Use exact sample boundaries and Archive contracts (S-12, S-15). |
 | selection empty/extra-field cardinality | defer | Planned | Contract details are open. |
 | payload-only extra provenance survives | rewrite | Planned | Provenance belongs in envelope/references (S-11). |
@@ -397,7 +397,7 @@ These are the exact labels passed to the V2 shell test's `check` function.
 | two claims per recording | defer | Planned | Desired enrichment and claim contracts remain open. |
 | the long one is a performance | defer | Planned | Classification vocabulary and policy remain open. |
 | a second run has nothing to be done | keep the mechanism | Planned | Preserve quiet regenerable work (INV-4, INV-5). |
-| losing make's stamps writes nothing new | keep the mechanism | Planned | Regeneration must not duplicate evidence (INV-4, INV-5). |
+| losing make's stamps writes nothing new | keep the mechanism | Ported | Rerunning a tool on unchanged inputs finds its recorded run and writes nothing, and derived media already complete is not made again; the rerun tests replace the decoder with one that fails if called (INV-4, INV-5). |
 | a claim nobody ruled on is not accepted | translate | Planned | Query Archive assessments, not V2 decisions (ADR 0005). |
 | an accepted claim is accepted | translate | Planned | Preserve exact scoped judgment as an assessment (ADR 0005). |
 | a decision superseded by a rejection no longer accepts | translate | Planned | Translate judgment history to assessments; current rules stay contract-owned (ADR 0005, S-18). |

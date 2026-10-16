@@ -55,6 +55,13 @@ elsewhere and is governed by the specification kept here.
 > Door admits and World projects, and the specification upgrade contract of
 > [ADR 0068](docs/decisions/0068-specification-upgrade.md), by which
 > `door transition` moves a 0.0.6 archive to 0.0.7 in one commit.
+> [`enrich/`](enrich/README.md) proposes machine claims through `door admit`:
+> `enrich probe` (audio stream facts), `enrich detect` (span suggestions), and
+> `enrich match` (work matches), each under a derivation run; `enrich/media.py`
+> makes waveform peaks and listening copies that the relay serves by digest
+> ([ADR 0069](docs/decisions/0069-derived-media.md)). `capture import`
+> ([capture/](capture/README.md), [ADR 0070](docs/decisions/0070-capture-import.md))
+> admits a recorder card's new recordings as sessions and runs that chain.
 > Per-kind current rules remain open.
 > Except where a command is explicitly implemented, the material below
 > describes commitments rather than running software.
@@ -210,6 +217,10 @@ repository.
   [release readiness note](docs/proposals/v2-migration-release-readiness.md).
   [ADR 0046](docs/decisions/0046-world-release-before-v2-migration.md)
   places that migration release after the World releases.
+- **Cutover** from the V2 importer has a
+  [proposed plan](docs/proposals/cutover-plan.md): what must be true before the
+  V2 system stops importing and the relay commits, the order, rollback, and
+  where Archive stands against each V2 capability.
 - **Commands beyond the accepted core** remain provisional: `archive plan`,
   `apply`, and `views`.
 
@@ -236,6 +247,8 @@ docs/decisions/      why each decision was made
 spec/                the contract copied into every archive
 docs/proposals/v2-migration-release-readiness.md
                      proposed V2 release boundary and unresolved audio gates
+docs/proposals/cutover-plan.md
+                     proposed conditions, order, and rollback for leaving the V2 importer
 relay/               HTTP for the operator's browser: Door's service, World's query, derived media
 world/               experimental, rebuildable semantic projection
 world/projection/    what each World projection version emits: SHACL shapes and vocabulary

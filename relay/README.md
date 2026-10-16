@@ -11,7 +11,9 @@ the caller's tailnet login. It owns no state.
 
 The relay needs Python with World's dependency installed
 ([World](../world/README.md#install)), a running `door serve` for the archive,
-and a World store for it:
+and a World store for it. It reads the derived-media layout from
+`enrich/derived.py`, so run it from a source tree that holds `enrich/` beside
+`relay/` and `world/` (the flake's `tools` package does):
 
 ```sh
 door serve --socket /path/to/private-dir/door.sock      # in the archive
