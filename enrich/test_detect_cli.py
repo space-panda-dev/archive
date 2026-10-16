@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 import adapter
 import detector
@@ -164,6 +167,45 @@ class DetectCommand(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("chroma_novelty signal cannot be computed", answer["detail"])
         self.assertEqual(support.head(self.root), before)
+
+    def test_door_refuses_suggestions_that_do_not_fit_the_stream(self) -> None:
+        # The detector never produces these; Door, not the detector, is what
+        # keeps a span inside the pinned stream and at its rate (ADR 0066).
+        import enrich
+        stream = self.probed("session")["outputs"][0]
+        sample_count = self.show(stream["object_id"])["payload"]["sample_count"]
+        real = detector.detect
+
+        def past_the_end(*args: object, **kwargs: object) -> detector.Detection:
+            found = real(*args, **kwargs)
+            # Anchor: the real detection ends exactly at the stream's count.
+            self.assertEqual(found.spans[-1][1], sample_count)
+            start, end, kind = found.spans[-1]
+            found.spans[-1] = (start, end + 1, kind)
+            return found
+
+        def other_rate(*args: object, **kwargs: object) -> detector.Detection:
+            found = real(*args, **kwargs)
+            self.assertEqual(found.sample_rate, 8000)
+            found.sample_rate = 16000
+            return found
+
+        cases = {"end_sample must not exceed the stream claim's sample_count": past_the_end,
+                 "sample_rate must equal the stream claim's sample_rate": other_rate}
+        before = support.head(self.root)
+        for expected, fake in cases.items():
+            with self.subTest(expected=expected):
+                errors, printed = io.StringIO(), io.StringIO()
+                with mock.patch.object(detector, "detect", fake), redirect_stderr(errors), redirect_stdout(printed):
+                    code = enrich.main(["detect", "--archive", str(self.root), "--artifact",
+                                        self.objects["session"]["object_id"], "--door", support.DOOR,
+                                        "--archive-command", support.ARCHIVE, "--ffmpeg", support.FFMPEG,
+                                        "--staging", str(self.staging)])
+                self.assertEqual((code, printed.getvalue()), (1, ""))
+                detail = json.loads(errors.getvalue())["detail"]
+                self.assertIn("door admit failed", detail)
+                self.assertIn(expected, detail)
+                self.assertEqual(support.head(self.root), before)
 
     def test_an_unknown_preset_is_refused_before_decoding(self) -> None:
         self.probed("session")

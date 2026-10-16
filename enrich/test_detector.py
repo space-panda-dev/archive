@@ -9,6 +9,8 @@ pieces' own sample edges, within the tolerance each signal states.
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import unittest
 from fractions import Fraction
 from pathlib import Path
@@ -159,6 +161,21 @@ class SignalsAreNeverDropped(unittest.TestCase):
         self.assertEqual(raised.exception.signal, "chroma_novelty")
         self.assertIn("fills only 12", str(raised.exception))
 
+    def test_a_rate_too_low_to_bin_every_pitch_class_is_refused(self) -> None:
+        # At 200 Hz the FFT of a 20-sample hop has bins only up to 100 Hz,
+        # which miss four pitch classes: a chroma that cannot see them is not
+        # computed, and its flat curve never stands in for "no change".
+        wav, _ = support.synthetic_wav(self.tmp / "low.wav", 200, [floor_noise(60, amplitude=0.1)])
+        stream = counted(wav)
+        self.assertEqual((stream.sample_rate, stream.sample_count), (200, 12000))
+        with self.assertRaises(detector.SignalError) as raised:
+            detector.detect(wav, stream, JAM)
+        self.assertEqual(raised.exception.signal, "chroma_novelty")
+        self.assertIn("pitch classes [0, 3, 8, 10]", str(raised.exception))
+        # Anchor: at 1 kHz every class has a bin and the same audio is detected.
+        wav, _ = support.synthetic_wav(self.tmp / "khz.wav", 1000, [floor_noise(60, amplitude=0.1)])
+        detector.detect(wav, counted(wav), JAM)
+
     def test_too_little_audio_for_two_loudness_windows_is_refused(self) -> None:
         wav, _ = support.synthetic_wav(self.tmp / "tiny.wav", 8000, [chord(5, A_MINOR)])
         with self.assertRaises(detector.SignalError) as raised:
@@ -175,6 +192,24 @@ class SignalsAreNeverDropped(unittest.TestCase):
         with self.assertRaises(detector.SignalError) as raised:
             detector.detect(wav, counted(wav), JAM)
         self.assertIn("not finite", str(raised.exception))
+
+    def test_every_signal_refuses_values_that_are_not_finite_on_its_own(self) -> None:
+        # detect() stops at the first signal, so each signal's own check is
+        # reached only by calling it: removing any one would otherwise pass.
+        wav = nan_wav(self.tmp)
+        hops = detector.measure(wav, counted(wav), JAM["hop_ms"], JAM["chroma_min_hz"], JAM["chroma_max_hz"])
+        # Anchor: the measurement carries the NaN into every per-hop value.
+        self.assertFalse(np.all(np.isfinite(hops.energy)))
+        self.assertFalse(np.all(np.isfinite(hops.chroma)))
+        signals = {"silence": lambda: detector.silence_breaks(hops.level_db, JAM),
+                   "loudness": lambda: detector.loudness_transitions(hops, JAM),
+                   "chroma_novelty": lambda: detector.chroma_novelty(hops, JAM),
+                   "quiet": lambda: detector.quiet_runs(hops.level_db, JAM)}
+        for name, compute in signals.items():
+            with self.subTest(signal=name), self.assertRaises(detector.SignalError) as raised:
+                compute()
+            self.assertEqual(raised.exception.signal, name)
+            self.assertIn("not finite", str(raised.exception))
 
     def test_a_signal_failure_stops_the_others(self) -> None:
         wav, _ = session(self.tmp)
@@ -207,6 +242,20 @@ class StreamFacts(unittest.TestCase):
         with self.assertRaisesRegex(detector.DetectorError, "stream claim counts"):
             detector.detect(self.wav, detector.Stream(0, 8000, 2, self.stream.sample_count), JAM)
 
+    def test_every_sample_is_in_exactly_one_hop_including_a_short_last_one(self) -> None:
+        odd, _ = support.synthetic_wav(self.tmp / "odd.wav", 8000, [chord(30.000125, A_MINOR)])
+        stream = counted(odd)
+        self.assertEqual(stream.sample_count, 240001)
+        # Read one hop at a time too, so the short hop is the only one in its read.
+        for frames in (detector.FRAMES_PER_READ, 1):
+            with self.subTest(frames=frames), mock.patch.object(detector, "FRAMES_PER_READ", frames):
+                hops = detector.measure(odd, stream, JAM["hop_ms"], JAM["chroma_min_hz"], JAM["chroma_max_hz"])
+                self.assertEqual((hops.size, hops.count), (800, 240001))
+                self.assertEqual(len(hops.lengths), 301)
+                self.assertEqual(hops.lengths[-1], 1)
+                self.assertEqual(int(hops.lengths.sum()), stream.sample_count)
+                self.assertEqual((len(hops.energy), len(hops.chroma), len(hops.flatness)), (301, 301, 301))
+
     def test_a_stream_that_decodes_to_nothing_is_refused(self) -> None:
         empty = support.empty_wav(self.tmp / "empty.wav")
         with self.assertRaisesRegex(detector.DetectorError, "no samples"):
@@ -232,6 +281,35 @@ class StreamFacts(unittest.TestCase):
             detector.detect(wav, stream, JAM)
 
 
+@needs_ffmpeg
+class StandaloneCommand(unittest.TestCase):
+    """`detector.py <file>` probes, detects, and prints; no archive is involved."""
+
+    def setUp(self) -> None:
+        self.tmp = support.scratch(self, "detect-")
+
+    def run_tool(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run([sys.executable, str(Path(detector.__file__)), *arguments, "--ffmpeg", support.FFMPEG,
+                               "--ffprobe", support.FFPROBE], capture_output=True, text=True)
+
+    def test_a_file_is_probed_and_its_spans_printed(self) -> None:
+        wav, edges = session(self.tmp)
+        done = self.run_tool(str(wav), "--preset", "show")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        printed = json.loads(done.stdout)
+        self.assertEqual(printed, detector.detect(wav, counted(wav), detector.PRESETS["show"]).as_json())
+        self.assertEqual((printed["sample_count"], printed["spans"][-1]["end_sample"]), (edges[-1], edges[-1]))
+
+    def test_a_stream_that_is_not_counted_and_a_failed_detection_are_refused(self) -> None:
+        wav, _ = support.synthetic_wav(self.tmp / "short.wav", 8000, [chord(12, A_MINOR)])
+        done = self.run_tool(str(wav), "--stream-index", "1")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("stream 1 is not an exactly counted audio stream", json.loads(done.stderr)["detail"])
+        done = self.run_tool(str(wav))
+        self.assertEqual((done.returncode, done.stdout), (1, ""))
+        self.assertIn("chroma_novelty signal cannot be computed", json.loads(done.stderr)["detail"])
+
+
 class Rules(unittest.TestCase):
     def test_a_lone_value_has_no_rank_and_equal_values_rank_in_order(self) -> None:
         self.assertEqual(detector.percentile_ranks([0.5]), [None])
@@ -243,6 +321,31 @@ class Rules(unittest.TestCase):
         features = [(0.1, 0.9), (0.5, 0.5), (0.9, 0.1), (0.4, 0.55), (None, None)]
         self.assertEqual(detector.classify(features, JAM), ["talk", "music", "music", "unknown", "unknown"])
         self.assertEqual(detector.classify([(0.3, 0.3)], JAM), ["unknown"])
+
+    def test_the_band_edges_are_inclusive_and_exact(self) -> None:
+        # Twenty-one key confidences rank 0, 1/20, ..., 1; without flatness the
+        # mean rank is the key rank, so ranks 6/20, 7/20 and 8/20 sit exactly
+        # on the talk edge, inside the band, and on the music edge.
+        features = [(float(index), None) for index in range(21)]
+        classes = detector.classify(features, JAM)
+        self.assertEqual(classes[:7], ["talk"] * 7)
+        self.assertEqual(classes[7], "unknown")
+        self.assertEqual(classes[8:], ["music"] * 13)
+
+    def test_an_edge_too_close_to_the_previous_one_or_the_end_is_dropped(self) -> None:
+        def region(hop: int) -> list[detector.Point]:
+            return [detector.Point(hop, "silence", 1.0)]
+        # A minimum of 10 hops in a stream of 100: 5 is too close to the start,
+        # 12 is kept, 20 is too close to 12, 30 is kept, 95 is too close to the end.
+        self.assertEqual(detector.boundaries([region(h) for h in (5, 12, 20, 30, 95)], 10, 100), [12, 30])
+        self.assertEqual(detector.boundaries([region(90)], 10, 100), [90])
+
+    def test_a_region_breaks_at_silence_before_loudness_before_novelty(self) -> None:
+        region = [detector.Point(10, "chroma_novelty", 60.0), detector.Point(20, "loudness", 30.0),
+                  detector.Point(30, "silence", 2.0), detector.Point(40, "silence", 5.0)]
+        self.assertEqual(detector.region_edge(region), 40)
+        self.assertEqual(detector.region_edge(region[:2]), 20)
+        self.assertEqual(detector.region_edge(region[:1]), 10)
 
     def test_key_confidence_needs_pitch_energy_that_varies(self) -> None:
         self.assertIsNone(detector.key_confidence(np.zeros((4, 12))))
