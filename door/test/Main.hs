@@ -431,6 +431,9 @@ main = do
   withProposalTemporaryRoot gitObjectStoreBarrierFailureChecks
   withProposalTemporaryRoot operationJournalSizeCheck
   withProposalTemporaryRoot operationJournalKillRecoveryCheck
+  withProposalTemporaryRoot indexRecoveryRecordBatchChecks
+  withProposalTemporaryRoot indexRecoveryRefusalChecks
+  withProposalTemporaryRoot indexRecoveryTransitionCheck
   withProposalTemporaryRoot persistentRecordParentSymlinkCheck
   withProposalTemporaryRoot persistentRecordParentSwapCheck
   withProposalTemporaryRoot persistentRecordCleanupOwnershipCheck
@@ -3900,6 +3903,25 @@ contentAdmissionChecks parent = do
       && missingHeadAfter == missingHead)
     missingCode missingOutput missingErrors
 
+  -- A content-bearing batch killed after its ref update: the next write
+  -- recovers the ordinary index like after any other batch.
+  shellChecked ("set -e; cd " <> quote staging
+    <> "; printf 'interrupted take\\n' > interrupted.bin"
+    <> "; " <> identity <> quote realAnnex <> " add -q interrupted.bin"
+    <> "; " <> identity <> "git commit -q -m interrupted")
+  (interruptedKey, interruptedDigest, interruptedSize) <- stagedFile "interrupted.bin"
+  (interruptedProposal, interruptedRevision) <- artifactProposal "content-interrupted"
+    interruptedDigest interruptedSize interruptedKey "staging"
+  interruptedBefore <- gitHead root
+  (interruptedCode, interruptedOut, interruptedErr) <- doorWithGitWrapper parent "content-interrupted" root ["admit", "--proposal", interruptedProposal]
+    [("ARCHIVE_GIT_ANNEX_EXECUTABLE", fsckBomb)] (killedAfter RefUpdate)
+  (_, interruptedTree, _) <- shell ("git -C " <> quote root <> " ls-tree -r HEAD -- "
+    <> quote (contentRelative interruptedDigest) <> " " <> quote (recordRelative interruptedRevision))
+  assert "the killed content-bearing batch committed its record and content location"
+    (contains "120000 blob " interruptedTree && contains (recordRelative interruptedRevision) interruptedTree)
+    interruptedCode interruptedOut (interruptedErr <> "\ntree: " <> interruptedTree)
+  killedBatchRecovers "content-bearing batch" "content-interrupted-next" parent root archiveId interruptedBefore
+
 operationJournalKillRecoveryCheck :: FilePath -> IO ()
 operationJournalKillRecoveryCheck parent = do
   (root, archiveId, _) <- newProposalArchive parent "journal-kill-recovery"
@@ -3979,6 +4001,226 @@ operationJournalKillRecoveryCheck parent = do
       && headAfterRetry /= headBefore && commitsAfterRetry == commitsBefore + 1
       && recordsAfterRetry == recordsBefore + 1 && not journalAfterRetry)
     retryCode retryOutput retryErrors
+
+-- | A Git step Door takes outside its temporary index: advancing the branch,
+-- refreshing the ordinary index, or comparing the ordinary index with a
+-- commit. A Door-run Git child without GIT_INDEX_FILE uses the ordinary index.
+-- git-annex runs the configured Git too, and updates its own branch; only
+-- Door's branch update passes --create-reflog.
+data GitStep = RefUpdate | IndexRefresh | IndexComparison
+
+gitStepTest :: GitStep -> String
+gitStepTest RefUpdate = "[ \"$argument\" = --create-reflog ]"
+gitStepTest IndexRefresh = "[ \"$argument\" = read-tree ] && [ -z \"$GIT_INDEX_FILE\" ]"
+gitStepTest IndexComparison = "[ \"$argument\" = --cached ] && [ -z \"$GIT_INDEX_FILE\" ]"
+
+-- | A Git wrapper that kills its parent Door once the step has succeeded.
+killedAfter :: GitStep -> FilePath -> String
+killedAfter step realGit =
+  "#!/bin/sh\nhit=0\nfor argument in \"$@\"; do\n"
+    <> "  if " <> gitStepTest step <> "; then hit=1; fi\n"
+    <> "done\n" <> quote realGit <> " \"$@\"\nstatus=$?\n"
+    <> "if [ \"$hit\" = 1 ] && [ \"$status\" = 0 ]; then\n"
+    <> "  kill -KILL \"$PPID\"\n  sleep 1\nfi\nexit \"$status\"\n"
+
+-- | A Git wrapper under which the step fails and everything else runs.
+failingAt :: GitStep -> FilePath -> String
+failingAt step realGit =
+  "#!/bin/sh\nfor argument in \"$@\"; do\n"
+    <> "  if " <> gitStepTest step <> "; then exit 3; fi\n"
+    <> "done\nexec " <> quote realGit <> " \"$@\"\n"
+
+-- | Run the real Door with one of the wrappers above as its Git executable.
+doorWithGitWrapper :: FilePath -> String -> FilePath -> [String] -> [(String, String)]
+                   -> (FilePath -> String) -> IO (ExitCode, String, String)
+doorWithGitWrapper parent suffix root arguments extra script = do
+  realGit <- findExecutable "git" >>= maybe
+    (ioError (userError "Git wrapper fixture cannot find git")) pure
+  let fakeBin = parent </> ("git-wrapper-" <> suffix)
+      fakeGit = fakeBin </> "git"
+  createDirectoryIfMissing True fakeBin
+  writeFile fakeGit (script realGit)
+  setFileMode fakeGit 0o755
+  environment <- getEnvironment
+  let overrides = ("ARCHIVE_GIT_EXECUTABLE", fakeGit) : extra
+      kept = filter ((`notElem` map fst overrides) . fst) environment
+  readCreateProcessWithExitCode ((proc "door" arguments)
+    { cwd = Just root, env = Just (overrides <> kept) }) ""
+
+-- | Whether the ordinary index holds exactly a commit's tree.
+indexMatches :: FilePath -> String -> IO Bool
+indexMatches root commit = do
+  (code, _, _) <- readProcessWithExitCode "git"
+    ["-C", root, "diff", "--cached", "--quiet", trim commit, "--"] ""
+  pure (code == ExitSuccess)
+
+-- | A metadata admission of one new entity: an ordinary later write, with a
+-- git-annex that fails if it is ever run.
+admitFreshEntity :: FilePath -> FilePath -> String -> String -> IO (ExitCode, String, String, Bool)
+admitFreshEntity parent root archiveId name = do
+  (proposal, _) <- freshEntityProposal root archiveId name
+  persistentAdmissionCommandWithFakeAnnex parent name root proposal
+
+freshEntityProposal :: FilePath -> String -> String -> IO (FilePath, String)
+freshEntityProposal root archiveId name = do
+  objectId <- allocatedObjectId archiveId "archive.core/entity" name
+  proposal <- writeAdmissionProposal root name (manifestFor
+    ["records/entity.json"]
+    [(objectId, "archive.core/entity", name)]
+    [(objectId, Nothing)] []) ["records/entity.json", entityDraft objectId]
+  pure (proposal, objectId)
+
+-- | What a Door killed right after its ref update leaves (the anchor: the
+-- branch moved, the journal remains, the ordinary index still holds the old
+-- commit's tree and not the new one), then the next ordinary write: it must
+-- recover the index to the committed batch and commit on top of it.
+killedBatchRecovers :: String -> String -> FilePath -> FilePath -> String -> String -> IO ()
+killedBatchRecovers label name parent root archiveId headBefore = do
+  let journal = root </> ".git" </> "archive-door-operation"
+  headAfterKill <- gitHead root
+  journalAfterKill <- doesPathExist journal
+  staleAtOld <- indexMatches root headBefore
+  staleAtHead <- indexMatches root headAfterKill
+  assert (label <> ": a Door killed after its ref update leaves the commit, its journal, and the old index")
+    (trim headAfterKill /= trim headBefore && journalAfterKill && staleAtOld && not staleAtHead)
+    ExitSuccess (show (headBefore, headAfterKill, journalAfterKill, staleAtOld, staleAtHead)) ""
+  (code, output, errors, annexCalled) <- admitFreshEntity parent root archiveId name
+  headAfter <- gitHead root
+  parentOfHead <- checkedOutput "index recovery reads the new commit's parent"
+    ["-C", root, "rev-parse", "HEAD^"]
+  fresh <- indexMatches root headAfter
+  journalAfter <- doesPathExist journal
+  assert (label <> ": the next write recovers the index to the committed batch and commits on top of it")
+    (code == ExitSuccess && null errors && not annexCalled && contains "\"retry\":false" output
+      && trim parentOfHead == trim headAfterKill && fresh && not journalAfter)
+    code output errors
+
+-- | Door builds every batch in a temporary index and refreshes the ordinary
+-- index only after the ref update, so a Door killed in between leaves an
+-- index at the old tree. The journal says Door made it stale; the next
+-- Door's recovery refreshes it, and nothing else.
+indexRecoveryRecordBatchChecks :: FilePath -> IO ()
+indexRecoveryRecordBatchChecks parent = do
+  (root, archiveId, _) <- newProposalArchive parent "index-recovery-records"
+  let journal = root </> ".git" </> "archive-door-operation"
+      admitKilled step name = do
+        (proposal, _) <- freshEntityProposal root archiveId name
+        doorWithGitWrapper parent name root ["admit", "--proposal", proposal] [] (killedAfter step)
+  killedBefore <- gitHead root
+  _ <- admitKilled RefUpdate "index-recovery-killed"
+  killedBatchRecovers "record batch" "index-recovery-next" parent root archiveId killedBefore
+
+  refreshedBefore <- gitHead root
+  _ <- admitKilled IndexRefresh "index-recovery-refreshed"
+  refreshedHead <- gitHead root
+  refreshedJournal <- doesPathExist journal
+  refreshedIndex <- indexMatches root refreshedHead
+  assert "a Door killed after its index refresh leaves its journal and an index already at the commit"
+    (trim refreshedHead /= trim refreshedBefore && refreshedJournal && refreshedIndex)
+    ExitSuccess (show (refreshedHead, refreshedJournal, refreshedIndex)) ""
+  (code, output, errors, _) <- admitFreshEntity parent root archiveId "index-recovery-after-refresh"
+  afterRefreshHead <- gitHead root
+  afterRefreshParent <- checkedOutput "index recovery reads the parent after a refreshed kill"
+    ["-C", root, "rev-parse", "HEAD^"]
+  afterRefreshIndex <- indexMatches root afterRefreshHead
+  afterRefreshJournal <- doesPathExist journal
+  assert "the next write clears that journal and commits on the refreshed index"
+    (code == ExitSuccess && null errors && trim afterRefreshParent == trim refreshedHead
+      && afterRefreshIndex && not afterRefreshJournal)
+    code output errors
+
+  -- A change staged by hand after the kill is not Door's: recovery leaves
+  -- the index alone and the staged-changes check still refuses the write.
+  foreignBefore <- gitHead root
+  _ <- admitKilled RefUpdate "index-recovery-foreign"
+  foreignHead <- gitHead root
+  writeFile (root </> "operator-note.txt") "staged by hand\n"
+  shellChecked ("git -C " <> quote root <> " add operator-note.txt")
+  (foreignCode, foreignOutput, foreignErrors, _) <-
+    admitFreshEntity parent root archiveId "index-recovery-refused"
+  foreignHeadAfter <- gitHead root
+  staged <- checkedOutput "index recovery lists the staged paths"
+    ["-C", root, "diff", "--cached", "--name-only", "HEAD", "--"]
+  foreignAtHead <- indexMatches root foreignHead
+  foreignAtOld <- indexMatches root foreignBefore
+  assert "an index holding a change Door did not make is still refused after recovery, and kept"
+    (foreignCode /= ExitSuccess && null foreignOutput
+      && contains "archive index has staged changes" foreignErrors
+      && trim foreignHeadAfter == trim foreignHead && trim foreignHead /= trim foreignBefore
+      && "operator-note.txt" `elem` lines staged && not foreignAtHead && not foreignAtOld)
+    foreignCode foreignOutput (foreignErrors <> "\nstaged: " <> staged)
+
+-- | The branches where recovery does not refresh: a comparison or refresh
+-- that fails keeps the journal and the index for the next Door, and a
+-- branch moved past the journaled commit is not Door's state to repair.
+indexRecoveryRefusalChecks :: FilePath -> IO ()
+indexRecoveryRefusalChecks parent = do
+  (root, archiveId, _) <- newProposalArchive parent "index-recovery-refusals"
+  let journal = root </> ".git" </> "archive-door-operation"
+      admitUnder name script = do
+        (proposal, _) <- freshEntityProposal root archiveId name
+        doorWithGitWrapper parent name root ["admit", "--proposal", proposal] [] script
+  headBefore <- gitHead root
+  _ <- admitUnder "index-refusal-killed" (killedAfter RefUpdate)
+  headAfterKill <- gitHead root
+  let refusedKeepingJournal label expected (code, output, errors) = do
+        headNow <- gitHead root
+        journalNow <- doesPathExist journal
+        atOld <- indexMatches root headBefore
+        assert label
+          (code /= ExitSuccess && null output && contains expected errors
+            && trim headNow == trim headAfterKill && trim headAfterKill /= trim headBefore
+            && journalNow && atOld)
+          code output errors
+  admitUnder "index-refusal-compare" (failingAt IndexComparison) >>= refusedKeepingJournal
+    "a recovery that cannot compare the index refuses and keeps its journal and the index"
+    "could not compare the archive index with the journaled old commit"
+  admitUnder "index-refusal-refresh" (failingAt IndexRefresh) >>= refusedKeepingJournal
+    "a recovery whose index refresh fails refuses and keeps its journal and the index"
+    "could not refresh the archive index to the committed batch"
+  killedBatchRecovers "after refused recoveries" "index-refusal-next" parent root archiveId headBefore
+
+  movedBefore <- gitHead root
+  _ <- admitUnder "index-moved-killed" (killedAfter RefUpdate)
+  movedTarget <- gitHead root
+  bypass <- checkedOutput "index recovery writes a bypass commit"
+    ["-C", root, "-c", "user.name=archive-test", "-c", "user.email=archive-test@example.invalid"
+    , "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "bypass"]
+  shellChecked ("git -C " <> quote root <> " update-ref HEAD " <> trim bypass)
+  (movedCode, movedOutput, movedErrors, _) <- admitFreshEntity parent root archiveId "index-moved-next"
+  movedHead <- gitHead root
+  movedAtOld <- indexMatches root movedBefore
+  movedJournal <- doesPathExist journal
+  assert "a branch moved past the journaled commit is not refreshed, and the stale index is refused"
+    (trim movedTarget /= trim movedBefore && trim bypass /= trim movedTarget
+      && movedCode /= ExitSuccess && null movedOutput
+      && contains "archive index has staged changes" movedErrors
+      && trim movedHead == trim bypass && movedAtOld && not movedJournal)
+    movedCode movedOutput movedErrors
+
+-- | A transition goes through the same journal as an admission.
+indexRecoveryTransitionCheck :: FilePath -> IO ()
+indexRecoveryTransitionCheck parent = do
+  (root, archiveId, initOutput) <- newProposalArchive parent "index-recovery-transition"
+  operatorId <- requiredField "operator_id" initOutput
+  operatorRevision <- recordRevisionForObject root operatorId
+  target <- allocatedObjectId archiveId "archive.core/entity" "index-transition-target"
+  targetRevision <- commitEntityFixture root target
+  transitionObject <- allocatedObjectId archiveId
+    "archive.transition/retire" "index-transition-retire"
+  retireContract <- contractCitation root "archive.transition/retire"
+  proposal <- writeTransitionProposal root "index-transition"
+    (transitionManifestFor
+      ["records/retire.json"]
+      [(transitionObject, "archive.transition/retire", "index-transition-retire")]
+      [(transitionObject, Nothing), (operatorId, Just operatorRevision)
+      , (target, Just targetRevision)])
+    ["records/retire.json", retireDraft transitionObject operatorId operatorRevision
+      target targetRevision retireContract]
+  headBefore <- gitHead root
+  _ <- doorWithGitWrapper parent "index-transition-killed" root
+    ["transition", "--proposal", proposal] [] (killedAfter RefUpdate)
+  killedBatchRecovers "transition" "index-transition-next" parent root archiveId headBefore
 
 operationJournalSizeCheck :: FilePath -> IO ()
 operationJournalSizeCheck parent = do
@@ -6682,8 +6924,9 @@ specificationUpgradeServiceChecks parent = do
 -- | A Door killed after its upgrade commit advanced the branch, and before
 -- it wrote the worktree, leaves its operation journal. The next Door
 -- recovers it: it verifies the committed manifest and release against the
--- journal, writes their worktree copies from the commit, and answers the
--- identical proposal as a retry.
+-- journal, writes their worktree copies from the commit, refreshes the
+-- ordinary index to it, and answers the identical proposal as a retry; a
+-- later write then commits without the index refreshed by hand.
 specificationUpgradeRecoveryChecks :: FilePath -> IO ()
 specificationUpgradeRecoveryChecks parent = do
   (root, archiveId, initOutput) <- newEarlierArchive parent "upgrade-recovery"
@@ -6728,10 +6971,13 @@ specificationUpgradeRecoveryChecks parent = do
   manifestAfterKill <- readFile (root </> "archive.json")
   committedManifest <- checkedOutput "the recovery fixture reads the committed manifest"
     ["-C", root, "show", "HEAD:archive.json"]
-  assert "a Door killed after the upgrade's ref update leaves the commit, its journal, and the old worktree manifest"
+  indexAtOld <- indexMatches root headBefore
+  indexAtKilled <- indexMatches root headAfterKill
+  assert "a Door killed after the upgrade's ref update leaves the commit, its journal, and the old worktree manifest and index"
     (headAfterKill /= headBefore && journalAfterKill
       && contains "\"spec\":\"archive/0.0.6\"" manifestAfterKill
-      && contains "\"spec\":\"archive/0.0.7\"" committedManifest)
+      && contains "\"spec\":\"archive/0.0.7\"" committedManifest
+      && indexAtOld && not indexAtKilled)
     ExitSuccess manifestAfterKill committedManifest
   length manifestAfterKill `seq` pure ()
   (code, out, err) <- doorCommandAt root ["transition", "--proposal", proposal] ""
@@ -6740,11 +6986,18 @@ specificationUpgradeRecoveryChecks parent = do
   manifestAfter <- readFile (root </> "archive.json")
   context <- ByteString.readFile (root </> "spec" </> "0.0.7" </> "context.jsonld")
   released <- ByteString.readFile ("spec" </> "0.0.7" </> "context.jsonld")
-  assert "the next Door recovers the upgrade: the worktree follows the commit and the proposal answers as a retry"
+  indexAfter <- indexMatches root headAfter
+  assert "the next Door recovers the upgrade: the worktree and the index follow the commit and the proposal answers as a retry"
     (code == ExitSuccess && contains upgradeRevision out && contains "\"retry\":true" out
       && headAfter == headAfterKill && not journalAfter
-      && manifestAfter == committedManifest && context == released)
+      && manifestAfter == committedManifest && context == released && indexAfter)
     code out err
+  (nextCode, nextOut, nextErr, nextAnnex) <- admitFreshEntity parent root archiveId "upgrade-recovery-next"
+  nextHead <- gitHead root
+  nextIndex <- indexMatches root nextHead
+  assert "a write after the recovered upgrade commits without the index refreshed by hand"
+    (nextCode == ExitSuccess && null nextErr && not nextAnnex && nextHead /= headAfter && nextIndex)
+    nextCode nextOut nextErr
 
 -- | The additive rule of ADR 0068, the layouts it compares, and the paths an
 -- upgrade may write, without an archive. The real 0.0.6 and 0.0.7 releases

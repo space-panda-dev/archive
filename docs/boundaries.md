@@ -128,7 +128,11 @@ pins the archive root and `.git` directories and spawns Git from the opened
 `.git` directory through a small POSIX helper; pathname replacement cannot
 redirect that child. It synchronizes installed records, the reachable local Git
 object baseline, and the advancing ref, and reconciles journaled interrupted
-record installations under the archive lock. `archive init` also holds that
+record installations under the archive lock. A batch is built in a temporary
+Git index; once its ref has advanced, reconciliation, in the committing process
+or the next Door after a kill, refreshes the ordinary index to the commit only
+while it still holds the journaled old commit's tree. Any other staged change
+is left in place and refused. `archive init` also holds that
 lock through its initial commit and synchronization barrier. Its durable
 ownership journal can finish a fully installed, matching pre-ref initialization
 after an interrupted commit; an incomplete layout or mismatched journal is

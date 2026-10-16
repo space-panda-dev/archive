@@ -715,7 +715,10 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
                       ("committed batch durability barrier failed; operation journal retained: " <> problem))
                     Right () -> do
                       installCommittedFiles
-                      cleanupTemporariesOnly
+                      cleaned <- cleanupTemporariesOnly
+                      case cleaned of
+                        Left problem -> pure (Left problem)
+                        Right () -> refreshCommittedIndex headValue target
 
     -- The worktree copies of a committed upgrade's specification files,
     -- from the committed blobs. This runs after every committed batch, also
@@ -733,6 +736,35 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
         Left problem -> hPutStrLn stderr ("door: warning: archive commit succeeded but "
           <> path <> " could not be written to the worktree: " <> Text.unpack problem)
         Right () -> pure ()
+
+    -- Door builds a batch in a temporary index, so once the ref advances the
+    -- ordinary index still holds the old commit's tree: Door made it stale,
+    -- and recovery refreshes it before the journal goes, whether the process
+    -- that committed is the one finishing or a later Door after a kill.
+    -- Only that exact state is refreshed. An index already at the commit
+    -- needs nothing; any other index holds changes Door did not make, and a
+    -- branch moved past the journaled commit is not Door's state either.
+    -- Both are left alone for the staged-changes check to refuse. A refresh
+    -- that fails retains the journal, so the next Door tries again.
+    refreshCommittedIndex headValue target
+      | headValue /= target = pure (Right ())
+      | otherwise = do
+          compared <- runGitStatus executable rootPath rootFd gitFd Nothing
+            ["diff", "--cached", "--quiet", Text.unpack (journalOldHead journal), "--"]
+          case compared of
+            Left problem -> pure (Left (indexComparisonFailure problem))
+            Right (ExitFailure 1) -> pure (Right ())
+            Right (ExitFailure code) -> pure (Left (indexComparisonFailure
+              ("git diff exited " <> Text.pack (show code))))
+            Right ExitSuccess -> do
+              refreshed <- runGit executable rootPath rootFd gitFd Nothing
+                ["-c", "core.hooksPath=/dev/null", "read-tree", Text.unpack target]
+              pure $ case refreshed of
+                Left problem -> Left
+                  ("could not refresh the archive index to the committed batch; operation journal retained: " <> problem)
+                Right _ -> Right ()
+    indexComparisonFailure problem =
+      "could not compare the archive index with the journaled old commit; operation journal retained: " <> problem
 
     cleanupUncommitted = withPinnedRecords rootFd pinnedRecords $ \recordsFd -> do
       history <- oldHistoryClear
@@ -1911,19 +1943,12 @@ commitRecordBatchWithFiles (ArchiveWriteLock rootPath rootFd gitFd executable) e
                                             case temps of
                                               Left problem -> pure (Left
                                                 ("archive commit succeeded; operation journal retained because staged source cleanup failed: " <> problem))
+                                              -- The ordinary index follows the commit when
+                                              -- the journal is reconciled below: the one path
+                                              -- a killed process's successor also takes.
                                               Right () -> do
-                                                refreshed <- runGitTyped executable rootPath rootFd gitFd Nothing
-                                                  ["-c", "core.hooksPath=/dev/null", "read-tree", Text.unpack commit]
-                                                case refreshed of
-                                                  Left problem | gitPinChanged problem ->
-                                                    pure (Left (gitFailureMessage problem))
-                                                  Left problem -> do
-                                                    hPutStrLn stderr ("door: warning: archive commit succeeded but index refresh failed: " <> Text.unpack (gitFailureMessage problem))
-                                                    installWorktreeLinks
-                                                    pure (Right commit)
-                                                  Right _ -> do
-                                                    installWorktreeLinks
-                                                    pure (Right commit)
+                                                installWorktreeLinks
+                                                pure (Right commit)
 
     closePinnedRecords reference = do
       pinned <- readIORef reference

@@ -272,7 +272,12 @@ the Btrfs snapshot taken before the run.
 5. **Run.** Run `door transition --proposal <directory>` once the operator
    approves the dry run's result. A refusal writes nothing; record it and stop.
    An uncertain outcome is answered by sending the identical proposal again: a
-   committed upgrade answers as a retry.
+   committed upgrade answers as a retry. If Door was killed after the commit,
+   that next Door finishes the run under the archive lock: it writes the new
+   `archive.json` and `spec/0.0.7/` into the worktree and refreshes the Git
+   index to the commit, so no `git read-tree` by hand is needed. A Git index
+   that holds a change Door did not make is left as it is, and Door refuses
+   the next write until the operator resolves it.
 6. **Check.** `git show --name-status HEAD` lists exactly `M archive.json`, the
    three `spec/0.0.7/` documents, the added bundles, and the record. `archive
    status` reports `archive/0.0.7` with no issue, and `archive doctor` passes.
