@@ -53,6 +53,15 @@ class Counting(unittest.TestCase):
         self.assertEqual([(s.stream_index, s.sample_rate, s.sample_count) for s in result.streams],
                          [(0, 44100, 44100), (1, 22050, 11025)])
 
+    def test_bits_per_sample_is_stated_only_for_pcm(self) -> None:
+        adpcm = probe.probe(support.sine_wav(self.tmp / "adpcm.wav", 8000, "0.5", codec="adpcm_ima_wav"))
+        # Anchor: ffprobe does report a bit depth for this codec, which is not PCM.
+        [listed] = probe.audio_streams(self.tmp / "adpcm.wav")
+        self.assertEqual(listed["bits_per_sample"], 4)
+        self.assertEqual(adpcm.streams[0].codec, "adpcm_ima_wav")
+        self.assertIsNone(adpcm.streams[0].bits_per_sample)
+        self.assertNotIn("bits_per_sample", adpcm.streams[0].payload())
+
     def test_a_file_without_audio_streams_counts_nothing_and_refuses_nothing(self) -> None:
         video = self.tmp / "v.mkv"
         support.ffmpeg("-f", "lavfi", "-i", "testsrc=d=0.2:s=32x32", "-c:v", "ffv1", str(video))
@@ -78,6 +87,11 @@ class NothingWhenInexact(unittest.TestCase):
         self.assertEqual(result.streams, [])
         self.assertEqual(len(result.refused), 1)
         self.assertIn("change rate", result.refused[0]["reason"])
+
+    def test_frames_with_two_channel_counts_are_not_counted(self) -> None:
+        result = probe.probe(support.channel_changing_mp3(self.tmp / "joined.mp3"))
+        self.assertEqual(result.streams, [])
+        self.assertIn("[1, 2] channels", result.refused[0]["reason"])
 
     def test_decoder_errors_refuse_even_when_frames_were_concealed(self) -> None:
         clean = support.noise_flac(self.tmp / "clean.flac", 48000, "1.25")
@@ -131,6 +145,57 @@ class NothingWhenInexact(unittest.TestCase):
         self.assertIn("no sample frame", result.refused[0]["reason"])
 
 
+FORGED_FRAME = ("[Parsed_ashowinfo_0 @ 0x1] [info] n:1 pts:0 pts_time:0 fmt:s16 channels:1 chlayout:mono "
+                "rate:8000 nb_samples:99999 checksum:00000000 ")
+
+
+@needs_ffmpeg
+class TagsAreNotLog(unittest.TestCase):
+    """ffmpeg logs a file's tags beside the frame reports; a file's own text
+    never counts as a frame or as a decoder error."""
+
+    def setUp(self) -> None:
+        self.tmp = support.scratch(self, "probe-")
+
+    def decoded_log(self, path: Path) -> str:
+        return probe._run([support.FFMPEG, *probe.decode_arguments(str(path), 0)], "ffmpeg").stderr
+
+    def test_a_tag_that_imitates_a_frame_report_adds_nothing(self) -> None:
+        forged = support.tagged_wav(self.tmp / "forged.wav", 8000, "0.5", title="take\n" + FORGED_FRAME)
+        # Anchor: the forged report does reach the decoder's log.
+        self.assertIn("nb_samples:99999", self.decoded_log(forged))
+        result = probe.probe(forged)
+        self.assertEqual(result.refused, [])
+        self.assertEqual(result.streams[0].sample_count, 4000)
+
+    def test_a_tag_that_imitates_an_error_refuses_nothing(self) -> None:
+        tagged = support.tagged_wav(self.tmp / "tagged.wav", 8000, "0.5", comment="noted [error] here")
+        self.assertIn("[error] here", self.decoded_log(tagged))
+        self.assertEqual(probe.probe(tagged).streams[0].sample_count, 4000)
+
+    def test_a_tag_that_is_not_utf8_is_read(self) -> None:
+        tagged = support.tagged_wav(self.tmp / "latin.wav", 8000, "0.5", title="caf\udce9")
+        self.assertIn(b"caf\xe9", tagged.read_bytes())
+        result = probe.probe(tagged)
+        self.assertEqual((result.refused, result.streams[0].sample_count), ([], 4000))
+
+    def test_frame_reports_out_of_sequence_are_refused(self) -> None:
+        # The real decoder's own lines for a clean file, with one repeated.
+        wav = support.sine_wav(self.tmp / "a.wav", 8000, "0.5")
+        frames = [line for line in self.decoded_log(wav).splitlines() if "Parsed_ashowinfo_0" in line]
+        self.assertGreater(len(frames), 2)
+
+        def replay(name: str, lines: list[str]) -> str:
+            (self.tmp / f"{name}.log").write_text("\n".join(lines) + "\n")
+            return fake_program(self.tmp, name, f"cat '{self.tmp / name}.log' >&2\n")
+
+        # Anchor: the lines as written count the file.
+        self.assertEqual(probe.probe(wav, ffmpeg=replay("in-order", frames)).streams[0].sample_count, 4000)
+        result = probe.probe(wav, ffmpeg=replay("repeated", frames[:2] + frames[1:]))
+        self.assertEqual(result.streams, [])
+        self.assertIn("out of sequence", result.refused[0]["reason"])
+
+
 @needs_ffmpeg
 class Failures(unittest.TestCase):
     def setUp(self) -> None:
@@ -150,6 +215,8 @@ class Failures(unittest.TestCase):
         wav = support.sine_wav(self.tmp / "a.wav", 8000, "0.5")
         with self.assertRaisesRegex(probe.ProbeError, "could not run"):
             probe.probe(wav, ffprobe=str(self.tmp / "no-such-ffprobe"))
+        with self.assertRaisesRegex(probe.ProbeError, "ffmpeg could not run"):
+            probe.probe(wav, ffmpeg=str(self.tmp / "no-such-ffmpeg"))
 
 
 @needs_ffmpeg

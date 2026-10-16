@@ -45,6 +45,11 @@ could be counted exactly (`nothing_proposed`, with each stream's reason); and
   estimate is never used. A stream whose frames change rate, whose decoder
   reported damage (which ffmpeg would otherwise conceal), that decodes no
   frames, or that has more than 64 channels is refused with its reason.
+- The decoder's log is read line by line as it arrives, and only a line that
+  starts with the filter's prefix is a frame report, numbered in sequence.
+  ffmpeg logs a file's tags in the same stream, indented, so a tag that
+  imitates a frame report or an error neither adds samples nor refuses a
+  count, and tags that are not UTF-8 are read.
 - `codec` is ffprobe's codec name; `bits_per_sample` is stated for PCM codecs
   only.
 - The run records `ffprobe`, `ffmpeg`, and the libav libraries `ffmpeg -version`

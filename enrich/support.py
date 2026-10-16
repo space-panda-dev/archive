@@ -98,6 +98,28 @@ def rate_changing_mp3(path: Path) -> Path:
     return path
 
 
+def channel_changing_mp3(path: Path) -> Path:
+    """A mono and a stereo MP3 stream at one rate, joined frame to frame."""
+    first, second = path.with_suffix(".mono.mp3"), path.with_suffix(".stereo.mp3")
+    for target, channels in ((first, "1"), (second, "2")):
+        ffmpeg("-f", "lavfi", "-i", "sine=sample_rate=44100:duration=1", "-ac", channels, "-c:a", "libmp3lame",
+               "-write_xing", "0", "-id3v2_version", "0", str(target))
+    path.write_bytes(first.read_bytes() + second.read_bytes())
+    first.unlink()
+    second.unlink()
+    return path
+
+
+def tagged_wav(path: Path, rate: int, seconds: str, **tags: str) -> Path:
+    """A mono WAV whose INFO tags hold the given text. A tag's characters
+    U+DC80 to U+DCFF reach the file as the single bytes 0x80 to 0xFF, so a
+    tag can hold bytes that are not UTF-8."""
+    metadata = [argument for name, value in tags.items() for argument in ("-metadata", f"{name}={value}")]
+    ffmpeg("-f", "lavfi", "-i", f"sine=frequency=440:sample_rate={rate}:duration={seconds}", *metadata,
+           "-c:a", "pcm_s16le", str(path))
+    return path
+
+
 def corrupted_flac(path: Path) -> Path:
     """A FLAC file with damaged frames in the middle; ffmpeg conceals them."""
     noise_flac(path, 48000, "1.25")

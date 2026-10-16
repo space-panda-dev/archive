@@ -91,8 +91,11 @@ _LIBRARY = re.compile(r"^(libavutil|libavcodec|libavformat|libavfilter)\s+(\d+)\
 
 
 def _run(arguments: list[str], what: str) -> subprocess.CompletedProcess[str]:
+    # The programs echo a file's tags, which need not be UTF-8; only ASCII
+    # structure is read from their output, so undecodable bytes are replaced.
     try:
-        return subprocess.run(arguments, capture_output=True, text=True)
+        return subprocess.run(arguments, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
     except OSError as exc:
         raise ProbeError(f"{what} could not run: {exc}") from exc
 
@@ -129,31 +132,53 @@ def audio_streams(path: Path, ffprobe: str = "ffprobe") -> list[dict[str, Any]]:
     return [s for s in listed["streams"] if isinstance(s, dict) and s.get("codec_type") == "audio"]
 
 
-_FRAME = re.compile(r"\[Parsed_ashowinfo_0 @ [^\]]*\] \[info\] n:\d+ .*?channels:(\d+) .*?rate:(\d+) nb_samples:(\d+) ")
-_LEVEL = re.compile(r"\[(" + "|".join(REFUSING_LEVELS) + r")\] ")
+# Only a line that starts with ashowinfo's own prefix is a frame report, and
+# only a line that starts with a log prefix carries a level. ffmpeg also logs
+# the file's tags at info level ("[info]     title : ..."), indenting any
+# continuation line, so text a file holds can appear inside a line but never
+# at its start: a tag cannot add frames to a count or hide a decoder error.
+_FRAME = re.compile(r"^\[Parsed_ashowinfo_0 @ [^\]]+\] \[info\] n:(\d+) .*?channels:(\d+) .*?rate:(\d+) "
+                    r"nb_samples:(\d+) ")
+_LEVEL = re.compile(r"^(?:\[[^\]]+ @ [^\]]+\] ){0,2}\[(" + "|".join(REFUSING_LEVELS) + r")\] ")
 
 
 def count_stream(path: Path, stream: dict[str, Any], ffmpeg: str = "ffmpeg") -> tuple[Stream | None, str | None]:
     """Decode one stream and count its sample frames. Returns the stream's
-    facts, or None and the reason the count is not exact."""
+    facts, or None and the reason the count is not exact.
+
+    The decoder's log is read line by line as it arrives: a recording of
+    hours logs one line per frame, which is never held in memory at once."""
     index = stream.get("index")
     codec = stream.get("codec_name")
     if not isinstance(index, int) or index < 0 or not isinstance(codec, str) or not 1 <= len(codec) <= 100:
         return None, "ffprobe did not report the stream's index and codec"
-    completed = _run([ffmpeg, *decode_arguments(str(path), index)], "ffmpeg")
-    rates, channels, total, problems = set(), set(), 0, []
-    for line in completed.stderr.splitlines():
-        frame = _FRAME.search(line)
-        if frame:
-            channels.add(int(frame.group(1)))
-            rates.add(int(frame.group(2)))
-            total += int(frame.group(3))
-        elif _LEVEL.search(line):
-            problems.append(line.strip())
-    if completed.returncode != 0:
-        return None, f"ffmpeg exited {completed.returncode} decoding the stream"
-    if problems:
-        return None, "the decoder reported errors, so frames may be lost or concealed: " + problems[0][:300]
+    try:
+        process = subprocess.Popen([ffmpeg, *decode_arguments(str(path), index)], stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    except OSError as exc:
+        raise ProbeError(f"ffmpeg could not run: {exc}") from exc
+    rates, channels, total, expected = set(), set(), 0, 0
+    problem = None
+    with process:
+        assert process.stderr is not None
+        for raw in process.stderr:
+            for line in raw.decode("utf-8", errors="replace").splitlines():
+                frame = _FRAME.match(line)
+                if frame:
+                    number = int(frame.group(1))
+                    # Frames are numbered from 0; a reconfigured filter starts again.
+                    if number not in (0, expected) and problem is None:
+                        problem = f"frame reports are out of sequence: {line.strip()}"
+                    expected = number + 1
+                    channels.add(int(frame.group(2)))
+                    rates.add(int(frame.group(3)))
+                    total += int(frame.group(4))
+                elif problem is None and _LEVEL.match(line):
+                    problem = line.strip()
+    if process.returncode != 0:
+        return None, f"ffmpeg exited {process.returncode} decoding the stream"
+    if problem is not None:
+        return None, "the decoder reported errors, so frames may be lost or concealed: " + problem[:300]
     if len(rates) != 1 or len(channels) != 1:
         if not rates:
             return None, "no frame was decoded"
