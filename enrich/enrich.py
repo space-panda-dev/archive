@@ -7,7 +7,8 @@ The command reads the archive only through `archive export`, runs the tool on
 the Artifact's locally present content, and proposes the run and its claims
 to `door admit` through the adapter (ADR 0064). It prints one JSON object.
 Exit status: 0 when the claims were committed, predicted, or already
-recorded; 2 when the tool kept nothing to propose; 1 on any failure.
+recorded; 3 when the tool kept nothing to propose; 1 on any failure; and 2,
+as argparse decides, when the arguments are not understood.
 """
 
 from __future__ import annotations
@@ -28,6 +29,9 @@ import adapter  # noqa: E402
 import probe as probe_tool  # noqa: E402
 
 STREAM_CONTRACT = ("archive.claim/audio_stream", "1")
+# Not 2: argparse exits 2 on arguments it does not understand, and a caller
+# must never read a mistyped command as "this file has no audio".
+NOTHING_PROPOSED = 3
 
 
 class CommandError(Exception):
@@ -92,7 +96,7 @@ def run_probe(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     result = probe_tool.probe(path, args.ffmpeg, args.ffprobe)
     ended = adapter.now()
     if not result.streams:
-        return 2, {"status": "nothing_proposed", "artifact": pin, "probe": result.as_json()}
+        return NOTHING_PROPOSED, {"status": "nothing_proposed", "artifact": pin, "probe": result.as_json()}
     outputs = tuple(
         adapter.Output(contract=STREAM_CONTRACT, name=f"stream-{stream.stream_index}",
                        payload=stream.payload(),

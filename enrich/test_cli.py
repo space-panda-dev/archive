@@ -127,7 +127,7 @@ class ProbeCommand(unittest.TestCase):
     def test_an_artifact_without_audio_proposes_nothing(self) -> None:
         before = support.head(self.root)
         code, answer = self.enrich("video", "--staging", str(self.staging))
-        self.assertEqual((code, answer["status"]), (2, "nothing_proposed"), answer)
+        self.assertEqual((code, answer["status"]), (3, "nothing_proposed"), answer)
         self.assertEqual(answer["probe"], {"streams": [], "refused": []})
         self.assertEqual(support.head(self.root), before)
         self.assertFalse(self.staging.exists())
@@ -165,6 +165,14 @@ class ProbeCommand(unittest.TestCase):
                                    capture_output=True, text=True, env=env)
         self.assertEqual(completed.returncode, 1)
         self.assertIn("git is not on PATH", json.loads(completed.stderr)["detail"])
+
+    def test_arguments_not_understood_are_not_read_as_nothing_proposed(self) -> None:
+        completed = subprocess.run([sys.executable, str(HERE / "enrich.py"), "probe", "--archive", str(self.root),
+                                    "--artefact", self.objects["wav"]["object_id"]],
+                                   capture_output=True, text=True, env=self.env)
+        self.assertEqual(completed.returncode, 2, completed.stderr)
+        self.assertNotEqual(completed.returncode, 3)
+        self.assertEqual(completed.stdout, "")
 
     def test_an_unknown_object_is_refused(self) -> None:
         code, answer = self.enrich("urn:uuid:00000000-0000-4000-8000-000000000000")

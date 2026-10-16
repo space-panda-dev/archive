@@ -29,9 +29,10 @@ Counts every audio stream of the Artifact's current revision and proposes one
 `archive.claim/audio_stream` claim per counted stream, all made by one
 `archive.claim/derivation_run` claim, in one Door batch. It prints one JSON
 object and exits 0 when the claims were committed (`committed`), predicted by
-a dry run (`predicted`), or already recorded (`unchanged`); 2 when no stream
-could be counted exactly (`nothing_proposed`, with each stream's reason); and
-1 on any failure, with `{"status": "failed", "detail": ...}` on stderr.
+a dry run (`predicted`), or already recorded (`unchanged`); 3 when no stream
+could be counted exactly (`nothing_proposed`, with each stream's reason); 1 on
+any failure, with `{"status": "failed", "detail": ...}` on stderr; and 2 when
+the arguments are not understood.
 
 - The Artifact's bytes are read from the archive's content worktree, where
   layout `archive/2` places them, and are checked against the digest and size
@@ -110,7 +111,12 @@ if reader.equivalent_run(result) is None:           # optional quiet-history che
 - **`Output(contract, name, payload, refs)`** is one claim the run made. The
   adapter cites the contract's installed bundle, names the claim
   `<run name>-<name>` in the contract's namespace, and adds the `run` pin;
-  `refs` are the output's other pins, and must not include `run`.
+  `refs` are the output's other pins, and must not include `run`. They pin
+  revisions already committed: an output cannot pin another output of the
+  same run, because those revisions exist only inside `propose`. A detector
+  whose suggestions pin a stream claim (ADR 0066) therefore pins one an
+  earlier probe run committed, and a tool that needs both proposes them as
+  two runs.
 - **`propose(reader, result, door, staging, dry_run, by, env)`** checks the
   proposer's obligations of D-15 (a Package URL agent, at least one output, a
   run that does not end before it starts, `used` pins to revisions in the
@@ -120,8 +126,8 @@ if reader.equivalent_run(result) is None:           # optional quiet-history che
   answer must equal them. It returns an `Admission` with the run, the
   outputs, the parameters (`reused` or not), and the revision identifiers.
 - **Parameters** are written as RFC 8785 canonical JSON (`canonical()`). When
-  an Artifact already holds exactly those bytes, the run pins its current
-  revision. Otherwise the bytes are added to the `Staging` repository (a
+  an Artifact's current revision holds exactly those bytes, the run pins
+  that revision; a superseded revision is never reused. Otherwise the bytes are added to the `Staging` repository (a
   git-annex repository, created when absent), which is configured in the
   archive as a Git remote (an existing remote with the same path, or
   `enrich-staging`), and declared as content for Door to fetch and verify
@@ -129,8 +135,12 @@ if reader.equivalent_run(result) is None:           # optional quiet-history che
   `staging` a new parameters Artifact is refused.
 - **A dry run** stages nothing and configures no remote; Door predicts the
   revisions without fetching anything.
-- `AdapterError` carries every refusal, Door's included; a refused batch
+- `AdapterError` carries every refusal, Door's included (an answer that is
+  not the planned status and revisions is refused too); a refused batch
   leaves the archive unchanged.
+- `equivalent_run` counts a recorded run only when some claim pins it as
+  `run`: a run that kept no output (which D-15 forbids proposing, but Door
+  cannot detect) never makes a rerun quiet.
 
 The adapter proposes only through `door admit`; `door serve` takes the same
 proposal directory, so a long-running caller can switch without changing the
