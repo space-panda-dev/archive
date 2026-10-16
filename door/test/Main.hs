@@ -4030,6 +4030,15 @@ failingAt step realGit =
     <> "  if " <> gitStepTest step <> "; then exit 3; fi\n"
     <> "done\nexec " <> quote realGit <> " \"$@\"\n"
 
+-- | A Git wrapper under which the step exits 0 but floods stderr past Door's
+-- capture bound, so Door gets no exit status for it: the comparison's
+-- process-failure branch, distinct from a nonzero exit.
+floodingAt :: GitStep -> FilePath -> String
+floodingAt step realGit =
+  "#!/bin/sh\nfor argument in \"$@\"; do\n"
+    <> "  if " <> gitStepTest step <> "; then head -c 4194304 /dev/zero | tr '\\000' x >&2; exit 0; fi\n"
+    <> "done\nexec " <> quote realGit <> " \"$@\"\n"
+
 -- | Run the real Door with one of the wrappers above as its Git executable.
 doorWithGitWrapper :: FilePath -> String -> FilePath -> [String] -> [(String, String)]
                    -> (FilePath -> String) -> IO (ExitCode, String, String)
@@ -4175,6 +4184,9 @@ indexRecoveryRefusalChecks parent = do
   admitUnder "index-refusal-compare" (failingAt IndexComparison) >>= refusedKeepingJournal
     "a recovery that cannot compare the index refuses and keeps its journal and the index"
     "could not compare the archive index with the journaled old commit"
+  admitUnder "index-refusal-compare-process" (floodingAt IndexComparison) >>= refusedKeepingJournal
+    "a recovery whose index comparison process fails without an exit status refuses and keeps its journal and the index"
+    "could not compare the archive index with the journaled old commit; operation journal retained: subprocess stderr exceeded its byte limit"
   admitUnder "index-refusal-refresh" (failingAt IndexRefresh) >>= refusedKeepingJournal
     "a recovery whose index refresh fails refuses and keeps its journal and the index"
     "could not refresh the archive index to the committed batch"
