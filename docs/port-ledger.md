@@ -134,7 +134,7 @@ These are boundaries for later phases, not decisions made by this ledger.
 | Pending manifest format | rewrite | Ported | The accepted closed proposal manifest names ordered records, identities, contents, and expected heads (ADR 0023). |
 | Idempotent remove-if-missing | keep the mechanism | Ported | Operational cleanup tolerates an already-absent path while reporting real removal failures (S-4). |
 | Streamed Git pathspec stage/unstage/commit | translate | Ported | A temporary index builds exactly the validated record batch and advances the branch by expected-parent compare-and-swap without staging unrelated paths (P-1, INV-2). |
-| Refuse an already-dirty records index | keep the mechanism | Ported | Persistent transition refuses staged changes before constructing its isolated batch commit (S-2, INV-2). |
+| Refuse an already-dirty records index | keep the mechanism | Ported | Persistent transition refuses staged changes before constructing its isolated batch commit; journal recovery refreshes only an index Door itself left at the old commit, so the refusal keeps meaning a change Door did not make (S-2, INV-2). |
 | Durable operation-ID files | defer | Planned | Idempotency is required, but the durable protocol/location is open (S-4; admission/staging question). |
 | CLI option parsing | translate | Ported | Door accepts proposal-directory admission and transition commands with an optional dry-run and refuses stdin mutation (ADR 0023, ADR 0028). |
 | Main writer dispatch | rewrite | In progress | Door dispatches both modes through committed-snapshot validation and persistent commit seams, including content-bearing admission; persistent success still predates ADR 0031's power-loss contract (S-2, S-8, S-11). |
