@@ -240,6 +240,7 @@ relay/               HTTP for the operator's browser: Door's service and World's
 world/               experimental, rebuildable semantic projection
 world/projection/    what each World projection version emits: SHACL shapes and vocabulary
 fixture/             published synthetic records and the builder that admits them through Door
+enrich/              enrichment tools and the adapter that proposes their runs to Door
 ```
 
 ## Contributing

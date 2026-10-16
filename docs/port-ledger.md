@@ -197,7 +197,7 @@ These are boundaries for later phases, not decisions made by this ledger.
 | Canonical contract manifest/catalog bytes | translate | Ported | RFC 8785 bundle bytes determine their SHA-256 paths and citations, and the loader verifies both (D-6, D-8). |
 | Artifact contract | rewrite | Planned | Remove location/annex key and add Archive provenance (S-9, S-11). |
 | Entity contract | translate | Planned | Keep stable subject/name distinction (ADR 0012). |
-| Technical metadata contract | translate | In progress | Derived evidence pins exact inputs and records run configuration (ADR 0006). Specification 0.0.7 installs `derivation_run` and `audio_stream`, and Door admits them with every rule checked (D-15, ADRs 0064 and 0065); World projects runs, stream facts, span suggestions, and version 2 matches (projection 6, revision 3); the probe tool is not ported. |
+| Technical metadata contract | translate | In progress | Derived evidence pins exact inputs and records run configuration (ADR 0006). Specification 0.0.7 installs `derivation_run` and `audio_stream`, and Door admits them with every rule checked (D-15, ADRs 0064 and 0065); World projects runs, stream facts, span suggestions, and version 2 matches (projection 6, revision 3); `enrich probe` counts streams by decoding and proposes them with their run. |
 | Label contract | defer | Planned | Representation and current rule remain open. |
 | Transcript contract | defer | Planned | Representation/current rule and remote disclosure adapter remain open. |
 | Selection contract | rewrite | Planned | Preserve ordered pins but replace float seconds with exact boundaries (S-15). |
@@ -237,12 +237,12 @@ These are boundaries for later phases, not decisions made by this ledger.
 | V2 rule parser and relative dates | defer | Planned | Policy grammar, stable names, freshness, and authorship are open. |
 | Raw TSV apply | rewrite | Planned | Plans must cite policy/evidence and revalidate before acting (S-28, INV-19). |
 | Safe plan path and strict TSV parser | keep the mechanism | Planned | Retain input hardening below a future bound-plan interface. |
-| Enrichment build configuration | translate | Planned | Configuration stays separate and is recorded as run input (ADR 0006, ADR 0007). |
+| Enrichment build configuration | translate | In progress | Configuration stays separate and is recorded as run input (ADR 0006, ADR 0007). The `enrich/` adapter admits a run's parameters as a canonical JSON Artifact and reuses it when the bytes match. |
 | Object+revision derivation stamp | keep the mechanism | Planned | Disposable stamps bind exact evidence and support quiet history (INV-4, INV-5). |
 | Desired enrichment discovery | defer | Planned | The policy/mechanism boundary and grammar are open. |
-| Standalone probe/classifier recipes | translate | Planned | Tools take files and propose results through Door (ADR 0006). |
-| Unrecorded classifier configuration | rewrite | Planned | Parameters and presets must be recorded as run inputs (ADR 0006). |
-| Recipe proposal to Door | translate | Planned | Keep the call chain and assert the real dispatcher reaches Door (INV-2). |
+| Standalone probe/classifier recipes | translate | In progress | Tools take files and propose results through Door (ADR 0006). The probe is ported as `enrich/probe.py`; the classifier is not. |
+| Unrecorded classifier configuration | rewrite | Planned | Parameters and presets must be recorded as run inputs (ADR 0006); the `enrich/` adapter's `parameters` is where they go. |
+| Recipe proposal to Door | translate | In progress | Keep the call chain and assert the real dispatcher reaches Door (INV-2). `enrich probe` proposes through `door admit`, and its tests read the committed claims back with `archive show` and World. |
 | V2 hot placement rule | rewrite | Planned | Desired placement belongs in authorized policy, not annex expressions (ADR 0007). |
 | V2 cold placement rule | rewrite | Planned | Same; no-policy planning yields an empty plan. |
 | Facts copied into annex metadata | delete | Planned | ADR 0008 explicitly rejects the mechanism. |

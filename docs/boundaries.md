@@ -70,6 +70,7 @@ archive export [--since <commit>] the committed snapshot, or what was added afte
 archive ls | show | current      reading
 archive plan | apply             reconciling (may become top-level plan / apply)
 archive views                    rebuilding browsable views (name unsettled)
+enrich/enrich.py probe           count an Artifact's audio streams and propose the facts to Door
 ```
 
 `door serve --socket <path>` runs Door for one archive (the working
@@ -91,6 +92,14 @@ proposal directory for the service, refuses content and any draft not naming
 the caller's agent, and answers read-only SPARQL. It writes nothing itself.
 [`relay/openapi.json`](../relay/openapi.json) describes every route, answer,
 and refusal code ([ADR 0060](decisions/0060-relay-interface-and-role.md)).
+
+[`enrich/`](../enrich/README.md) holds enrichment
+([ADR 0064](decisions/0064-derivation-runs.md)): tools that take files and
+return plain results, and one adapter that reads the archive through
+`archive export`, packages a result as a derivation run with its outputs, and
+proposes them in one `door admit` batch. The first tool is the audio stream
+probe ([ADR 0065](decisions/0065-audio-stream-facts.md)), which needs `ffmpeg`
+and `ffprobe` and counts sample frames only by decoding them.
 
 World's answers are standard SPARQL results, and what each projection version
 emits is declared in [`world/projection/`](../world/projection/6/projection.json)

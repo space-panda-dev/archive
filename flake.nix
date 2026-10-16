@@ -61,9 +61,9 @@
           python = pythonFor pkgs;
         in pkgs.runCommand "archive-tools" { nativeBuildInputs = [ pkgs.makeWrapper ]; } ''
           mkdir -p $out/share/archive $out/bin
-          cp -r ${self}/world ${self}/relay ${self}/fixture ${self}/spec ${self}/LICENSES $out/share/archive/
+          cp -r ${self}/world ${self}/relay ${self}/fixture ${self}/enrich ${self}/spec ${self}/LICENSES $out/share/archive/
           chmod -R u+w $out/share/archive
-          rm -f $out/share/archive/fixture/test_*.py
+          rm -f $out/share/archive/fixture/test_*.py $out/share/archive/enrich/test_*.py $out/share/archive/enrich/support.py
           rm -rf $out/share/archive/world/tests $out/share/archive/relay/tests
           wrap() {
             makeWrapper ${python}/bin/python3 $out/bin/$1 \
@@ -77,6 +77,8 @@
           wrap relay relay/relay.py
           wrap archive-fixture fixture/build.py
           wrap archive-fixture-serve fixture/serve.py
+          wrap enrich enrich/enrich.py
+          wrapProgram $out/bin/enrich --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.ffmpeg-headless ]}
         '';
     in
     {
@@ -146,7 +148,7 @@
           # Every Python suite, against the Door and Archive built above;
           # a missing binary fails rather than skips.
           python = pkgs.runCommand "archive-python-tests"
-            { nativeBuildInputs = [ python archive pkgs.git pkgs.git-annex ]; } ''
+            { nativeBuildInputs = [ python archive pkgs.git pkgs.git-annex pkgs.ffmpeg-headless ]; } ''
             cp -r ${self} source
             chmod -R u+w source
             cd source
@@ -161,6 +163,7 @@
             python -m unittest discover -s shadow -p 'test_*.py'
             python -m unittest discover -s migration -p 'test_*.py'
             python -m unittest discover -s fixture -p 'test_*.py'
+            python -m unittest discover -s enrich -p 'test_*.py'
             touch $out
           '';
         });
@@ -179,6 +182,7 @@
               pkgs.git-annex
               pkgs.perl
               (pythonFor pkgs)
+              pkgs.ffmpeg-headless
               pkgs.which
             ];
           };

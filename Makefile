@@ -7,7 +7,8 @@ check:
 claims:
 	python3 scripts/check.py --claims
 
-# PYTHON must have world/requirements-test.txt installed.
+# PYTHON must have world/requirements-test.txt installed; the enrich suite
+# also needs ffmpeg and ffprobe on PATH.
 PYTHON ?= python3
 
 test: test-haskell test-python
@@ -26,4 +27,5 @@ test-python:
 	  $(PYTHON) -m unittest discover -s relay/tests && \
 	  $(PYTHON) -m unittest discover -s shadow -p "test_*.py" && \
 	  $(PYTHON) -m unittest discover -s migration -p "test_*.py" && \
-	  $(PYTHON) -m unittest discover -s fixture -p "test_*.py"'
+	  $(PYTHON) -m unittest discover -s fixture -p "test_*.py" && \
+	  $(PYTHON) -m unittest discover -s enrich -p "test_*.py"'
