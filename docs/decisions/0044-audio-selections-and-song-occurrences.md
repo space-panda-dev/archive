@@ -1,6 +1,6 @@
 # 0044. Audio selections and song occurrences have separate identities
 
-Status: accepted
+Status: accepted; amended by [ADR 0066](0066-span-suggestions.md) (boundary candidates may be admitted)
 
 The rehearsal review application needs an accepted excerpt of audio that
 matching, transcription, derivation, publication, and World can all name.
