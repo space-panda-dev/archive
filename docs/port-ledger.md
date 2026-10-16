@@ -254,7 +254,7 @@ These are boundaries for later phases, not decisions made by this ledger.
 | Shared native multicall executable | keep the mechanism | Planned | Reuse packaging mechanism with Archive command aliases. |
 | Haskell dependencies and warnings | keep the mechanism | Planned | They support the language boundary in ADR 0014. |
 | V2 package licence | rewrite | Planned | Apply AGPL-3.0-or-later/CC0 split (ADR 0017). |
-| Enrichment binaries excluded from Door package | keep the mechanism | Planned | Standalone tools preserve the enrichment boundary (ADR 0006). |
+| Enrichment binaries excluded from Door package | keep the mechanism | In progress | Standalone tools preserve the enrichment boundary (ADR 0006); `enrich/media.py` is the first, outside the Cabal package (ADR 0064, ADR 0069). |
 | Root flake pin/system fan-out | keep the mechanism | Ported | The locked Archive flake declares Darwin and Linux systems; reproducible packaging is mechanism, not archive meaning. |
 | V2 Nix Haskell derivation | translate | Ported | The flake builds Archive's native Door and reader package and runs both Cabal suites (ADR 0014). |
 | V2 templates and command aliases in `postInstall` | rewrite | Planned | Install Archive spec/contracts and only accepted commands. |

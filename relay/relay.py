@@ -29,9 +29,12 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "world"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "enrich"))
 
+import derived  # noqa: E402
 import world  # noqa: E402
 
 MAX_BODY = 1024 * 1024
@@ -44,12 +47,29 @@ DOOR_ROUTES = {
     "/door/transition-dry-run": ("transition", True),
     "/door/transition": ("transition", False),
 }
-ROUTES = {"/health": "GET", "/world/query": "POST", **{path: "POST" for path in DOOR_ROUTES}}
+# Derived media by content digest (ADR 0069); the template names each route.
+MEDIA_ROUTES = {f"/media/{{digest}}/{kind}": kind for kind in derived.KINDS}
+MEDIA_PATH = re.compile(r"/media/([^/?#]*)/([a-z]+)")
+ROUTES = {"/health": "GET", "/world/query": "POST", **{path: "POST" for path in DOOR_ROUTES},
+          **{path: "GET" for path in MEDIA_ROUTES}}
+
+
+def route_of(path: str) -> tuple[str, str | None]:
+    """The described route a request path asks for, and the digest a media
+    path names. A path matching no route is returned as it is."""
+    match = MEDIA_PATH.fullmatch(path)
+    if match is not None:
+        route = f"/media/{{digest}}/{match.group(2)}"
+        if route in MEDIA_ROUTES:
+            return route, unquote(match.group(1))
+    return path, None
+
+
 ROLES = ("shadow", "scratch", "live")
 CONFIG_FIELDS = {
     "listen", "archive_root", "door_socket", "world_store", "archive_command", "staging",
     "writes", "role", "origins", "callers", "query_timeout_seconds", "max_rows",
-    "query_workers", "cache_bytes",
+    "query_workers", "cache_bytes", "media_root",
 }
 # Answers smaller than this go out uncompressed: gzip would not pay for itself.
 GZIP_MIN_BYTES = 1024
@@ -81,6 +101,10 @@ RELAY_CODES: dict[str, HTTPStatus] = {
     "door_unreachable": HTTPStatus.SERVICE_UNAVAILABLE,
     "door_failed": HTTPStatus.BAD_GATEWAY,
     "internal_error": HTTPStatus.INTERNAL_SERVER_ERROR,
+    "media_forbidden": HTTPStatus.FORBIDDEN,
+    "media_unknown_digest": HTTPStatus.NOT_FOUND,
+    "media_not_derived": HTTPStatus.NOT_FOUND,
+    "range_not_satisfiable": HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE,
 }
 DOOR_STATUSES: dict[str, HTTPStatus] = {
     "request_malformed": HTTPStatus.BAD_GATEWAY,
@@ -100,14 +124,16 @@ DOOR_STATUSES: dict[str, HTTPStatus] = {
 
 class Refused(Exception):
     """A request the relay will not answer with success: a code, its HTTP
-    status, and a message. ``extra`` carries Door's other refusal fields."""
+    status, and a message. ``extra`` carries Door's other refusal fields,
+    and ``headers`` any header the refusal must carry."""
 
     def __init__(self, code: str, message: str, status: HTTPStatus | None = None,
-                 extra: dict[str, Any] | None = None):
+                 extra: dict[str, Any] | None = None, headers: dict[str, str] | None = None):
         super().__init__(message)
         self.code = code
         self.status = status or RELAY_CODES[code]
         self.extra = extra or {}
+        self.headers = headers or {}
 
     def error(self) -> dict[str, Any]:
         return {"code": self.code, "message": str(self), **self.extra}
@@ -130,6 +156,8 @@ class Config:
     max_rows: int
     query_workers: int = 3
     cache_bytes: int = 64 * 1024 * 1024
+    # The derived-media root (ADR 0069); None leaves the media routes refusing.
+    media_root: Path | None = None
 
 
 def load_config(path: Path) -> Config:
@@ -157,6 +185,8 @@ def load_config(path: Path) -> Config:
     for field in ("archive_root", "door_socket", "world_store", "staging"):
         if not isinstance(data.get(field), str):
             raise ValueError(f"{field} must be a path")
+    if "media_root" in data and not isinstance(data["media_root"], str):
+        raise ValueError("media_root must be a path")
     return Config(
         host=listen["host"],
         port=int(listen["port"]),
@@ -173,6 +203,7 @@ def load_config(path: Path) -> Config:
         max_rows=int(data.get("max_rows", 10000)),
         query_workers=_count(data, "query_workers", 3, minimum=1),
         cache_bytes=_count(data, "cache_bytes", 64 * 1024 * 1024, minimum=0),
+        media_root=Path(data["media_root"]) if "media_root" in data else None,
     )
 
 
@@ -486,6 +517,126 @@ def accepts_gzip(header: str | None) -> bool:
     return allowed.get("gzip", allowed.get("*", 0.0)) > 0
 
 
+# What the media routes need from World, in one query a generation: the
+# content digest of every Artifact, the digest every destroy transition names,
+# and the person each operator initialization appoints. Payloads are
+# canonical JSON, so an Artifact's and a destroy's both begin with
+# {"content":{"digest":...}} (D-8, ADR 0024). One row per kind keeps the
+# answer inside any row limit.
+ARCH = "urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#"
+PAYLOAD_DIGEST = """REPLACE(STR(?payload), '^[{]"content":[{]"digest":"(sha256:[0-9a-f]{64})".*$', "$1")"""
+MEDIA_LOOKUP = f"""PREFIX arch: <{ARCH}>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+SELECT ?kind (GROUP_CONCAT(DISTINCT ?value; separator=" ") AS ?values) WHERE {{
+  {{
+    GRAPH ?records {{ ?artifact a arch:Artifact ; arch:payload ?payload }}
+    BIND("artifact" AS ?kind)
+    BIND({PAYLOAD_DIGEST} AS ?value)
+  }} UNION {{
+    GRAPH ?records {{ ?destroy dcterms:conformsTo ?contract ; arch:payload ?payload }}
+    GRAPH ?contracts {{ ?contract dcterms:identifier "archive.transition/destroy" }}
+    BIND("destroyed" AS ?kind)
+    BIND({PAYLOAD_DIGEST} AS ?value)
+  }} UNION {{
+    GRAPH ?records {{ ?initialization dcterms:conformsTo ?contract ; arch:appoints ?person .
+                     ?person arch:object_id ?operator }}
+    GRAPH ?contracts {{ ?contract dcterms:identifier "archive.transition/operator_initialization" }}
+    BIND("operator" AS ?kind)
+    BIND(STR(?operator) AS ?value)
+  }}
+}}
+GROUP BY ?kind
+"""
+MEDIA_CACHE_CONTROL = "private, max-age=31536000, immutable"
+MEDIA_CHUNK = 1024 * 1024
+
+
+@dataclass(frozen=True)
+class MediaIndex:
+    """What one World generation says the media routes may serve, and to whom."""
+
+    generation: str
+    artifacts: frozenset[str]
+    destroyed: frozenset[str]
+    operators: frozenset[str]
+
+    def serves(self, digest: str) -> bool:
+        """An Artifact's content, unless a destroy transition names it: a
+        derivative carries the recording, so destroyed content is not served
+        through one either (ADR 0024)."""
+        return digest in self.artifacts and digest not in self.destroyed
+
+    def operator(self) -> str | None:
+        """The active operator's person. Succession is unsupported (D-7), so
+        it is the one person an initialization appoints; anything else is
+        no operator, and no caller is served."""
+        return next(iter(self.operators)) if len(self.operators) == 1 else None
+
+
+def media_index(generation: str, data: Any) -> MediaIndex:
+    """Read MEDIA_LOOKUP's SPARQL results; anything unexpected is a failure,
+    never an empty index."""
+    found: dict[str, set[str]] = {"artifact": set(), "destroyed": set(), "operator": set()}
+    try:
+        for row in data["results"]["bindings"]:
+            found[row["kind"]["value"]].update(row["values"]["value"].split())
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise Refused("internal_error", "World's answer to the media lookup has an unexpected shape") from exc
+    if not all(derived.is_digest(digest) for digest in found["artifact"] | found["destroyed"]):
+        raise Refused("internal_error", "World holds an Artifact or destroy payload without a canonical digest")
+    return MediaIndex(generation, frozenset(found["artifact"]), frozenset(found["destroyed"]),
+                      frozenset(found["operator"]))
+
+
+RANGE = re.compile(r"bytes=([0-9]*)-([0-9]*)", re.ASCII)
+
+
+def byte_range(header: str | None, size: int) -> tuple[int, int] | None:
+    """The first and last byte one Range header asks for, or None to send
+    everything. A header this cannot read, another unit, or several ranges
+    are ignored, as RFC 9110 14.2 allows; a range starting past the end is
+    refused with the size the client should know."""
+    if header is None:
+        return None
+    match = RANGE.fullmatch(header.strip())
+    if match is None or match.group(0) == "bytes=-":
+        return None
+    first, last = match.groups()
+    if first == "":
+        suffix = int(last)
+        if suffix == 0 or size == 0:
+            raise _unsatisfiable(size)
+        return max(0, size - suffix), size - 1
+    start = int(first)
+    end = int(last) if last else size - 1
+    if last and end < start:
+        return None
+    if start >= size:
+        raise _unsatisfiable(size)
+    return start, min(end, size - 1)
+
+
+def _unsatisfiable(size: int) -> Refused:
+    return Refused("range_not_satisfiable", f"the range asked for is outside the {size} bytes there are",
+                   headers={"Content-Range": f"bytes */{size}"})
+
+
+def copy_range(source: Any, start: int, length: int, destination: Any) -> bool:
+    """Copy ``length`` bytes of ``source`` from ``start``; False if the
+    client went away first, which is how a browser stops listening."""
+    source.seek(start)
+    try:
+        while length > 0:
+            block = source.read(min(MEDIA_CHUNK, length))
+            if not block:
+                raise OSError("the derived media file ended early")
+            destination.write(block)
+            length -= len(block)
+    except (BrokenPipeError, ConnectionResetError):
+        return False
+    return True
+
+
 class Relay:
     def __init__(self, config: Config):
         private_directory(config.staging)
@@ -499,6 +650,7 @@ class Relay:
         # not held by this lock.
         self.writes = threading.Lock()
         self.generations: dict[int, str | None] = {}
+        self.media: MediaIndex | None = None
         self.warm_now = threading.Event()
         self.stopping = threading.Event()
         self.warmer = threading.Thread(target=self._warm_forever, name="relay-warmer", daemon=True)
@@ -602,6 +754,34 @@ class Relay:
             self.cache.drop_other_generations(version, generation)
         return warmed
 
+    def media_index(self) -> MediaIndex:
+        """The media index for World's selected generation, looked up once a
+        generation through the query cache and pool."""
+        version = world.PROJECTION_VERSION
+        known = self.media
+        if known is not None and known.generation == world.selected_generation(self.config.world_store, version):
+            return known
+        key, entry = self.answer(MEDIA_LOOKUP, version, world.N_TRIPLES)
+        index = media_index(key[1], json.loads(entry["result"])["data"])
+        self.media = index
+        return index
+
+    def media_file(self, kind: str, digest: str, agent: str) -> Path:
+        """Where the derivative a caller may have is, or the refusal."""
+        if not derived.is_digest(digest):
+            raise Refused("request_malformed", "a media route names a content digest, sha256:<64 lowercase hex>")
+        if self.config.media_root is None:
+            raise Refused("media_not_derived", "this relay has no derived-media root configured")
+        index = self.media_index()
+        operator = index.operator()
+        if operator is None:
+            raise Refused("media_forbidden", "World names no single active operator, so media are served to no one")
+        if agent != operator:
+            raise Refused("media_forbidden", "media are served only to the active operator's person (ADR 0069)")
+        if not index.serves(digest):
+            raise Refused("media_unknown_digest", "no Artifact in World's selected generation has this content")
+        return derived.path(self.config.media_root, digest, kind)
+
     def door(self, path: str, body: Any, agent: str) -> dict[str, Any]:
         with self.writes:
             answer = self._door(path, body, agent)
@@ -664,7 +844,7 @@ def make_handler(relay: Relay) -> type[BaseHTTPRequestHandler]:
             return config.callers[login]
 
         def _send(self, status: HTTPStatus, value: Any, allow: str | None = None, body: bytes | None = None,
-                  compressed: bytes | None = None) -> None:
+                  compressed: bytes | None = None, headers: dict[str, str] | None = None) -> None:
             if body is None:
                 body = json.dumps(value, ensure_ascii=False, sort_keys=True).encode("utf-8")
             if accepts_gzip(self.headers.get("Accept-Encoding")) and len(body) >= GZIP_MIN_BYTES:
@@ -679,6 +859,8 @@ def make_handler(relay: Relay) -> type[BaseHTTPRequestHandler]:
                 self.send_header("Vary", "Origin")
             if allow:
                 self.send_header("Allow", allow)
+            for name, header in (headers or {}).items():
+                self.send_header(name, header)
             self.send_header("Vary", "Accept-Encoding")
             if encoding:
                 self.send_header("Content-Encoding", encoding)
@@ -691,32 +873,80 @@ def make_handler(relay: Relay) -> type[BaseHTTPRequestHandler]:
 
         def _answer(self, method: str) -> None:
             authorized = False
+            route, digest = route_of(self.path)
             try:
                 agent = self._agent()
                 authorized = True
-                expected = ROUTES.get(self.path)
+                expected = ROUTES.get(route)
                 if expected is None:
                     raise Refused("not_found", "no such route")
                 if expected != method:
-                    raise Refused("method_not_allowed", f"{self.path} answers {expected} only")
-                if self.path == "/health":
+                    raise Refused("method_not_allowed", f"{route} answers {expected} only")
+                if route == "/health":
                     status, result = relay.health()
-                elif self.path == "/world/query":
+                elif route == "/world/query":
                     self._send_answer(*relay.query(self._body()))
                     return
+                elif route in MEDIA_ROUTES:
+                    self._send_media(MEDIA_ROUTES[route], digest, agent)
+                    return
                 else:
-                    status, result = HTTPStatus.OK, relay.door(self.path, self._body(), agent)
+                    status, result = HTTPStatus.OK, relay.door(route, self._body(), agent)
                 self._send(status, {"ok": status == HTTPStatus.OK, "archive": relay.archive(), "result": result})
             except Refused as refused:
                 answer: dict[str, Any] = {"ok": False, "error": refused.error()}
                 if authorized:
                     answer["archive"] = relay.archive()
-                allow = ROUTES.get(self.path) if refused.code == "method_not_allowed" else None
-                self._send(refused.status, answer, allow)
+                allow = ROUTES.get(route) if refused.code == "method_not_allowed" else None
+                self._send(refused.status, answer, allow, headers=refused.headers)
             except Exception as exc:  # noqa: BLE001 - every request gets an answer
                 sys.stderr.write(f"relay: internal error: {type(exc).__name__}: {exc}\n")
                 self._send(HTTPStatus.INTERNAL_SERVER_ERROR,
                            {"ok": False, "error": {"code": "internal_error", "message": "the relay failed unexpectedly"}})
+
+        def _send_media(self, kind: str, digest: str, agent: str) -> None:
+            """A derivative's bytes, all of them or the one range asked for.
+            Only a regular file at the layout path is served, never a link
+            that could lead to an original."""
+            path = relay.media_file(kind, digest, agent)
+            try:
+                descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+            except FileNotFoundError as exc:
+                raise Refused("media_not_derived", f"no {kind} has been made for this content yet") from exc
+            except OSError as exc:
+                raise Refused("internal_error", f"the derived-media root could not be read: {exc.strerror}") from exc
+            found = os.fstat(descriptor)
+            if not stat.S_ISREG(found.st_mode):
+                os.close(descriptor)
+                raise Refused("internal_error", "a derived-media path is not a regular file")
+            with os.fdopen(descriptor, "rb") as source:
+                size, tag = found.st_size, derived.etag(digest, kind)
+                # A range of another version of the file would splice two files.
+                if_range = self.headers.get("If-Range")
+                wanted = byte_range(self.headers.get("Range"), size) if if_range in (None, tag) else None
+                first, last = wanted if wanted is not None else (0, size - 1)
+                self.send_response(HTTPStatus.PARTIAL_CONTENT if wanted is not None else HTTPStatus.OK)
+                origin = self.headers.get("Origin")
+                if origin in config.origins:
+                    self.send_header("Access-Control-Allow-Origin", origin)
+                    self.send_header("Access-Control-Expose-Headers", "Accept-Ranges, Content-Range, Content-Length, ETag")
+                    self.send_header("Vary", "Origin")
+                self.send_header("Content-Type", derived.KINDS[kind].media_type)
+                self.send_header("Content-Length", str(last - first + 1))
+                if wanted is not None:
+                    self.send_header("Content-Range", f"bytes {first}-{last}/{size}")
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("ETag", tag)
+                self.send_header("Cache-Control", MEDIA_CACHE_CONTROL)
+                self.end_headers()
+                try:
+                    finished = copy_range(source, first, last - first + 1, self.wfile)
+                except OSError as exc:
+                    # The headers are gone: all that is left is to stop.
+                    sys.stderr.write(f"relay: media read failed: {type(exc).__name__}: {exc}\n")
+                    finished = False
+                if not finished:
+                    self.close_connection = True
 
         def _send_answer(self, key: tuple, entry: dict[str, Any]) -> None:
             """A query answer from its cached ``result`` bytes, with the
@@ -764,7 +994,7 @@ def make_handler(relay: Relay) -> type[BaseHTTPRequestHandler]:
             self.send_response(HTTPStatus.NO_CONTENT)
             self.send_header("Access-Control-Allow-Origin", self.headers["Origin"])
             self.send_header("Access-Control-Allow-Methods", "GET, POST")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Range, If-Range")
             self.send_header("Access-Control-Max-Age", "600")
             self.send_header("Vary", "Origin")
             self.end_headers()

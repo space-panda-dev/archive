@@ -61,6 +61,8 @@ The decisions behind these boundaries: Archive stands alone
 door admit | transition          the only commands that change archival meaning
 door serve --socket <path>       the same commands for applications, on a private socket
 relay/relay.py --config <file>   Door's service and World's query over HTTP, for the tailnet
+enrich/media.py --root <dir> --digest <d> <file>
+                                 waveform peaks and a listening copy: regenerable derived media
 door verify                      full verification of HEAD and a fresh checkpoint
 archive init | status | doctor   setup, state, whole-archive check
 archive maintenance repack       coordinated packing of loose Git objects
@@ -90,6 +92,16 @@ proposal directory for the service, refuses content and any draft not naming
 the caller's agent, and answers read-only SPARQL. It writes nothing itself.
 [`relay/openapi.json`](../relay/openapi.json) describes every route, answer,
 and refusal code ([ADR 0060](decisions/0060-relay-interface-and-role.md)).
+
+Enrichment code lives in [`enrich/`](../enrich/README.md)
+([ADR 0064](decisions/0064-derivation-runs.md)). Each tool takes files and
+writes a plain result; it never reads or writes an archive. The first,
+`enrich/media.py`, makes waveform peaks and a listening copy of a recording
+into a derived-media root laid out by content digest
+([ADR 0069](decisions/0069-derived-media.md)). That root is regenerable and
+never admitted. The relay serves it read-only, by digest, to the operator's
+login only, for content World knows as an Artifact's; it reads the layout
+from `enrich/derived.py` and never serves an original's bytes.
 
 World's answers are standard SPARQL results, and what each projection version
 emits is declared in [`world/projection/`](../world/projection/6/projection.json)
