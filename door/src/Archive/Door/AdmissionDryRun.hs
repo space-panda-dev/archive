@@ -39,8 +39,12 @@ import Archive.Door.Contracts
       , contractBundleVersion
       )
   , ReferenceTargetRule (..)
+  , SameSubjectRule (..)
+  , TargetMeasureRule (..)
   , contractReferenceTargets
   , distinctTrackContentRule
+  , sameSubjectRule
+  , targetMeasureRule
   , validateContractBundle
   , validateContractInstance
   , validateCoreContextForSpecification
@@ -101,7 +105,9 @@ import qualified Archive.GitSnapshot as Git
 import Archive.Read.Core (CommittedRecord (..))
 import Control.Monad (foldM_)
 import qualified Crypto.Hash.SHA256 as SHA256
-import Data.Aeson (Value (Object, String), object, (.=))
+import Data.Aeson (Value (Array, Number, Object, String), object, (.=))
+import Data.Foldable (toList)
+import Data.Scientific (floatingOrInteger)
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as StrictByteString
@@ -750,6 +756,8 @@ validateProposalContracts snapshot proposal = pure $ do
       validateReferenceTargetRules targets (proposalRecordDraft record) bundles
       mapM_ (validateDistinctTrackContent targets
         (proposalRecordDraft record) instanceValue) bundles
+      mapM_ (validateTargetMeasure targets (proposalRecordDraft record)) bundles
+      mapM_ (validateSameSubject targets (proposalRecordDraft record)) bundles
       (revision, _) <- canonicalizeDraftStrict (proposalRecordValue record)
       pure (earlier <> [Target (objectIdText (envelopeObject (proposalRecordDraft record)))
         revision (proposalRecordDraft record)])
@@ -786,10 +794,20 @@ validateReferenceTargetRules records draft bundles = do
       if not (referenceTargetMany rule) && length references > 1
         then Left ("contract requires exactly one " <> role <> " reference")
         else mapM_ (validateOne role rule) references
+    -- A rule naming one shape refuses any other; a rule naming several
+    -- accepts a revision of any of them, then applies that shape's checks.
     validateOne role rule reference = do
       target <- referencedEntry records role reference
       let body = envelopeBody (targetDraft target)
-      case referenceTargetShape rule of
+          shape = bodyShape body
+      case referenceTargetShapes rule of
+        [single]
+          | single /= shape -> Left (role <> " reference must target " <> article single)
+        shapes
+          | shape `notElem` shapes -> Left (role <> " reference must target a revision of shape "
+              <> Text.intercalate " or " shapes)
+        _ -> validateShape role rule target body
+    validateShape role rule target body = case bodyShape body of
         "claim" -> case body of
           ClaimRecord _ -> case referenceTargetContract rule of
             Nothing -> Right ()
@@ -823,6 +841,91 @@ validateReferenceTargetRules records draft bundles = do
                     <> Text.intercalate " or " expected)
           _ -> Left (role <> " reference must target an Entity revision")
         _ -> Left "installed contract has an unsupported reference target shape"
+    article shape = case shape of
+      "claim" -> "a Claim revision"
+      "assessment" -> "an Assessment revision"
+      "artifact" -> "an Artifact revision"
+      "entity" -> "an Entity revision"
+      other -> "a " <> other <> " revision"
+
+bodyShape :: RecordBody -> Text
+bodyShape body = case body of
+  ArtifactRecord _ -> "artifact"
+  EntityRecord _ -> "entity"
+  ClaimRecord _ -> "claim"
+  AssessmentRecord _ -> "assessment"
+
+-- | The one reference a rule reads in a role, or a refusal naming the role.
+singleReference :: DraftEnvelope -> Text -> Either Text Reference
+singleReference draft role =
+  case filter ((== role) . referenceRole) (envelopeReferences draft) of
+    [reference] -> Right reference
+    _ -> Left ("contract requires exactly one " <> role <> " reference")
+
+-- | A pinned Claim's payload as an object.
+targetClaimPayload :: [Target] -> Text -> Reference -> Either Text (KeyMap.KeyMap Value)
+targetClaimPayload records role reference = do
+  target <- referencedEntry records role reference
+  case envelopeBody (targetDraft target) of
+    ClaimRecord (Object payload) -> Right payload
+    _ -> Left (role <> " reference must target a Claim revision")
+
+-- | A record's measurements fit the Claim that measured the audio: its rate
+-- equals the pinned Claim's, and no span ends past the pinned Claim's count.
+validateTargetMeasure :: [Target] -> DraftEnvelope -> ContractBundle -> Either Text ()
+validateTargetMeasure records draft bundle = do
+  rule <- targetMeasureRule (contractBundleSchema bundle)
+  case rule of
+    Nothing -> Right ()
+    Just measure -> do
+      let role = targetMeasureRole measure
+      reference <- singleReference draft role
+      target <- targetClaimPayload records role reference
+      own <- case envelopeBody draft of
+        ClaimRecord (Object payload) -> Right payload
+        _ -> Left "target measure rule applies only to a Claim payload"
+      targetRate <- integerField (targetMeasureRate measure) target
+      targetCount <- integerField (targetMeasureCount measure) target
+      ownRate <- integerField (targetMeasureRate measure) own
+      if ownRate /= targetRate
+        then Left (targetMeasureRate measure <> " must equal the " <> role <> " claim's "
+          <> targetMeasureRate measure)
+        else Right ()
+      spans <- case KeyMap.lookup (Key.fromText (targetMeasurePayload measure)) own of
+        Just (Array values) -> Right (toList values)
+        _ -> Left (targetMeasurePayload measure <> " must be an array")
+      ends <- mapM (spanEnd (targetMeasureEnd measure)) spans
+      if all (<= targetCount) ends
+        then Right ()
+        else Left (targetMeasureEnd measure <> " must not exceed the " <> role <> " claim's "
+          <> targetMeasureCount measure)
+  where
+    spanEnd name (Object piece) = integerField name piece
+    spanEnd _ _ = Left "span must be an object"
+    integerField name fields = case KeyMap.lookup (Key.fromText name) fields of
+      Just (Number value) | Right integer <- (floatingOrInteger value :: Either Double Integer) -> Right integer
+      _ -> Left (name <> " must be an integer")
+
+-- | The pinned Claim is about the very revision this record names: its one
+-- subject reference and this record's one compared reference pin the same
+-- object and revision.
+validateSameSubject :: [Target] -> DraftEnvelope -> ContractBundle -> Either Text ()
+validateSameSubject records draft bundle = do
+  rule <- sameSubjectRule (contractBundleSchema bundle)
+  case rule of
+    Nothing -> Right ()
+    Just same -> do
+      let role = sameSubjectRole same
+      reference <- singleReference draft role
+      target <- referencedEntry records role reference
+      subject <- singleReference (targetDraft target) (sameSubjectSubject same)
+      compared <- singleReference draft (sameSubjectEquals same)
+      if referenceObject subject == referenceObject compared
+          && referenceRevision subject == referenceRevision compared
+          && referenceRevision compared /= Nothing
+        then Right ()
+        else Left (role <> " claim must be about the same " <> sameSubjectEquals same
+          <> " revision as this record's " <> sameSubjectEquals same <> " reference")
 
 referencedEntry :: [Target] -> Text -> Reference -> Either Text Target
 referencedEntry records role reference = do

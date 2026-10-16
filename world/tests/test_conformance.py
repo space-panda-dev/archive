@@ -31,6 +31,17 @@ ARCH = "urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#"
 UNREACHABLE = {("records", ARCH + "dependent_destroy"), ("records", ARCH + "dependent_source_gone"),
                ("records", ARCH + "external_survivor")}
 
+# Installed by specification 0.0.7 but not cited by the fixture. Door refuses
+# every proposal citing the upgrade until its dispatch exists ("unsupported
+# transition contract"; door/test). Door admits the others (door/test), but
+# World does not project them yet: their `artifact` and `source` roles resolve
+# through core terms, so a fixture citing them fails conformance until World's
+# projection of specification 0.0.7 lands with its own fixture records.
+UNCITED = {("archive.transition/specification_upgrade", "1"),
+           ("archive.claim/derivation_run", "1"), ("archive.claim/audio_stream", "1"),
+           ("archive.claim/span_suggestions", "1"), ("archive.claim/work_match", "2"),
+           ("archive.claim/capture_alignment", "2")}
+
 
 def integration_binaries():
     """Door and Archive, or a skip; CI sets ARCHIVE_REQUIRE_INTEGRATION so a
@@ -81,7 +92,8 @@ class FixtureArchiveConformanceTests(unittest.TestCase):
     def test_the_fixture_cites_every_contract_in_the_catalog(self):
         # Enumerate the catalog rather than naming today's contracts.
         catalog = json.loads((ROOT / "spec" / self.export["spec"].removeprefix("archive/") / "contracts.json").read_text())
-        expected = {(c["id"], c["version"]) for c in catalog["contracts"]}
+        expected = {(c["id"], c["version"]) for c in catalog["contracts"]} - UNCITED
+        self.assertTrue(UNCITED <= {(c["id"], c["version"]) for c in catalog["contracts"]})
         cited = {(c["id"], c["version"]) for r in self.export["records"] for c in r.get("contracts", [])}
         self.assertEqual(cited, expected)
         self.assertEqual({r["agent"] for r in self.export["records"]}, {self.manifest["operator_id"]})
@@ -111,7 +123,7 @@ class FixtureArchiveConformanceTests(unittest.TestCase):
         answer = projection.store.query("""SELECT ?id ?version WHERE { GRAPH ?g {
             ?c <http://purl.org/dc/terms/identifier> ?id ; <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#version> ?version } }""")
         found = {(row["id"].value, row["version"].value) for row in answer}
-        catalog = json.loads((ROOT / "spec/0.0.6/contracts.json").read_text())
+        catalog = json.loads((ROOT / "spec" / self.export["spec"].removeprefix("archive/") / "contracts.json").read_text())
         self.assertEqual(found, {(c["id"], c["version"]) for c in catalog["contracts"]})
 
 

@@ -16,6 +16,10 @@ module Archive.Door.Contracts
   , ReferenceTargetRule (..)
   , contractReferenceTargets
   , distinctTrackContentRule
+  , TargetMeasureRule (..)
+  , targetMeasureRule
+  , SameSubjectRule (..)
+  , sameSubjectRule
   ) where
 
 import Archive.Door.Json (decodeUnique)
@@ -51,7 +55,8 @@ data ContractBundle = ContractBundle
   deriving (Eq, Show)
 
 data ReferenceTargetRule = ReferenceTargetRule
-  { referenceTargetShape :: Text
+  { -- | The accepted record shapes: one from `shape`, or a set from `shapes`.
+    referenceTargetShapes :: [Text]
   , referenceTargetKind :: Maybe Text
   -- | A nonempty set of accepted Entity kinds (`kinds`), or empty when the
   -- rule names a single `kind` or none.
@@ -171,6 +176,7 @@ validateCoreContextForSpecification specification value = do
         "archive/0.0.4" -> Set.fromList worldContextKeys
         "archive/0.0.5" -> Set.fromList reviewContextKeys
         "archive/0.0.6" -> Set.fromList reviewContextKeys
+        "archive/0.0.7" -> Set.fromList reviewContextKeys
         _ -> Set.empty
   if not (Set.null expected) && keys == expected
     then Right ()
@@ -264,6 +270,12 @@ validateSchema schema@(Object fields) = do
   case (KeyMap.member "x-archive-distinct-track-content" fields, KeyMap.member "x-archive-track-sample-spans" fields) of
     (True, False) -> Left "distinct track content rule requires a track sample spans rule"
     _ -> Right ()
+  maybe (Right ()) validateOrderedInstantsRule
+    (KeyMap.lookup "x-archive-ordered-instants" fields)
+  maybe (Right ()) (validateNamedFieldsRule "sequential spans rule" ["payload", "start", "end"])
+    (KeyMap.lookup "x-archive-sequential-spans" fields)
+  _ <- targetMeasureRule schema
+  _ <- sameSubjectRule schema
   walkSchema schema [] schema
 validateSchema _ = Left "contract schema must be a JSON object"
 
@@ -272,6 +284,8 @@ profileRuleNames =
   [ "x-archive-reference-targets", "x-archive-ordered-sample-spans", "x-archive-unique-sorted-refs"
   , "x-archive-track-sample-spans", "x-archive-distinct-track-content"
   , "x-archive-monotonic-anchors", "x-archive-distinct-refs", "x-archive-ordered-distinct-refs"
+  , "x-archive-ordered-instants", "x-archive-sequential-spans", "x-archive-target-measure"
+  , "x-archive-same-subject"
   ]
 
 walkSchema :: Value -> [Text] -> Value -> Either Text ()
@@ -294,7 +308,7 @@ schemaKeywords =
   [ "$schema", "$defs", "$ref", "type", "const", "enum", "required"
   , "properties", "additionalProperties", "items", "minItems", "maxItems"
   , "contains", "minContains", "maxContains", "allOf", "pattern"
-  , "minLength", "maxLength", "format", "minimum"
+  , "minLength", "maxLength", "format", "minimum", "maximum"
   , "$comment", "title", "description", "default", "deprecated"
   , "examples", "readOnly", "writeOnly"
   ] <> profileRuleNames
@@ -313,10 +327,7 @@ validateReferenceTargetRules (Object roles) = mapM_ validateRole (KeyMap.toList 
       | Text.null (Key.toText role) = Left "contract reference target role must not be empty"
       | otherwise = do
           fields <- objectValue "contract reference target rule" value
-          shape <- requiredString "shape" fields
-          if shape `notElem` ["artifact", "assessment", "claim", "entity"]
-            then Left "contract reference target shape must be artifact, assessment, claim, or entity"
-            else pure ()
+          shapes <- targetShapes fields
           kind <- case KeyMap.lookup "kind" fields of
             Nothing -> Right Nothing
             Just (String value') | not (Text.null value') -> Right (Just value')
@@ -324,22 +335,43 @@ validateReferenceTargetRules (Object roles) = mapM_ validateRole (KeyMap.toList 
           kinds <- optionalKinds fields
           targetContract <- optionalTargetContract fields
           many <- optionalMany fields
-          let expectedKeys = ["shape"]
+          let expectedKeys = [if KeyMap.member "shapes" fields then "shapes" else "shape"]
                 <> ["kind" | kind /= Nothing]
                 <> ["kinds" | not (null kinds)]
                 <> ["contract" | targetContract /= Nothing]
                 <> ["many" | KeyMap.member "many" fields]
           requireExactKeys "contract reference target rule" expectedKeys fields
-          if (kind /= Nothing || not (null kinds)) && shape /= "entity"
+          if (kind /= Nothing || not (null kinds)) && shapes /= ["entity"]
             then Left "contract reference target kind is valid only for entity shape"
             else if kind /= Nothing && not (null kinds)
               then Left "contract reference target may name kind or kinds, not both"
-              else if targetContract /= Nothing && shape /= "claim"
+              else if targetContract /= Nothing && shapes /= ["claim"]
                 then Left "contract reference target contract is valid only for claim shape"
                 else if many && kind /= Nothing
                   then Left "repeated Entity kind rules are unsupported"
                   else Right ()
 validateReferenceTargetRules _ = Left "contract reference targets must be an object"
+
+-- | A target rule names one record shape in `shape`, or, for a role that may
+-- pin records of several shapes, a set of at least two in `shapes`.
+targetShapes :: KeyMap.KeyMap Value -> Either Text [Text]
+targetShapes fields = case (KeyMap.lookup "shape" fields, KeyMap.lookup "shapes" fields) of
+  (Just _, Just _) -> Left "contract reference target may name shape or shapes, not both"
+  (Just (String shape), Nothing) -> (: []) <$> knownShape shape
+  (Just _, Nothing) -> Left "contract reference target shape must be a string"
+  (Nothing, Just (Array values)) -> do
+    names <- mapM shapeName (toList values)
+    if length names < 2 || length names /= length (unique names)
+      then Left "contract reference target shapes must be a set of at least two shapes"
+      else mapM knownShape names
+  (Nothing, Just _) -> Left "contract reference target shapes must be an array"
+  (Nothing, Nothing) -> Left "contract reference target rule requires shape or shapes"
+  where
+    shapeName (String name) = Right name
+    shapeName _ = Left "contract reference target shapes must contain strings"
+    knownShape shape
+      | shape `elem` ["artifact", "assessment", "claim", "entity"] = Right shape
+      | otherwise = Left "contract reference target shape must be artifact, assessment, claim, or entity"
 
 optionalTargetContract :: KeyMap.KeyMap Value -> Either Text (Maybe (Text, Text))
 optionalTargetContract fields = case KeyMap.lookup "contract" fields of
@@ -417,6 +449,85 @@ validateDistinctRefsRule (Object fields) = do
     else Left "distinct references rule must name at least two distinct roles"
 validateDistinctRefsRule _ = Left "distinct references rule must be an object"
 
+validateNamedFieldsRule :: Text -> [Text] -> Value -> Either Text ()
+validateNamedFieldsRule label names (Object fields) = do
+  requireExactKeys label names fields
+  mapM_ (`requiredString` fields) names
+validateNamedFieldsRule label _ _ = Left (label <> " must be an object")
+
+validateOrderedInstantsRule :: Value -> Either Text ()
+validateOrderedInstantsRule value = do
+  validateNamedFieldsRule "ordered instants rule" ["start", "end"] value
+  case value of
+    Object fields -> do
+      start <- requiredString "start" fields
+      end <- requiredString "end" fields
+      if start == end then Left "ordered instants rule must name two distinct fields" else Right ()
+    _ -> Left "ordered instants rule must be an object"
+
+-- | @x-archive-target-measure@: the record pins one Claim in @role@ whose
+-- payload holds integer fields @rate@ and @count@.  The record's own payload
+-- @rate@ MUST equal the target's, and every element of the payload array
+-- @payload@ MUST have an integer @end@ no greater than the target's @count@.
+data TargetMeasureRule = TargetMeasureRule
+  { targetMeasureRole :: Text
+  , targetMeasureRate :: Text
+  , targetMeasureCount :: Text
+  , targetMeasurePayload :: Text
+  , targetMeasureEnd :: Text
+  } deriving (Eq, Show)
+
+targetMeasureRule :: Value -> Either Text (Maybe TargetMeasureRule)
+targetMeasureRule schema@(Object fields) = case KeyMap.lookup "x-archive-target-measure" fields of
+  Nothing -> Right Nothing
+  Just value -> do
+    let names = ["role", "rate", "count", "payload", "end"]
+    validateNamedFieldsRule "target measure rule" names value
+    rule <- objectValue "target measure rule" value
+    role <- requiredString "role" rule
+    rate <- requiredString "rate" rule
+    count <- requiredString "count" rule
+    payload <- requiredString "payload" rule
+    end <- requiredString "end" rule
+    requireSingleClaimTarget "target measure rule" schema role
+    pure (Just (TargetMeasureRule role rate count payload end))
+targetMeasureRule _ = Left "contract schema must be an object"
+
+-- | @x-archive-same-subject@: the Claim pinned in @role@ has exactly one
+-- @subject@ reference, and it MUST pin the same object and revision as this
+-- record's one @equals@ reference.
+data SameSubjectRule = SameSubjectRule
+  { sameSubjectRole :: Text
+  , sameSubjectSubject :: Text
+  , sameSubjectEquals :: Text
+  } deriving (Eq, Show)
+
+sameSubjectRule :: Value -> Either Text (Maybe SameSubjectRule)
+sameSubjectRule schema@(Object fields) = case KeyMap.lookup "x-archive-same-subject" fields of
+  Nothing -> Right Nothing
+  Just value -> do
+    let names = ["role", "subject", "equals"]
+    validateNamedFieldsRule "same subject rule" names value
+    rule <- objectValue "same subject rule" value
+    role <- requiredString "role" rule
+    subject <- requiredString "subject" rule
+    equals <- requiredString "equals" rule
+    if role == equals
+      then Left "same subject rule must compare two different roles"
+      else Right ()
+    requireSingleClaimTarget "same subject rule" schema role
+    pure (Just (SameSubjectRule role subject equals))
+sameSubjectRule _ = Left "contract schema must be an object"
+
+-- | The rules that read a pinned Claim's payload or references need that
+-- role to name exactly one Claim: its target rule says so.
+requireSingleClaimTarget :: Text -> Value -> Text -> Either Text ()
+requireSingleClaimTarget label schema role = do
+  targets <- contractReferenceTargets schema
+  case lookup role targets of
+    Just rule | referenceTargetShapes rule == ["claim"] && not (referenceTargetMany rule) -> Right ()
+    _ -> Left (label <> " role must have a single Claim reference target rule")
+
 requiredStrings :: Text -> KeyMap.KeyMap Value -> Either Text [Text]
 requiredStrings name fields = case KeyMap.lookup (Key.fromText name) fields of
   Just (Array values) -> mapM one (toList values)
@@ -433,7 +544,7 @@ contractReferenceTargets (Object fields) = case KeyMap.lookup (Key.fromText "x-a
   where
     parseRole (role, Object rule) = do
       let roleName = Key.toText role
-      shape <- requiredString "shape" rule
+      shapes <- targetShapes rule
       kind <- case KeyMap.lookup (Key.fromText "kind") rule of
         Nothing -> Right Nothing
         Just (String value) -> Right (Just value)
@@ -441,7 +552,7 @@ contractReferenceTargets (Object fields) = case KeyMap.lookup (Key.fromText "x-a
       kinds <- optionalKinds rule
       targetContract <- optionalTargetContract rule
       many <- optionalMany rule
-      pure (roleName, ReferenceTargetRule shape kind kinds targetContract many)
+      pure (roleName, ReferenceTargetRule shapes kind kinds targetContract many)
     parseRole _ = Left "contract reference target rule must be an object"
 contractReferenceTargets _ = Left "contract schema must be an object"
 
@@ -471,6 +582,7 @@ validateSchemaKeywordTypes fields = do
   maybe (Right ()) (validateIntegerKeyword "minLength") (KeyMap.lookup "minLength" fields)
   maybe (Right ()) (validateIntegerKeyword "maxLength") (KeyMap.lookup "maxLength" fields)
   maybe (Right ()) (validateNumberKeyword "minimum") (KeyMap.lookup "minimum" fields)
+  maybe (Right ()) (validateNumberKeyword "maximum") (KeyMap.lookup "maximum" fields)
   maybe (Right ()) validateStringKeyword (KeyMap.lookup "pattern" fields)
   maybe (Right ()) validateFormatKeyword (KeyMap.lookup "format" fields)
   validateArrayKeyword "allOf" fields
@@ -646,6 +758,14 @@ validateContractProfile (Object schema) (Object instanceValue) = do
     Nothing -> pure ()
     Just (Object rule) -> validateOrderedDistinctRefsInstance rule instanceValue
     Just _ -> Left "ordered distinct references rule must be an object"
+  case KeyMap.lookup "x-archive-ordered-instants" schema of
+    Nothing -> pure ()
+    Just (Object rule) -> validateOrderedInstantsInstance rule instanceValue
+    Just _ -> Left "ordered instants rule must be an object"
+  case KeyMap.lookup "x-archive-sequential-spans" schema of
+    Nothing -> pure ()
+    Just (Object rule) -> validateSequentialSpansInstance rule instanceValue
+    Just _ -> Left "sequential spans rule must be an object"
 validateContractProfile _ _ = Left "contract profile requires an object instance"
 
 -- | Spans are grouped by track, and references of the span role follow the
@@ -733,6 +853,54 @@ validateMonotonicAnchorsInstance rule instanceValue = do
   where
     anchorRow names (Object anchor) = mapM (`requiredInteger` anchor) names
     anchorRow _ _ = Left "anchor must be an object"
+
+-- | Both named payload fields are RFC 3339 instants in UTC with a @Z@
+-- suffix, and the second is not earlier than the first.
+validateOrderedInstantsInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
+validateOrderedInstantsInstance rule instanceValue = do
+  startName <- requiredString "start" rule
+  endName <- requiredString "end" rule
+  payload <- requiredObject "payload" instanceValue
+  start <- utcInstant startName payload
+  end <- utcInstant endName payload
+  if end >= start
+    then Right ()
+    else Left (endName <> " must not be before " <> startName)
+  where
+    utcInstant name payload = do
+      value <- requiredString name payload
+      case parseUtcInstant value of
+        Just instant -> Right instant
+        Nothing -> Left (name <> " must be an RFC 3339 instant in UTC with a Z suffix")
+
+parseUtcInstant :: Text -> Maybe UTCTime
+parseUtcInstant value
+  | Text.isSuffixOf "Z" value && Text.isInfixOf "T" value =
+      parseTimeM False defaultTimeLocale "%Y-%m-%dT%H:%M:%S%QZ" (Text.unpack value)
+  | otherwise = Nothing
+
+-- | A nonempty payload array of spans with integer bounds where
+-- @0 <= start < end@, each starting at or after the previous one's end.
+validateSequentialSpansInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
+validateSequentialSpansInstance rule instanceValue = do
+  payloadName <- requiredString "payload" rule
+  startName <- requiredString "start" rule
+  endName <- requiredString "end" rule
+  payload <- requiredObject "payload" instanceValue
+  spans <- case KeyMap.lookup (Key.fromText payloadName) payload of
+    Just (Array values) | not (null values) -> Right (toList values)
+    _ -> Left "sequential spans payload must be a nonempty array"
+  bounds <- mapM (spanBounds startName endName) spans
+  if all (\(start, end) -> start >= 0 && end > start) bounds
+    then Right ()
+    else Left "each span requires 0 <= start < end"
+  if and (zipWith (\(_, previousEnd) (start, _) -> start >= previousEnd) bounds (drop 1 bounds))
+    then Right ()
+    else Left "spans must be in order and must not overlap"
+  where
+    spanBounds startName endName (Object piece) =
+      (,) <$> requiredInteger startName piece <*> requiredInteger endName piece
+    spanBounds _ _ _ = Left "span must be an object"
 
 validateDistinctRefsInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
 validateDistinctRefsInstance rule instanceValue = do
@@ -842,6 +1010,7 @@ evaluateSchema root path (Object fields) value = do
     , evaluateConst fields value
     , evaluateEnum fields value
     , evaluateMinimum fields value
+    , evaluateMaximum fields value
     , evaluateObject root path fields value
     , evaluateArray root path fields value
     , evaluateString fields value
@@ -896,6 +1065,13 @@ evaluateMinimum fields (Number value) = case KeyMap.lookup "minimum" fields of
   Just (Number lower) -> Right (value >= lower)
   Just _ -> Left "contract schema minimum must be a number"
 evaluateMinimum _ _ = Right True
+
+evaluateMaximum :: KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateMaximum fields (Number value) = case KeyMap.lookup "maximum" fields of
+  Nothing -> Right True
+  Just (Number upper) -> Right (value <= upper)
+  Just _ -> Left "contract schema maximum must be a number"
+evaluateMaximum _ _ = Right True
 
 evaluateObject :: Value -> [Text] -> KeyMap.KeyMap Value -> Value -> Either Text Bool
 evaluateObject root path fields (Object object) = do

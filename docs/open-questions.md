@@ -19,6 +19,14 @@ unsupported rather than guess.
 - The selection facts of 0.0.5 pin only version 2 selections. Does a
   single-track version 1 selection ever need a title, kind, or credit, or is
   it superseded by a version 2 revision first?
+- The `audio_stream` role `artifact`, the `span_suggestions` role `source`,
+  and the `derivation_run` payload field `software`, named by
+  [ADR 0065](decisions/0065-audio-stream-facts.md),
+  [ADR 0066](decisions/0066-span-suggestions.md), and
+  [ADR 0064](decisions/0064-derivation-runs.md), are core terms that a
+  contract fragment may not redefine, so specification 0.0.7 interprets them
+  as `arch:Artifact`, `arch:source`, and `prov:SoftwareAgent`. How does World
+  project those roles, and should a later contract version rename them?
 - How does an existing archive migrate to a specification version that is not
   additive? (Additive releases are adopted by a transition,
   [ADR 0068](decisions/0068-specification-upgrade.md).)

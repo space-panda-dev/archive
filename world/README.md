@@ -152,8 +152,9 @@ ARCHIVE_TEST_DOOR=$(cabal list-bin door) ARCHIVE_TEST_ARCHIVE=$(cabal list-bin a
 The conformance tests build the [fixture archive](../fixture/README.md)
 through the real Door, so they need the two variables; without them they are
 skipped, unless `ARCHIVE_REQUIRE_INTEGRATION` is set, when they fail. They
-require the fixture to cite every contract in the specification's catalog,
-every served projection of it to conform, and every declared term to appear in
+require the fixture to cite every contract in the specification's catalog
+except the six that specification 0.0.7 adds, which World does not project
+yet, every served projection of it to conform, and every declared term to appear in
 it.
 
 The bootstrap export fixture was captured from a synthetic archive created by

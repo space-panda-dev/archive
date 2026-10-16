@@ -47,6 +47,14 @@ elsewhere and is governed by the specification kept here.
 > Door admits all of them; publication approval and withdrawal are committed
 > only through `door transition`, authorized by the active operator
 > ([ADR 0051](docs/decisions/0051-publication-transition-dispatch.md)).
+> Specification 0.0.7 adds derivation runs, audio stream facts, span
+> suggestions, and matches and alignments that pin their run
+> ([ADRs 0064](docs/decisions/0064-derivation-runs.md) to
+> [0067](docs/decisions/0067-matches-and-alignments-pin-runs.md); the bundles
+> as proposed are in [0064-contracts](docs/proposals/0064-contracts/)), which
+> Door admits, and the specification upgrade contract of
+> [ADR 0068](docs/decisions/0068-specification-upgrade.md), which this Door
+> installs but refuses as an unsupported transition.
 > Per-kind current rules remain open.
 > Except where a command is explicitly implemented, the material below
 > describes commitments rather than running software.
@@ -195,8 +203,8 @@ repository.
 
 ## What is provisional
 
-- **The specification** is a small pre-1.0 contract at version 0.0.6
-  ([current spec](spec/archive-spec.md), [0.0.6 release copy](spec/0.0.6/archive-spec.md), [0.0.5 release copy](spec/0.0.5/archive-spec.md), [0.0.4 release copy](spec/0.0.4/archive-spec.md), [0.0.3 release copy](spec/0.0.3/archive-spec.md)); unresolved subjects remain explicitly outside
+- **The specification** is a small pre-1.0 contract at version 0.0.7
+  ([current spec](spec/archive-spec.md), [0.0.7 release copy](spec/0.0.7/archive-spec.md), [0.0.6 release copy](spec/0.0.6/archive-spec.md), [0.0.5 release copy](spec/0.0.5/archive-spec.md), [0.0.4 release copy](spec/0.0.4/archive-spec.md), [0.0.3 release copy](spec/0.0.3/archive-spec.md)); unresolved subjects remain explicitly outside
   its normative protocols.
 - The unresolved V2 audio migration gates are recorded in the
   [release readiness note](docs/proposals/v2-migration-release-readiness.md).

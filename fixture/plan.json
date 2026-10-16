@@ -1,6 +1,6 @@
 {
   "protocol": "archive-fixture/1",
-  "description": "Synthetic records that cite every contract in the specification's catalog. fixture/build.py admits them through the real Door into a fresh archive (ADR 0059). Every label, title, and byte is invented.",
+  "description": "Synthetic records that cite every contract in the specification's catalog except the six specification 0.0.7 adds. fixture/build.py admits them through the real Door into a fresh archive (ADR 0059). Every label, title, and byte is invented.",
   "operator": "fixture-operator",
   "steps": [
     {
