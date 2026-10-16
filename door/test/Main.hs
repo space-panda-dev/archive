@@ -5224,16 +5224,26 @@ initChecks root = do
     ExitSuccess (show typedIncomplete) ""
   shellAssert "incomplete archive remains untouched" ("test \"$(cat " <> quote (incomplete <> "/archive.json") <> ")\" = tampered")
   shellChecked ("cp -R " <> quote root <> " " <> quote missingRecord)
-  missingRecords <- listDirectory (missingRecord </> "records")
-  case missingRecords of
-    missing : _ -> removePathForcibly (missingRecord </> "records" </> missing)
-    [] -> assert "initialized fixture contains bootstrap records" False ExitSuccess "" ""
+  -- Records fan out under digest-prefix directories (ADR 0053), and two
+  -- bootstrap records may share one, so remove exactly one record file and
+  -- count files, never top-level entries.
+  let countRecordFiles = do
+        (_, counted, _) <- shell ("find " <> quote (missingRecord <> "/records")
+          <> " -type f | wc -l | tr -d ' '")
+        pure (read (trim counted) :: Int)
+  recordFilesBefore <- countRecordFiles
+  (_, firstRecord, _) <- shell ("find " <> quote (missingRecord <> "/records")
+    <> " -type f | LC_ALL=C sort | head -n 1")
+  assert "initialized fixture contains bootstrap records"
+    (recordFilesBefore >= 2 && not (null (trim firstRecord))) ExitSuccess firstRecord ""
+  removeFile (trim firstRecord)
   (missingCode, missingOutput, missingErrors) <- archiveCommand
     ["init", "--operator", "alice", missingRecord] ""
   assert "missing bootstrap record is refused as an incomplete archive"
     (missingCode /= ExitSuccess) missingCode missingOutput missingErrors
-  shellAssert "missing bootstrap record refusal leaves the fixture unchanged"
-    ("test \"$(find " <> quote (missingRecord <> "/records") <> " -type f | wc -l | tr -d ' ')\" = 1")
+  recordFilesAfter <- countRecordFiles
+  assert "missing bootstrap record refusal leaves the fixture unchanged"
+    (recordFilesAfter == recordFilesBefore - 1) ExitSuccess (show (recordFilesBefore, recordFilesAfter)) ""
   shellChecked ("cp " <> quote (root <> "/archive.json") <> " " <> quote (root <> "/archive.json.before-tamper") <> " && printf tampered > " <> quote (root <> "/archive.json"))
   (tamperedCode, tamperedOutput, tamperedErrors) <- archiveCommand ["init", "--operator", "alice", root] ""
   assert "tampered archive is refused" (tamperedCode /= ExitSuccess) tamperedCode tamperedOutput tamperedErrors
