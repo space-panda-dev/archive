@@ -72,6 +72,7 @@ archive plan | apply             reconciling (may become top-level plan / apply)
 archive views                    rebuilding browsable views (name unsettled)
 enrich/enrich.py probe           count an Artifact's audio streams and propose the facts to Door
 enrich/enrich.py detect          suggest an audio stream's spans and propose them to Door
+enrich/enrich.py match           score a selection against each Work's linked occurrences and propose matches
 ```
 
 `door serve --socket <path>` runs Door for one archive (the working
@@ -103,7 +104,12 @@ probe ([ADR 0065](decisions/0065-audio-stream-facts.md)), which needs `ffmpeg`
 and `ffprobe` and counts sample frames only by decoding them. The second is
 the span detector ([ADR 0066](decisions/0066-span-suggestions.md)), which
 needs `ffmpeg` and numpy, measures against a probed stream claim, and
-suggests classed spans in integer samples from one fixed signal set.
+suggests classed spans in integer samples from one fixed signal set. The
+third is the work matcher
+([ADR 0067](decisions/0067-matches-and-alignments-pin-runs.md)), which needs
+`ffmpeg`, `ffprobe`, numpy, and scipy; numpy and scipy are the only libraries
+outside the standard library that `enrich/` uses. The detector's presets and
+the matcher's score limit are the operator's to calibrate.
 
 World's answers are standard SPARQL results, and what each projection version
 emits is declared in [`world/projection/`](../world/projection/6/projection.json)

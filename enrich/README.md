@@ -13,13 +13,16 @@ here writes a record: Door decides every revision.
 | [`adapter.py`](adapter.py) | The adapter: reading the archive, staging parameters, and proposing a run with its outputs |
 | [`probe.py`](probe.py) | The audio stream probe, a standalone tool ([ADR 0065](../docs/decisions/0065-audio-stream-facts.md)) |
 | [`detector.py`](detector.py) | The span detector, a standalone tool ([ADR 0066](../docs/decisions/0066-span-suggestions.md)) |
-| [`enrich.py`](enrich.py) | The `enrich` command that runs a tool against an archive's Artifact |
+| [`match.py`](match.py) | The work matcher, a standalone tool ([ADR 0067](../docs/decisions/0067-matches-and-alignments-pin-runs.md)) |
+| [`enrich.py`](enrich.py) | The `enrich` command that runs a tool against an archive's records |
+| [`requirements.txt`](requirements.txt) | The detector's and the matcher's libraries, numpy and scipy |
 | `support.py`, `test_*.py` | Synthetic audio, scratch archives built through Door, and the tests |
 
 The adapter and the probe use only Python's standard library; the detector
-also needs numpy ([`requirements.txt`](requirements.txt)). The probe needs
-`ffmpeg` and `ffprobe`, the detector `ffmpeg`. The tests also need World's
-test requirements, numpy, Door, and `archive` (`make test-python`).
+needs numpy and the matcher numpy and scipy (`requirements.txt`, and the
+flake's Python). The probe and the matcher need `ffmpeg` and `ffprobe`, the
+detector `ffmpeg`. The tests also need World's test requirements, Door, and
+`archive` (`make test-python`).
 
 ## `enrich probe`
 
@@ -231,6 +234,89 @@ structure. Calibrating `jam` and `show` on real recordings is a follow-up for
 the operator. A changed preset is a new parameters Artifact and a new run, so
 earlier suggestions keep the values that made them.
 
+## `enrich match`
+
+```sh
+enrich/enrich.py match --archive <dir> (--selection <id> | --occurrence <id>) --limit <decimal>
+                 [--staging <annex>] [--dry-run]
+```
+
+Compares one `archive.claim/audio_selection` version 2 claim, or one
+`archive.claim/song_occurrence` version 2 claim, with the occurrences linked
+to each Work, and proposes at most one `archive.claim/work_match` version 2
+claim per Work, all made by one derivation run in one Door batch
+([ADR 0067](../docs/decisions/0067-matches-and-alignments-pin-runs.md),
+[ADR 0047](../docs/decisions/0047-v2-audio-route-source-rules.md) rule 5). It
+prints one JSON object with every Work's scores and exits as `enrich probe`
+does: 0 when matches were committed, predicted, or already recorded; 3 when
+no Work's best score is within the limit (`nothing_proposed`); 1 on any
+failure; and 2 when the arguments are not understood.
+
+- **The corpus** is read from `archive export`, never from record files. It is
+  every head `archive.claim/performance_work` version 3 claim and the song
+  occurrence it links, grouped by the head revision of its Work. Nothing is
+  chosen as current: every head link counts. A link is skipped, with its
+  reason in the answer, when it pins a superseded occurrence revision, when
+  its occurrence is the compared one or shares one of its selections (a
+  recording is not evidence about itself), or when its Work's head is not a
+  `musical_work` Entity. A corpus left empty is a failure, not a quiet "no
+  match".
+- **The audio** of an occurrence is its first selection in the contract's
+  canonical order, and of a selection its first track: the tracks of one
+  selection capture the same moment. Each span is decoded from the pinned
+  Artifact's locally present content (checked against its digest) at the
+  file's own rate, trimmed in samples, downmixed to mono, and resampled. A
+  span whose rate is not the file's, that runs past the audio, or whose audio
+  is shorter than the method's minimum refuses the whole run.
+- **Only the best match per Work** is proposed, and only when its score is at
+  or below `--limit`. Its `corpus` pins every occurrence of that Work that was
+  compared, since the score is their minimum; `work` pins the Work's head
+  revision; `selection` or `occurrence` pins the compared claim; `parameters`
+  pins the run's parameters Artifact; and `run` pins the run. The payload is
+  exactly the method, the score as decimal text, the scale, and
+  `lower_is_closer`. A match never establishes a Work (ADR 0040).
+- **The run** reads (`used`) the compared claim and its selection, every
+  corpus link, occurrence, selection, and Work, and every Artifact whose bytes
+  were decoded. Its software is ffprobe, ffmpeg, the libav libraries, numpy,
+  and scipy, as installed at run time. A rerun with the same inputs, software,
+  and parameters answers `unchanged` before decoding anything.
+- **The parameters** are every setting of the method, the decoder invocation,
+  and the limit, as canonical JSON with decimal text for fractions. A
+  different limit is a different configuration and so a different run.
+
+### The method, and its thresholds
+
+The method is `archive-enrich/chroma-oti-qmax` version 1, made by
+`pkg:generic/archive-enrich-match@0.1.0`, with scale
+`archive-enrich/chroma-oti-qmax/sqrt-min-length-over-qmax`. It follows the
+cover-song measure of Serrà, Serra, and Andrzejak (2009) in numpy and scipy:
+pitch-class profiles of spectral peaks, the optimal transposition index, a
+binary cross-recurrence matrix of stacked frames that marks mutual nearest
+neighbours, and the Qmax local alignment with gap penalties. Each profile is
+rounded to integer units (`profile_units`) before the transposition, so the
+distances, the marks, and Qmax are exact integer arithmetic: they depend on
+no linear-algebra library (the BLAS behind numpy differs between a pip wheel
+and the flake), thread count, or summation order, none of which a run
+records. The profiles themselves are floating-point and depend on the numpy
+and scipy versions the run records and, in the last bits, on the machine; a
+value within a rounding error of half a unit can round the other way elsewhere.
+The score is `sqrt(min(N_query, N_reference)) / Qmax`, rounded
+half to even to six places; lower is closer, and a pair with no aligned path
+has no score. `match.py <query> <reference>...` scores whole files with no
+archive involved.
+
+The V2 system computed the same kind of measure with Essentia, whose Python
+bindings are not in nixpkgs and whose published wheels are pre-releases for
+some platforms only, so they cannot be obtained reproducibly for both the
+flake and a macOS virtual environment. This method is therefore its own
+implementation under its own identifier, and its scores are not on the V2
+system's scale: the V2 thresholds (0.08 and 0.18) do not apply.
+**The operator must calibrate `--limit` on real recordings** (known same-song
+and different-song pairs from the archive) before trusting a proposal; no
+default limit exists. The tests show only that, on synthetic tunes, the same
+melody in another key scores lower than a different melody, and that scores
+are deterministic.
+
 ## The adapter interface
 
 A new tool (a detector, a matcher) uses the adapter like this:
@@ -279,7 +365,10 @@ if reader.equivalent_run(result) is None:           # optional quiet-history che
   same run, because those revisions exist only inside `propose`. A detector
   whose suggestions pin a stream claim (ADR 0066) therefore pins one an
   earlier probe run committed, and a tool that needs both proposes them as
-  two runs.
+  two runs. An output that must pin the run's parameters Artifact (a match,
+  whose contract has a `parameters` role) names that role in
+  `parameters_role`, and the adapter adds the pin, whether the Artifact is
+  reused or new in the same batch.
 - **`propose(reader, result, door, staging, dry_run, by, env)`** checks the
   proposer's obligations of D-15 (a Package URL agent, at least one output, a
   run that does not end before it starts, `used` pins to revisions in the

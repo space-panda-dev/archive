@@ -187,6 +187,38 @@ def synthetic_wav(path: Path, rate: int, pieces: list[tuple], channels: int = 1)
         writer.setframerate(rate)
         writer.writeframes(np.repeat(pcm, channels).tobytes())
     return path, edges
+# Two invented tunes, as MIDI note numbers, one note per quarter second.
+TUNE = (60, 62, 64, 65, 67, 69, 67, 65, 64, 62, 60, 67, 64, 60, 72, 71)
+OTHER_TUNE = (57, 57, 64, 64, 66, 66, 64, 62, 62, 61, 61, 59, 59, 57, 52, 54)
+
+
+def tune_samples(notes: tuple[int, ...], rate: int, transpose: int = 0, repeats: int = 3, seed: int = 0,
+                 note_seconds: float = 0.25):
+    """A tune of three-harmonic tones with faint noise, as floats, made with
+    numpy: the same tune transposed has the same melody in another key."""
+    import numpy
+    rng = numpy.random.default_rng(seed)
+    length = int(note_seconds * rate)
+    t = numpy.arange(length) / rate
+    envelope = numpy.minimum(1, numpy.minimum(t / 0.01, (note_seconds - t) / 0.02))
+    tones = []
+    for note in notes * repeats:
+        frequency = 440 * 2 ** ((note + transpose - 69) / 12)
+        tones.append(sum(numpy.sin(2 * numpy.pi * frequency * h * t) / h for h in (1, 2, 3)) * envelope)
+    samples = numpy.concatenate(tones) * 0.3
+    return samples + rng.normal(0, 0.01, size=len(samples))
+
+
+def write_wav(path: Path, samples, rate: int) -> Path:
+    """Mono 16-bit PCM through Python's own writer."""
+    import numpy
+    data = numpy.clip(numpy.round(numpy.asarray(samples) * 32767), -32768, 32767).astype("<i2")
+    with wave.open(str(path), "wb") as writer:
+        writer.setnchannels(1)
+        writer.setsampwidth(2)
+        writer.setframerate(rate)
+        writer.writeframes(data.tobytes())
+    return path
 
 
 def build_archive(test: unittest.TestCase, contents: dict[str, Path], steps: tuple[dict[str, Any], ...] = (),

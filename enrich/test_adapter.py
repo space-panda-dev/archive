@@ -239,6 +239,13 @@ class Proposals(unittest.TestCase):
             "not in the archive": self.run_result(used=(adapter.Pin("used", self.wav["object_id"],
                                                                     "sha256:" + "0" * 64),)),
             "Package URL": self.run_result(agent="tool"),
+            "the run has none": self.run_result(outputs=(adapter.Output(
+                STREAM, "s", PAYLOAD, (self.artifact_pin,), parameters_role="parameters"),)),
+            "parameters pin is the adapter's to add": self.run_result(parameters={"x": 1}, outputs=(adapter.Output(
+                STREAM, "s", PAYLOAD, (adapter.Pin("parameters", self.wav["object_id"], self.wav["revision_id"]),),
+                parameters_role="parameters"),)),
+            "run pin is the adapter's to add": self.run_result(parameters={"x": 1}, outputs=(adapter.Output(
+                STREAM, "s", PAYLOAD, (self.artifact_pin,), parameters_role="run"),)),
         }
         for message, run in cases.items():
             with self.assertRaisesRegex(adapter.AdapterError, message):
