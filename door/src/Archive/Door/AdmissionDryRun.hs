@@ -795,14 +795,31 @@ validateUpgradeHistory snapshot additions upgradeCommits current installed entri
         _ -> Left "a specification upgrade commit must introduce exactly one record"
 
 -- | A record cites only bundles the archive held when it was committed: the
--- bundle's path was added by the record's commit or an earlier one.
+-- bundle's path was added by the record's commit or an earlier one. Likewise
+-- a record written under a specification whose core context the archive
+-- holds was committed with or after that context, so a specification
+-- upgrade cannot make an earlier record readable after the fact (D-1,
+-- ADR 0068). A record whose context the archive never held is left to the
+-- checks that read it.
 validateCitationOrder :: [Text] -> Map.Map FilePath Text -> [Installed] -> [RecordEntry] -> Either Text ()
 validateCitationOrder commits additions installed entries = mapM_ check entries
   where
     position = Map.fromList (zip commits [0 :: Int ..])
     paths = Map.fromList [(installedKey item, installedPath item) | item <- installed]
     at path = Map.lookup path additions >>= (`Map.lookup` position)
-    check entry = mapM_ (cited entry) (envelopeContracts (storedDraft (entryEnvelope entry)))
+    check entry = do
+      contextHeld entry
+      mapM_ (cited entry) (envelopeContracts (storedDraft (entryEnvelope entry)))
+    contextHeld entry =
+      let specification = envelopeSpec (storedDraft (entryEnvelope entry))
+      in case Text.stripPrefix "archive/" specification of
+        Just version
+          | let path = "spec/" <> Text.unpack version <> "/context.jsonld"
+          , Map.member path additions -> case (at path, at (entryPath entry)) of
+              (Just context, Just record) | context <= record -> Right ()
+              _ -> Left (Text.pack (entryPath entry) <> " is written under " <> specification
+                <> " before the archive held its core context")
+        _ -> Right ()
     cited entry citation =
       case Map.lookup (contractId citation, contractVersion citation, contractDigest citation) paths of
         Nothing -> Left ("contract is not installed at this snapshot: " <> contractId citation)

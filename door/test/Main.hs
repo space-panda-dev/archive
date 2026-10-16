@@ -408,6 +408,7 @@ main = do
   specificationUpgradeRuleChecks
   withProposalTemporaryRoot specificationUpgradeChecks
   withProposalTemporaryRoot forgedUpgradeChecks
+  withProposalTemporaryRoot forgedUpgradeHistoryChecks
   withProposalTemporaryRoot specificationUpgradeServiceChecks
   withProposalTemporaryRoot specificationUpgradeRecoveryChecks
   transitionDispatchCatalogChecks
@@ -6452,6 +6453,21 @@ specificationUpgradeChecks parent = do
   refused "a second upgrade from the old version is refused"
     "upgrade-again" (upgrade operator) operator operatorRevision
     "specification upgrade from archive/0.0.6 does not start at the archive's specification archive/0.0.7"
+
+  -- The runbook's checks: the whole-store check and Door's full
+  -- verification both accept the upgraded history.
+  (doctorCode, doctorOut, doctorErr) <- readCreateProcessWithExitCode
+    ((proc "archive" ["doctor"]) {cwd = Just root}) ""
+  assert "archive doctor passes on the upgraded archive"
+    (doctorCode == ExitSuccess) doctorCode doctorOut doctorErr
+  removeFile (root </> ".git" </> "archive-door-verified.json")
+  (verifyCode, verifyOut, verifyErr) <- doorCommandAt root ["verify"] ""
+  -- The checkpoint belongs to the `door` build that wrote it, so only its
+  -- presence is checked here.
+  verified <- doesFileExist (root </> ".git" </> "archive-door-verified.json")
+  assert "door verify verifies the upgraded history in full and writes a checkpoint for it"
+    (verifyCode == ExitSuccess && contains "\"status\":\"verified\"" verifyOut && verified)
+    verifyCode verifyOut verifyErr
   pure ()
 
 -- | A manifest changed outside a specification upgrade is not an archive
@@ -6488,6 +6504,123 @@ forgedUpgradeChecks parent = do
   assert "a manifest changed without an upgrade record is refused as incomplete evidence"
     (code /= ExitSuccess && null out && contains "a specification upgrade commit must introduce exactly one record" err)
     code out err
+
+-- | A forged upgrade commit that looks like Door's in every way but one is
+-- refused by the full verification, so no single rule of the upgrade
+-- history check can be dropped silently. Each case starts from the same
+-- 0.0.6 archive; the first, a complete forgery, is the anchor that the
+-- forging itself builds a history Door accepts.
+forgedUpgradeHistoryChecks :: FilePath -> IO ()
+forgedUpgradeHistoryChecks parent = do
+  (root, archiveId, initOutput) <- newEarlierArchive parent "forged-upgrade-history"
+  operatorId <- requiredField "operator_id" initOutput
+  operatorRevision <- recordRevisionForObject root operatorId
+  previousCatalog <- either (const []) toList <$> loadContractCatalog "archive/0.0.6"
+  targetCatalog <- either (const []) toList <$> loadContractCatalog "archive/0.0.7"
+  let added = [entry | entry <- targetCatalog, entry `notElem` previousCatalog]
+      asString (identifier, version, digest) = (Text.unpack identifier, Text.unpack version, Text.unpack digest)
+      cited identifier = case [asString entry | entry@(i, _, _) <- targetCatalog, i == identifier] of
+        entry : _ -> entry
+        [] -> ("", "", "")
+      upgradeContract = cited "archive.transition/specification_upgrade"
+      runContract = cited "archive.claim/derivation_run"
+      bundleName (_, _, digest) = "sha256-" <> drop 7 (Text.unpack digest) <> ".json"
+      isRun (identifier, _, _) = identifier == "archive.claim/derivation_run"
+      namespace = "archive.transition/specification_upgrade"
+      atSpec specification = replace "\"spec\":\"archive/0.0.7\"" ("\"spec\":" <> jsonString specification)
+      payload from to = "{\"from\":" <> jsonString from <> ",\"to\":" <> jsonString to <> "}"
+      commitAll message = shellChecked ("git -C " <> quote root <> " add -A archive.json spec contracts records"
+        <> " && git -C " <> quote root <> " -c user.name=archive-test -c user.email=archive-test@example.invalid"
+        <> " commit -q -m " <> quote message)
+      writeRecord draft = do
+        value <- either (\problem -> assert "a forged record decodes" False ExitSuccess problem "" >> pure Aeson.Null)
+          pure (decodeUnique (LazyByteString.pack draft))
+        case finalizeStored "2026-01-01T00:00:00Z" value of
+          Left problem -> assert "a forged record finalizes" False ExitSuccess (Text.unpack problem) ""
+          Right (revision, stored) -> do
+            let relative = recordRelative (Text.unpack revision)
+            createDirectoryIfMissing True (takeDirectory (root </> relative))
+            LazyByteString.writeFile (root </> relative) (encodeCanonical stored)
+      upgradeRecord name from to specification = do
+        objectId <- allocatedObjectId archiveId namespace name
+        pure (atSpec specification (contractRecord "claim" upgradeContract (payload from to)
+          [pinned "authorizer" (operatorId, operatorRevision)] objectId))
+      -- Everything Door's upgrade commit writes, each part adjustable.
+      forgeUpgrade name adjustManifest record bundles = do
+        manifest <- ByteString.readFile (root </> "archive.json")
+        removeFile (root </> "archive.json")
+        writeFile (root </> "archive.json") (adjustManifest (replace "\"spec\":\"archive/0.0.6\""
+          "\"spec\":\"archive/0.0.7\"" (LazyByteString.unpack (LazyByteString.fromStrict manifest))))
+        createDirectoryIfMissing True (root </> "spec" </> "0.0.7")
+        mapM_ (\(from, to) -> ByteString.readFile from >>= ByteString.writeFile (root </> to))
+          [ ("spec/VERSION", "spec/0.0.7/VERSION"), ("spec/archive-spec.md", "spec/0.0.7/archive-spec.md")
+          , ("spec/0.0.7/context.jsonld", "spec/0.0.7/context.jsonld") ]
+        mapM_ (\entry -> ByteString.readFile ("spec/contracts" </> bundleName entry)
+          >>= ByteString.writeFile (root </> "contracts" </> bundleName entry)) bundles
+        record >>= writeRecord
+        commitAll name
+      complete name = forgeUpgrade name id (upgradeRecord name "archive/0.0.6" "archive/0.0.7" "archive/0.0.7") added
+  base <- gitHead root
+  entityId <- allocatedObjectId archiveId "archive.core/entity" "forged-history-person"
+  proposal <- writeAdmissionProposal root "forged-history" (manifestFor
+    ["records/entity.json"] [(entityId, "archive.core/entity", "forged-history-person")]
+    [(entityId, Nothing)] []) ["records/entity.json", atSpec "archive/0.0.6" (entityDraft entityId)]
+  let reset = shellChecked ("git -C " <> quote root <> " reset -q --hard " <> base
+        <> " && git -C " <> quote root <> " clean -fdq")
+      readsAfter :: String -> IO () -> Maybe String -> IO ()
+      readsAfter label forge expected = do
+        forge
+        (code, out, err) <- doorCommandAt root ["admit", "--proposal", proposal, "--dry-run"] ""
+        assert label
+          (case expected of
+            Nothing -> code == ExitSuccess && contains "\"status\":\"predicted\"" out
+            Just message -> code /= ExitSuccess && null out && contains message err)
+          code out err
+        reset
+
+  readsAfter "a complete forged upgrade is read like Door's own (anchor)"
+    (complete "forged-complete") Nothing
+  readsAfter "an upgrade record whose from is not the manifest's previous specification is refused"
+    (forgeUpgrade "forged-from" id (upgradeRecord "forged-from" "archive/0.0.5" "archive/0.0.7" "archive/0.0.7") added)
+    (Just "a specification upgrade record does not name the manifest change it made")
+  readsAfter "an upgrade record written under the old specification is refused"
+    (forgeUpgrade "forged-spec" id (upgradeRecord "forged-spec" "archive/0.0.6" "archive/0.0.7" "archive/0.0.6") added)
+    (Just "a specification upgrade record does not name the manifest change it made")
+  readsAfter "an upgrade commit that is not an upgrade claim is refused"
+    (forgeUpgrade "forged-claim" id (pure (contractRecord "claim" runContract runPayload []
+      "urn:uuid:00000000-0000-4000-8000-0000000000f1")) added)
+    (Just "a specification upgrade commit's record is not one upgrade claim")
+  readsAfter "an upgrade that changes the archive identifier is refused"
+    (forgeUpgrade "forged-identifier" (replace archiveId "urn:uuid:00000000-0000-4000-8000-0000000000f2")
+      (upgradeRecord "forged-identifier" "archive/0.0.6" "archive/0.0.7" "archive/0.0.7") added)
+    (Just "a specification upgrade changed the archive identifier or layout")
+  readsAfter "an upgrade record committed outside an upgrade commit is refused"
+    (complete "forged-first" >> upgradeRecord "forged-second" "archive/0.0.6" "archive/0.0.7" "archive/0.0.7"
+      >>= writeRecord >> commitAll "forged-second")
+    (Just "a specification upgrade record exists outside a specification upgrade commit")
+  readsAfter "a bundle the root commit installed ahead of its release is refused"
+    (do
+      mapM_ (\entry -> ByteString.readFile ("spec/contracts" </> bundleName entry)
+        >>= ByteString.writeFile (root </> "contracts" </> bundleName entry)) (filter isRun added)
+      shellChecked ("git -C " <> quote root <> " add contracts && git -C " <> quote root
+        <> " -c user.name=archive-test -c user.email=archive-test@example.invalid commit -q --amend --no-edit")
+      forgeUpgrade "forged-early-bundle" id
+        (upgradeRecord "forged-early-bundle" "archive/0.0.6" "archive/0.0.7" "archive/0.0.7")
+        (filter (not . isRun) added))
+    (Just "did not add exactly the bundles its catalog adds")
+  readsAfter "a record citing a bundle before the upgrade installed it is refused"
+    (do
+      writeRecord (atSpec "archive/0.0.6" (contractRecord "claim" runContract runPayload []
+        "urn:uuid:00000000-0000-4000-8000-0000000000f3"))
+      commitAll "forged-early-citation"
+      complete "forged-late-upgrade")
+    (Just "before the archive held it")
+  readsAfter "a record written under a specification before the upgrade installed it is refused"
+    (do
+      writeRecord (entityDraft "urn:uuid:00000000-0000-4000-8000-0000000000f4")
+      commitAll "forged-early-specification"
+      complete "forged-late-specification")
+    (Just "before the archive held its core context")
 
 -- | The service commits an upgrade like any transition, and then plans
 -- against the new release without a restart (ADR 0054).
