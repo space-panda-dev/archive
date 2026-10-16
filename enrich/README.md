@@ -12,12 +12,14 @@ here writes a record: Door decides every revision.
 |---|---|
 | [`adapter.py`](adapter.py) | The adapter: reading the archive, staging parameters, and proposing a run with its outputs |
 | [`probe.py`](probe.py) | The audio stream probe, a standalone tool ([ADR 0065](../docs/decisions/0065-audio-stream-facts.md)) |
+| [`detector.py`](detector.py) | The span detector, a standalone tool ([ADR 0066](../docs/decisions/0066-span-suggestions.md)) |
 | [`enrich.py`](enrich.py) | The `enrich` command that runs a tool against an archive's Artifact |
 | `support.py`, `test_*.py` | Synthetic audio, scratch archives built through Door, and the tests |
 
-Everything uses only Python's standard library; the probe needs `ffmpeg` and
-`ffprobe`. The tests also need World's test requirements, Door, and
-`archive` (`make test-python`).
+The adapter and the probe use only Python's standard library; the detector
+also needs numpy ([`requirements.txt`](requirements.txt)). The probe needs
+`ffmpeg` and `ffprobe`, the detector `ffmpeg`. The tests also need World's
+test requirements, numpy, Door, and `archive` (`make test-python`).
 
 ## `enrich probe`
 
@@ -67,6 +69,163 @@ the arguments are not understood.
 
 `probe.py <file>` runs the tool alone and prints its plain result; no archive
 is involved.
+
+## `enrich detect`
+
+```sh
+enrich/enrich.py detect --archive <dir> --artifact <object id> [--stream <claim id>] [--preset jam|show]
+                        [--staging <annex>] [--dry-run]
+```
+
+Suggests spans of one audio stream of the Artifact's current revision and
+proposes one `archive.claim/span_suggestions` claim, made by one
+`archive.claim/derivation_run` claim, in one Door batch. It prints one JSON
+object and exits 0 when the claim was committed (`committed`), predicted by a
+dry run (`predicted`), or already recorded (`unchanged`); 1 on any failure,
+with `{"status": "failed", "detail": ...}` on stderr; and 2 when the
+arguments are not understood. There is no "nothing proposed": a stream that
+decodes always gets at least one span, and one that cannot be analysed fails.
+
+- **The stream comes from a claim.** The detector reads the
+  `audio_stream` claim about exactly this Artifact revision (made by
+  `enrich probe`), takes its `stream_index`, `sample_rate`, `channel_count`,
+  and `sample_count`, and pins it in role `stream`; the Artifact is pinned in
+  role `source`. With no such claim it refuses and says to probe first. With
+  several (a file with two audio streams, or two probe runs) it refuses
+  unless `--stream` names one; it never chooses silently.
+- **The count must agree.** The stream is decoded once by `ffmpeg` to 32-bit
+  float samples at its own rate and channel count. If the decoded frames are
+  not whole frames of the claim's channel count, or their number differs from
+  the claim's `sample_count`, the detection is refused: its spans would not
+  be about that claim's samples.
+- The run's `used` references pin the Artifact and the stream claim; its
+  parameters are the preset as canonical JSON (`{"preset", "values",
+  "decoder", "decode_arguments"}`), one Artifact per preset, admitted by the
+  first run that uses it and reused afterwards. Its software is `ffmpeg`, the
+  libav libraries it reports, and `numpy`. The method is
+  `archive-enrich/detect-spans` version 1, and the agent is
+  `pkg:generic/archive-enrich-detect@0.1.0`.
+- A rerun with the same preset, software, Artifact revision, and stream claim
+  answers `unchanged` before decoding anything and writes nothing (INV-5).
+  Another preset is another run; both runs' suggestions remain, and neither
+  supersedes the other (ADR 0066).
+
+`detector.py <file> [--preset jam|show] [--stream-index n]` probes the file,
+detects, and prints the plain result; no archive is involved.
+
+### How spans are found
+
+Everything is integer arithmetic on samples except the signal values
+themselves. The decoded channels are averaged to one, and the stream is cut
+into consecutive **hops** of `sample_rate * hop_ms // 1000` samples (800 at
+8 kHz, 4,800 at 48 kHz for the presets' 100 ms); the last hop may be short.
+Every preset duration is a whole number of hops, so every edge the detector
+suggests is a hop boundary or the end of the stream. Per hop it measures the
+mean square level (in dB relative to full scale; a hop with no energy reads
+as -120 dB), a 12-class chroma (the power of a Hann-windowed FFT of the hop,
+binned to the nearest pitch class between `chroma_min_hz` and
+`chroma_max_hz`), and the spectral flatness (geometric over arithmetic mean
+power).
+
+The one signal set, all computed for every detection:
+
+1. **Silence breaks.** Hops below `silence_threshold_db` form silent runs of
+   at least `silence_min_ms`. Runs of at least `min_break_ms` are merged when
+   separated by at most `merge_gap_ms`; each merged run breaks at its middle
+   hop, if that leaves `min_segment_ms` after the previous break and before
+   the end. At most `max_silence_breaks`, the longest first. Score: the run's
+   length in seconds.
+2. **Loudness transitions.** The level of consecutive `window_ms` windows; a
+   point at the start of each window whose level differs from the previous
+   window's by at least `min_transition_delta_db`, at least
+   `min_transition_spacing_ms` after the previous point. At most
+   `max_loudness_transitions`, the largest first. Score: the change in dB.
+3. **Chroma novelty.** Chroma summed over `chroma_block_ms` blocks and
+   normalised, then Foote novelty: a Gaussian-tapered checkerboard kernel of
+   `chroma_kernel_blocks` blocks a side slid along the diagonal of the
+   blocks' self-similarity, scaled to 0 to 1. A point at each block that
+   reaches the `chroma_peak_percentile` of the curve and is its largest value
+   within `chroma_min_spacing_ms` either side. A curve that is flat where the
+   kernel fits has no peaks. Score: novelty times 60.
+
+At most `max_review_points` points are kept, highest score first. Points are
+clustered into **regions** while each is at most `review_cluster_gap_ms`
+after the previous one. A region's edge is its strongest silence break, else
+its strongest loudness transition, else its strongest novelty peak. Region
+edges become boundaries in time order, each kept only when it leaves
+`min_segment_ms` after the previous boundary and before the end.
+
+**Quiet** is long low loudness relative to the recording's own floor, the
+review application's notion of a long quiet stretch (60 s within 3 dB of
+the session's 5th-percentile loudness). The floor is the
+`quiet_floor_percentile` of the hop levels; a quiet hop is within
+`quiet_margin_db` of the floor and below `silence_threshold_db`; a quiet run
+is at least `quiet_min_ms` of quiet hops. Each quiet run is a span of its own
+with exactly its edges. Its edges replace any boundary inside it or less than
+`min_segment_ms` from it.
+
+**Classes.** A quiet run's span is `quiet`. Every other span is classed by
+the V2 detector's session-relative rule. For each span at least
+`classify_min_ms` long, two features are computed from its hops: **key
+confidence**, the best Pearson correlation of its mean chroma with the 24
+rotated Krumhansl-Schmuckler major and minor profiles, and the mean
+**spectral flatness**. Each feature is ranked among the recording's other
+unquiet spans, from 0 to 1 exactly (equal values rank in span order; a lone
+value has no rank), with flatness inverted. The mean of a span's ranks is
+`music` at or above `rank_threshold_percent + rank_band_percent` percent,
+`talk` at or below `rank_threshold_percent - rank_band_percent` percent, and
+`unknown` in between, without a rank, or when the span is too short. The rule
+is relative: in every recording with two or more classifiable spans, the
+least tonal is ranked lowest, so one span of a recording of only music is
+likely to be called `talk`.
+
+**Failing loudly.** A signal that cannot be computed refuses the whole
+detection and nothing is proposed: loudness when the stream fills fewer than
+two windows, chroma novelty when it fills no more blocks than the kernel
+spans, and any signal whose values are not finite (samples that decode to
+NaN, for example). More than 10,000 spans, which a claim cannot hold, is
+refused too.
+
+### How it differs from the V2 detector
+
+The V2 system's detector produced float seconds for a preview cache. This one
+produces evidence, so:
+
+- **Samples, not seconds.** Every edge is an integer sample at the stream's
+  own rate, on a hop boundary, measured against a counted stream claim. V2
+  decoded loudness at 1,000 Hz, chroma at 22,050 Hz, and silences through
+  `silencedetect`, then rounded seconds to six places.
+- **One signal set.** Silence, loudness, and chroma novelty are computed by
+  this tool from one decode with numpy. V2 combined `ffmpeg silencedetect`,
+  its own PCM loudness, librosa's constant-Q chroma, and an optional
+  spectral-balance signal, and classified with librosa features. Here chroma
+  comes from an FFT of each hop instead of a constant-Q transform.
+- **No silent skip.** V2 skipped chroma novelty when librosa was missing or
+  failed, returned no novelty for a short file, and skipped loudness windows
+  of digital silence; its output looked the same either way. Here every
+  signal is computed or the detection fails.
+- **Region edges by signal, not by raw score.** V2 took the edge from the
+  highest-scoring point in a region, comparing seconds, decibels, and scaled
+  novelty as if they were one unit. Here a silence break wins, then a
+  loudness transition, then a novelty peak, so a cut falls in the middle of a
+  silence when there is one.
+- **Quiet spans.** V2 had no quiet class; the review application cut long
+  quiet inside a span. Here a long quiet run is its own span.
+- **Exact classification.** Ranks and their mean are exact fractions, so a
+  span on a threshold is classed the same way on every machine. V2 rounded
+  them to three places. V2's `likely_song`, `likely_talk`, and `uncertain`
+  are `music`, `talk`, and `unknown`.
+- **Presets are evidence.** The `jam` and `show` values are V2's, written as
+  integer milliseconds and decibels, and recorded as the run's parameters
+  Artifact. V2's `strict-silence` preset, its spectral-balance values, and its
+  1,000 Hz loudness rate are not carried over.
+
+**The presets are not calibrated.** V2's values were tuned against V2's
+signals; this detector's signals differ (FFT chroma, hop-level silence, the
+quiet rule), and it has been tested only on synthetic audio of known
+structure. Calibrating `jam` and `show` on real recordings is a follow-up for
+the operator. A changed preset is a new parameters Artifact and a new run, so
+earlier suggestions keep the values that made them.
 
 ## The adapter interface
 

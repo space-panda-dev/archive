@@ -240,9 +240,9 @@ These are boundaries for later phases, not decisions made by this ledger.
 | Enrichment build configuration | translate | In progress | Configuration stays separate and is recorded as run input (ADR 0006, ADR 0007). The `enrich/` adapter admits a run's parameters as a canonical JSON Artifact and reuses it when the bytes match. |
 | Object+revision derivation stamp | keep the mechanism | Planned | Disposable stamps bind exact evidence and support quiet history (INV-4, INV-5). |
 | Desired enrichment discovery | defer | Planned | The policy/mechanism boundary and grammar are open. |
-| Standalone probe/classifier recipes | translate | In progress | Tools take files and propose results through Door (ADR 0006). The probe is ported as `enrich/probe.py`; the classifier is not. |
-| Unrecorded classifier configuration | rewrite | Planned | Parameters and presets must be recorded as run inputs (ADR 0006); the `enrich/` adapter's `parameters` is where they go. |
-| Recipe proposal to Door | translate | In progress | Keep the call chain and assert the real dispatcher reaches Door (INV-2). `enrich probe` proposes through `door admit`, and its tests read the committed claims back with `archive show` and World. |
+| Standalone probe/classifier recipes | translate | In progress | Tools take files and propose results through Door (ADR 0006). The probe is ported as `enrich/probe.py`. The whole-file classifier is not; `enrich/detector.py` classes each suggested span `music`, `talk`, `quiet`, or `unknown` instead (ADR 0066). |
+| Unrecorded classifier configuration | rewrite | In progress | Parameters and presets must be recorded as run inputs (ADR 0006); the `enrich/` adapter's `parameters` is where they go. The span detector's `jam` and `show` presets are recorded there; the whole-file classifier's configuration is not ported. |
+| Recipe proposal to Door | translate | In progress | Keep the call chain and assert the real dispatcher reaches Door (INV-2). `enrich probe` and `enrich detect` propose through `door admit`, and their tests read the committed claims back with `archive show` and World. |
 | V2 hot placement rule | rewrite | Planned | Desired placement belongs in authorized policy, not annex expressions (ADR 0007). |
 | V2 cold placement rule | rewrite | Planned | Same; no-policy planning yields an empty plan. |
 | Facts copied into annex metadata | delete | Planned | ADR 0008 explicitly rejects the mechanism. |

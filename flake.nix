@@ -28,7 +28,8 @@
           '' + gitIdentity;
         });
 
-      # World, the relay, and their tests. pyshacl and owlrl are not in
+      # World, the relay, the enrichment tools (numpy, for the span
+      # detector), and their tests. pyshacl and owlrl are not in
       # nixpkgs; these are the newest releases that accept its rdflib.
       pythonFor = pkgs: pkgs.python3.withPackages (ps:
         let
@@ -52,7 +53,7 @@
             sha256 = "d7e0c21b25e948bb643dbc5db6258da64a90a8ac89055c1fe562b469031072aa";
             dependencies = [ ps.rdflib owlrl ps.packaging ps.prettytable ];
           };
-        in [ ps.pyoxigraph ps.rdflib ps.jsonschema pyshacl ]);
+        in [ ps.pyoxigraph ps.rdflib ps.jsonschema pyshacl ps.numpy ]);
 
       # The Python parts and commands for World, the relay, and the fixture.
       toolsFor = pkgs:
