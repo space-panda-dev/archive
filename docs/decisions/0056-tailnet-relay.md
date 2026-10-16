@@ -1,6 +1,6 @@
 # 0056. A tailnet relay for the operator's browser
 
-Status: accepted
+Status: accepted; media routes added by [ADR 0069](0069-derived-media.md)
 
 The rehearsal review application runs in a browser on the operator's iPad and
 phone. Door's service listens only on a private Unix socket (ADR 0054), and

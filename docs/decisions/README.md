@@ -78,3 +78,10 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0061](0061-scratch-archives.md) | Scratch archives for testing real commits |
 | [0062](0062-release-bundle-and-ci.md) | Releases carry an image and a bundle, and CI checks both |
 | [0063](0063-relay-read-speed.md) | Relay reads at interactive speed: cache, concurrency, and gzip |
+| [0064](0064-derivation-runs.md) | Derivation runs are claims, and enrichment code lives in `enrich/` |
+| [0065](0065-audio-stream-facts.md) | Audio stream facts are machine claims about an Artifact |
+| [0066](0066-span-suggestions.md) | Machine-suggested spans are admitted claims |
+| [0067](0067-matches-and-alignments-pin-runs.md) | Matches and alignments pin a derivation run |
+| [0068](0068-specification-upgrade.md) | An archive upgrades its specification by a transition |
+| [0069](0069-derived-media.md) | Waveform peaks and listening copies are derived media, served by digest |
+| [0070](0070-capture-import.md) | New recordings are imported natively |

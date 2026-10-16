@@ -12,12 +12,16 @@ unsupported rather than guess.
 
 - Specification 0.0.5 installs the V2 migration route contracts after the
   World releases ([ADR 0046](decisions/0046-world-release-before-v2-migration.md)).
-  Which release carries the ADR 0036 bundle amendment in its text, and what
-  run record contract lets a `work_match` claim be admitted?
+  Which release carries the ADR 0036 bundle amendment in its text? (The run
+  record a `work_match` claim needs is settled by
+  [ADR 0064](decisions/0064-derivation-runs.md) and
+  [ADR 0067](decisions/0067-matches-and-alignments-pin-runs.md).)
 - The selection facts of 0.0.5 pin only version 2 selections. Does a
   single-track version 1 selection ever need a title, kind, or credit, or is
   it superseded by a version 2 revision first?
-- How does an existing archive migrate between spec versions?
+- How does an existing archive migrate to a specification version that is not
+  additive? (Additive releases are adopted by a transition,
+  [ADR 0068](decisions/0068-specification-upgrade.md).)
 - For V2 migration ([ADR 0035](decisions/0035-v2-migration-preserves-evidence-and-claims.md)),
   accepted ADR 0036 specifies one deterministic PAX/USTAR bundle, an RFC 8785
   manifest, a whole-container content digest, a fixed identity for the first
