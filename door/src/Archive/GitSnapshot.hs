@@ -22,6 +22,8 @@ module Archive.GitSnapshot
   , uniqueIntroducer
   , linearHistory
   , immutableAdditions
+  , archivePathHistory
+  , readPathAt
   ) where
 
 import Archive.Process
@@ -411,23 +413,42 @@ linearHistory snapshot = do
 -- the current tree for an immutable history.
 immutableAdditions :: GitSnapshot -> [FilePath]
                    -> IO (Either GitSnapshotError (Map FilePath Text))
-immutableAdditions snapshot prefixes = do
+immutableAdditions snapshot prefixes =
+  fmap fst <$> archivePathHistory snapshot prefixes []
+
+-- | 'immutableAdditions', except that the named paths may also be modified
+-- in place after they were added. The second result lists each such
+-- modification, as the path and the commit, in history order. Only the
+-- archive manifest is ever named here: a specification upgrade records the
+-- new version where the archive records its version (ADR 0068), and the
+-- caller proves that every such commit is one.
+archivePathHistory :: GitSnapshot -> [FilePath] -> [FilePath]
+                   -> IO (Either GitSnapshotError (Map FilePath Text, [(FilePath, Text)]))
+archivePathHistory snapshot prefixes mutable = do
   result <- runGitBytes snapshot
     ([ "log", "--reverse", "--format=%x1e%H%x00", "-z", "--name-status", "-z"
      , Text.unpack (snapshotCommit snapshot), "--"
      ] <> prefixes)
   pure $ do
     bytes <- result
-    parseImmutableChanges bytes
+    parseArchiveChanges mutable bytes
 
-parseImmutableChanges :: LazyByteString.ByteString
-                      -> Either GitSnapshotError (Map FilePath Text)
-parseImmutableChanges bytes = do
+parseArchiveChanges :: [FilePath] -> LazyByteString.ByteString
+                    -> Either GitSnapshotError (Map FilePath Text, [(FilePath, Text)])
+parseArchiveChanges mutable bytes = do
   tokens <- mapM decodeToken
     (filter (not . StrictByteString.null)
       (StrictByteString.split 0 (LazyByteString.toStrict bytes)))
-  additions <- parseCommits tokens
-  foldl insertUnique (Right Map.empty) additions
+  changes <- parseCommits tokens
+  additions <- foldl insertUnique (Right Map.empty) [(path, commit) | (True, path, commit) <- changes]
+  let modifications = [(path, commit) | (False, path, commit) <- changes]
+  -- History is listed oldest first, so a path is added before any change.
+  mapM_ (\(path, commit) -> case Map.lookup path additions of
+      Just added | added /= commit -> Right ()
+      _ -> Left (GitProcessFailure
+        ("archive path was modified without an earlier addition: " <> Text.pack path)))
+    modifications
+  pure (additions, modifications)
   where
     decodeToken raw = case Text.decodeUtf8' raw of
       Left _ -> Left (GitProcessFailure "Git history output is not valid UTF-8")
@@ -442,12 +463,16 @@ parseImmutableChanges bytes = do
       parsed <- parseChanges commit changes
       (parsed <>) <$> parseCommits remaining
 
+    -- True marks an addition, False an in-place modification of a path the
+    -- caller allows to change.
     parseChanges _ [] = Right []
     parseChanges commit (status : path : rest)
       | status == "A" = do
           case validatePath (Text.unpack path) of
             Left problem -> Left problem
-            Right () -> ((Text.unpack path, commit) :) <$> parseChanges commit rest
+            Right () -> ((True, Text.unpack path, commit) :) <$> parseChanges commit rest
+      | status == "M" && Text.unpack path `elem` mutable =
+          ((False, Text.unpack path, commit) :) <$> parseChanges commit rest
       | otherwise = Left (GitProcessFailure
           ("immutable archive path has Git status " <> status <> ": " <> path))
     parseChanges _ _ = Left (GitProcessFailure "Git returned malformed path history")
@@ -459,6 +484,33 @@ parseImmutableChanges bytes = do
         ("immutable archive path was introduced more than once: " <> Text.pack path))
 
     validCommitText value = validCommit (Text.unpack value)
+
+-- | Read one file as a commit of the pinned history holds it. The commit is
+-- named by its full identifier and must be the pinned commit or one of its
+-- ancestors. The bytes are not cached.
+readPathAt :: GitSnapshot -> Text -> FilePath -> IO (Either GitSnapshotError LazyByteString.ByteString)
+readPathAt snapshot commit path = case validatePath path of
+  Left issue -> pure (Left issue)
+  Right ()
+    | not (validCommit (Text.unpack commit)) -> pure (Left (GitInvalidCommit "commit identifier is malformed"))
+    | otherwise -> do
+        ancestry <- runGitBytes snapshot
+          ["merge-base", "--is-ancestor", Text.unpack commit, Text.unpack (snapshotCommit snapshot)]
+        case ancestry of
+          Left (GitProcessFailure detail)
+            | "git exited 1:" `Text.isPrefixOf` detail -> pure (Left (GitInvalidCommit
+                "commit is not in the pinned history"))
+          Left issue -> pure (Left issue)
+          Right _ -> do
+            listing <- runGitBytes snapshot ["ls-tree", "-z", Text.unpack commit, "--", path]
+            case listing >>= strictText of
+              Left issue -> pure (Left issue)
+              Right output -> case Text.splitOn "\t" (Text.dropWhileEnd (== '\0') output) of
+                [metadata, listed] | Text.unpack listed == path -> case Text.words metadata of
+                  [_, "blob", object] | validCommit (Text.unpack object) ->
+                    runGitBytes snapshot ["cat-file", "blob", Text.unpack object]
+                  _ -> pure (Left (GitMissingPath path))
+                _ -> pure (Left (GitMissingPath path))
 
 parseLinearHistory :: Text -> Text -> Either GitSnapshotError [Text]
 parseLinearHistory pinned output = do

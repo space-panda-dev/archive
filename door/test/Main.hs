@@ -32,7 +32,8 @@ import Archive.Door.AdmissionDryRun
   )
 import Archive.Door.TransitionCommit (commitTransition)
 import Archive.Door.TransitionDryRun
-  ( TransitionPlanningError (..)
+  ( TransitionPlan (..)
+  , TransitionPlanningError (..)
   , dryRunTransition
   , dryRunTransitionForCommit
   , transitionDispatchTable
@@ -42,9 +43,11 @@ import Archive.Door.Identity (parseIdentityName, parseIdentityNamespace, uuidV5)
 import Archive.Door.Contracts (validateCoreContextForSpecification, validateContractInstance)
 import Archive.Door.Json (decodeUnique)
 import qualified Data.Map.Strict as CheckpointMap
-import Archive.Door.Layout (contentRelativePath, parseSha256Digest, recordRelativePath)
+import Archive.Door.Layout (contentRelativePath, parseSha256Digest, recordRelativePath, specificationLayout)
 import Archive.Door.AdmissionCommit (commitAdmission)
-import Archive.Door.RecordCommit (commitRecordBatch, prunePackedGitObjects, validateRecordPath, withArchiveWriteLock)
+import Archive.Door.RecordCommit (commitRecordBatch, prunePackedGitObjects, validateArchiveFilePath, validateRecordPath, withArchiveWriteLock)
+import Archive.Door.SpecificationUpgrade (SpecificationRelease (..), additiveUpgrade, compareSpecifications)
+import qualified Data.Set as Set
 import Archive.Door.VerifiedCheckpoint (VerifiedCheckpoint (..), checkpointCompactAfter, readCheckpoint)
 import Archive.Door.Proposal (readAdmissionProposal, readTransitionProposal)
 import Archive.Process
@@ -402,6 +405,11 @@ main = do
   derivationContractProfileChecks
   withProposalTemporaryRoot specificationUpgradeRefusalChecks
   withProposalTemporaryRoot earlierSpecificationChecks
+  specificationUpgradeRuleChecks
+  withProposalTemporaryRoot specificationUpgradeChecks
+  withProposalTemporaryRoot forgedUpgradeChecks
+  withProposalTemporaryRoot specificationUpgradeServiceChecks
+  withProposalTemporaryRoot specificationUpgradeRecoveryChecks
   transitionDispatchCatalogChecks
   contractCatalogChecks
   refusalCodeSchemaChecks
@@ -891,6 +899,9 @@ commitGitHistory :: FilePath -> String -> IO ()
 commitGitHistory root message = shellChecked
   ("git -C " <> quote root <> " add -A"
     <> " && git -C " <> quote root <> " commit -q -m " <> quote message)
+
+isRight :: Either a b -> Bool
+isRight = not . isLeft
 
 isLeft :: Either a b -> Bool
 isLeft result = case result of
@@ -6126,9 +6137,10 @@ derivationContractAdmissionChecks parent = do
     "archive.claim/capture_alignment" "derivation-alignment-v1" (alignment alignmentV1 [pinned "run" stream])
   pure ()
 
--- | An installed upgrade contract that no handler dispatches fails loudly in
--- both commands: `door transition` names it unsupported, and `door admit`
--- refuses it as it refuses every transition contract.
+-- | On an archive already at this Door's release there is nothing later to
+-- adopt: `door transition` refuses an upgrade to a version it has no
+-- catalog for, and `door admit` refuses the contract as it refuses every
+-- transition contract.
 specificationUpgradeRefusalChecks :: FilePath -> IO ()
 specificationUpgradeRefusalChecks parent = do
   (root, archiveId, initOutput) <- newProposalArchive parent "specification-upgrade"
@@ -6141,33 +6153,524 @@ specificationUpgradeRefusalChecks parent = do
   upgradeId <- allocatedObjectId archiveId namespace "upgrade-0-0-8"
   headBefore <- gitHead root
   (code, out, err) <- transitionAt root "upgrade-0-0-8" [(upgradeId, namespace, "upgrade-0-0-8")]
-    [(upgradeId, Nothing)] (upgrade upgradeId)
+    [(upgradeId, Nothing), (operatorId, Just operatorRevision)] (upgrade upgradeId)
   headAfter <- gitHead root
-  assert "door transition refuses a specification upgrade it has no handler for"
+  assert "door transition refuses an upgrade to a version it has no catalog for"
     (code /= ExitSuccess && null out && headBefore == headAfter
-      && contains "unsupported transition contract: archive.transition/specification_upgrade version 1" err)
+      && contains "unsupported: unknown specification version archive/0.0.8" err)
     code out err
   _ <- refuseNew root archiveId "door admit refuses a specification upgrade"
     namespace "upgrade-admitted" upgrade
     "unsupported: transition contracts cannot be admitted generically"
-  -- A citation of the same identifier and version under a digest this archive
-  -- does not install must not be reported as installed.
+  pure ()
+
+-- | A 0.0.6 archive adopts 0.0.7 by one `door transition` (ADR 0068, D-15):
+-- every refusal writes nothing, the upgrade is one commit that installs the
+-- release and records the new version, a retry changes nothing, Door's
+-- checkpoint describes the new commit, and the archive then admits a
+-- derivation run, which only 0.0.7 installs.
+specificationUpgradeChecks :: FilePath -> IO ()
+specificationUpgradeChecks parent = do
+  (root, archiveId, initOutput) <- newEarlierArchive parent "specification-upgrade-0-0-6"
+  operatorId <- requiredField "operator_id" initOutput
+  initialOperatorRevision <- recordRevisionForObject root operatorId
+  previousCatalog <- either (const []) toList <$> loadContractCatalog "archive/0.0.6"
+  targetCatalog <- either (const []) toList <$> loadContractCatalog "archive/0.0.7"
+  let added = [entry | entry <- targetCatalog, entry `notElem` previousCatalog]
+      cited identifier = case [(Text.unpack i, Text.unpack v, Text.unpack d) | (i, v, d) <- targetCatalog, i == identifier] of
+        [entry] -> pure entry
+        found -> assert ("the 0.0.7 catalog lists " <> Text.unpack identifier <> " once") False ExitSuccess (show found) ""
+          >> pure ("", "", "")
+  upgradeContract <- cited "archive.transition/specification_upgrade"
+  runContract <- cited "archive.claim/derivation_run"
+  let namespace = "archive.transition/specification_upgrade"
+      atSpec specification draft = replace "\"spec\":\"archive/0.0.7\"" ("\"spec\":" <> jsonString specification) draft
+      payload from to = "{\"from\":" <> jsonString from <> ",\"to\":" <> jsonString to <> "}"
+      upgradeDraft contract from to authorizer =
+        contractRecord "claim" contract (payload from to) [pinned "authorizer" authorizer]
+      writeUpgrade name draftFor authorizer expectedAuthorizer = do
+        objectId <- allocatedObjectId archiveId namespace name
+        let draft = draftFor objectId
+        proposal <- writeTransitionProposal root name
+          (transitionManifestFor ["records/transition.json"] [(objectId, namespace, name)]
+            [(objectId, Nothing), (fst authorizer, Just expectedAuthorizer)])
+          ["records/transition.json", draft]
+        pure (draft, proposal)
+      unchangedAfter label action expected = do
+        headBefore <- gitHead root
+        manifestBefore <- ByteString.readFile (root </> "archive.json")
+        (code, out, err) <- action
+        headAfter <- gitHead root
+        manifestAfter <- ByteString.readFile (root </> "archive.json")
+        assert label
+          (code /= ExitSuccess && null out && headBefore == headAfter
+            && manifestBefore == manifestAfter && contains expected err)
+          code out err
+      refused label name draftFor authorizer expectedAuthorizer expected = do
+        (_, proposal) <- writeUpgrade name draftFor authorizer expectedAuthorizer
+        unchangedAfter label (doorCommandAt root ["transition", "--proposal", proposal] "") expected
+      withDataDirectory directory proposal = do
+        environment <- getEnvironment
+        readCreateProcessWithExitCode ((proc "door" ["transition", "--proposal", proposal])
+          { cwd = Just root
+          , env = Just (("archive_datadir", directory) : filter ((/= "archive_datadir") . fst) environment)
+          }) ""
+
+  guest <- admitNew root archiveId "the 0.0.6 archive admits a person who is not the operator"
+    "archive.core/entity" "upgrade-guest" (atSpec "archive/0.0.6" . entityRecord "person" "Guest")
+
+  -- The operator's appointed person gains a revision; an upgrade must pin it.
+  let revisedOperator = atSpec "archive/0.0.6" (replace "\"supersedes\":[]"
+        ("\"supersedes\":[" <> pinned "supersedes" (operatorId, initialOperatorRevision) <> "]")
+        (entityRecord "person" "Operator" operatorId))
+  operatorRevision <- canonicalRevisionOf revisedOperator
+  revisedProposal <- writeAdmissionProposal root "upgrade-operator-revision"
+    (manifestFor ["records/operator.json"] [] [(operatorId, Just initialOperatorRevision)] [])
+    ["records/operator.json", revisedOperator]
+  (reviseCode, reviseOut, reviseErr) <- doorCommandAt root ["admit", "--proposal", revisedProposal] ""
+  assert "the upgrade fixture revises the operator's person"
+    (reviseCode == ExitSuccess && contains operatorRevision reviseOut) reviseCode reviseOut reviseErr
+  assert "the operator's revisions differ, so a stale pin is detectable (anchor)"
+    (operatorRevision /= initialOperatorRevision) ExitSuccess operatorRevision initialOperatorRevision
+  let operator = (operatorId, operatorRevision)
+      staleOperator = (operatorId, initialOperatorRevision)
+      upgrade = upgradeDraft upgradeContract "archive/0.0.6" "archive/0.0.7"
+
+  -- Refusals, one per rule; each leaves HEAD and the manifest unchanged.
+  refused "an upgrade authorized by a person who is not the operator is refused"
+    "upgrade-guest" (upgrade guest) guest (snd guest)
+    "transition authorizer is not the active operator"
+  refused "an upgrade whose expected head for the authorizer is stale is refused"
+    "upgrade-stale-head" (upgrade staleOperator) staleOperator initialOperatorRevision
+    "expected head is stale"
+  refused "an upgrade pinning a superseded revision of the operator is refused"
+    "upgrade-stale-pin" (upgrade staleOperator) staleOperator operatorRevision
+    "transition reference must pin the current object head"
+  refused "a downgrade is refused"
+    "upgrade-downgrade" (atSpec "archive/0.0.5" . upgradeDraft upgradeContract "archive/0.0.6" "archive/0.0.5" operator)
+    operator operatorRevision "unsupported: no downgrade exists: archive/0.0.5 is earlier than archive/0.0.6"
+  refused "an upgrade to the archive's own version is refused"
+    "upgrade-same" (atSpec "archive/0.0.6" . upgradeDraft upgradeContract "archive/0.0.6" "archive/0.0.6" operator)
+    operator operatorRevision "unsupported: a specification upgrade must name a version later than archive/0.0.6"
+  refused "an upgrade to a version this Door has no catalog for is refused"
+    "upgrade-unknown" (atSpec "archive/0.0.9" . upgradeDraft upgradeContract "archive/0.0.6" "archive/0.0.9" operator)
+    operator operatorRevision "unsupported: unknown specification version archive/0.0.9"
+  refused "an upgrade that does not start at the archive's specification is refused"
+    "upgrade-wrong-from" (upgradeDraft upgradeContract "archive/0.0.5" "archive/0.0.7" operator)
+    operator operatorRevision "specification upgrade from archive/0.0.5 does not start at the archive's specification archive/0.0.6"
+  refused "an upgrade record written under the old specification is refused"
+    "upgrade-old-spec" (atSpec "archive/0.0.6" . upgrade operator)
+    operator operatorRevision "must be written under its target specification archive/0.0.7"
   let (upgradeIdentifier, upgradeVersion, upgradeDigest) = upgradeContract
       foreignDigest = "sha256:" <> replicate 64 'e'
-      foreignUpgrade = contractRecord "claim" (upgradeIdentifier, upgradeVersion, foreignDigest)
-        "{\"from\":\"archive/0.0.7\",\"to\":\"archive/0.0.8\"}" [pinned "authorizer" (operatorId, operatorRevision)]
-  assert "the foreign citation differs from the installed one only in its digest"
+  assert "the foreign citation differs from the catalog's only in its digest (anchor)"
     (foreignDigest /= upgradeDigest) ExitSuccess foreignDigest upgradeDigest
-  foreignId <- allocatedObjectId archiveId namespace "upgrade-foreign"
-  (foreignCode, foreignOut, foreignErr) <- transitionAt root "upgrade-foreign"
-    [(foreignId, namespace, "upgrade-foreign")] [(foreignId, Nothing)] (foreignUpgrade foreignId)
-  headForeign <- gitHead root
-  assert "door transition refuses an uninstalled upgrade citation as not installed"
-    (foreignCode /= ExitSuccess && null foreignOut && headForeign == headBefore
-      && contains "proposed contract is not installed at this snapshot" foreignErr
-      && not (contains "is installed but" foreignErr))
-    foreignCode foreignOut foreignErr
+  refused "an upgrade citing a bundle outside the target catalog is refused as not installed"
+    "upgrade-foreign" (upgradeDraft (upgradeIdentifier, upgradeVersion, foreignDigest) "archive/0.0.6" "archive/0.0.7" operator)
+    operator operatorRevision "proposed contract is not installed at this snapshot or in the catalog of archive/0.0.7"
+  twoRecordsId <- allocatedObjectId archiveId namespace "upgrade-two-a"
+  otherRecordId <- allocatedObjectId archiveId namespace "upgrade-two-b"
+  twoRecords <- writeTransitionProposal root "upgrade-two-records"
+    (transitionManifestFor ["records/a.json", "records/b.json"]
+      [(twoRecordsId, namespace, "upgrade-two-a"), (otherRecordId, namespace, "upgrade-two-b")]
+      [(twoRecordsId, Nothing), (otherRecordId, Nothing), (operatorId, Just operatorRevision)])
+    ["records/a.json", upgrade operator twoRecordsId, "records/b.json", upgrade operator otherRecordId]
+  unchangedAfter "an upgrade proposal with two records is refused"
+    (doorCommandAt root ["transition", "--proposal", twoRecords] "")
+    "a specification upgrade proposal must contain exactly one record"
+
+  -- Non-additive releases, from a copy of Door's specification files.
+  let dataDirectory = parent </> "upgrade-datadir"
+      dataCatalog = dataDirectory </> "spec" </> "0.0.7" </> "contracts.json"
+      dataContext = dataDirectory </> "spec" </> "0.0.7" </> "context.jsonld"
+  shellChecked ("mkdir -p " <> quote dataDirectory <> " && cp -R spec " <> quote (dataDirectory </> "spec"))
+  (_, additiveProposal) <- writeUpgrade "upgrade-datadir" (upgrade operator) operator operatorRevision
+  catalogBytes <- ByteString.readFile dataCatalog
+  case decodeUnique (LazyByteString.fromStrict catalogBytes) of
+    Right (Aeson.Object fields) | Just (Aeson.Array entries) <- KeyMap.lookup "contracts" fields -> do
+      let retireV1 entry = case entry of
+            Aeson.Object item -> KeyMap.lookup "id" item == Just (Aeson.String "archive.transition/retire")
+              && KeyMap.lookup "version" item == Just (Aeson.String "1")
+            _ -> False
+          kept = filter (not . retireV1) (toList entries)
+      assert "the reduced catalog drops exactly one bundle the 0.0.6 catalog lists (anchor)"
+        (length kept + 1 == length entries
+          && any (\(i, v, _) -> i == "archive.transition/retire" && v == "1") previousCatalog)
+        ExitSuccess (show (length kept)) ""
+      removeFile dataCatalog
+      LazyByteString.writeFile dataCatalog (encodeCanonical (Aeson.Object
+        (KeyMap.insert "contracts" (Aeson.toJSON kept) fields)))
+    _ -> assert "the 0.0.7 catalog decodes" False ExitSuccess "" ""
+  unchangedAfter "an upgrade to a release whose catalog drops a bundle is refused"
+    (withDataDirectory dataDirectory additiveProposal)
+    "unsupported: archive/0.0.7 is not additive: its catalog lacks archive.transition/retire version 1"
+  removeFile dataCatalog
+  ByteString.writeFile dataCatalog catalogBytes
+  contextBytes <- readFile dataContext
+  let changedContext = replace "\"by\": \"as:generator\"" "\"by\": \"as:actor\"" contextBytes
+  assert "the changed context differs from the release's in one mapping (anchor)"
+    (length contextBytes == length changedContext + 4 && changedContext /= contextBytes)
+    ExitSuccess "" ""
+  length contextBytes `seq` removeFile dataContext
+  writeFile dataContext changedContext
+  unchangedAfter "an upgrade to a release whose core context changes a mapping is refused"
+    (withDataDirectory dataDirectory additiveProposal)
+    "unsupported: archive/0.0.7 is not additive: its core context drops or changes by"
+
+  -- The dry run predicts the revision and writes nothing.
+  (upgradeRecord, proposal) <- writeUpgrade "upgrade-0-0-7" (upgrade operator) operator operatorRevision
+  upgradeRevision <- canonicalRevisionOf upgradeRecord
+  headBefore <- gitHead root
+  manifestBefore <- ByteString.readFile (root </> "archive.json")
+  (dryCode, dryOut, dryErr) <- doorCommandAt root ["transition", "--proposal", proposal, "--dry-run"] ""
+  headAfterDry <- gitHead root
+  manifestAfterDry <- ByteString.readFile (root </> "archive.json")
+  assert "the upgrade dry run predicts the revision and writes nothing"
+    (dryCode == ExitSuccess && contains "\"status\":\"predicted\"" dryOut && contains upgradeRevision dryOut
+      && contains "\"retry\":false" dryOut && headAfterDry == headBefore && manifestAfterDry == manifestBefore)
+    dryCode dryOut dryErr
+
+  -- The upgrade: one commit, the record, the release, and the new version.
+  -- It commits in this process, so the checkpoint it writes belongs to this
+  -- build and can be read back (ADR 0052); the service check below commits
+  -- one through `door` itself.
+  parsedProposal <- readTransitionProposal proposal >>= either (ioError . userError . Text.unpack) pure
+  committed <- commitTransition root parsedProposal
+  headAfter <- gitHead root
+  assert "door transition commits the specification upgrade"
+    (either (const False) (\plan -> plannedTransitionRevisions plan == [Text.pack upgradeRevision]
+        && not (transitionRetry plan)) committed
+      && headAfter /= headBefore)
+    ExitSuccess (show (either Just (const Nothing) committed)) ""
+  parentOfUpgrade <- checkedOutput "the upgrade fixture reads the upgrade's parent"
+    ["-C", root, "rev-parse", "HEAD~1"]
+  changes <- checkedOutput "the upgrade fixture lists the upgrade's changes"
+    ["-C", root, "show", "--no-renames", "--name-status", "--format=", "HEAD"]
+  let expectedChanges = sort
+        ([ "M\tarchive.json"
+         , "A\tspec/0.0.7/VERSION"
+         , "A\tspec/0.0.7/archive-spec.md"
+         , "A\tspec/0.0.7/context.jsonld"
+         , "A\t" <> recordRelative upgradeRevision ]
+        <> [ "A\tcontracts/sha256-" <> drop 7 (Text.unpack digest) <> ".json" | (_, _, digest) <- added ])
+  assert "the upgrade is one commit holding its record, the release's documents and added bundles, and the new manifest"
+    (trim parentOfUpgrade == headBefore && sort (lines changes) == expectedChanges && length added > 1)
+    ExitSuccess changes (unlines expectedChanges)
+  committedManifest <- checkedOutput "the upgrade fixture reads the committed manifest"
+    ["-C", root, "show", "HEAD:archive.json"]
+  worktreeManifest <- readFile (root </> "archive.json")
+  assert "the archive records the new version where it records its version, committed and in the worktree"
+    (contains "\"spec\":\"archive/0.0.7\"" committedManifest && worktreeManifest == committedManifest
+      && contains "\"spec\":\"archive/0.0.6\"" (LazyByteString.unpack (LazyByteString.fromStrict manifestBefore)))
+    ExitSuccess committedManifest worktreeManifest
+  installedMatch <- mapM (\(_, _, digest) -> do
+      let name = "sha256-" <> drop 7 (Text.unpack digest) <> ".json"
+      installed <- ByteString.readFile (root </> "contracts" </> name)
+      released <- ByteString.readFile ("spec/contracts" </> name)
+      pure (installed == released)) added
+  documentMatch <- mapM (\(installed, released) -> (==) <$> ByteString.readFile (root </> installed) <*> ByteString.readFile released)
+    [ ("spec/0.0.7/VERSION", "spec/VERSION"), ("spec/0.0.7/archive-spec.md", "spec/archive-spec.md")
+    , ("spec/0.0.7/context.jsonld", "spec/0.0.7/context.jsonld") ]
+  status <- checkedOutput "the upgrade fixture reads the worktree status"
+    ["-C", root, "status", "--porcelain", "--untracked-files=no"]
+  assert "the installed bundles and documents are the release's bytes, and the worktree matches the commit"
+    (and installedMatch && and documentMatch && null status) ExitSuccess status ""
+  (statusCode, statusOut, statusErr) <- readCreateProcessWithExitCode
+    ((proc "archive" ["status"]) {cwd = Just root}) ""
+  assert "archive status reads the upgraded archive at 0.0.7"
+    (statusCode == ExitSuccess && contains "\"spec\":\"archive/0.0.7\"" statusOut) statusCode statusOut statusErr
+
+  -- A complete retry changes nothing.
+  (retryCode, retryOut, retryErr) <- doorCommandAt root ["transition", "--proposal", proposal] ""
+  headAfterRetry <- gitHead root
+  assert "an identical upgrade retry returns the same revision and writes nothing"
+    (retryCode == ExitSuccess && contains upgradeRevision retryOut && contains "\"retry\":true" retryOut
+      && headAfterRetry == headAfter)
+    retryCode retryOut retryErr
+
+  -- Door's checkpoint describes the upgrade commit (ADR 0052): planning on
+  -- it needs neither the history walk nor a whole-store check.
+  checkpoint <- readCheckpoint root
+  let checkpointAdds path = maybe False ((== Just (Text.pack headAfter)) . CheckpointMap.lookup path . checkpointAdditions) checkpoint
+  assert "the checkpoint names the upgrade commit and the paths it added"
+    (fmap checkpointCommit checkpoint == Just (Text.pack headAfter)
+      && checkpointAdds "spec/0.0.7/context.jsonld"
+      && all (\(_, _, digest) -> checkpointAdds ("contracts/sha256-" <> drop 7 (Text.unpack digest) <> ".json")) added
+      && not (checkpointAdds "archive.json"))
+    ExitSuccess (show (fmap checkpointCommit checkpoint)) headAfter
+  realGit <- findExecutable "git" >>= maybe (ioError (userError "upgrade fixture cannot find git")) pure
+  let bombDirectory = parent </> "upgrade-git"
+      bomb = bombDirectory </> "git"
+      withBomb action = do
+        setEnv "ARCHIVE_GIT_EXECUTABLE" bomb
+        result <- action
+        setEnv "ARCHIVE_GIT_EXECUTABLE" realGit
+        pure result
+      runProposal name = do
+        objectId <- allocatedObjectId archiveId "archive.derivation/run" name
+        let draft = contractRecord "claim" runContract runPayload [] objectId
+        path <- writeAdmissionProposal root name (manifestFor ["records/run.json"]
+          [(objectId, "archive.derivation/run", name)] [(objectId, Nothing)] []) ["records/run.json", draft]
+        parsed <- readAdmissionProposal path >>= either (ioError . userError . Text.unpack) pure
+        revision <- canonicalRevisionOf draft
+        pure (path, parsed, revision)
+  createDirectoryIfMissing True bombDirectory
+  writeFile bomb ("#!/bin/sh\nfor argument in \"$@\"; do case \"$argument\" in log|fsck) exit 97;; esac; done\nexec "
+    <> quote realGit <> " \"$@\"\n")
+  setFileMode bomb 0o755
+  (_, firstRun, _) <- runProposal (runName 1)
+  forgetSnapshots
+  fromCheckpoint <- withBomb (dryRunAdmissionForCommit root firstRun)
+  assert "a derivation run plans on the upgraded archive from the checkpoint alone"
+    (either (const False) (const True) fromCheckpoint) ExitSuccess (show (either Just (const Nothing) fromCheckpoint)) ""
+  removeFile (root </> ".git" </> "archive-door-verified.json")
+  forgetSnapshots
+  withoutCheckpoint <- withBomb (dryRunAdmissionForCommit root firstRun)
+  assert "without the checkpoint the same plan needs the full read (anchor)"
+    (either (const True) (const False) withoutCheckpoint) ExitSuccess "" ""
+
+  -- The full verification of the upgraded history, then the checkpointed
+  -- path, each admits a derivation run.
+  (firstPath, _, firstRevision) <- runProposal (runName 2)
+  (admitCode, admitOut, admitErr) <- doorCommandAt root ["admit", "--proposal", firstPath] ""
+  assert "the upgraded archive, verified in full, admits a derivation run"
+    (admitCode == ExitSuccess && contains firstRevision admitOut) admitCode admitOut admitErr
+  (secondPath, _, secondRevision) <- runProposal (runName 3)
+  (secondCode, secondOut, secondErr) <- doorCommandAt root ["admit", "--proposal", secondPath] ""
+  assert "the upgraded archive, from its checkpoint, admits another derivation run"
+    (secondCode == ExitSuccess && contains secondRevision secondOut) secondCode secondOut secondErr
+  _ <- admitNew root archiveId "the upgraded archive still admits a record under 0.0.6"
+    "archive.core/entity" "upgrade-after-0-0-6" (atSpec "archive/0.0.6" . entityRecord "person" "Earlier")
+
+  -- No downgrade, and no second upgrade from the old version.
+  refused "a downgrade of the upgraded archive is refused"
+    "downgrade-0-0-6" (atSpec "archive/0.0.6" . upgradeDraft upgradeContract "archive/0.0.7" "archive/0.0.6" operator)
+    operator operatorRevision "unsupported: no downgrade exists: archive/0.0.6 is earlier than archive/0.0.7"
+  _ <- refuseNew root archiveId "door admit refuses a specification upgrade on the upgraded archive"
+    namespace "upgrade-admitted" (upgrade operator)
+    "unsupported: transition contracts cannot be admitted generically"
+  refused "a second upgrade from the old version is refused"
+    "upgrade-again" (upgrade operator) operator operatorRevision
+    "specification upgrade from archive/0.0.6 does not start at the archive's specification archive/0.0.7"
   pure ()
+
+-- | A manifest changed outside a specification upgrade is not an archive
+-- Door reads: the full verification refuses the history.
+forgedUpgradeChecks :: FilePath -> IO ()
+forgedUpgradeChecks parent = do
+  (root, archiveId, _) <- newEarlierArchive parent "forged-upgrade"
+  previousCatalog <- either (const []) toList <$> loadContractCatalog "archive/0.0.6"
+  targetCatalog <- either (const []) toList <$> loadContractCatalog "archive/0.0.7"
+  objectId <- allocatedObjectId archiveId "archive.core/entity" "forged-upgrade-person"
+  proposal <- writeAdmissionProposal root "forged-upgrade" (manifestFor
+    ["records/entity.json"] [(objectId, "archive.core/entity", "forged-upgrade-person")]
+    [(objectId, Nothing)] []) ["records/entity.json", entityDraft objectId]
+  (beforeCode, beforeOut, beforeErr) <- doorCommandAt root ["admit", "--proposal", proposal, "--dry-run"] ""
+  assert "before the forgery the 0.0.6 archive refuses a 0.0.7 record for lack of its context (anchor)"
+    (beforeCode /= ExitSuccess && contains "selects a core context this archive does not hold" beforeErr)
+    beforeCode beforeOut beforeErr
+  manifest <- readFile (root </> "archive.json")
+  let upgraded = replace "\"spec\":\"archive/0.0.6\"" "\"spec\":\"archive/0.0.7\"" manifest
+  length manifest `seq` removeFile (root </> "archive.json")
+  writeFile (root </> "archive.json") upgraded
+  createDirectoryIfMissing True (root </> "spec" </> "0.0.7")
+  mapM_ (\(from, to) -> ByteString.readFile from >>= ByteString.writeFile (root </> to))
+    [ ("spec/VERSION", "spec/0.0.7/VERSION"), ("spec/archive-spec.md", "spec/0.0.7/archive-spec.md")
+    , ("spec/0.0.7/context.jsonld", "spec/0.0.7/context.jsonld") ]
+  mapM_ (\(_, _, digest) -> do
+      let name = "sha256-" <> drop 7 (Text.unpack digest) <> ".json"
+      ByteString.readFile ("spec/contracts" </> name) >>= ByteString.writeFile (root </> "contracts" </> name))
+    [entry | entry <- targetCatalog, entry `notElem` previousCatalog]
+  shellChecked ("git -C " <> quote root <> " add archive.json spec contracts"
+    <> " && git -C " <> quote root <> " -c user.name=archive-test -c user.email=archive-test@example.invalid"
+    <> " commit -q -m forged")
+  (code, out, err) <- doorCommandAt root ["admit", "--proposal", proposal, "--dry-run"] ""
+  assert "a manifest changed without an upgrade record is refused as incomplete evidence"
+    (code /= ExitSuccess && null out && contains "a specification upgrade commit must introduce exactly one record" err)
+    code out err
+
+-- | The service commits an upgrade like any transition, and then plans
+-- against the new release without a restart (ADR 0054).
+specificationUpgradeServiceChecks :: FilePath -> IO ()
+specificationUpgradeServiceChecks parent = do
+  (root, archiveId, initOutput) <- newEarlierArchive parent "upgrade-service"
+  operatorId <- requiredField "operator_id" initOutput
+  operatorRevision <- recordRevisionForObject root operatorId
+  targetCatalog <- either (const []) toList <$> loadContractCatalog "archive/0.0.7"
+  let cited identifier = case [(Text.unpack i, Text.unpack v, Text.unpack d) | (i, v, d) <- targetCatalog, i == identifier] of
+        entry : _ -> entry
+        [] -> ("", "", "")
+      namespace = "archive.transition/specification_upgrade"
+      socketDirectory = parent </> "upgrade-service-socket"
+      socketPath = socketDirectory </> "door.sock"
+      request command proposal = do
+        connection <- Socket.socket Socket.AF_UNIX Socket.Stream Socket.defaultProtocol
+        Socket.connect connection (Socket.SockAddrUnix socketPath)
+        SocketBytes.sendAll connection (LazyByteString.toStrict (Aeson.encode (Aeson.object
+          ["command" .= (command :: Text.Text), "proposal" .= proposal])) <> "\n")
+        answer <- receiveAll connection ByteString.empty
+        Socket.close connection
+        pure (LazyByteString.unpack (LazyByteString.fromStrict answer))
+      receiveAll connection collected = do
+        chunk <- SocketBytes.recv connection 65536
+        if ByteString.null chunk then pure collected else receiveAll connection (collected <> chunk)
+      waitForSocket tries = do
+        present <- doesPathExist socketPath
+        if present || tries <= (0 :: Int) then pure present
+          else threadDelay 50000 >> waitForSocket (tries - 1)
+  upgradeId <- allocatedObjectId archiveId namespace "service-upgrade"
+  let upgradeRecord = contractRecord "claim" (cited "archive.transition/specification_upgrade")
+        "{\"from\":\"archive/0.0.6\",\"to\":\"archive/0.0.7\"}" [pinned "authorizer" (operatorId, operatorRevision)] upgradeId
+  upgradeRevision <- canonicalRevisionOf upgradeRecord
+  upgradeProposal <- writeTransitionProposal root "service-upgrade"
+    (transitionManifestFor ["records/transition.json"] [(upgradeId, namespace, "service-upgrade")]
+      [(upgradeId, Nothing), (operatorId, Just operatorRevision)])
+    ["records/transition.json", upgradeRecord]
+  runId <- allocatedObjectId archiveId "archive.derivation/run" (runName 7)
+  let runRecord = contractRecord "claim" (cited "archive.claim/derivation_run") runPayload [] runId
+  runRevision <- canonicalRevisionOf runRecord
+  runProposal <- writeAdmissionProposal root "service-run" (manifestFor ["records/run.json"]
+    [(runId, "archive.derivation/run", runName 7)] [(runId, Nothing)] []) ["records/run.json", runRecord]
+  createDirectoryIfMissing True socketDirectory
+  setFileMode socketDirectory 0o700
+  withCreateProcess (proc "door" ["serve", "--socket", socketPath])
+    { cwd = Just root, std_out = NoStream, std_err = CreatePipe } $ \_ _ _ _ -> do
+    started <- waitForSocket 100
+    beforeRun <- request "admit-dry-run" runProposal
+    assert "the service refuses a derivation run before the upgrade (anchor)"
+      (started && contains "\"ok\":false" beforeRun) ExitSuccess beforeRun ""
+    upgraded <- request "transition" upgradeProposal
+    assert "the service commits the specification upgrade"
+      (contains "\"ok\":true" upgraded && contains upgradeRevision upgraded) ExitSuccess upgraded ""
+    admitted <- request "admit" runProposal
+    assert "the service admits a derivation run after the upgrade without a restart"
+      (contains "\"ok\":true" admitted && contains runRevision admitted) ExitSuccess admitted ""
+
+-- | A Door killed after its upgrade commit advanced the branch, and before
+-- it wrote the worktree, leaves its operation journal. The next Door
+-- recovers it: it verifies the committed manifest and release against the
+-- journal, writes their worktree copies from the commit, and answers the
+-- identical proposal as a retry.
+specificationUpgradeRecoveryChecks :: FilePath -> IO ()
+specificationUpgradeRecoveryChecks parent = do
+  (root, archiveId, initOutput) <- newEarlierArchive parent "upgrade-recovery"
+  operatorId <- requiredField "operator_id" initOutput
+  operatorRevision <- recordRevisionForObject root operatorId
+  targetCatalog <- either (const []) toList <$> loadContractCatalog "archive/0.0.7"
+  let upgradeContract = case [ (Text.unpack i, Text.unpack v, Text.unpack d)
+                             | (i, v, d) <- targetCatalog, i == "archive.transition/specification_upgrade" ] of
+        entry : _ -> entry
+        [] -> ("", "", "")
+      namespace = "archive.transition/specification_upgrade"
+      journal = root </> ".git" </> "archive-door-operation"
+  upgradeId <- allocatedObjectId archiveId namespace "recovered-upgrade"
+  let upgradeRecord = contractRecord "claim" upgradeContract
+        "{\"from\":\"archive/0.0.6\",\"to\":\"archive/0.0.7\"}" [pinned "authorizer" (operatorId, operatorRevision)] upgradeId
+  upgradeRevision <- canonicalRevisionOf upgradeRecord
+  proposal <- writeTransitionProposal root "recovered-upgrade"
+    (transitionManifestFor ["records/transition.json"] [(upgradeId, namespace, "recovered-upgrade")]
+      [(upgradeId, Nothing), (operatorId, Just operatorRevision)])
+    ["records/transition.json", upgradeRecord]
+  realGit <- findExecutable "git" >>= maybe
+    (ioError (userError "upgrade recovery fixture cannot find git")) pure
+  let fakeBin = parent </> "upgrade-recovery-fake-bin"
+      fakeGit = fakeBin </> "git"
+  createDirectoryIfMissing True fakeBin
+  writeFile fakeGit
+    ("#!/bin/sh\nupdate=0\nfor argument in \"$@\"; do\n"
+      <> "  if [ \"$argument\" = update-ref ]; then update=1; fi\n"
+      <> "done\n" <> quote realGit <> " \"$@\"\nstatus=$?\n"
+      <> "if [ \"$update\" = 1 ] && [ \"$status\" = 0 ]; then\n"
+      <> "  kill -KILL \"$PPID\"\n  sleep 1\n"
+      <> "fi\nexit \"$status\"\n")
+  setFileMode fakeGit 0o755
+  environment <- getEnvironment
+  headBefore <- gitHead root
+  _ <- readCreateProcessWithExitCode ((proc "door" ["transition", "--proposal", proposal])
+    { cwd = Just root
+    , env = Just (("ARCHIVE_GIT_EXECUTABLE", fakeGit) : filter ((/= "ARCHIVE_GIT_EXECUTABLE") . fst) environment)
+    }) ""
+  headAfterKill <- gitHead root
+  journalAfterKill <- doesPathExist journal
+  manifestAfterKill <- readFile (root </> "archive.json")
+  committedManifest <- checkedOutput "the recovery fixture reads the committed manifest"
+    ["-C", root, "show", "HEAD:archive.json"]
+  assert "a Door killed after the upgrade's ref update leaves the commit, its journal, and the old worktree manifest"
+    (headAfterKill /= headBefore && journalAfterKill
+      && contains "\"spec\":\"archive/0.0.6\"" manifestAfterKill
+      && contains "\"spec\":\"archive/0.0.7\"" committedManifest)
+    ExitSuccess manifestAfterKill committedManifest
+  length manifestAfterKill `seq` pure ()
+  (code, out, err) <- doorCommandAt root ["transition", "--proposal", proposal] ""
+  headAfter <- gitHead root
+  journalAfter <- doesPathExist journal
+  manifestAfter <- readFile (root </> "archive.json")
+  context <- ByteString.readFile (root </> "spec" </> "0.0.7" </> "context.jsonld")
+  released <- ByteString.readFile ("spec" </> "0.0.7" </> "context.jsonld")
+  assert "the next Door recovers the upgrade: the worktree follows the commit and the proposal answers as a retry"
+    (code == ExitSuccess && contains upgradeRevision out && contains "\"retry\":true" out
+      && headAfter == headAfterKill && not journalAfter
+      && manifestAfter == committedManifest && context == released)
+    code out err
+
+-- | The additive rule of ADR 0068, the layouts it compares, and the paths an
+-- upgrade may write, without an archive. The real 0.0.6 and 0.0.7 releases
+-- are the anchor; each refusal changes one thing about the target.
+specificationUpgradeRuleChecks :: IO ()
+specificationUpgradeRuleChecks = do
+  previousCatalog <- either (const Set.empty) id <$> loadContractCatalog "archive/0.0.6"
+  targetCatalog <- either (const Set.empty) id <$> loadContractCatalog "archive/0.0.7"
+  let contextOf path = do
+        bytes <- LazyByteString.readFile path
+        pure $ case decodeUnique bytes of
+          Right (Aeson.Object outer) | Just (Aeson.Object inner) <- KeyMap.lookup "@context" outer -> inner
+          _ -> KeyMap.empty
+  previousContext <- contextOf "spec/0.0.6/context.jsonld"
+  targetContext <- contextOf "spec/0.0.7/context.jsonld"
+  let previous = SpecificationRelease "archive/0.0.6" previousCatalog "archive/2" previousContext
+      target = SpecificationRelease "archive/0.0.7" targetCatalog "archive/2" targetContext
+      refusedWith label expected candidate = assert label
+        (either (contains expected . Text.unpack) (const False) (additiveUpgrade previous candidate))
+        ExitSuccess (show (additiveUpgrade previous candidate)) expected
+      oneEntry = Set.findMin previousCatalog
+      (oneId, oneVersion, _) = oneEntry
+  assert "the real 0.0.6 to 0.0.7 upgrade is additive (anchor)"
+    (additiveUpgrade previous target == Right () && not (Set.null previousCatalog)
+      && previousCatalog `Set.isProperSubsetOf` targetCatalog && not (KeyMap.null previousContext))
+    ExitSuccess (show (additiveUpgrade previous target)) ""
+  refusedWith "a target catalog lacking a current bundle is not additive" "its catalog lacks"
+    target { releaseCatalog = Set.delete oneEntry targetCatalog }
+  refusedWith "a target catalog giving a current bundle other bytes is not additive" "its catalog lacks"
+    target { releaseCatalog = Set.insert (oneId, oneVersion, Text.pack (digestOf 'f')) (Set.delete oneEntry targetCatalog) }
+  refusedWith "a target catalog listing one version under two digests is not additive" "different bytes"
+    target { releaseCatalog = Set.insert (oneId, oneVersion, Text.pack (digestOf 'f')) targetCatalog }
+  refusedWith "a target with another layout is not additive" "its layout archive/1"
+    target { releaseLayout = "archive/1" }
+  refusedWith "a target core context that changes a mapping is not additive" "drops or changes label"
+    target { releaseContext = KeyMap.insert "label" (Aeson.String "dcterms:title") targetContext }
+  refusedWith "a target core context that drops a term is not additive" "drops or changes label"
+    target { releaseContext = KeyMap.delete "label" targetContext }
+  assert "a target core context may define more terms"
+    (additiveUpgrade previous target { releaseContext = KeyMap.insert "extra_term" (Aeson.String "arch:extra") targetContext } == Right ())
+    ExitSuccess "" ""
+  assert "each known release has its layout, and a later one is not guessed"
+    (map specificationLayout ["archive/0.0.5", "archive/0.0.6", "archive/0.0.7"] == [Right "archive/1", Right "archive/2", Right "archive/2"]
+      && isLeft (specificationLayout "archive/0.0.8"))
+    ExitSuccess "" ""
+  assert "specification versions order numerically, not as text"
+    (compareSpecifications "archive/0.0.10" "archive/0.0.9" == Right GT
+      && compareSpecifications "archive/0.0.6" "archive/0.0.7" == Right LT
+      && isLeft (compareSpecifications "archive/0.0" "archive/0.0.7"))
+    ExitSuccess "" ""
+  assert "an upgrade writes only the manifest, a release's three documents, and digest-named bundles"
+    (all (isRight . validateArchiveFilePath)
+        [ "archive.json", "spec/0.0.7/VERSION", "spec/0.0.7/archive-spec.md", "spec/0.0.7/context.jsonld"
+        , "contracts/sha256-" <> replicate 64 'a' <> ".json" ]
+      && all (isLeft . validateArchiveFilePath)
+        [ "records/00/00/sha256-" <> replicate 64 '0' <> ".json", "spec/0.0.7/notes.md", "spec/latest/VERSION"
+        , "contracts/sha256-" <> replicate 64 'A' <> ".json", "contracts/other.json", "../archive.json"
+        , "./archive.json", "content/sha256/aa/aa/" <> replicate 64 'a' ])
+    ExitSuccess "" ""
 
 -- | Pure checks of the 0.0.7 profile: each malformed rule is refused when its
 -- bundle loads, and the accepted bundles' rules are the anchors.
@@ -6255,7 +6758,45 @@ derivationContractProfileChecks = do
 -- catalog, and refuses a contract only 0.0.7 installs.
 earlierSpecificationChecks :: FilePath -> IO ()
 earlierSpecificationChecks parent = do
-  (root, archiveId, _) <- newProposalArchive parent "earlier-specification"
+  (root, archiveId, _) <- newEarlierArchive parent "earlier-specification"
+  let previousSpec = "archive/0.0.6"
+  previousCatalog <- either (const []) toList <$> loadContractCatalog (Text.pack previousSpec)
+  currentCatalog <- either (const []) toList <$> loadContractCatalog "archive/0.0.7"
+  let added = [entry | entry <- currentCatalog, entry `notElem` previousCatalog]
+  (statusCode, statusOut, statusErr) <- readCreateProcessWithExitCode
+    ((proc "archive" ["status"]) {cwd = Just root}) ""
+  assert "archive status reads the 0.0.6 archive"
+    (statusCode == ExitSuccess && contains ("\"spec\":" <> jsonString previousSpec) statusOut)
+    statusCode statusOut statusErr
+  let atPrevious draftFor objectId = replace "\"spec\":\"archive/0.0.7\"" ("\"spec\":" <> jsonString previousSpec) (draftFor objectId)
+  work <- admitNew root archiveId "door admit commits a musical_work into the 0.0.6 archive"
+    "archive.audio/song" "song-2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e" (atPrevious (entityRecord "musical_work" "Earlier Work"))
+  laterHead <- gitHead root
+  _ <- refuseNew root archiveId "the 0.0.6 archive refuses a record under specification 0.0.7"
+    "archive.core/entity" "later-specification-person" (entityRecord "person" "Later Person")
+    "record spec archive/0.0.7 selects a core context this archive does not hold"
+  laterHeadAfter <- gitHead root
+  assert "the refused later-specification record wrote nothing"
+    (laterHead == laterHeadAfter) ExitSuccess laterHead laterHeadAfter
+  correspondence <- contractCitation root "archive.claim/work_musicbrainz_correspondence"
+  _ <- admitNew root archiveId "door admit commits a 0.0.6 contract claim into the 0.0.6 archive"
+    "archive.claim/work_musicbrainz_correspondence" "earlier-correspondence"
+    (\objectId -> replace "\"spec\":\"archive/0.0.7\"" ("\"spec\":" <> jsonString previousSpec)
+      (musicBrainzClaim objectId (fst work) (snd work) correspondence))
+  case [entry | entry@(identifier, _, _) <- added, identifier == "archive.claim/derivation_run"] of
+    [(identifier, version, digest)] -> do
+      _ <- refuseNew root archiveId "the 0.0.6 archive refuses a contract only 0.0.7 installs"
+        "archive.derivation/run" (runName 1)
+        (atPrevious (contractRecord "claim" (Text.unpack identifier, Text.unpack version, Text.unpack digest) runPayload []))
+        "proposed contract is not installed at this snapshot: archive.claim/derivation_run"
+      pure ()
+    found -> assert "0.0.7 adds exactly one derivation_run bundle" False ExitSuccess (show found) ""
+
+-- | A fresh `archive init` rewritten into an archive governed by 0.0.6 (see
+-- 'earlierSpecificationChecks'): the oldest way this build has to make one.
+newEarlierArchive :: FilePath -> String -> IO (FilePath, String, String)
+newEarlierArchive parent suffix = do
+  (root, archiveId, initOutput) <- newProposalArchive parent suffix
   let previous = "0.0.6"
       previousSpec = "archive/" <> previous
   manifest <- ByteString.readFile (root </> "archive.json")
@@ -6295,34 +6836,7 @@ earlierSpecificationChecks parent = do
   shellChecked ("git -C " <> quote root <> " add archive.json spec records"
     <> " && git -C " <> quote root <> " -c user.name=archive-test -c user.email=archive-test@example.invalid"
     <> " commit -q --amend --no-edit")
-  (statusCode, statusOut, statusErr) <- readCreateProcessWithExitCode
-    ((proc "archive" ["status"]) {cwd = Just root}) ""
-  assert "archive status reads the 0.0.6 archive"
-    (statusCode == ExitSuccess && contains ("\"spec\":" <> jsonString previousSpec) statusOut)
-    statusCode statusOut statusErr
-  let atPrevious draftFor objectId = replace "\"spec\":\"archive/0.0.7\"" ("\"spec\":" <> jsonString previousSpec) (draftFor objectId)
-  work <- admitNew root archiveId "door admit commits a musical_work into the 0.0.6 archive"
-    "archive.audio/song" "song-2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e" (atPrevious (entityRecord "musical_work" "Earlier Work"))
-  laterHead <- gitHead root
-  _ <- refuseNew root archiveId "the 0.0.6 archive refuses a record under specification 0.0.7"
-    "archive.core/entity" "later-specification-person" (entityRecord "person" "Later Person")
-    "record spec archive/0.0.7 selects a core context this archive does not hold"
-  laterHeadAfter <- gitHead root
-  assert "the refused later-specification record wrote nothing"
-    (laterHead == laterHeadAfter) ExitSuccess laterHead laterHeadAfter
-  correspondence <- contractCitation root "archive.claim/work_musicbrainz_correspondence"
-  _ <- admitNew root archiveId "door admit commits a 0.0.6 contract claim into the 0.0.6 archive"
-    "archive.claim/work_musicbrainz_correspondence" "earlier-correspondence"
-    (\objectId -> replace "\"spec\":\"archive/0.0.7\"" ("\"spec\":" <> jsonString previousSpec)
-      (musicBrainzClaim objectId (fst work) (snd work) correspondence))
-  case [entry | entry@(identifier, _, _) <- added, identifier == "archive.claim/derivation_run"] of
-    [(identifier, version, digest)] -> do
-      _ <- refuseNew root archiveId "the 0.0.6 archive refuses a contract only 0.0.7 installs"
-        "archive.derivation/run" (runName 1)
-        (atPrevious (contractRecord "claim" (Text.unpack identifier, Text.unpack version, Text.unpack digest) runPayload []))
-        "proposed contract is not installed at this snapshot: archive.claim/derivation_run"
-      pure ()
-    found -> assert "0.0.7 adds exactly one derivation_run bundle" False ExitSuccess (show found) ""
+  pure (root, archiveId, initOutput)
   where
     rewriteFile path bytes = do
       removeFile path

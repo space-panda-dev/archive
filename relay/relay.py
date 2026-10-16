@@ -195,8 +195,9 @@ def private_directory(directory: Path) -> None:
 
 
 def read_archive_manifest(archive_root: Path) -> tuple[str, str]:
-    """The archive's identifier and specification, from its manifest, which
-    Door never changes after init."""
+    """The archive's identifier and specification, from its manifest. Door
+    changes the manifest only in a specification upgrade, which changes the
+    specification and never the identifier (ADR 0068)."""
     manifest = json.loads((archive_root / "archive.json").read_text(encoding="utf-8"))
     archive_id, spec = manifest.get("archive_id"), manifest.get("spec")
     if not (isinstance(archive_id, str) and archive_id.startswith("urn:uuid:") and isinstance(spec, str)):
@@ -490,7 +491,7 @@ class Relay:
     def __init__(self, config: Config):
         private_directory(config.staging)
         self.config = config
-        self.archive_id, self.spec = read_archive_manifest(config.archive_root)
+        self.archive_id, _ = read_archive_manifest(config.archive_root)
         self.queries = QueryPool(config.world_store, config.max_rows, config.query_timeout_seconds,
                                  config.query_workers)
         self.cache = AnswerCache(config.cache_bytes)
@@ -511,8 +512,13 @@ class Relay:
         self.queries.stop()
 
     def archive(self) -> dict[str, Any]:
-        """What every authorized answer says about the archive and World."""
-        return {"archive_id": self.archive_id, "spec": self.spec, "role": self.config.role,
+        """What every authorized answer says about the archive and World. The
+        specification is read again for each answer, so an upgrade committed
+        while the relay runs is reported from the next answer on."""
+        archive_id, spec = read_archive_manifest(self.config.archive_root)
+        if archive_id != self.archive_id:
+            raise ValueError(f"{self.config.archive_root / 'archive.json'} names another archive")
+        return {"archive_id": self.archive_id, "spec": spec, "role": self.config.role,
                 "projections": world.served_projections(self.config.world_store)}
 
     def health(self) -> tuple[HTTPStatus, dict[str, Any]]:

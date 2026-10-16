@@ -31,6 +31,7 @@ module Archive.Door.Layout
   , contentRelativePath
   , parseContentRelativePath
   , currentLayout
+  , specificationLayout
   , recordsDirectoryPath
   , specContextPath
   , specDirectoryPath
@@ -101,6 +102,19 @@ contractPath root digest = contractsDirectoryPath root </> "sha256-" <> Text.unp
 -- refused: no archive that needs keeping was created with it.
 currentLayout :: Text
 currentLayout = "archive/2"
+
+-- | The layout each specification release this build knows prescribes
+-- (D-1): @archive/1@ before 0.0.6, @archive/2@ from 0.0.6 through 0.0.7. A
+-- later release's layout is not guessed; it is unknown until a build that
+-- carries that release says what it is.
+specificationLayout :: Text -> Either Text Text
+specificationLayout specification = do
+  version <- specVersion specification
+  case map (read . Text.unpack) (Text.splitOn "." version) :: [Integer] of
+    [0, 0, patch]
+      | patch >= 1 && patch <= 5 -> Right "archive/1"
+      | patch >= 6 && patch <= 7 -> Right "archive/2"
+    _ -> Left ("this build does not know the layout of " <> specification)
 
 -- | The two fan-out directories of a digest: its first and second pairs of
 -- hexadecimal characters.
