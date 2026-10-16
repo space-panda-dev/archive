@@ -172,10 +172,10 @@ These are boundaries for later phases, not decisions made by this ledger.
 | Artifact path query | defer | Planned | It depends on layout and external location state. |
 | Claim convenience writer | rewrite | Planned | Empty contracts and missing agent/provenance violate S-11 and S-12. |
 | Whole-store check | translate | Ported | `archive doctor` checks references, exact pins, lineage, assessments, and cited contracts while retaining incomplete-read evidence (S-10, S-12, INV-24). |
-| Contract catalog | rewrite | Ported | Archive 0.0.2 verifies and copies the exact five specification-owned bundles while retaining the immutable version 1 bytes (D-6, D-8, ADR 0030); 0.0.5 verifies and copies all twenty-four, keeping every earlier bundle's bytes (D-13, D-14). |
+| Contract catalog | rewrite | Ported | Archive 0.0.2 verifies and copies the exact five specification-owned bundles while retaining the immutable version 1 bytes (D-6, D-8, ADR 0030); 0.0.5 verifies and copies all twenty-four, keeping every earlier bundle's bytes (D-13, D-14); 0.0.7 copies thirty (D-15). |
 | `archive init` | rewrite | Ported | Initialization creates the accepted layout, identities, local resources, bootstrap records, Git repository, and git-annex repository in one archival commit (D-1, D-2, D-7, D-10). |
 | `door admit` | rewrite | In progress | Dry-run and persistent modes enforce exact proposals, heads, one lock, one commit, and quiet retry, including content; persistent success still predates ADR 0031's power-loss contract (D-4, ADR 0023). |
-| `door transition` | rewrite | Ported | Dry-run and persistent modes dispatch exact retire/destroy contracts, replay immutable history, and enforce authorization, heads, state, durable v2 order, one lock, one commit, and quiet retry (D-9, ADR 0030, INV-2). |
+| `door transition` | rewrite | Ported | Dry-run and persistent modes dispatch exact retire/destroy contracts, replay immutable history, and enforce authorization, heads, state, durable v2 order, one lock, one commit, and quiet retry (D-9, ADR 0030, INV-2). The specification upgrade of 0.0.7 is installed but refused as unsupported until its dispatch exists (D-15, ADR 0068). |
 
 ## Reading modules and contracts
 
@@ -197,7 +197,7 @@ These are boundaries for later phases, not decisions made by this ledger.
 | Canonical contract manifest/catalog bytes | translate | Ported | RFC 8785 bundle bytes determine their SHA-256 paths and citations, and the loader verifies both (D-6, D-8). |
 | Artifact contract | rewrite | Planned | Remove location/annex key and add Archive provenance (S-9, S-11). |
 | Entity contract | translate | Planned | Keep stable subject/name distinction (ADR 0012). |
-| Technical metadata contract | translate | Planned | Derived evidence pins exact inputs and records run configuration (ADR 0006). |
+| Technical metadata contract | translate | In progress | Derived evidence pins exact inputs and records run configuration (ADR 0006). Specification 0.0.7 installs `derivation_run` and `audio_stream`, and Door admits them with every rule checked (D-15, ADRs 0064 and 0065); the probe tool is not ported. |
 | Label contract | defer | Planned | Representation and current rule remain open. |
 | Transcript contract | defer | Planned | Representation/current rule and remote disclosure adapter remain open. |
 | Selection contract | rewrite | Planned | Preserve ordered pins but replace float seconds with exact boundaries (S-15). |

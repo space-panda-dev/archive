@@ -172,7 +172,9 @@ class ScratchTests(unittest.TestCase):
                              "identities": [{"object_id": object_id, "namespace": "archive.core/entity", "name": name}],
                              "contents": [], "expected_heads": [{"object_id": object_id, "revision_id": None}]},
                 "records": {"records/entity.json": {
-                    "spec": "archive/0.0.6", "object_id": object_id, "shape": "entity", "by": "pkg:generic/scratch-test@0",
+                    # Door refuses a spec whose context the archive does not hold.
+                    "spec": json.loads((self.source / "archive.json").read_text())["spec"],
+                    "object_id": object_id, "shape": "entity", "by": "pkg:generic/scratch-test@0",
                     "agent": self.operator, "payload": {"kind": "person", "label": name}, "refs": [], "supersedes": []}}}
 
     def test_create_commit_reset_and_delete(self) -> None:

@@ -12,12 +12,14 @@ data-files:
   , spec/0.0.4/context.jsonld
   , spec/0.0.5/context.jsonld
   , spec/0.0.6/context.jsonld
+  , spec/0.0.7/context.jsonld
   , spec/0.0.1/contracts.json
   , spec/0.0.2/contracts.json
   , spec/0.0.3/contracts.json
   , spec/0.0.4/contracts.json
   , spec/0.0.5/contracts.json
   , spec/0.0.6/contracts.json
+  , spec/0.0.7/contracts.json
   , spec/contracts/*.json
 
 library

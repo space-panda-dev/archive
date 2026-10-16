@@ -36,6 +36,7 @@ import Archive.Door.TransitionDryRun
   , dryRunTransition
   , dryRunTransitionForCommit
   , transitionDispatchTable
+  , transitionContractsWithoutHandler
   )
 import Archive.Door.Identity (parseIdentityName, parseIdentityNamespace, uuidV5)
 import Archive.Door.Contracts (validateCoreContextForSpecification, validateContractInstance)
@@ -180,7 +181,7 @@ assessmentWithPins objectId target revision = replace "}]" (",\"revision_id\":\"
 
 envelope :: String -> String -> String -> String -> String -> String
 envelope objectId shape payload refs extra =
-  "{\"spec\":\"archive/0.0.6\",\"object_id\":\"" <> objectId
+  "{\"spec\":\"archive/0.0.7\",\"object_id\":\"" <> objectId
   <> "\",\"shape\":\"" <> shape <> "\",\"by\":\"" <> writer
   <> "\",\"agent\":\"" <> person <> "\",\"payload\":" <> payload
   <> ",\"refs\":" <> refs <> ",\"supersedes\":[]" <> extra <> "}"
@@ -338,14 +339,14 @@ main = do
   succeeds "specification 0.0.5 admits its installed musical_work kind"
     (replace "{\"kind\":\"person\"" "{\"kind\":\"musical_work\"" (entityDraft entity))
   refuses "specification 0.0.2 refuses the later musical_work kind"
-    (replace "archive/0.0.6" "archive/0.0.2"
+    (replace "archive/0.0.7" "archive/0.0.2"
       (replace "{\"kind\":\"person\"" "{\"kind\":\"musical_work\"" (entityDraft entity)))
     "entity kind is not defined by the core context"
   refuses "a supplied recording time is not a draft" (withField (entityDraft entity) "at" "1900-01-01T00:00:00Z") "draft envelope must omit at"
   refuses "a supplied revision is not a draft" (withField (entityDraft entity) "revision_id" zeroDigest) "draft envelope must omit revision_id"
-  comparesDifferent "the specification version remains in revision identity" (entityDraft entity) (replace "archive/0.0.6" "archive/0.0.2" (entityDraft entity))
+  comparesDifferent "the specification version remains in revision identity" (entityDraft entity) (replace "archive/0.0.7" "archive/0.0.2" (entityDraft entity))
   refuses "an empty batch is not a successful admission" "[]" "admission batch must contain at least one record"
-  refuses "a malformed specification identifier is refused" (replace "archive/0.0.6" "not-an-archive-spec" (entityDraft entity)) "spec must be archive/ followed by a three-part numeric version"
+  refuses "a malformed specification identifier is refused" (replace "archive/0.0.7" "not-an-archive-spec" (entityDraft entity)) "spec must be archive/ followed by a three-part numeric version"
   refuses "an object identifier containing a hostname is refused" (replace entity "http://host.example/path" (entityDraft entity)) "object_id must not contain a hostname"
   refuses "a non-UUID object identifier is refused" (replace entity "local-object" (entityDraft entity)) "object_id must be a lowercase urn:uuid identifier"
   refuses "draft field errors keep precedence over object UUID validation"
@@ -397,6 +398,10 @@ main = do
   reviewContractProfileChecks
   withProposalTemporaryRoot migrationContractAdmissionChecks
   migrationContractProfileChecks
+  withProposalTemporaryRoot derivationContractAdmissionChecks
+  derivationContractProfileChecks
+  withProposalTemporaryRoot specificationUpgradeRefusalChecks
+  withProposalTemporaryRoot earlierSpecificationChecks
   transitionDispatchCatalogChecks
   contractCatalogChecks
   refusalCodeSchemaChecks
@@ -3023,7 +3028,7 @@ worldContractAdmissionChecks parent = do
   assert "archive export carries the admitted World chain at 0.0.5"
     (exportCode == ExitSuccess
       && contains "\"status\":\"ok\"" exportOut
-      && contains "\"spec\":\"archive/0.0.6\"" exportOut
+      && contains "\"spec\":\"archive/0.0.7\"" exportOut
       && all (`contains` exportOut)
         ([ workRevision, correspondenceRevision, performanceRevision, audioRevision
          , selectionRevision, occurrenceRevision, typedRevision ] <> reviewRevisions))
@@ -4721,7 +4726,7 @@ retireDraft :: String -> String -> String -> String -> String
             -> (String, String, String) -> String
 retireDraft objectId operatorId operatorRevision targetId targetRevision
     (contractId, version, digest) =
-  "{\"spec\":\"archive/0.0.6\",\"object_id\":" <> jsonString objectId
+  "{\"spec\":\"archive/0.0.7\",\"object_id\":" <> jsonString objectId
   <> ",\"shape\":\"claim\",\"by\":" <> jsonString writer
   <> ",\"agent\":" <> jsonString operatorId
   <> ",\"payload\":{\"reason\":\"test retirement\"},\"refs\":["
@@ -4745,7 +4750,7 @@ destroyDraft :: String -> String -> String -> String -> String -> String
              -> Integer -> (String, String, String) -> String
 destroyDraft objectId operatorId operatorRevision targetId targetRevision digest size
     (contractId, version, contractDigest) =
-  "{\"spec\":\"archive/0.0.6\",\"object_id\":" <> jsonString objectId
+  "{\"spec\":\"archive/0.0.7\",\"object_id\":" <> jsonString objectId
   <> ",\"shape\":\"claim\",\"by\":" <> jsonString writer
   <> ",\"agent\":" <> jsonString operatorId
   <> ",\"payload\":{\"content\":{\"digest\":" <> jsonString digest
@@ -4988,9 +4993,9 @@ jsonStringField name value =
 initLayoutCheck :: FilePath -> String
 initLayoutCheck root =
   "test -f " <> quote (root <> "/archive.json")
-  <> " && grep -Eq '^\\{\"archive_id\":\"urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\",\"layout\":\"archive/2\",\"spec\":\"archive/0.0.6\"\\}$' " <> quote (root <> "/archive.json")
-  <> " && test -f " <> quote (root <> "/spec/0.0.6/VERSION") <> " && test -f " <> quote (root <> "/spec/0.0.6/archive-spec.md") <> " && test -f " <> quote (root <> "/spec/0.0.6/context.jsonld")
-  <> " && test \"$(find " <> quote (root <> "/contracts") <> " -type f | wc -l | tr -d ' ')\" = 24"
+  <> " && grep -Eq '^\\{\"archive_id\":\"urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\",\"layout\":\"archive/2\",\"spec\":\"archive/0.0.7\"\\}$' " <> quote (root <> "/archive.json")
+  <> " && test -f " <> quote (root <> "/spec/0.0.7/VERSION") <> " && test -f " <> quote (root <> "/spec/0.0.7/archive-spec.md") <> " && test -f " <> quote (root <> "/spec/0.0.7/context.jsonld")
+  <> " && test \"$(find " <> quote (root <> "/contracts") <> " -type f | wc -l | tr -d ' ')\" = 30"
   <> " && test \"$(find " <> quote (root <> "/records") <> " -type f | wc -l | tr -d ' ')\" = 2"
   <> " && for f in " <> quote (root <> "/contracts") <> "/*.json; do test \"$(basename \"$f\" .json | cut -c8-)\" = \"$(shasum -a 256 \"$f\" | cut -d' ' -f1)\"; done"
   <> " && for f in " <> quote (root <> "/records") <> "/*/*/*.json; do grep -Eq '\"revision_id\":\"sha256:[0-9a-f]{64}\"' \"$f\"; done"
@@ -4999,9 +5004,9 @@ initLayoutCheck root =
 
 exactResourcesCheck :: FilePath -> String
 exactResourcesCheck root =
-  "cmp spec/VERSION " <> quote (root <> "/spec/0.0.6/VERSION")
-  <> " && cmp spec/archive-spec.md " <> quote (root <> "/spec/0.0.6/archive-spec.md")
-  <> " && cmp spec/0.0.6/context.jsonld " <> quote (root <> "/spec/0.0.6/context.jsonld")
+  "cmp spec/VERSION " <> quote (root <> "/spec/0.0.7/VERSION")
+  <> " && cmp spec/archive-spec.md " <> quote (root <> "/spec/0.0.7/archive-spec.md")
+  <> " && cmp spec/0.0.7/context.jsonld " <> quote (root <> "/spec/0.0.7/context.jsonld")
   <> " && diff -rq spec/contracts " <> quote (root <> "/contracts")
 
 shellAssert :: String -> String -> IO ()
@@ -5398,7 +5403,7 @@ reviewContractProfileChecks = do
     (either (const False) (isLeft . validateCoreContextForSpecification "archive/0.0.5") priorContext)
     ExitSuccess "" ""
   refuses "specification 0.0.4 refuses the later recording_session kind"
-    (replace "archive/0.0.6" "archive/0.0.4"
+    (replace "archive/0.0.7" "archive/0.0.4"
       (replace "{\"kind\":\"person\"" "{\"kind\":\"recording_session\"" (entityDraft entity)))
     "entity kind is not defined by the core context"
   titleBundle <- readFile "spec/contracts/sha256-0bec7932301de6f62b92ffc167f41236cf98c10e6a6175481400c64da502d8d9.json"
@@ -5672,10 +5677,12 @@ transitionDispatchCatalogChecks = do
           , "archive.transition/" `Text.isPrefixOf` identifier -> [(identifier, version)]
         _ -> []) files
   let table = map fst transitionDispatchTable
-  assert "the transition dispatch table enumerates exactly the installed transition contracts"
-    (not (null installed) && sort installed == sort table
-      && length table == length (nubOrdered table))
-    ExitSuccess (show installed) (show table)
+      refused = transitionContractsWithoutHandler
+  assert "the transition dispatch table and the refused list enumerate exactly the installed transition contracts"
+    (not (null installed) && sort installed == sort (table <> refused)
+      && length table == length (nubOrdered table)
+      && all (`notElem` table) refused)
+    ExitSuccess (show installed) (show (table, refused))
   where
     nubOrdered [] = []
     nubOrdered (value : rest) = value : nubOrdered (filter (/= value) rest)
@@ -5830,3 +5837,522 @@ recordRelative revision = either (error . Text.unpack) recordRelativePath
 contentRelative :: String -> FilePath
 contentRelative digest = either (error . Text.unpack) contentRelativePath
   (parseSha256Digest (Text.pack digest))
+
+-- Derivation runs, audio facts, suggestions, and run-pinned matches and
+-- alignments (ADRs 0064 to 0068, specification 0.0.7), through the real
+-- `door admit`. Each refusal's draft differs from an accepted twin only in the
+-- rule's field, and the test anchors that difference.
+
+runName :: Int -> String
+runName index = "run-00000000-0000-4000-8000-" <> replicate (12 - length digits) '0' <> digits
+  where digits = show index
+
+runPayloadAt :: String -> String -> String
+runPayloadAt started ended =
+  "{\"ended_at\":" <> jsonString ended
+  <> ",\"method\":{\"id\":\"energy-spans\",\"version\":\"1\"}"
+  <> ",\"software\":[{\"name\":\"ffmpeg\",\"version\":\"7.1\"},{\"name\":\"numpy\",\"version\":\"2.1.0\"}]"
+  <> ",\"started_at\":" <> jsonString started <> "}"
+
+runPayload :: String
+runPayload = runPayloadAt "2026-10-16T10:00:00Z" "2026-10-16T10:00:05.250Z"
+
+streamPayload :: Integer -> Integer -> Integer -> String
+streamPayload rate count channels =
+  "{\"bits_per_sample\":24,\"channel_count\":" <> show channels
+  <> ",\"codec\":\"pcm_s24le\",\"sample_count\":" <> show count
+  <> ",\"sample_rate\":" <> show rate <> ",\"stream_index\":0}"
+
+spansPayload :: Integer -> [(Integer, Integer, String)] -> String
+spansPayload rate spans =
+  "{\"sample_rate\":" <> show rate <> ",\"spans\":[" <> joinWith "," (map span' spans) <> "]}"
+  where
+    span' (start, end, kind) =
+      "{\"class\":" <> jsonString kind <> ",\"end_sample\":" <> show end
+      <> ",\"start_sample\":" <> show start <> "}"
+
+matchPayload :: String
+matchPayload =
+  "{\"direction\":\"lower_is_closer\",\"method\":{\"id\":\"chroma-cover\",\"version\":\"1\"},\"scale\":\"distance\",\"score\":\"0.25\"}"
+
+derivationContractAdmissionChecks :: FilePath -> IO ()
+derivationContractAdmissionChecks parent = do
+  (root, archiveId, _) <- newProposalArchive parent "derivation-contracts"
+  let artifactFixture name digest = do
+        objectId <- allocatedObjectId archiveId "archive.core/artifact" name
+        revision <- commitArtifactFixtureWithDigest root objectId digest
+        pure (objectId, revision)
+      runNamespace = "archive.derivation/run"
+  audio <- artifactFixture "derivation-audio" zeroDigest
+  other <- artifactFixture "derivation-other" (digestOf '1')
+  parameters <- artifactFixture "derivation-parameters" (digestOf '2')
+  work <- admitNew root archiveId "door admit commits a musical_work for matches"
+    "archive.audio/song" "song-1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d" (entityRecord "musical_work" "Fixture Work")
+
+  -- Runs (ADR 0064).
+  runContract <- contractCitationVersion root "archive.claim/derivation_run" "1"
+  let runDraft payload refs = contractRecord "claim" runContract payload refs
+  run <- admitNew root archiveId "a derivation run with used inputs and parameters is admitted"
+    runNamespace (runName 1)
+    (runDraft runPayload [pinned "used" audio, pinned "parameters" parameters])
+  _ <- admitNew root archiveId "a run that ends when it starts is admitted"
+    runNamespace (runName 2)
+    (runDraft (runPayloadAt "2026-10-16T10:00:00Z" "2026-10-16T10:00:00Z") [])
+  _ <- admitNew root archiveId "a run may use an Entity and a Claim revision"
+    runNamespace (runName 3)
+    (runDraft runPayload [pinned "used" work, pinned "used" run])
+  backwards <- refuseNew root archiveId "a run that ends before it starts is refused"
+    runNamespace (runName 4)
+    (runDraft (runPayloadAt "2026-10-16T10:00:00Z" "2026-10-16T09:59:59.999Z") [])
+    "ended_at must not be before started_at"
+  assert "the backwards run differs from an admitted run only in ended_at"
+    (contains "\"ended_at\":\"2026-10-16T09:59:59.999Z\"" backwards
+      && contains "\"started_at\":\"2026-10-16T10:00:00Z\"" backwards)
+    ExitSuccess backwards ""
+  offset <- refuseNew root archiveId "a run instant with a numeric offset is refused"
+    runNamespace (runName 5)
+    (runDraft (runPayloadAt "2026-10-16T10:00:00+00:00" "2026-10-16T10:00:05Z") [])
+    "contract instance does not satisfy its schema"
+  assert "the offset fixture changes only the started_at suffix"
+    (contains "10:00:00+00:00" offset) ExitSuccess "" ""
+  -- The pattern alone admits any digits; the date must exist.
+  _ <- refuseNew root archiveId "a run instant on a day that does not exist is refused"
+    runNamespace (runName 12)
+    (runDraft (runPayloadAt "2026-02-30T10:00:00Z" "2026-10-16T10:00:05Z") [])
+    "contract instance does not satisfy its schema"
+  _ <- refuseNew root archiveId "a run instant at hour 24 is refused"
+    runNamespace (runName 13)
+    (runDraft (runPayloadAt "2026-10-16T10:00:00Z" "2026-10-16T24:00:00Z") [])
+    "contract instance does not satisfy its schema"
+  _ <- refuseNew root archiveId "a run refuses two parameters Artifacts"
+    runNamespace (runName 6)
+    (runDraft runPayload [pinned "parameters" parameters, pinned "parameters" other])
+    "contract instance does not satisfy its schema"
+  _ <- refuseNew root archiveId "a run's parameters must be an Artifact"
+    runNamespace (runName 7)
+    (runDraft runPayload [pinned "parameters" work])
+    "parameters reference must target an Artifact revision"
+  let software count = "{\"ended_at\":\"2026-10-16T10:00:05Z\",\"method\":{\"id\":\"energy-spans\",\"version\":\"1\"},\"software\":["
+        <> joinWith "," (replicate count "{\"name\":\"lib\",\"version\":\"1\"}")
+        <> "],\"started_at\":\"2026-10-16T10:00:00Z\"}"
+  _ <- admitNew root archiveId "a run names up to 32 software components"
+    runNamespace (runName 8) (runDraft (software 32) [])
+  _ <- refuseNew root archiveId "a run refuses 33 software components"
+    runNamespace (runName 9) (runDraft (software 33) [])
+    "contract instance does not satisfy its schema"
+  judgmentContract <- contractCitation root "archive.assessment/judgment"
+  judgment <- admitNew root archiveId "door admit commits a judgment of a run"
+    "archive.assessment/judgment" "derivation-judgment"
+    (contractRecord "assessment" judgmentContract "{\"verdict\":\"affirmed\"}" [pinned "assessment_of" run])
+  _ <- refuseNew root archiveId "a run may not use an Assessment revision"
+    runNamespace (runName 10) (runDraft runPayload [pinned "used" judgment])
+    "used reference must target a revision of shape artifact or claim or entity"
+
+  -- Stream facts (ADR 0065), proposed with their run in one batch.
+  streamContract <- contractCitationVersion root "archive.claim/audio_stream" "1"
+  let streamDraft payload refs = contractRecord "claim" streamContract payload refs
+  batchRunId <- allocatedObjectId archiveId runNamespace (runName 11)
+  streamId <- allocatedObjectId archiveId "archive.claim/audio_stream" "derivation-stream"
+  let batchRunDraft = runDraft runPayload [pinned "used" audio] batchRunId
+  batchRunRevision <- canonicalRevisionOf batchRunDraft
+  let batchRun = (batchRunId, batchRunRevision)
+      acceptedStream = streamDraft (streamPayload 48000 480000 2) [pinned "artifact" audio, pinned "run" batchRun] streamId
+  streamRevision <- canonicalRevisionOf acceptedStream
+  admitBatch root "a run and the stream facts it made are admitted in one batch" "derivation-stream-batch"
+    [ (batchRunId, runNamespace, runName 11, batchRunDraft)
+    , (streamId, "archive.claim/audio_stream", "derivation-stream", acceptedStream) ]
+  let stream = (streamId, streamRevision)
+  _ <- admitNew root archiveId "a stream of 64 channels is admitted"
+    "archive.claim/audio_stream" "derivation-stream-64"
+    (streamDraft (streamPayload 48000 480000 64) [pinned "artifact" audio, pinned "run" run])
+  wide <- refuseNew root archiveId "a stream of 65 channels is refused by its maximum"
+    "archive.claim/audio_stream" "derivation-stream-65"
+    (streamDraft (streamPayload 48000 480000 65) [pinned "artifact" audio, pinned "run" run])
+    "contract instance does not satisfy its schema"
+  assert "the channel fixtures differ only in channel_count"
+    (contains "\"channel_count\":65," wide) ExitSuccess "" ""
+  _ <- refuseNew root archiveId "a stream refuses a zero sample_count"
+    "archive.claim/audio_stream" "derivation-stream-empty"
+    (streamDraft (streamPayload 48000 0 2) [pinned "artifact" audio, pinned "run" run])
+    "contract instance does not satisfy its schema"
+  _ <- refuseNew root archiveId "a stream's run must be a derivation run"
+    "archive.claim/audio_stream" "derivation-stream-not-run"
+    (streamDraft (streamPayload 48000 480000 2) [pinned "artifact" audio, pinned "run" stream])
+    "run reference must target a Claim citing archive.claim/derivation_run version 1"
+  _ <- refuseNew root archiveId "a stream's subject must be an Artifact"
+    "archive.claim/audio_stream" "derivation-stream-of-entity"
+    (streamDraft (streamPayload 48000 480000 2) [pinned "artifact" work, pinned "run" run])
+    "artifact reference must target an Artifact revision"
+  _ <- refuseNew root archiveId "a stream without a run is refused"
+    "archive.claim/audio_stream" "derivation-stream-no-run"
+    (streamDraft (streamPayload 48000 480000 2) [pinned "artifact" audio])
+    "contract instance does not satisfy its schema"
+
+  -- Span suggestions (ADR 0066).
+  suggestionsContract <- contractCitationVersion root "archive.claim/span_suggestions" "1"
+  let suggestionsDraft payload refs = contractRecord "claim" suggestionsContract payload refs
+      againstStream source stream' = [pinned "source" source, pinned "stream" stream', pinned "run" run]
+      suggest label name spans expected = refuseNew root archiveId label
+        "archive.claim/span_suggestions" name
+        (suggestionsDraft (spansPayload 48000 spans) (againstStream audio stream)) expected
+      accepted = [(0, 1000, "music"), (1000, 5000, "talk"), (6000, 480000, "quiet")]
+  _ <- admitNew root archiveId "span suggestions in order, touching, and ending at sample_count are admitted"
+    "archive.claim/span_suggestions" "derivation-suggestions"
+    (suggestionsDraft (spansPayload 48000 accepted) (againstStream audio stream))
+  overlap <- suggest "overlapping suggested spans are refused" "derivation-suggestions-overlap"
+    [(0, 1000, "music"), (900, 5000, "talk"), (6000, 480000, "quiet")]
+    "spans must be in order and must not overlap"
+  assert "the overlap fixture moves only the second span's start"
+    (contains "\"start_sample\":900" overlap) ExitSuccess "" ""
+  _ <- suggest "suggested spans out of order are refused" "derivation-suggestions-order"
+    [(1000, 5000, "talk"), (0, 1000, "music")]
+    "spans must be in order and must not overlap"
+  _ <- suggest "an empty suggested span is refused" "derivation-suggestions-empty-span"
+    [(0, 1000, "music"), (5000, 5000, "talk")]
+    "each span requires 0 <= start < end"
+  past <- suggest "a suggested span past the stream's sample_count is refused" "derivation-suggestions-past"
+    [(0, 1000, "music"), (1000, 5000, "talk"), (6000, 480001, "quiet")]
+    "end_sample must not exceed the stream claim's sample_count"
+  assert "the past-the-end fixture adds one sample to the last end"
+    (contains "\"end_sample\":480001" past) ExitSuccess "" ""
+  rate <- refuseNew root archiveId "suggestions at a rate other than the stream's are refused"
+    "archive.claim/span_suggestions" "derivation-suggestions-rate"
+    (suggestionsDraft (spansPayload 44100 accepted) (againstStream audio stream))
+    "sample_rate must equal the stream claim's sample_rate"
+  assert "the rate fixture changes only sample_rate"
+    (contains "\"sample_rate\":44100" rate) ExitSuccess "" ""
+  _ <- suggest "an unknown span class is refused" "derivation-suggestions-class"
+    [(0, 1000, "noise")]
+    "contract instance does not satisfy its schema"
+  assert "the stream and the other source are different Artifacts"
+    (fst audio /= fst other) ExitSuccess "" ""
+  _ <- refuseNew root archiveId "suggestions about another Artifact than the stream's are refused"
+    "archive.claim/span_suggestions" "derivation-suggestions-other-source"
+    (suggestionsDraft (spansPayload 48000 accepted) (againstStream other stream))
+    "stream claim must be about the same source revision"
+  revisedId <- pure (fst audio)
+  revisedRevision <- commitDraftFixture root
+    (replace "\"supersedes\":[]" ("\"supersedes\":[" <> pinned "supersedes" audio <> "]")
+      (replace zeroDigest (digestOf '3') (artifactDraft revisedId)))
+  assert "the revised Artifact is a new revision of the stream's object"
+    (revisedRevision /= snd audio) ExitSuccess revisedRevision (snd audio)
+  _ <- refuseNew root archiveId "suggestions about another revision of the stream's Artifact are refused"
+    "archive.claim/span_suggestions" "derivation-suggestions-other-revision"
+    (suggestionsDraft (spansPayload 48000 accepted) (againstStream (revisedId, revisedRevision) stream))
+    "stream claim must be about the same source revision"
+  _ <- refuseNew root archiveId "suggestions must pin an audio stream claim"
+    "archive.claim/span_suggestions" "derivation-suggestions-not-stream"
+    (suggestionsDraft (spansPayload 48000 accepted) (againstStream audio run))
+    "stream reference must target a Claim citing archive.claim/audio_stream version 1"
+  _ <- refuseNew root archiveId "suggestions' run must be a derivation run"
+    "archive.claim/span_suggestions" "derivation-suggestions-not-run"
+    (suggestionsDraft (spansPayload 48000 accepted)
+      [pinned "source" audio, pinned "stream" stream, pinned "run" stream])
+    "run reference must target a Claim citing archive.claim/derivation_run version 1"
+  let many count = [(index * 48, index * 48 + 48, "unknown") | index <- [0 .. count - 1]]
+  _ <- admitNew root archiveId "10,000 suggested spans are admitted"
+    "archive.claim/span_suggestions" "derivation-suggestions-most"
+    (suggestionsDraft (spansPayload 48000 (many 10000)) (againstStream audio stream))
+  _ <- refuseNew root archiveId "10,001 suggested spans are refused"
+    "archive.claim/span_suggestions" "derivation-suggestions-too-many"
+    (suggestionsDraft (spansPayload 48000 (many 10001)) (againstStream audio stream))
+    "contract instance does not satisfy its schema"
+
+  -- Matches and alignments pin their run (ADR 0067).
+  selectionContract <- contractCitationVersion root "archive.claim/audio_selection" "2"
+  occurrenceContract <- contractCitationVersion root "archive.claim/song_occurrence" "2"
+  selection <- admitNew root archiveId "door admit commits a selection to match"
+    "archive.claim/audio_selection" "derivation-selection"
+    (contractRecord "claim" selectionContract (tracksPayload [[(10, 200, 48000)]]) [pinned "piece" audio])
+  corpusSelection <- admitNew root archiveId "door admit commits a corpus selection"
+    "archive.claim/audio_selection" "derivation-corpus-selection"
+    (contractRecord "claim" selectionContract (tracksPayload [[(10, 200, 48000)]]) [pinned "piece" other])
+  occurrence <- admitNew root archiveId "door admit commits an occurrence to match"
+    "archive.claim/song_occurrence" "derivation-occurrence"
+    (contractRecord "claim" occurrenceContract "{}" [pinned "selection" selection])
+  corpus <- admitNew root archiveId "door admit commits a corpus occurrence"
+    "archive.claim/song_occurrence" "derivation-corpus"
+    (contractRecord "claim" occurrenceContract "{}" [pinned "selection" corpusSelection])
+  v1SelectionContract <- contractCitationVersion root "archive.claim/audio_selection" "1"
+  v1Selection <- admitNew root archiveId "door admit commits a version 1 selection"
+    "archive.claim/audio_selection" "derivation-selection-v1"
+    (contractRecord "claim" v1SelectionContract
+      "{\"pieces\":[{\"end_sample\":200,\"sample_rate\":48000,\"start_sample\":10}]}" [pinned "piece" audio])
+  matchContract <- contractCitationVersion root "archive.claim/work_match" "2"
+  let matchDraft compared run' = contractRecord "claim" matchContract matchPayload
+        (compared <> [pinned "work" work, pinned "corpus" corpus, pinned "parameters" parameters, pinned "run" run'])
+  _ <- admitNew root archiveId "a version 2 match of an occurrence pins its run"
+    "archive.claim/work_match" "derivation-match-occurrence"
+    (matchDraft [pinned "occurrence" occurrence] run)
+  _ <- admitNew root archiveId "a version 2 match of a selection pins its run"
+    "archive.claim/work_match" "derivation-match-selection"
+    (matchDraft [pinned "selection" selection] run)
+  both <- refuseNew root archiveId "a match naming both an occurrence and a selection is refused"
+    "archive.claim/work_match" "derivation-match-both"
+    (matchDraft [pinned "occurrence" occurrence, pinned "selection" selection] run)
+    "contract instance does not satisfy its schema"
+  assert "the both fixture adds only the selection reference"
+    (contains "\"role\":\"occurrence\"" both && contains "\"role\":\"selection\"" both) ExitSuccess "" ""
+  _ <- refuseNew root archiveId "a match naming neither an occurrence nor a selection is refused"
+    "archive.claim/work_match" "derivation-match-neither"
+    (matchDraft [] run)
+    "contract instance does not satisfy its schema"
+  _ <- refuseNew root archiveId "a version 2 match refuses a run that is not a derivation run"
+    "archive.claim/work_match" "derivation-match-not-run"
+    (matchDraft [pinned "occurrence" occurrence] stream)
+    "run reference must target a Claim citing archive.claim/derivation_run version 1"
+  _ <- refuseNew root archiveId "a version 2 match compares only version 2 selections"
+    "archive.claim/work_match" "derivation-match-v1-selection"
+    (matchDraft [pinned "selection" v1Selection] run)
+    "selection reference must target a Claim citing archive.claim/audio_selection version 2"
+  _ <- refuseNew root archiveId "a version 2 match still refuses its occurrence inside its corpus"
+    "archive.claim/work_match" "derivation-match-self-corpus"
+    (contractRecord "claim" matchContract matchPayload
+      [pinned "occurrence" corpus, pinned "work" work, pinned "corpus" corpus, pinned "run" run])
+    "must name different objects"
+
+  alignmentV2 <- contractCitationVersion root "archive.claim/capture_alignment" "2"
+  alignmentV1 <- contractCitationVersion root "archive.claim/capture_alignment" "1"
+  let alignment contract refs = contractRecord "claim" contract
+        (alignmentPayload [(0, 0), (48000, 48001)]) ([pinned "reference" audio, pinned "aligned" other] <> refs)
+  _ <- admitNew root archiveId "a version 2 alignment without a run is admitted"
+    "archive.claim/capture_alignment" "derivation-alignment-unrun" (alignment alignmentV2 [])
+  _ <- admitNew root archiveId "a version 2 alignment pins a derivation run"
+    "archive.claim/capture_alignment" "derivation-alignment-run" (alignment alignmentV2 [pinned "run" run])
+  _ <- refuseNew root archiveId "a version 2 alignment refuses a run that is not a derivation run"
+    "archive.claim/capture_alignment" "derivation-alignment-not-run" (alignment alignmentV2 [pinned "run" stream])
+    "run reference must target a Claim citing archive.claim/derivation_run version 1"
+  _ <- admitNew root archiveId "a version 1 alignment keeps its untyped run"
+    "archive.claim/capture_alignment" "derivation-alignment-v1" (alignment alignmentV1 [pinned "run" stream])
+  pure ()
+
+-- | An installed upgrade contract that no handler dispatches fails loudly in
+-- both commands: `door transition` names it unsupported, and `door admit`
+-- refuses it as it refuses every transition contract.
+specificationUpgradeRefusalChecks :: FilePath -> IO ()
+specificationUpgradeRefusalChecks parent = do
+  (root, archiveId, initOutput) <- newProposalArchive parent "specification-upgrade"
+  operatorId <- requiredField "operator_id" initOutput
+  operatorRevision <- recordRevisionForObject root operatorId
+  upgradeContract <- contractCitationVersion root "archive.transition/specification_upgrade" "1"
+  let namespace = "archive.transition/specification_upgrade"
+      upgrade = contractRecord "claim" upgradeContract
+        "{\"from\":\"archive/0.0.7\",\"to\":\"archive/0.0.8\"}" [pinned "authorizer" (operatorId, operatorRevision)]
+  upgradeId <- allocatedObjectId archiveId namespace "upgrade-0-0-8"
+  headBefore <- gitHead root
+  (code, out, err) <- transitionAt root "upgrade-0-0-8" [(upgradeId, namespace, "upgrade-0-0-8")]
+    [(upgradeId, Nothing)] (upgrade upgradeId)
+  headAfter <- gitHead root
+  assert "door transition refuses a specification upgrade it has no handler for"
+    (code /= ExitSuccess && null out && headBefore == headAfter
+      && contains "unsupported transition contract: archive.transition/specification_upgrade version 1" err)
+    code out err
+  _ <- refuseNew root archiveId "door admit refuses a specification upgrade"
+    namespace "upgrade-admitted" upgrade
+    "unsupported: transition contracts cannot be admitted generically"
+  -- A citation of the same identifier and version under a digest this archive
+  -- does not install must not be reported as installed.
+  let (upgradeIdentifier, upgradeVersion, upgradeDigest) = upgradeContract
+      foreignDigest = "sha256:" <> replicate 64 'e'
+      foreignUpgrade = contractRecord "claim" (upgradeIdentifier, upgradeVersion, foreignDigest)
+        "{\"from\":\"archive/0.0.7\",\"to\":\"archive/0.0.8\"}" [pinned "authorizer" (operatorId, operatorRevision)]
+  assert "the foreign citation differs from the installed one only in its digest"
+    (foreignDigest /= upgradeDigest) ExitSuccess foreignDigest upgradeDigest
+  foreignId <- allocatedObjectId archiveId namespace "upgrade-foreign"
+  (foreignCode, foreignOut, foreignErr) <- transitionAt root "upgrade-foreign"
+    [(foreignId, namespace, "upgrade-foreign")] [(foreignId, Nothing)] (foreignUpgrade foreignId)
+  headForeign <- gitHead root
+  assert "door transition refuses an uninstalled upgrade citation as not installed"
+    (foreignCode /= ExitSuccess && null foreignOut && headForeign == headBefore
+      && contains "proposed contract is not installed at this snapshot" foreignErr
+      && not (contains "is installed but" foreignErr))
+    foreignCode foreignOut foreignErr
+  pure ()
+
+-- | Pure checks of the 0.0.7 profile: each malformed rule is refused when its
+-- bundle loads, and the accepted bundles' rules are the anchors.
+derivationContractProfileChecks :: IO ()
+derivationContractProfileChecks = do
+  catalog <- either (const []) toList <$> loadContractCatalog "archive/0.0.7"
+  let digestFor identifier version =
+        [digest | (identifier', version', digest) <- catalog, identifier' == identifier, version' == version]
+      bundleSchema identifier version = case digestFor identifier version of
+        [digest] -> do
+          bytes <- readFile ("spec/contracts/sha256-" <> drop 7 (Text.unpack digest) <> ".json")
+          case decodeUnique (LazyByteString.pack bytes) of
+            Right (Aeson.Object fields) | Just schema <- KeyMap.lookup "schema" fields -> pure schema
+            _ -> assert ("the bundle of " <> Text.unpack identifier <> " decodes") False ExitSuccess bytes "" >> pure Aeson.Null
+        found -> assert ("the 0.0.7 catalog lists " <> Text.unpack identifier <> " " <> Text.unpack version)
+          False ExitSuccess (show found) "" >> pure Aeson.Null
+      ref role suffix = Aeson.object
+        [ "role" .= (role :: Text.Text)
+        , "id" .= ("urn:uuid:00000000-0000-4000-8000-0000000000" <> suffix :: Text.Text)
+        , "revision_id" .= Text.pack zeroDigest ]
+      withRoot schema key value = case schema of
+        Aeson.Object fields -> Aeson.Object (KeyMap.insert key value fields)
+        _ -> schema
+      withoutRoot schema key = case schema of
+        Aeson.Object fields -> Aeson.Object (KeyMap.delete key fields)
+        _ -> schema
+      instanceOf payload refs = Aeson.object ["payload" .= payload, "refs" .= (refs :: [Aeson.Value])]
+      decoded text = either (const Aeson.Null) id (decodeUnique (LazyByteString.pack text))
+  runSchema <- bundleSchema "archive.claim/derivation_run" "1"
+  suggestionsSchema <- bundleSchema "archive.claim/span_suggestions" "1"
+  let run = instanceOf (decoded runPayload) []
+      suggestions = instanceOf (decoded (spansPayload 48000 [(0, 10, "music")]))
+        [ref "source" "21", ref "stream" "22", ref "run" "23"]
+  assert "the accepted 0.0.7 instances satisfy their bundles"
+    (validateContractInstance runSchema run == Right ()
+      && validateContractInstance suggestionsSchema suggestions == Right ())
+    ExitSuccess "" ""
+  let refusedOnLoad label schema instanceValue =
+        assert label (isLeft (validateContractInstance schema instanceValue)) ExitSuccess
+          (show (validateContractInstance schema instanceValue)) ""
+      targets = case runSchema of
+        Aeson.Object fields -> KeyMap.lookup "x-archive-reference-targets" fields
+        _ -> Nothing
+      withUsedRule rule = withRoot runSchema "x-archive-reference-targets"
+        (case targets of
+          Just (Aeson.Object roles) -> Aeson.Object (KeyMap.insert "used" rule roles)
+          _ -> Aeson.Null)
+  refusedOnLoad "a target rule naming a single shape in shapes is refused"
+    (withUsedRule (Aeson.object ["shapes" .= ["claim" :: Text.Text], "many" .= True])) run
+  refusedOnLoad "a target rule naming an unknown shape in shapes is refused"
+    (withUsedRule (Aeson.object ["shapes" .= ["claim", "record" :: Text.Text], "many" .= True])) run
+  refusedOnLoad "a target rule naming both shape and shapes is refused"
+    (withUsedRule (Aeson.object ["shape" .= ("claim" :: Text.Text), "shapes" .= ["claim", "entity" :: Text.Text]])) run
+  refusedOnLoad "a target rule with kinds for several shapes is refused"
+    (withUsedRule (Aeson.object ["shapes" .= ["claim", "entity" :: Text.Text], "kind" .= ("person" :: Text.Text)])) run
+  refusedOnLoad "an ordered instants rule naming one field twice is refused"
+    (withRoot runSchema "x-archive-ordered-instants" (Aeson.object ["start" .= ("started_at" :: Text.Text), "end" .= ("started_at" :: Text.Text)])) run
+  refusedOnLoad "an ordered instants rule with an extra key is refused"
+    (withRoot runSchema "x-archive-ordered-instants" (Aeson.object ["start" .= ("started_at" :: Text.Text), "end" .= ("ended_at" :: Text.Text), "payload" .= ("x" :: Text.Text)])) run
+  refusedOnLoad "a sequential spans rule missing its end field is refused"
+    (withRoot suggestionsSchema "x-archive-sequential-spans" (Aeson.object ["payload" .= ("spans" :: Text.Text), "start" .= ("start_sample" :: Text.Text)])) suggestions
+  refusedOnLoad "a target measure rule whose role has no Claim target is refused"
+    (withRoot suggestionsSchema "x-archive-target-measure" (Aeson.object
+      [ "role" .= ("source" :: Text.Text), "rate" .= ("sample_rate" :: Text.Text), "count" .= ("sample_count" :: Text.Text)
+      , "payload" .= ("spans" :: Text.Text), "end" .= ("end_sample" :: Text.Text) ])) suggestions
+  refusedOnLoad "a same subject rule comparing a role with itself is refused"
+    (withRoot suggestionsSchema "x-archive-same-subject" (Aeson.object
+      [ "role" .= ("stream" :: Text.Text), "subject" .= ("artifact" :: Text.Text), "equals" .= ("stream" :: Text.Text) ])) suggestions
+  refusedOnLoad "a same subject rule whose role has no target rule is refused"
+    (withRoot (withoutRoot suggestionsSchema "x-archive-target-measure") "x-archive-same-subject" (Aeson.object
+      [ "role" .= ("run2" :: Text.Text), "subject" .= ("artifact" :: Text.Text), "equals" .= ("source" :: Text.Text) ])) suggestions
+  refusedOnLoad "an unknown profile rule is still refused"
+    (withRoot runSchema "x-archive-ordered-times" (Aeson.object [])) run
+  refusedOnLoad "a non-numeric maximum is refused"
+    (withRoot runSchema "maximum" (Aeson.String "64")) run
+  assert "the sequential spans rule refuses a backwards span the schema accepts"
+    (isLeft (validateContractInstance suggestionsSchema
+      (instanceOf (decoded (spansPayload 48000 [(10, 10, "music")])) [ref "source" "21", ref "stream" "22", ref "run" "23"])))
+    ExitSuccess "" ""
+
+-- | An archive governed by specification 0.0.6, built from a fresh `archive
+-- init` by rewriting its one initial commit with Door's own writer: the
+-- 0.0.6 release copy and catalog, and the two bootstrap records finalized
+-- again under `archive/0.0.6`. Door still admits into it with the 0.0.6
+-- catalog, and refuses a contract only 0.0.7 installs.
+earlierSpecificationChecks :: FilePath -> IO ()
+earlierSpecificationChecks parent = do
+  (root, archiveId, _) <- newProposalArchive parent "earlier-specification"
+  let previous = "0.0.6"
+      previousSpec = "archive/" <> previous
+  manifest <- ByteString.readFile (root </> "archive.json")
+  rewriteFile (root </> "archive.json") (LazyByteString.pack
+    (replace "\"spec\":\"archive/0.0.7\"" ("\"spec\":" <> jsonString previousSpec)
+      (LazyByteString.unpack (LazyByteString.fromStrict manifest))))
+  shellChecked ("git -C " <> quote root <> " rm -r -q spec/0.0.7")
+  createDirectoryIfMissing True (root </> "spec" </> previous)
+  mapM_ (\name -> ByteString.readFile ("spec" </> previous </> name)
+      >>= ByteString.writeFile (root </> "spec" </> previous </> name))
+    ["VERSION", "archive-spec.md", "context.jsonld"]
+  previousCatalog <- either (const []) toList <$> loadContractCatalog (Text.pack previousSpec)
+  currentCatalog <- either (const []) toList <$> loadContractCatalog "archive/0.0.7"
+  let keep = [drop 7 (Text.unpack digest) | (_, _, digest) <- previousCatalog]
+      added = [entry | entry@(_, _, digest) <- currentCatalog, drop 7 (Text.unpack digest) `notElem` keep]
+  assert "the 0.0.7 catalog adds bundles to the 0.0.6 catalog"
+    (not (null previousCatalog) && not (null added) && length currentCatalog == length previousCatalog + length added)
+    ExitSuccess (show added) ""
+  installedNames <- listDirectory (root </> "contracts")
+  mapM_ (\name -> shellChecked ("git -C " <> quote root <> " rm -q " <> quote ("contracts/" <> name)))
+    [name | name <- installedNames, take 64 (drop 7 name) `notElem` keep]
+  recordPaths <- shellLines ("cd " <> quote root <> " && git ls-files records")
+  stored <- mapM (\path -> do
+      bytes <- LazyByteString.readFile (root </> path)
+      case decodeUnique bytes of
+        Right (Aeson.Object fields) -> pure (path, fields)
+        _ -> assert "a bootstrap record decodes" False ExitSuccess path "" >> pure (path, KeyMap.empty)) recordPaths
+  let shapeOf fields = KeyMap.lookup "shape" fields
+      entities = [item | item@(_, fields) <- stored, shapeOf fields == Just (Aeson.String "entity")]
+      claims = [item | item@(_, fields) <- stored, shapeOf fields == Just (Aeson.String "claim")]
+  case (entities, claims) of
+    ([(entityPath, entityFields)], [(claimPath, claimFields)]) -> do
+      (oldRevision, newRevision) <- refinalize root entityPath entityFields id
+      _ <- refinalize root claimPath claimFields (retarget oldRevision newRevision)
+      pure ()
+    _ -> assert "init writes one entity and one initialization claim" False ExitSuccess (show recordPaths) ""
+  shellChecked ("git -C " <> quote root <> " add archive.json spec records"
+    <> " && git -C " <> quote root <> " -c user.name=archive-test -c user.email=archive-test@example.invalid"
+    <> " commit -q --amend --no-edit")
+  (statusCode, statusOut, statusErr) <- readCreateProcessWithExitCode
+    ((proc "archive" ["status"]) {cwd = Just root}) ""
+  assert "archive status reads the 0.0.6 archive"
+    (statusCode == ExitSuccess && contains ("\"spec\":" <> jsonString previousSpec) statusOut)
+    statusCode statusOut statusErr
+  let atPrevious draftFor objectId = replace "\"spec\":\"archive/0.0.7\"" ("\"spec\":" <> jsonString previousSpec) (draftFor objectId)
+  work <- admitNew root archiveId "door admit commits a musical_work into the 0.0.6 archive"
+    "archive.audio/song" "song-2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e" (atPrevious (entityRecord "musical_work" "Earlier Work"))
+  laterHead <- gitHead root
+  _ <- refuseNew root archiveId "the 0.0.6 archive refuses a record under specification 0.0.7"
+    "archive.core/entity" "later-specification-person" (entityRecord "person" "Later Person")
+    "record spec archive/0.0.7 selects a core context this archive does not hold"
+  laterHeadAfter <- gitHead root
+  assert "the refused later-specification record wrote nothing"
+    (laterHead == laterHeadAfter) ExitSuccess laterHead laterHeadAfter
+  correspondence <- contractCitation root "archive.claim/work_musicbrainz_correspondence"
+  _ <- admitNew root archiveId "door admit commits a 0.0.6 contract claim into the 0.0.6 archive"
+    "archive.claim/work_musicbrainz_correspondence" "earlier-correspondence"
+    (\objectId -> replace "\"spec\":\"archive/0.0.7\"" ("\"spec\":" <> jsonString previousSpec)
+      (musicBrainzClaim objectId (fst work) (snd work) correspondence))
+  case [entry | entry@(identifier, _, _) <- added, identifier == "archive.claim/derivation_run"] of
+    [(identifier, version, digest)] -> do
+      _ <- refuseNew root archiveId "the 0.0.6 archive refuses a contract only 0.0.7 installs"
+        "archive.derivation/run" (runName 1)
+        (atPrevious (contractRecord "claim" (Text.unpack identifier, Text.unpack version, Text.unpack digest) runPayload []))
+        "proposed contract is not installed at this snapshot: archive.claim/derivation_run"
+      pure ()
+    found -> assert "0.0.7 adds exactly one derivation_run bundle" False ExitSuccess (show found) ""
+  where
+    rewriteFile path bytes = do
+      removeFile path
+      LazyByteString.writeFile path bytes
+    refinalize root' path fields adjust = do
+      let oldRevision = case KeyMap.lookup "revision_id" fields of
+            Just (Aeson.String value) -> value
+            _ -> ""
+          at = case KeyMap.lookup "at" fields of
+            Just (Aeson.String value) -> value
+            _ -> "2026-01-01T00:00:00Z"
+          draft = adjust (KeyMap.insert "spec" (Aeson.String "archive/0.0.6")
+            (KeyMap.delete "at" (KeyMap.delete "revision_id" fields)))
+      case finalizeStored at (Aeson.Object draft) of
+        Left problem -> assert "a bootstrap record refinalizes" False ExitSuccess (Text.unpack problem) "" >> pure (oldRevision, oldRevision)
+        Right (revision, value) -> do
+          shellChecked ("git -C " <> quote root' <> " rm -q " <> quote path)
+          let relative = recordRelative (Text.unpack revision)
+          createDirectoryIfMissing True (takeDirectory (root' </> relative))
+          LazyByteString.writeFile (root' </> relative) (encodeCanonical value)
+          assert "the refinalized record is a different revision" (revision /= oldRevision) ExitSuccess "" ""
+          pure (oldRevision, revision)
+    retarget oldRevision newRevision fields = case KeyMap.lookup "refs" fields of
+      Just (Aeson.Array refs) -> KeyMap.insert "refs" (Aeson.Array (fmap (repin oldRevision newRevision) refs)) fields
+      _ -> fields
+    repin oldRevision newRevision (Aeson.Object reference)
+      | KeyMap.lookup "revision_id" reference == Just (Aeson.String oldRevision) =
+          Aeson.Object (KeyMap.insert "revision_id" (Aeson.String newRevision) reference)
+    repin _ _ reference = reference
+    shellLines script = do
+      (code, output, errors) <- shell script
+      assert "temporary test setup" (code == ExitSuccess) code output errors
+      pure (lines output)

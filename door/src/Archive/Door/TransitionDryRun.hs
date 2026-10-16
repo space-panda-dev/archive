@@ -15,6 +15,7 @@ module Archive.Door.TransitionDryRun
   , dryRunTransition
   , TransitionKind (..)
   , transitionDispatchTable
+  , transitionContractsWithoutHandler
   ) where
 
 import Archive.Door.AdmissionDryRun
@@ -110,8 +111,9 @@ data TransitionKind
 
 -- | The only transition contracts Door can commit, by exact identifier and
 -- version (ADRs 0028, 0051).  Dispatch additionally requires the citation's
--- digest to be installed.  Tests enumerate this table against the installed
--- catalog, so a transition contract cannot ship without a handler.
+-- digest to be installed.  Tests enumerate this table and
+-- 'transitionContractsWithoutHandler' against the installed catalog, so a
+-- transition contract cannot ship without a handler or a recorded refusal.
 transitionDispatchTable :: [((Text, Text), TransitionKind)]
 transitionDispatchTable =
   [ (("archive.transition/operator_initialization", "1"), OperatorInitialization)
@@ -121,6 +123,15 @@ transitionDispatchTable =
   , (("archive.transition/destroy", "2"), Destroy)
   , (("archive.transition/publication_approval", "1"), PublicationApproval)
   , (("archive.transition/publication_withdrawal", "1"), PublicationWithdrawal)
+  ]
+
+-- | Installed transition contracts this Door refuses as unsupported.
+-- Specification 0.0.7 installs the specification upgrade bundle (ADR 0068);
+-- its dispatch is not implemented yet, so every proposal citing it fails
+-- loudly instead of committing.
+transitionContractsWithoutHandler :: [(Text, Text)]
+transitionContractsWithoutHandler =
+  [ ("archive.transition/specification_upgrade", "1")
   ]
 
 -- | The table entry for a draft's single installed transition citation.
@@ -271,7 +282,14 @@ prepare record = do
 dispatch :: Set (Text, Text, Text) -> DraftEnvelope -> Either Text TransitionKey
 dispatch installed draft = case transitionCitationKind installed draft of
   Just (kind, version) -> Right (TransitionKey kind version)
-  Nothing -> Left "unsupported transition contract"
+  Nothing -> case [ (identifier, version)
+                  | citation <- envelopeContracts draft
+                  , let identifier = contractId citation
+                        version = contractVersion citation
+                  , (identifier, version) `elem` transitionContractsWithoutHandler ] of
+    (identifier, version) : _ -> Left ("unsupported transition contract: " <> identifier
+      <> " version " <> version <> " is installed but this Door has no handler for it")
+    [] -> Left "unsupported transition contract"
 
 validateBatchContracts :: [TransitionKey] -> [Prepared] -> Either Text ()
 validateBatchContracts keys prepared = case prepared of

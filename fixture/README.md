@@ -6,7 +6,9 @@ title, and byte here is invented.
 
 - [`plan.json`](plan.json) lists the records, step by step, with symbolic
   keys instead of identifiers. Together they cite every contract in the
-  current specification's catalog.
+  current specification's catalog except the six that specification 0.0.7
+  adds: Door refuses the specification upgrade, and World does not project
+  the others yet.
 - [`content/`](content/) holds the bytes the plan's artifacts admit.
 - [`build.py`](build.py) builds the archive. It needs only Python's standard
   library, `archive`, `door`, `git`, and `git-annex`.
