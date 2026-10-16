@@ -124,9 +124,10 @@ data SinceOutcome
 
 -- | Read one committed HEAD, and the record paths added after an earlier
 -- commit of its history (ADR 0055). History only adds records, and the
--- history audit Door also uses ('GitSnapshot.immutableAdditions') refuses
--- anything else, so the paths added after the commit are exactly the new
--- records. Paths come from Git's listing; none is built here.
+-- history audit Door also uses ('GitSnapshot.archivePathHistory') refuses
+-- anything else under @records/@ (only the manifest may change, in a
+-- specification upgrade), so the paths added after the commit are exactly
+-- the new records. Paths come from Git's listing; none is built here.
 readCommittedArchiveSince :: FilePath -> Text -> IO SinceOutcome
 readCommittedArchiveSince root since
   | not (validCommitText since) = pure (SinceRefused

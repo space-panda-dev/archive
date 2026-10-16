@@ -59,6 +59,7 @@ The decisions behind these boundaries: Archive stands alone
 
 ```
 door admit | transition          the only commands that change archival meaning
+door transition (upgrade)        adopting a later, additive specification release
 door serve --socket <path>       the same commands for applications, on a private socket
 relay/relay.py --config <file>   Door's service and World's query over HTTP, for the tailnet
 door verify                      full verification of HEAD and a fresh checkpoint
@@ -103,6 +104,18 @@ directory interface is accepted. Persistent admission commits metadata-only
 batches under the archive lock; new content-bearing batches remain explicit
 unsupported behavior until the required git-annex experiment, while complete
 retries return without transfer or mutation.
+A specification upgrade is a `door transition` proposal of one
+`archive.transition/specification_upgrade` record, written under the target
+specification and authorized by the current revision of the active operator's
+appointed person ([ADR 0068](decisions/0068-specification-upgrade.md)). Door
+adopts only the release it carries, and only when that release is additive
+for the archive's own; it takes the release's documents and bundles from its
+own specification files, never from the proposal. One commit under the archive
+lock adds the record, `spec/<version>/`, and the added bundles, and replaces
+`archive.json` with the new version; a retry writes nothing, and no downgrade
+exists. The command is the same everywhere, including `door serve`; running it
+against the shadow or a real archive needs its own approval
+([shadow runbook](shadow-runbook.md#specification-upgrade)).
 `door transition --proposal <directory> --dry-run` likewise predicts accepted
 retire/destroy transitions, validates durable version-2 batch order, and
 reports the authorization and state fences that must be rechecked by the

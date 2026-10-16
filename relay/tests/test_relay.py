@@ -216,6 +216,30 @@ class CallerChecks(Fixture):
         self.assertEqual((answer["ok"], answer["result"]["healthy"], answer["result"]["door"],
                           answer["result"]["world"]["status"]), (False, False, "unreachable", "unavailable"))
 
+    def test_answers_report_the_specification_the_manifest_names_now(self) -> None:
+        # A specification upgrade replaces the manifest while the relay runs.
+        harness = self.harness()
+        _, _, before = harness.call("GET", "/health")
+        manifest = self.tmp / "no-archive" / "archive.json"
+        manifest.write_text(json.dumps({"archive_id": ARCHIVE_ID, "layout": "archive/2", "spec": "archive/0.0.7"}))
+        _, _, after = harness.call("GET", "/health")
+        self.assertEqual((before["archive"]["spec"], after["archive"]["spec"]), ("archive/0.0.6", "archive/0.0.7"))
+
+    def test_a_manifest_naming_another_archive_is_an_internal_error(self) -> None:
+        # An upgrade never changes the identifier, so another one means the
+        # root now holds a different archive; the relay names neither.
+        harness = self.harness()
+        other = "urn:uuid:" + str(uuid.uuid4())
+        self.assertNotEqual(other, ARCHIVE_ID)
+        manifest = self.tmp / "no-archive" / "archive.json"
+        manifest.write_text(json.dumps({"archive_id": other, "layout": "archive/2", "spec": "archive/0.0.7"}))
+        logged = io.StringIO()
+        with redirect_stderr(logged):
+            status, _, answer = harness.call("GET", "/health")
+        self.assertEqual((status, answer["error"]["code"]), (500, "internal_error"))
+        self.assertNotIn(other, json.dumps(answer))
+        self.assertIn("names another archive", logged.getvalue())
+
     def test_a_request_without_an_allowed_login_is_refused_without_archive_details(self) -> None:
         harness = self.harness()
         for login in (None, "someone@example.test", ""):

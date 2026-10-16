@@ -9,12 +9,14 @@ import Archive.Door.Canonical (finalizeStored)
 import Archive.Door.Layout (archiveRoot, parseSha256Digest, recordPath)
 import Archive.Door.MutationError (MutationError (..))
 import Archive.Door.Proposal (Proposal)
-import Archive.Door.AdmissionDryRun (rememberCommitted, snapshotVerification)
+import Archive.Door.AdmissionDryRun (forgetSnapshots, rememberCommitted, snapshotVerification)
 import Archive.Door.RecordCommit
-  ( CommitVerification (..)
+  ( ArchiveFile (..)
+  , CommitVerification (..)
   , archiveWriteLockGitExecutableIdentity
-  , commitRecordBatchWithContent
+  , commitRecordBatchWithFiles
   , withArchiveWriteLock
+  , writeCommitBaseCheckpoint
   , writeCommitCheckpoint
   )
 import Archive.Door.TransitionDryRun
@@ -47,19 +49,31 @@ commitTransition root proposal = withArchiveWriteLock root $ \archiveLock -> do
             Right records -> do
               let (base, proven) = snapshotVerification snapshot
                   verification = CommitVerification { verifiedBase = base, verifiedObjectsProven = proven }
-              committed <- commitRecordBatchWithContent archiveLock
+                  files = [ArchiveFile path bytes | (path, bytes) <- plannedSpecificationFiles plan]
+              committed <- commitRecordBatchWithFiles archiveLock
                 (plannedTransitionSnapshot plan)
-                "Record archive transition"
+                (if null files then "Record archive transition" else "Upgrade archive specification")
                 records
                 []
+                files
                 (Just verification)
                 (finalCheck plan)
               case committed of
                 Left problem -> pure (Left problem)
-                Right commit -> do
-                  chain <- writeCommitCheckpoint archiveLock verification commit records
-                  rememberCommitted root snapshot commit chain records
-                  pure (Right plan)
+                Right commit
+                  | null files -> do
+                      chain <- writeCommitCheckpoint archiveLock verification commit records
+                      rememberCommitted root snapshot commit chain records
+                      pure (Right plan)
+                  -- An upgrade adds specification paths and bundles that a
+                  -- per-commit addition and the remembered snapshot do not
+                  -- carry, so it is recorded as a new base checkpoint, and
+                  -- the next request loads the new commit from it.
+                  | otherwise -> do
+                      _ <- writeCommitBaseCheckpoint archiveLock verification commit records
+                        (map archiveFilePath files)
+                      forgetSnapshots
+                      pure (Right plan)
   where
     finalCheck plan = do
       final <- dryRunTransitionForCommit root proposal

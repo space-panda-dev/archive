@@ -237,6 +237,52 @@ has role `scratch` and commits on; clients commit only where the role is
 archive shares the source's archive identifier and is never evidence: nothing
 is copied back from it.
 
+## Specification upgrade
+
+Status: proposed. Nothing here is approved. Each run, on a scratch archive,
+the shadow, or any later archive, needs its own operation review and the
+operator's immediate approval for that one run; the scratch standing approval
+above covers making scratch copies, not upgrading one.
+
+The shadow is a 0.0.6 archive. Specification 0.0.7 is additive for it, so it
+can adopt 0.0.7 by one `door transition`
+([ADR 0068](decisions/0068-specification-upgrade.md)): one commit adds the
+upgrade record, `spec/0.0.7/`, and the bundles 0.0.7 adds, and replaces
+`archive.json` with the new version. No downgrade exists; the only way back is
+the Btrfs snapshot taken before the run.
+
+1. **Review.** Name the archive root, the Door build (it must carry 0.0.7, the
+   version in its `spec/VERSION`), the operator person's current revision, and
+   the snapshot that is the rollback. Rehearse on a scratch copy first and
+   keep its result with the review.
+2. **Snapshot.** Take a read-only Btrfs snapshot of the archive and record its
+   identifier. Stop writers through the relay and the review application for
+   the run; Door's lock serializes the rest.
+3. **Proposal.** Write a transition proposal directory with one record: a
+   Claim with `spec` `archive/0.0.7`, citing
+   `archive.transition/specification_upgrade` version 1 under the digest the
+   0.0.7 catalog lists, payload `{"from": "archive/0.0.6", "to":
+   "archive/0.0.7"}`, and one `authorizer` reference pinning the current
+   revision of the operator's person. Its identity row uses namespace
+   `archive.transition/specification_upgrade`; `expected_heads` holds a null
+   expectation for the new object and the operator person's current revision.
+4. **Dry run.** Run `door transition --proposal <directory> --dry-run` from the
+   archive root and keep its JSON. It must predict one revision and write
+   nothing.
+5. **Run.** Run `door transition --proposal <directory>` once the operator
+   approves the dry run's result. A refusal writes nothing; record it and stop.
+   An uncertain outcome is answered by sending the identical proposal again: a
+   committed upgrade answers as a retry.
+6. **Check.** `git show --name-status HEAD` lists exactly `M archive.json`, the
+   three `spec/0.0.7/` documents, the added bundles, and the record. `archive
+   status` reports `archive/0.0.7` with no issue, and `archive doctor` passes.
+   World's next refresh rebuilds its projection in full, because the
+   specification changed; the relay reports the new version from the next
+   answer on.
+7. **Record.** Keep the review, the snapshot identifier, the dry-run and
+   committed JSON, and the checks with the shadow's reports, outside the
+   archive. Delete the snapshot only after the operator accepts the result.
+
 ## Synthetic harness
 
 From the repository root, these commands create only temporary synthetic trees, use the existing read-only manifest/census tools, and remove the temporary data on exit:
