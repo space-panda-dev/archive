@@ -237,6 +237,56 @@ has role `scratch` and commits on; clients commit only where the role is
 archive shares the source's archive identifier and is never evidence: nothing
 is copied back from it.
 
+## Importing new recordings
+
+This procedure is **proposed**. [`capture import`](../capture/README.md)
+puts a recorder card's new recordings into an archive as Archive-native
+records ([ADR 0070](decisions/0070-capture-import.md)). Running it against a
+scratch archive is covered by the standing approval above. Every run against
+the shadow, its dry runs included (a dry run is a Door command), needs the
+operator's approval for that run until the operator grants a standing one;
+the real archive is not in scope before cutover.
+
+1. **Mount the card read-only.** The importer only reads its input and never
+   deletes anything, but a read-only mount makes that a property of the
+   machine rather than of the code. Hidden names (`.Trashes`, `._*`) are
+   passed over and listed; any other file the Zoom H4essential grammar does
+   not recognise refuses the whole run, unless `--session-name` names the one
+   session those files form.
+2. **Rehearse on a scratch copy.** Create or reset a scratch archive, then run
+   the import against it with its own staging repository and derived-media
+   root, which must not be inside the card:
+
+   ```sh
+   capture import --archive "$SCRATCH/archive" --staging "$SCRATCH/capture-staging" \
+     --derived-media "$SCRATCH/derived-media" "$CARD" --dry-run
+   capture import --archive "$SCRATCH/archive" --staging "$SCRATCH/capture-staging" \
+     --derived-media "$SCRATCH/derived-media" "$CARD"
+   ```
+
+   Check the answer's sessions (each source's files, in recording order) and
+   chain, and look at the sessions in a review client through the scratch
+   relay.
+3. **Ask for approval to import into the shadow.** The request names the card,
+   the shadow's staging repository and derived-media root, and attaches the
+   scratch run's answer. With approval, run the same command against the
+   shadow, first with `--dry-run`: the predicted session, parts, and Artifact
+   revisions must equal the scratch run's, because the drafts carry no time
+   and both archives share one identifier. Then run it without `--dry-run`.
+4. **Confirm and keep the answer.** A second run must answer `unchanged` and
+   leave the archive's `HEAD` where it was. Keep both answers with the
+   operational reports, outside the archive.
+5. **If the chain stopped**, the answer (on stderr, with exit status 1) lists
+   the sessions already committed and how far the chain got. A rerun of the
+   import does not resume it, because those contents are now Artifacts. Run
+   the remaining `enrich probe`, `enrich detect` (primary source only), and
+   `enrich-media` steps by hand for the Artifacts it names; on the shadow each
+   is a separately approved command.
+6. **The card is the operator's.** Wiping or reusing it is a separate decision,
+   taken only after the shadow's content has been checked against its
+   backups. A rebuilt shadow loses imported sessions until the same cards are
+   imported again, which step 4's rule makes safe.
+
 ## Synthetic harness
 
 From the repository root, these commands create only temporary synthetic trees, use the existing read-only manifest/census tools, and remove the temporary data on exit:

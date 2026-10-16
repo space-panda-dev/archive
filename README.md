@@ -237,11 +237,11 @@ spec/                the contract copied into every archive
 docs/proposals/v2-migration-release-readiness.md
                      proposed V2 release boundary and unresolved audio gates
 relay/               HTTP for the operator's browser: Door's service, World's query, derived media
-enrich/              enrichment tools that derive from files: waveform peaks and listening copies
 world/               experimental, rebuildable semantic projection
 world/projection/    what each World projection version emits: SHACL shapes and vocabulary
 fixture/             published synthetic records and the builder that admits them through Door
-enrich/              enrichment tools and the adapter that proposes their runs to Door
+enrich/              enrichment tools, the adapter that proposes their runs to Door, and derived media
+capture/             the native importer of recorder files: grammars, sessions, and the enrichment chain
 ```
 
 ## Contributing

@@ -112,6 +112,17 @@ never admitted. The relay serves it read-only, by digest, to the operator's
 login only, for content World knows as an Artifact's; it reads the layout
 from `enrich/derived.py` and never serves an original's bytes.
 
+[`capture/`](../capture/README.md) holds the native importer of new recordings
+([ADR 0070](decisions/0070-capture-import.md)). `capture import` hashes a
+directory of recorder files, skips content that is already an Artifact's,
+groups the rest into sessions and sources with a recorder grammar (one named
+module per recorder model; the first is the Zoom H4essential), and proposes
+each session in one content-bearing `door admit` batch from a git-annex
+staging repository. It then runs `enrich probe`, `enrich detect` on the
+primary source, and `enrich/media.py` on what it admitted. It depends on
+enrichment's adapter for reading the archive and staging content, and on
+nothing else in the repository; it only reads its input.
+
 World's answers are standard SPARQL results, and what each projection version
 emits is declared in [`world/projection/`](../world/projection/6/projection.json)
 as SHACL shapes; [`fixture/`](../fixture/README.md) holds synthetic records

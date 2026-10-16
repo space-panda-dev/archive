@@ -63,9 +63,10 @@
           python = pythonFor pkgs;
         in pkgs.runCommand "archive-tools" { nativeBuildInputs = [ pkgs.makeWrapper ]; } ''
           mkdir -p $out/share/archive $out/bin
-          cp -r ${self}/world ${self}/relay ${self}/fixture ${self}/enrich ${self}/spec ${self}/LICENSES $out/share/archive/
+          cp -r ${self}/world ${self}/relay ${self}/fixture ${self}/enrich ${self}/capture ${self}/spec ${self}/LICENSES $out/share/archive/
           chmod -R u+w $out/share/archive
-          rm -f $out/share/archive/fixture/test_*.py $out/share/archive/enrich/test_*.py $out/share/archive/enrich/support.py
+          rm -f $out/share/archive/fixture/test_*.py $out/share/archive/enrich/test_*.py $out/share/archive/enrich/support.py \
+            $out/share/archive/capture/test_*.py
           rm -rf $out/share/archive/world/tests $out/share/archive/relay/tests $out/share/archive/enrich/tests
           wrap() {
             makeWrapper ${python}/bin/python3 $out/bin/$1 \
@@ -81,6 +82,7 @@
           wrap archive-fixture fixture/build.py
           wrap archive-fixture-serve fixture/serve.py
           wrap enrich enrich/enrich.py
+          wrap capture capture/capture.py
         '';
     in
     {
@@ -167,6 +169,7 @@
             python -m unittest discover -s migration -p 'test_*.py'
             python -m unittest discover -s fixture -p 'test_*.py'
             python -m unittest discover -s enrich -p 'test_*.py'
+            python -m unittest discover -s capture -p 'test_*.py'
             touch $out
           '';
         });

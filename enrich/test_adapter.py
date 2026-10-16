@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -180,6 +181,39 @@ class Proposals(unittest.TestCase):
         commit = support.head(staging.path)
         staging.stage(data, name)
         self.assertEqual(support.head(staging.path), commit)
+
+    def test_a_staged_file_has_the_key_of_its_digest_and_its_source_is_only_read(self) -> None:
+        source = self.tmp / "input.bin"
+        source.write_bytes(b"recorded bytes")
+        os.chmod(source, 0o444)
+        before = (source.stat().st_mtime_ns, source.read_bytes())
+        digest, size = adapter.digest_of(source.read_bytes()), source.stat().st_size
+        staging = self.staging()
+        key = staging.stage_file(source, digest, size, "x.wav")
+        self.assertEqual(key, f"SHA256E-s{size}--{digest.removeprefix('sha256:')}.wav")
+        self.assertEqual((source.stat().st_mtime_ns, source.read_bytes()), before)
+        # Staging it again writes nothing.
+        commit = support.head(staging.path)
+        self.assertEqual(staging.stage_file(source, digest, size, "x.wav"), key)
+        self.assertEqual(support.head(staging.path), commit)
+
+    def test_a_file_that_is_not_its_hashed_content_is_refused(self) -> None:
+        source = self.tmp / "changed.bin"
+        source.write_bytes(b"changed after hashing")
+        with self.assertRaisesRegex(adapter.AdapterError, "not the key"):
+            self.staging().stage_file(source, adapter.digest_of(b"what was hashed"), source.stat().st_size,
+                                      "y.wav")
+
+    def test_a_named_remote_is_added_under_its_name(self) -> None:
+        staging = adapter.Staging(self.tmp / "named", self.env["ARCHIVE_GIT_EXECUTABLE"],
+                                  self.env["ARCHIVE_GIT_ANNEX_EXECUTABLE"], self.env, remote="capture-staging")
+        staging.stage(b"{}", "seed.json")
+        self.assertEqual(staging.remote_name(self.root, create=True), "capture-staging")
+        remotes = subprocess.run(["git", "remote"], cwd=self.root, capture_output=True, text=True).stdout.split()
+        self.assertIn("capture-staging", remotes)
+        self.assertNotIn(adapter.STAGING_REMOTE, remotes)
+        # The default staging of another tool finds the same repository by its path.
+        self.assertEqual(self.staging(self.tmp / "named").remote_name(self.root, create=True), "capture-staging")
 
     def test_a_staging_repository_with_another_backend_is_refused(self) -> None:
         staging = self.staging()
