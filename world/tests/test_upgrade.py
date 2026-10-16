@@ -139,6 +139,12 @@ class SpecificationUpgradeTests(unittest.TestCase):
         refinalize(claims[0], repin)
         cls.operator_revision = new
         cls.git_run("add", "archive.json", "spec", "records")
+        # Early Door builds committed the bootstrap files as 100755, and real
+        # archives keep that first commit; Door must upgrade them as they are.
+        bootstrap = ["archive.json", *cls.git_run("ls-files", "spec", "contracts").split()]
+        cls.git_run("update-index", "--chmod=+x", *bootstrap)
+        for path in bootstrap:
+            (cls.root / path).chmod(0o755)
         cls.git_run("commit", "-q", "--amend", "--no-edit")
 
     def head(self):
@@ -180,8 +186,10 @@ class SpecificationUpgradeTests(unittest.TestCase):
         self.assertEqual(len(upgrade), 1)
         self.assertNotIn(upgrade[0]["digest"], {entry["digest"] for entry in catalog(PREVIOUS)})
 
-        # Anchor: Door loads the rewritten archive as the previous release.
+        # Anchor: Door loads the rewritten archive as the previous release,
+        # whose manifest is committed as an early Door committed it.
         self.assertEqual(json.loads((self.root / "archive.json").read_text())["spec"], f"archive/{PREVIOUS}")
+        self.assertTrue(self.git_run("ls-files", "-s", "archive.json").startswith("100755 "))
         self.run_checked([self.door, "verify"], "door verify of the earlier archive")
         before = self.export()
         self.assertEqual(before["status"], "ok")
@@ -216,6 +224,9 @@ class SpecificationUpgradeTests(unittest.TestCase):
         self.assertEqual(json.loads(upgraded.stdout)["status"], "committed")
         later = self.propose("admit", "later-guest", "archive.core/entity", self.entity("later-guest", CURRENT))
         self.assertEqual(later.returncode, 0, later.stderr)
+
+        self.assertTrue(self.git_run("ls-tree", "HEAD", "archive.json").startswith("100644 blob "))
+        self.assertEqual(self.git_run("status", "--porcelain"), "")
 
         after = self.export()
         self.assertEqual(after["spec"], f"archive/{CURRENT}")

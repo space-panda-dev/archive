@@ -54,6 +54,7 @@ import Archive.Door.VerifiedCheckpoint
 import qualified Codec.Compression.Zlib as Zlib
 import qualified Crypto.Hash.SHA1 as SHA1
 import qualified Crypto.Hash.SHA256 as SHA256
+import Control.Applicative ((<|>))
 import qualified Control.Exception as Exception
 import Control.Monad (unless, when)
 import Archive.Process (ProcessError, processErrorMessage, runProcessBoundedAt)
@@ -2014,7 +2015,10 @@ commitRecordBatchWithFiles (ArchiveWriteLock rootPath rootFd gitFd executable) e
           _ -> Left ("content path already holds a different entry: " <> Text.pack (contentLinkPath link))
 
     -- The manifest must be committed already, as a regular file, and is
-    -- replaced; any other specification file must not exist yet.
+    -- replaced; any other specification file must not exist yet. Archives
+    -- bootstrapped by early Door builds committed it as 100755, which Door
+    -- reads as a regular file everywhere else, so either mode is accepted
+    -- here; the replacement is committed as 100644.
     classifyFile file = do
       let bytes = LazyByteString.toStrict (archiveFileBytes file)
           path = archiveFilePath file
@@ -2028,7 +2032,8 @@ commitRecordBatchWithFiles (ArchiveWriteLock rootPath rootFd gitFd executable) e
           (False, []) -> Right (path, blobId)
           (False, _) -> Left ("specification file already exists: " <> Text.pack path)
           (True, [entry])
-            | Just old <- Text.stripPrefix "100644 blob " =<< Text.stripSuffix ("\t" <> Text.pack path) entry
+            | Just listed <- Text.stripSuffix ("\t" <> Text.pack path) entry
+            , Just old <- Text.stripPrefix "100644 blob " listed <|> Text.stripPrefix "100755 blob " listed
             , old /= blobId -> Right (path, blobId)
           (True, _) -> Left "the committed manifest is missing, not a regular file, or unchanged"
 
