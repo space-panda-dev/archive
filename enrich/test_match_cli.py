@@ -350,6 +350,103 @@ class CorpusFromExport(unittest.TestCase):
         self.assertEqual(works, {})
         self.assertEqual([s["reason"] for s in skipped], ["the Work's head is not a musical_work Entity"])
 
+    def test_a_selection_is_compared_by_its_first_track(self) -> None:
+        tmp = support.scratch(self, "enrich-match-tracks-")
+        a = support.write_wav(tmp / "a.wav", support.tune_samples(support.TUNE, 8000), 8000)
+        b = support.write_wav(tmp / "b.wav", support.tune_samples(support.OTHER_TUNE, 8000), 8000)
+        two_tracks = {**selection("s", "a", [(0, 1000)], 8000),
+                      "payload": {"tracks": [
+                          {"pieces": [{"start_sample": 0, "end_sample": 1000, "sample_rate": 8000}]},
+                          {"pieces": [{"start_sample": 0, "end_sample": 500, "sample_rate": 8000},
+                                      {"start_sample": 500, "end_sample": 1000, "sample_rate": 8000}]}]},
+                      "refs": [{"role": "piece", "pin": "a"}, {"role": "piece", "pin": "b"},
+                               {"role": "piece", "pin": "b"}]}
+        root, manifest = support.build_archive(self, {"a": a, "b": b}, (
+            {"name": "selection", "command": "admit", "records": [two_tracks]},))
+        objects = manifest["objects"]
+        reader = adapter.ArchiveReader.from_export(root, support.export(root))
+        record = reader.head(objects["s"]["object_id"])
+        # Anchor: Door kept both tracks and all three piece references.
+        self.assertEqual(len(record["payload"]["tracks"]), 2)
+        self.assertEqual(len([r for r in record["refs"] if r["role"] == "piece"]), 3)
+        pieces = enrich.selection_pieces(reader, record)
+        self.assertEqual([(artifact["object_id"], piece) for artifact, piece in pieces],
+                         [(objects["a"]["object_id"], {"start_sample": 0, "end_sample": 1000, "sample_rate": 8000})])
+
+    def test_only_the_head_revision_of_a_link_counts(self) -> None:
+        tmp = support.scratch(self, "enrich-match-relink-")
+        wav = support.write_wav(tmp / "a.wav", support.tune_samples(support.TUNE, 8000), 8000)
+        root, manifest = support.build_archive(self, {"a": wav}, (
+            {"name": "works", "command": "admit", "records": [work("work-x", "Test Work X"),
+                                                              work("work-y", "Test Work Y")]},
+            {"name": "selection", "command": "admit", "records": [selection("s", "a", [(0, 1000)], 8000)]},
+            {"name": "occurrence", "command": "admit", "records": [occurrence("o", "s")]},
+            {"name": "link", "command": "admit", "records": [link("l", "o", "work-x")]},
+            {"name": "relink", "command": "admit", "records": [{**link("l2", "o", "work-y"), "revises": "l"}]}))
+        objects = manifest["objects"]
+        reader = adapter.ArchiveReader.from_export(root, support.export(root))
+        # Anchor: the earlier revision is still exported, and it links Work X.
+        earlier = reader.by_revision[objects["l"]["revision_id"]]
+        self.assertIn(objects["work-x"]["object_id"], [r["id"] for r in earlier["refs"] if r["role"] == "work"])
+        self.assertNotEqual(objects["l"]["revision_id"], objects["l2"]["revision_id"])
+        works, skipped = enrich.match_corpus(reader, "urn:uuid:00000000-0000-4000-8000-000000000000", set())
+        self.assertEqual(list(works), [objects["work-y"]["object_id"]])
+        self.assertEqual([link["revision_id"] for link in works[objects["work-y"]["object_id"]]["links"]],
+                         [objects["l2"]["revision_id"]])
+        self.assertEqual(skipped, [])
+
+
+@needs_door
+class DoorRefusesMalformedMatches(unittest.TestCase):
+    """The matcher's proposal path ends at Door, and Door refuses a match that
+    breaks work_match version 2 however the matcher builds it."""
+
+    def setUp(self) -> None:
+        tmp = support.scratch(self, "enrich-match-refuse-")
+        wav = support.write_wav(tmp / "a.wav", support.tune_samples(support.TUNE, 8000), 8000)
+        self.env = support.environment()
+        self.root, manifest = support.build_archive(self, {"a": wav}, (
+            {"name": "works", "command": "admit", "records": [work("work-x", "Test Work X")]},
+            {"name": "selections", "command": "admit", "records": [
+                selection("s", "a", [(0, 1000)], 8000), selection("t", "a", [(1000, 2000)], 8000)]},
+            {"name": "occurrences", "command": "admit", "records": [occurrence("o", "s"), occurrence("p", "t")]},
+            {"name": "link", "command": "admit", "records": [link("l", "p", "work-x")]}))
+        self.objects = manifest["objects"]
+        self.reader = adapter.ArchiveReader(self.root, support.ARCHIVE, self.env)
+
+    def pin(self, role: str, key: str) -> adapter.Pin:
+        return adapter.Pin(role, self.objects[key]["object_id"], self.objects[key]["revision_id"])
+
+    def propose(self, *refs: adapter.Pin) -> adapter.Admission:
+        started = adapter.now()
+        output = adapter.Output(
+            contract=enrich.MATCH_CONTRACT, name="work",
+            payload={"method": {"id": match.METHOD_ID, "version": match.METHOD_VERSION}, "score": "0.100000",
+                     "scale": match.SCALE, "direction": match.DIRECTION}, refs=refs)
+        run = adapter.RunResult(agent=match.AGENT, method_id=match.METHOD_ID, method_version=match.METHOD_VERSION,
+                                software=(), started_at=started, ended_at=started,
+                                used=(self.pin("used", "s"),), outputs=(output,))
+        return adapter.propose(self.reader, run, door=support.DOOR, dry_run=True, env=self.env)
+
+    def test_door_refuses_what_work_match_version_2_forbids(self) -> None:
+        work_pin, corpus = self.pin("work", "work-x"), self.pin("corpus", "p")
+        # Anchor: the well-formed match is predicted, so each refusal below is the defect's.
+        self.assertEqual(self.propose(self.pin("selection", "s"), work_pin, corpus).status, "predicted")
+        self.assertEqual(self.propose(self.pin("occurrence", "o"), work_pin, corpus).status, "predicted")
+        malformed = {
+            "both compared roles": (self.pin("selection", "s"), self.pin("occurrence", "o"), work_pin, corpus),
+            "no compared record": (work_pin, corpus),
+            "a selection role pinning an occurrence": (self.pin("selection", "o"), work_pin, corpus),
+            "an occurrence role pinning a selection": (self.pin("occurrence", "s"), work_pin, corpus),
+            "the compared occurrence in its own corpus": (self.pin("occurrence", "p"), work_pin, corpus),
+            "a corpus selection": (self.pin("selection", "s"), work_pin, self.pin("corpus", "t")),
+            "no corpus": (self.pin("selection", "s"), work_pin),
+            "a Work that is a selection": (self.pin("selection", "s"), self.pin("work", "t"), corpus),
+        }
+        for case, refs in malformed.items():
+            with self.subTest(case), self.assertRaisesRegex(adapter.AdapterError, "door admit failed"):
+                self.propose(*refs)
+
 
 if __name__ == "__main__":
     unittest.main()
