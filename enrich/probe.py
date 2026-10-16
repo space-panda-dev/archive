@@ -103,21 +103,24 @@ def _run(arguments: list[str], what: str) -> subprocess.CompletedProcess[str]:
 def software(ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe") -> tuple[tuple[str, str], ...]:
     """The programs and libraries the count depends on, as installed now:
     ffprobe and ffmpeg, then the libraries ffmpeg reports, in its order."""
-    found: list[tuple[str, str]] = []
-    for program, wanted_libraries in ((ffprobe, False), (ffmpeg, True)):
-        completed = _run([program, "-version"], f"{program} -version")
-        lines = completed.stdout.splitlines()
-        match = _VERSION.match(lines[0]) if completed.returncode == 0 and lines else None
-        if match is None:
-            raise ProbeError(f"{program} -version did not report a version: {completed.stdout[:200]!r}")
-        found.append((match.group(1), match.group(2)))
-        if wanted_libraries:
-            libraries = [_LIBRARY.match(line) for line in lines]
-            libraries = [m for m in libraries if m]
-            names = {m.group(1) for m in libraries}
-            if not {"libavcodec", "libavformat", "libavfilter"} <= names:
-                raise ProbeError(f"{program} -version did not report its decoding libraries")
-            found.extend((m.group(1), f"{int(m.group(2))}.{int(m.group(3))}.{int(m.group(4))}") for m in libraries)
+    return (*program_versions(ffprobe, libraries=False), *program_versions(ffmpeg, libraries=True))
+
+
+def program_versions(program: str, libraries: bool) -> tuple[tuple[str, str], ...]:
+    """One program's version as `-version` reports it, followed, when
+    `libraries` is set, by the decoding libraries it reports, in its order.
+    The span detector names its decoder this way too."""
+    completed = _run([program, "-version"], f"{program} -version")
+    lines = completed.stdout.splitlines()
+    match = _VERSION.match(lines[0]) if completed.returncode == 0 and lines else None
+    if match is None:
+        raise ProbeError(f"{program} -version did not report a version: {completed.stdout[:200]!r}")
+    found = [(match.group(1), match.group(2))]
+    if libraries:
+        reported = [m for m in (_LIBRARY.match(line) for line in lines) if m]
+        if not {"libavcodec", "libavformat", "libavfilter"} <= {m.group(1) for m in reported}:
+            raise ProbeError(f"{program} -version did not report its decoding libraries")
+        found.extend((m.group(1), f"{int(m.group(2))}.{int(m.group(3))}.{int(m.group(4))}") for m in reported)
     return tuple(found)
 
 

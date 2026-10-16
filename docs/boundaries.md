@@ -71,6 +71,7 @@ archive ls | show | current      reading
 archive plan | apply             reconciling (may become top-level plan / apply)
 archive views                    rebuilding browsable views (name unsettled)
 enrich/enrich.py probe           count an Artifact's audio streams and propose the facts to Door
+enrich/enrich.py detect          suggest an audio stream's spans and propose them to Door
 ```
 
 `door serve --socket <path>` runs Door for one archive (the working
@@ -99,7 +100,10 @@ return plain results, and one adapter that reads the archive through
 `archive export`, packages a result as a derivation run with its outputs, and
 proposes them in one `door admit` batch. The first tool is the audio stream
 probe ([ADR 0065](decisions/0065-audio-stream-facts.md)), which needs `ffmpeg`
-and `ffprobe` and counts sample frames only by decoding them.
+and `ffprobe` and counts sample frames only by decoding them. The second is
+the span detector ([ADR 0066](decisions/0066-span-suggestions.md)), which
+needs `ffmpeg` and numpy, measures against a probed stream claim, and
+suggests classed spans in integer samples from one fixed signal set.
 
 World's answers are standard SPARQL results, and what each projection version
 emits is declared in [`world/projection/`](../world/projection/6/projection.json)

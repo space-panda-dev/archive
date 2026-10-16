@@ -18,6 +18,8 @@ import wave
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 HERE = Path(__file__).resolve().parent
 REPOSITORY = HERE.parent
 DOOR = os.environ.get("ARCHIVE_TEST_DOOR")
@@ -138,6 +140,53 @@ def empty_wav(path: Path) -> Path:
         writer.setsampwidth(2)
         writer.setframerate(8000)
     return path
+
+
+def chord(seconds: float, frequencies: tuple[float, ...] = (220.0, 277.18, 329.63), amplitude: float = 0.2):
+    """A sustained chord: several sines of equal amplitude."""
+    return ("chord", seconds, frequencies, amplitude)
+
+
+def talk(seconds: float, amplitude: float = 0.2, seed: int = 1):
+    """Talk-like noise: white noise whose level rises and falls four times a
+    second, like syllables."""
+    return ("talk", seconds, seed, amplitude)
+
+
+def floor_noise(seconds: float, amplitude: float = 0.001, seed: int = 2):
+    """A room's floor: faint white noise."""
+    return ("floor", seconds, seed, amplitude)
+
+
+def synthetic_wav(path: Path, rate: int, pieces: list[tuple], channels: int = 1) -> tuple[Path, list[int]]:
+    """A 16-bit WAV of the pieces in order, written with numpy and Python's
+    `wave`; each piece is a whole number of samples, so its edges are exact.
+    Returns the path and each piece's start sample, then the total."""
+    parts, edges, at = [], [], 0
+    for kind, seconds, *rest in pieces:
+        count = int(round(seconds * rate))
+        index = np.arange(at, at + count) / rate
+        if kind == "chord":
+            frequencies, amplitude = rest
+            signal = sum(amplitude * np.sin(2 * np.pi * f * index) for f in frequencies)
+        elif kind in ("talk", "floor"):
+            seed, amplitude = rest
+            noise = np.random.default_rng(seed + at).standard_normal(count) * amplitude
+            signal = noise * (0.55 + 0.45 * np.sin(2 * np.pi * 4.0 * index)) if kind == "talk" else noise
+        else:
+            raise ValueError(kind)
+        edges.append(at)
+        parts.append(signal)
+        at += count
+    edges.append(at)
+    samples = np.clip(np.concatenate(parts), -1.0, 1.0)
+    pcm = np.round(samples * 32767).astype("<i2")
+    with wave.open(str(path), "wb") as writer:
+        writer.setnchannels(channels)
+        writer.setsampwidth(2)
+        writer.setframerate(rate)
+        writer.writeframes(np.repeat(pcm, channels).tobytes())
+    return path, edges
 
 
 def build_archive(test: unittest.TestCase, contents: dict[str, Path], steps: tuple[dict[str, Any], ...] = (),
