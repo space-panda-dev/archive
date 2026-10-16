@@ -5915,6 +5915,15 @@ derivationContractAdmissionChecks parent = do
     "contract instance does not satisfy its schema"
   assert "the offset fixture changes only the started_at suffix"
     (contains "10:00:00+00:00" offset) ExitSuccess "" ""
+  -- The pattern alone admits any digits; the date must exist.
+  _ <- refuseNew root archiveId "a run instant on a day that does not exist is refused"
+    runNamespace (runName 12)
+    (runDraft (runPayloadAt "2026-02-30T10:00:00Z" "2026-10-16T10:00:05Z") [])
+    "contract instance does not satisfy its schema"
+  _ <- refuseNew root archiveId "a run instant at hour 24 is refused"
+    runNamespace (runName 13)
+    (runDraft (runPayloadAt "2026-10-16T10:00:00Z" "2026-10-16T24:00:00Z") [])
+    "contract instance does not satisfy its schema"
   _ <- refuseNew root archiveId "a run refuses two parameters Artifacts"
     runNamespace (runName 6)
     (runDraft runPayload [pinned "parameters" parameters, pinned "parameters" other])
@@ -6141,6 +6150,23 @@ specificationUpgradeRefusalChecks parent = do
   _ <- refuseNew root archiveId "door admit refuses a specification upgrade"
     namespace "upgrade-admitted" upgrade
     "unsupported: transition contracts cannot be admitted generically"
+  -- A citation of the same identifier and version under a digest this archive
+  -- does not install must not be reported as installed.
+  let (upgradeIdentifier, upgradeVersion, upgradeDigest) = upgradeContract
+      foreignDigest = "sha256:" <> replicate 64 'e'
+      foreignUpgrade = contractRecord "claim" (upgradeIdentifier, upgradeVersion, foreignDigest)
+        "{\"from\":\"archive/0.0.7\",\"to\":\"archive/0.0.8\"}" [pinned "authorizer" (operatorId, operatorRevision)]
+  assert "the foreign citation differs from the installed one only in its digest"
+    (foreignDigest /= upgradeDigest) ExitSuccess foreignDigest upgradeDigest
+  foreignId <- allocatedObjectId archiveId namespace "upgrade-foreign"
+  (foreignCode, foreignOut, foreignErr) <- transitionAt root "upgrade-foreign"
+    [(foreignId, namespace, "upgrade-foreign")] [(foreignId, Nothing)] (foreignUpgrade foreignId)
+  headForeign <- gitHead root
+  assert "door transition refuses an uninstalled upgrade citation as not installed"
+    (foreignCode /= ExitSuccess && null foreignOut && headForeign == headBefore
+      && contains "proposed contract is not installed at this snapshot" foreignErr
+      && not (contains "is installed but" foreignErr))
+    foreignCode foreignOut foreignErr
   pure ()
 
 -- | Pure checks of the 0.0.7 profile: each malformed rule is refused when its
@@ -6277,6 +6303,13 @@ earlierSpecificationChecks parent = do
   let atPrevious draftFor objectId = replace "\"spec\":\"archive/0.0.7\"" ("\"spec\":" <> jsonString previousSpec) (draftFor objectId)
   work <- admitNew root archiveId "door admit commits a musical_work into the 0.0.6 archive"
     "archive.audio/song" "song-2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e" (atPrevious (entityRecord "musical_work" "Earlier Work"))
+  laterHead <- gitHead root
+  _ <- refuseNew root archiveId "the 0.0.6 archive refuses a record under specification 0.0.7"
+    "archive.core/entity" "later-specification-person" (entityRecord "person" "Later Person")
+    "record spec archive/0.0.7 selects a core context this archive does not hold"
+  laterHeadAfter <- gitHead root
+  assert "the refused later-specification record wrote nothing"
+    (laterHead == laterHeadAfter) ExitSuccess laterHead laterHeadAfter
   correspondence <- contractCitation root "archive.claim/work_musicbrainz_correspondence"
   _ <- admitNew root archiveId "door admit commits a 0.0.6 contract claim into the 0.0.6 archive"
     "archive.claim/work_musicbrainz_correspondence" "earlier-correspondence"

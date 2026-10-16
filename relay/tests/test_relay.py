@@ -144,7 +144,7 @@ def allocated(archive_id: str, namespace: str, name: str) -> str:
     return "urn:uuid:" + str(uuid.uuid5(uuid.UUID(archive_id[9:]), namespace + "\0" + name))
 
 
-def entity_proposal(archive_id: str, name: str, agent: str = AGENT) -> dict:
+def entity_proposal(archive_id: str, name: str, agent: str = AGENT, spec: str = "archive/0.0.6") -> dict:
     object_id = allocated(archive_id, "archive.core/entity", name)
     return {
         "manifest": {
@@ -155,7 +155,7 @@ def entity_proposal(archive_id: str, name: str, agent: str = AGENT) -> dict:
             "expected_heads": [{"object_id": object_id, "revision_id": None}],
         },
         "records": {"records/entity.json": {
-            "spec": "archive/0.0.6", "object_id": object_id, "shape": "entity",
+            "spec": spec, "object_id": object_id, "shape": "entity",
             "by": "pkg:generic/archive-relay-test@0", "agent": agent,
             "payload": {"kind": "person", "label": name}, "refs": [], "supersedes": [],
         }},
@@ -558,6 +558,9 @@ class DoorChecks(Fixture):
                                      capture_output=True, text=True)
         self.assertEqual(initialized.returncode, 0, initialized.stderr)
         self.archive_id = json.loads(initialized.stdout)["archive_id"]
+        # Door refuses a record whose spec selects a context the archive
+        # does not hold, so drafts follow the archive's own specification.
+        self.spec = json.loads((self.root / "archive.json").read_text())["spec"]
         self.socket = private(self.tmp / "door") / "door.sock"
         self.door = subprocess.Popen([DOOR, "serve", "--socket", str(self.socket)], cwd=self.root,
                                      stderr=subprocess.DEVNULL)
@@ -590,19 +593,19 @@ class DoorChecks(Fixture):
     def test_a_dry_run_is_predicted_and_writes_nothing(self) -> None:
         harness = self.harness()
         before = self.head()
-        status, _, answer = harness.call("POST", "/door/admit-dry-run", entity_proposal(self.archive_id, "dry"))
+        status, _, answer = harness.call("POST", "/door/admit-dry-run", entity_proposal(self.archive_id, "dry", spec=self.spec))
         self.assertEqual(status, 200, answer)
         self.assertEqual(answer["result"]["door"]["status"], "predicted")
         self.assertEqual(len(answer["result"]["door"]["revision_ids"]), 1)
         self.assertEqual(self.head(), before)
         self.assertEqual(list(harness.config.staging.iterdir()), [])
-        status, _, _ = harness.call("POST", "/door/admit", entity_proposal(self.archive_id, "dry"))
+        status, _, _ = harness.call("POST", "/door/admit", entity_proposal(self.archive_id, "dry", spec=self.spec))
         self.assertEqual(status, 403)
         self.assertEqual(self.head(), before)
 
     def test_doors_refusal_codes_are_passed_on(self) -> None:
         harness = self.harness()
-        proposal = entity_proposal(self.archive_id, "refused")
+        proposal = entity_proposal(self.archive_id, "refused", spec=self.spec)
         proposal["manifest"]["identities"][0]["name"] = "not-the-allocated-name"
         status, _, answer = harness.call("POST", "/door/admit-dry-run", proposal)
         self.assertEqual((status, answer["error"]["code"]), (422, "proposal_refused"))
@@ -610,7 +613,7 @@ class DoorChecks(Fixture):
 
     def test_a_stale_expected_head_is_a_conflict(self) -> None:
         harness = self.harness(writes="commit", role="scratch")
-        first = entity_proposal(self.archive_id, "renamed")
+        first = entity_proposal(self.archive_id, "renamed", spec=self.spec)
         status, _, committed = harness.call("POST", "/door/admit", first)
         self.assertEqual(status, 200, committed)
         [revision] = committed["result"]["door"]["revision_ids"]
@@ -630,7 +633,7 @@ class DoorChecks(Fixture):
     def test_a_commit_is_read_back_through_world(self) -> None:
         harness = self.harness(writes="commit", role="scratch")
         before = self.head()
-        proposal = entity_proposal(self.archive_id, "committed")
+        proposal = entity_proposal(self.archive_id, "committed", spec=self.spec)
         predicted = harness.call("POST", "/door/admit-dry-run", proposal)[2]["result"]["door"]["revision_ids"]
         status, _, answer = harness.call("POST", "/door/admit", proposal)
         self.assertEqual(status, 200, answer)
@@ -650,7 +653,7 @@ class DoorChecks(Fixture):
     def test_a_failed_refresh_after_a_commit_is_reported_stale(self) -> None:
         harness = self.harness(writes="commit", role="scratch")
         with patch.object(world, "refresh_served", side_effect=world.ProjectionError("store is broken")):
-            status, _, answer = harness.call("POST", "/door/admit", entity_proposal(self.archive_id, "stale"))
+            status, _, answer = harness.call("POST", "/door/admit", entity_proposal(self.archive_id, "stale", spec=self.spec))
         self.assertEqual((status, answer["result"]["door"]["status"]), (200, "committed"))
         self.assertEqual(answer["result"]["world"], {"status": "stale", "detail": "ProjectionError: store is broken"})
 

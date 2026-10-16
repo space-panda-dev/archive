@@ -71,7 +71,7 @@ import Archive.Door.References
   )
 import Archive.Door.Types
   ( ContractCitation (..)
-  , DraftEnvelope
+  , DraftEnvelope (envelopeSpec)
   , ObjectId
   , objectIdText
   , Reference (..)
@@ -748,6 +748,7 @@ validateProposalContracts snapshot proposal = pure $ do
   where
     committed = map entryTarget (snapshotRecords snapshot)
     validateOne catalog earlier record = do
+      requireLocalContext (proposalRecordDraft record)
       instanceValue <- contractInstance (proposalRecordValue record)
       bundles <- mapM (validateCitation catalog instanceValue)
         (envelopeContracts (proposalRecordDraft record))
@@ -761,6 +762,19 @@ validateProposalContracts snapshot proposal = pure $ do
       (revision, _) <- canonicalizeDraftStrict (proposalRecordValue record)
       pure (earlier <> [Target (objectIdText (envelopeObject (proposalRecordDraft record)))
         revision (proposalRecordDraft record)])
+    -- D-1: the archive holds the local documents that interpret every
+    -- admitted record, so a record's `spec` must select a core context this
+    -- archive already holds (D-6). A record written for a later release than
+    -- the archive governs is refused instead of leaving it incomplete.
+    requireLocalContext draft =
+      let specification = envelopeSpec draft
+          contextPath = case Text.stripPrefix "archive/" specification of
+            Just version -> Just ("spec/" <> Text.unpack version <> "/context.jsonld")
+            Nothing -> Nothing
+      in case contextPath of
+        Just path | Map.member path (snapshotImmutableAdditions snapshot) -> Right ()
+        _ -> Left ("record spec " <> specification
+          <> " selects a core context this archive does not hold")
     validateCitation catalog instanceValue citation = do
       let key = (contractId citation, contractVersion citation, contractDigest citation)
       bundle <- case Map.lookup key catalog of
