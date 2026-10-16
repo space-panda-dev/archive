@@ -211,8 +211,12 @@ The conformance tests build the [fixture archive](../fixture/README.md)
 through the real Door, so they need the two variables; without them they are
 skipped, unless `ARCHIVE_REQUIRE_INTEGRATION` is set, when they fail. They
 require the fixture to cite every contract in the specification's catalog
-except the specification upgrade, which Door refuses, every served
-projection of it to conform, and every declared term to appear in it. The
+except the specification upgrade, which an archive born at the current
+release cannot cite, every served projection of it to conform, and every
+declared term to appear in it. The upgrade tests (`test_upgrade.py`) upgrade
+an archive at the previous release with the real `door transition` and
+require World's next refresh to rebuild in full, equal a fresh projection,
+and conform. The
 derivation tests (`test_derivation.py`) answer the recording examples
 against the same archive with golden rows, check its stream claim against
 the synthetic recording's bytes, refresh incrementally across its runs, and
