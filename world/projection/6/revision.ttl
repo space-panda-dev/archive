@@ -10,6 +10,7 @@
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
 @prefix arch: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#> .
 @prefix wsh: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#world-projection-6/shapes/> .
 
@@ -18,7 +19,7 @@ wsh:Asserted a sh:NodeShape ;
   sh:targetSubjectsOf arch:piece, arch:tracks, arch:alignment, arch:reference, arch:alignment_aligned,
     arch:reference_rate, arch:aligned_rate, arch:max_error_samples, arch:anchors, arch:selection, arch:work,
     arch:performance_kind, dcterms:title, arch:credit, arch:session_part, arch:assessment_of, arch:verdict,
-    arch:reason ;
+    arch:reason, arch:score ;
   sh:closed true ;
   sh:property [ sh:path arch:piece ; sh:nodeKind sh:IRI ; rdfs:comment "audio_selection version 1: each span." ] ;
   sh:property [ sh:path arch:tracks ; sh:nodeKind sh:IRI ; rdfs:comment "audio_selection version 2: each track." ] ;
@@ -29,8 +30,16 @@ wsh:Asserted a sh:NodeShape ;
   sh:property [ sh:path arch:aligned_rate ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
   sh:property [ sh:path arch:max_error_samples ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
   sh:property [ sh:path arch:anchors ; sh:nodeKind sh:IRI ] ;
-  sh:property [ sh:path arch:selection ; sh:nodeKind sh:IRI ; rdfs:comment "song_occurrence: each selection revision." ] ;
-  sh:property [ sh:path arch:work ; sh:nodeKind sh:IRI ; rdfs:comment "performance_work: the Work linked to the performance." ] ;
+  sh:property [ sh:path arch:selection ; sh:nodeKind sh:IRI ; rdfs:comment "song_occurrence: each selection revision; work_match 2: the compared selection." ] ;
+  sh:property [ sh:path arch:work ; sh:nodeKind sh:IRI ; rdfs:comment "performance_work: the Work linked to the performance; work_match 2: the matched Work revision." ] ;
+  sh:property [ sh:path arch:performance ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; rdfs:comment "work_match 2: the compared song occurrence revision." ] ;
+  sh:property [ sh:path arch:match_corpus ; sh:nodeKind sh:IRI ; rdfs:comment "work_match 2: each occurrence revision in the compared corpus." ] ;
+  sh:property [ sh:path arch:score ; sh:maxCount 1 ; sh:datatype xsd:decimal ; rdfs:comment "work_match 2: the score, compared within its scale only." ] ;
+  sh:property [ sh:path arch:score_scale ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:score_direction ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:in ( "higher_is_closer" "lower_is_closer" ) ] ;
+  sh:property [ sh:path arch:method ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; rdfs:comment "work_match 2: the method the payload names." ] ;
+  sh:property [ sh:path prov:wasGeneratedBy ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; rdfs:comment "work_match 2: the derivation run that made the match." ] ;
+  sh:property [ sh:path arch:parameters ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; rdfs:comment "work_match 2: the Artifact revision holding the method's parameters." ] ;
   sh:property [ sh:path arch:performance_kind ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
                 rdfs:comment "selection_kind: a concept in the performance-kinds scheme of the domain graph." ] ;
   sh:property [ sh:path dcterms:title ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
@@ -85,3 +94,73 @@ wsh:Part a sh:NodeShape ;
   sh:closed true ;
   sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
   sh:property [ sh:path prov:wasDerivedFrom ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
+
+# Specification 0.0.7: derivation runs and what they make (ADRs 0064 to
+# 0067), added in revision 3.
+
+wsh:Run a sh:NodeShape ;
+  rdfs:comment "derivation_run 1: the run's own revision, typed prov:Activity in its graph. Outputs name it with prov:wasGeneratedBy." ;
+  sh:targetClass prov:Activity ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:type ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( prov:Activity ) ] ;
+  sh:property [ sh:path arch:method ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path prov:startedAtTime ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:dateTime ] ;
+  sh:property [ sh:path prov:endedAtTime ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:dateTime ] ;
+  sh:property [ sh:path prov:wasAssociatedWith ; sh:nodeKind sh:IRI ; rdfs:comment "Each program the output depends on." ] ;
+  sh:property [ sh:path prov:used ; sh:nodeKind sh:IRI ; rdfs:comment "Each Artifact, Claim, or Entity revision the run read." ] ;
+  sh:property [ sh:path arch:parameters ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; rdfs:comment "The Artifact revision holding the run's configuration as canonical JSON." ] .
+
+wsh:Method a sh:NodeShape ;
+  rdfs:comment "The method a run executed or a match names, <{revision}:method>." ;
+  sh:targetObjectsOf arch:method ;
+  sh:closed true ;
+  sh:property [ sh:path dcterms:identifier ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:version ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] .
+
+wsh:Software a sh:NodeShape ;
+  rdfs:comment "One program or library a run reports, <{revision}:software={n}>; rdf:value is its reported position from 0." ;
+  sh:targetClass prov:SoftwareAgent ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:type ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( prov:SoftwareAgent ) ] ;
+  sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path foaf:name ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:version ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] .
+
+wsh:Streamed a sh:NodeShape ;
+  rdfs:comment "audio_stream 1: the Artifact revision the claim describes, as the subject of its stream." ;
+  sh:targetSubjectsOf arch:audio_stream ;
+  sh:closed true ;
+  sh:property [ sh:path arch:audio_stream ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
+
+wsh:Stream a sh:NodeShape ;
+  rdfs:comment "audio_stream 1: one stream's facts, <{revision}:stream>. Its duration in seconds is sample_count / sample_rate." ;
+  sh:targetObjectsOf arch:audio_stream ;
+  sh:closed true ;
+  sh:property [ sh:path arch:stream_index ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:codec ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:sample_rate ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:channel_count ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:sample_count ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:bits_per_sample ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path prov:wasGeneratedBy ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
+
+wsh:Suggestions a sh:NodeShape ;
+  rdfs:comment "span_suggestions 1: one run's suggested spans for one source Artifact revision." ;
+  sh:targetSubjectsOf arch:suggested_spans ;
+  sh:closed true ;
+  sh:property [ sh:path arch:suggested_spans ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path prov:wasDerivedFrom ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+                rdfs:comment "The source Artifact revision." ] ;
+  sh:property [ sh:path arch:measured_stream ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path prov:wasGeneratedBy ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:sample_rate ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] .
+
+wsh:SuggestedSpan a sh:NodeShape ;
+  rdfs:comment "One suggested span, <{revision}:span={n}>; rdf:value is its position from 0. A suggestion is never a selection." ;
+  sh:targetObjectsOf arch:suggested_spans ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:start_sample ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:end_sample ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:span_class ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ;
+                sh:in ( "music" "talk" "quiet" "unknown" ) ] .

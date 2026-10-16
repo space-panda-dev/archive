@@ -52,7 +52,7 @@ elsewhere and is governed by the specification kept here.
 > ([ADRs 0064](docs/decisions/0064-derivation-runs.md) to
 > [0067](docs/decisions/0067-matches-and-alignments-pin-runs.md); the bundles
 > as proposed are in [0064-contracts](docs/proposals/0064-contracts/)), which
-> Door admits, and the specification upgrade contract of
+> Door admits and World projects, and the specification upgrade contract of
 > [ADR 0068](docs/decisions/0068-specification-upgrade.md), by which
 > `door transition` moves a 0.0.6 archive to 0.0.7 in one commit.
 > Per-kind current rules remain open.

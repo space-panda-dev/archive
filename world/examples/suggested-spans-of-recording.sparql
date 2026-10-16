@@ -1,0 +1,32 @@
+# From a recording, list every span each detector run suggested for each of
+# its revisions: the span's position, sample bounds, and class, the sample
+# rate, the stream claim it was measured against, and the run with its
+# method. Each run's suggestions stay in their own claim graph; a later run
+# never replaces an earlier one, and no suggestion is a selection.
+PREFIX arch: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+PREFIX prov: <http://www.w3.org/ns/prov#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+SELECT ?recording ?suggestions ?position ?start ?end ?class ?rate ?stream ?run ?method ?methodVersion WHERE {
+  GRAPH ?records {
+    ?recording arch:object_id <urn:uuid:replace-with-recording-id> .
+    ?suggestions prov:wasDerivedFrom ?recording ;
+                 arch:measured_stream ?stream .
+  }
+  GRAPH ?suggestions {
+    ?suggestions arch:sample_rate ?rate ;
+                 prov:wasGeneratedBy ?run ;
+                 arch:suggested_spans ?span .
+    ?span rdf:value ?position ;
+          arch:start_sample ?start ;
+          arch:end_sample ?end ;
+          arch:span_class ?class .
+  }
+  GRAPH ?run {
+    ?run arch:method ?methodNode .
+    ?methodNode dcterms:identifier ?method ;
+                arch:version ?methodVersion .
+  }
+}
+ORDER BY ?recording ?suggestions ?position

@@ -1,6 +1,6 @@
 {
   "protocol": "archive-fixture/1",
-  "description": "Synthetic records that cite every contract in the specification's catalog except the six specification 0.0.7 adds. fixture/build.py admits them through the real Door into a fresh archive (ADR 0059). Every label, title, and byte is invented.",
+  "description": "Synthetic records that cite every contract in the specification's catalog except the specification upgrade, which Door refuses. fixture/build.py admits them through the real Door into a fresh archive (ADR 0059). Every label, title, and byte is invented.",
   "operator": "fixture-operator",
   "steps": [
     {
@@ -161,6 +161,104 @@
          "refs": [{"role": "occurrence", "pin": "occurrence-v2"}, {"role": "work", "pin": "work-b"},
                   {"role": "corpus", "pin": "occurrence-migrated"}, {"role": "run", "pin": "translation"},
                   {"role": "parameters", "pin": "parameters"}]}
+      ]
+    },
+    {
+      "name": "recording",
+      "command": "admit",
+      "records": [
+        {"key": "recording", "namespace": "archive.core/artifact", "name": "fixture-recording", "shape": "artifact", "content": "recording.wav"},
+        {"key": "detector-parameters", "namespace": "archive.core/artifact", "name": "fixture-detector-parameters", "shape": "artifact", "content": "detector-parameters.json"},
+        {"key": "matcher-parameters", "namespace": "archive.core/artifact", "name": "fixture-matcher-parameters", "shape": "artifact", "content": "matcher-parameters.json"}
+      ]
+    },
+    {
+      "name": "probe",
+      "command": "admit",
+      "records": [
+        {"key": "run-probe", "namespace": "archive.derivation/run", "name": "run-00000000-0000-4000-8000-0000000000a1", "shape": "claim",
+         "agent": "pkg:generic/archive-fixture-probe@1",
+         "contracts": [{"id": "archive.claim/derivation_run", "version": "1"}],
+         "payload": {"method": {"id": "fixture-probe", "version": "1"},
+                     "software": [{"name": "fixture-decoder", "version": "1.0"}],
+                     "started_at": "2026-01-01T00:00:00Z", "ended_at": "2026-01-01T00:00:01.5Z"},
+         "refs": [{"role": "used", "pin": "recording"}]},
+        {"key": "stream", "namespace": "archive.claim/audio_stream", "name": "fixture-recording-stream-0", "shape": "claim",
+         "agent": "pkg:generic/archive-fixture-probe@1",
+         "contracts": [{"id": "archive.claim/audio_stream", "version": "1"}],
+         "payload": {"stream_index": 0, "codec": "pcm_s16le", "sample_rate": 8000, "channel_count": 1,
+                     "sample_count": 4000, "bits_per_sample": 16},
+         "refs": [{"role": "artifact", "pin": "recording"}, {"role": "run", "pin": "run-probe"}]}
+      ]
+    },
+    {
+      "name": "detect",
+      "command": "admit",
+      "records": [
+        {"key": "run-detect", "namespace": "archive.derivation/run", "name": "run-00000000-0000-4000-8000-0000000000a2", "shape": "claim",
+         "agent": "pkg:generic/archive-fixture-detector@1",
+         "contracts": [{"id": "archive.claim/derivation_run", "version": "1"}],
+         "payload": {"method": {"id": "fixture-detector", "version": "1"},
+                     "software": [{"name": "fixture-decoder", "version": "1.0"}, {"name": "fixture-analysis", "version": "2.3"}],
+                     "started_at": "2026-01-01T00:01:00Z", "ended_at": "2026-01-01T00:01:02Z"},
+         "refs": [{"role": "used", "pin": "recording"}, {"role": "used", "pin": "stream"},
+                  {"role": "parameters", "pin": "detector-parameters"}]},
+        {"key": "suggestions", "namespace": "archive.claim/span_suggestions", "name": "fixture-recording-suggestions", "shape": "claim",
+         "agent": "pkg:generic/archive-fixture-detector@1",
+         "contracts": [{"id": "archive.claim/span_suggestions", "version": "1"}],
+         "payload": {"sample_rate": 8000,
+                     "spans": [{"start_sample": 0, "end_sample": 1000, "class": "quiet"},
+                               {"start_sample": 1000, "end_sample": 3000, "class": "music"},
+                               {"start_sample": 3000, "end_sample": 4000, "class": "unknown"}]},
+         "refs": [{"role": "source", "pin": "recording"}, {"role": "stream", "pin": "stream"}, {"role": "run", "pin": "run-detect"}]}
+      ]
+    },
+    {
+      "name": "align with a run",
+      "command": "admit",
+      "records": [
+        {"key": "run-align", "namespace": "archive.derivation/run", "name": "run-00000000-0000-4000-8000-0000000000a3", "shape": "claim",
+         "agent": "pkg:generic/archive-fixture-aligner@1",
+         "contracts": [{"id": "archive.claim/derivation_run", "version": "1"}],
+         "payload": {"method": {"id": "fixture-aligner", "version": "1"}, "software": [],
+                     "started_at": "2026-01-01T00:02:00Z", "ended_at": "2026-01-01T00:02:00Z"},
+         "refs": [{"role": "used", "pin": "take-a"}, {"role": "used", "pin": "take-b"}]},
+        {"key": "alignment-v2", "namespace": "archive.claim/capture_alignment", "name": "fixture-alignment-v2", "shape": "claim",
+         "agent": "pkg:generic/archive-fixture-aligner@1",
+         "contracts": [{"id": "archive.claim/capture_alignment", "version": "2"}],
+         "payload": {"reference_rate": 48000, "aligned_rate": 48000, "max_error_samples": 2,
+                     "method": {"id": "fixture-aligner", "version": "1"},
+                     "anchors": [{"reference_sample": 0, "aligned_sample": 1},
+                                 {"reference_sample": 48000, "aligned_sample": 48002}]},
+         "refs": [{"role": "reference", "pin": "take-a"}, {"role": "aligned", "pin": "take-b"}, {"role": "run", "pin": "run-align"}]}
+      ]
+    },
+    {
+      "name": "match with a run",
+      "command": "admit",
+      "records": [
+        {"key": "run-match", "namespace": "archive.derivation/run", "name": "run-00000000-0000-4000-8000-0000000000a4", "shape": "claim",
+         "agent": "pkg:generic/archive-fixture-matcher@2",
+         "contracts": [{"id": "archive.claim/derivation_run", "version": "1"}],
+         "payload": {"method": {"id": "fixture-matcher", "version": "2"},
+                     "software": [{"name": "fixture-analysis", "version": "2.3"}],
+                     "started_at": "2026-01-01T00:03:00Z", "ended_at": "2026-01-01T00:03:30Z"},
+         "refs": [{"role": "used", "pin": "occurrence-v2"}, {"role": "used", "pin": "selection-v2"},
+                  {"role": "used", "pin": "occurrence-migrated"}, {"role": "parameters", "pin": "matcher-parameters"}]},
+        {"key": "work-match-occurrence", "namespace": "archive.claim/work_match", "name": "fixture-work-match-occurrence", "shape": "claim",
+         "agent": "pkg:generic/archive-fixture-matcher@2",
+         "contracts": [{"id": "archive.claim/work_match", "version": "2"}],
+         "payload": {"direction": "lower_is_closer", "method": {"id": "fixture-matcher", "version": "2"}, "scale": "distance", "score": "0.25"},
+         "refs": [{"role": "occurrence", "pin": "occurrence-v2"}, {"role": "work", "pin": "work-b"},
+                  {"role": "corpus", "pin": "occurrence-migrated"}, {"role": "run", "pin": "run-match"},
+                  {"role": "parameters", "pin": "matcher-parameters"}]},
+        {"key": "work-match-selection", "namespace": "archive.claim/work_match", "name": "fixture-work-match-selection", "shape": "claim",
+         "agent": "pkg:generic/archive-fixture-matcher@2",
+         "contracts": [{"id": "archive.claim/work_match", "version": "2"}],
+         "payload": {"direction": "lower_is_closer", "method": {"id": "fixture-matcher", "version": "2"}, "scale": "distance", "score": "1.5"},
+         "refs": [{"role": "selection", "pin": "selection-v2"}, {"role": "work", "pin": "work-a"},
+                  {"role": "corpus", "pin": "occurrence-migrated"}, {"role": "corpus", "pin": "occurrence-v2"},
+                  {"role": "run", "pin": "run-match"}]}
       ]
     },
     {

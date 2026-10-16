@@ -6,10 +6,22 @@ title, and byte here is invented.
 
 - [`plan.json`](plan.json) lists the records, step by step, with symbolic
   keys instead of identifiers. Together they cite every contract in the
-  current specification's catalog except the six that specification 0.0.7
-  adds: Door refuses the specification upgrade, and World does not project
-  the others yet.
+  current specification's catalog except the specification upgrade, which
+  Door refuses. A record may name its `agent`: derivation runs and the claims
+  they make are asserted by a tool's Package URL (ADR 0064); every other
+  record by the archive's operator.
 - [`content/`](content/) holds the bytes the plan's artifacts admit.
+  `recording.wav` is synthetic audio, 4000 frames of 16-bit mono at 8000 Hz
+  (silence, a 440 Hz tone, then noise), made with:
+  ```sh
+  ffmpeg -f lavfi -i anullsrc=r=8000:cl=mono -f lavfi -i sine=frequency=440:sample_rate=8000 \
+    -f lavfi -i anoisesrc=r=8000:a=0.1:seed=7 \
+    -filter_complex '[0]atrim=end_sample=1000[a];[1]atrim=end_sample=2000[b];[2]atrim=end_sample=1000[c];[a][b][c]concat=n=3:v=0:a=1[out]' \
+    -map '[out]' -ac 1 -ar 8000 -c:a pcm_s16le -bitexact -fflags +bitexact -map_metadata -1 recording.wav
+  ```
+  The plan's stream claim states its facts, which World's tests check
+  against the file. The two `*-parameters.json` files are run configurations
+  as canonical JSON.
 - [`build.py`](build.py) builds the archive. It needs only Python's standard
   library, `archive`, `door`, `git`, and `git-annex`.
 

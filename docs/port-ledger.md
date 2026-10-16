@@ -197,7 +197,7 @@ These are boundaries for later phases, not decisions made by this ledger.
 | Canonical contract manifest/catalog bytes | translate | Ported | RFC 8785 bundle bytes determine their SHA-256 paths and citations, and the loader verifies both (D-6, D-8). |
 | Artifact contract | rewrite | Planned | Remove location/annex key and add Archive provenance (S-9, S-11). |
 | Entity contract | translate | Planned | Keep stable subject/name distinction (ADR 0012). |
-| Technical metadata contract | translate | In progress | Derived evidence pins exact inputs and records run configuration (ADR 0006). Specification 0.0.7 installs `derivation_run` and `audio_stream`, and Door admits them with every rule checked (D-15, ADRs 0064 and 0065); the probe tool is not ported. |
+| Technical metadata contract | translate | In progress | Derived evidence pins exact inputs and records run configuration (ADR 0006). Specification 0.0.7 installs `derivation_run` and `audio_stream`, and Door admits them with every rule checked (D-15, ADRs 0064 and 0065); World projects runs, stream facts, span suggestions, and version 2 matches (projection 6, revision 3); the probe tool is not ported. |
 | Label contract | defer | Planned | Representation and current rule remain open. |
 | Transcript contract | defer | Planned | Representation/current rule and remote disclosure adapter remain open. |
 | Selection contract | rewrite | Planned | Preserve ordered pins but replace float seconds with exact boundaries (S-15). |

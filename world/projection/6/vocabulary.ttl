@@ -3,7 +3,8 @@
 # meaning, narrowed as ADR 0012 says; the shapes files say how each is used.
 # Most terms come from the core context or a contract's context fragment in
 # the archive's specification; World mints `credit`, `performance_kind`,
-# `projection_version`, `WorldProjection`, and `world-projection-6`.
+# `audio_stream`, `projection_version`, `WorldProjection`, and
+# `world-projection-6`.
 
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -35,13 +36,13 @@ arch:contracts a rdf:Property ; rdfs:comment "The record's contract citations, a
 arch:role a rdf:Property ; rdfs:comment "A reference statement's role predicate." .
 arch:id a rdf:Property ; rdfs:comment "A reference statement's target object identifier, as a string." .
 arch:spec a rdf:Property ; rdfs:comment "The archive's specification, archive/<version>." .
-arch:version a rdf:Property ; rdfs:comment "A contract bundle's version." .
+arch:version a rdf:Property ; rdfs:comment "A version string: a contract bundle's version in the context graph; in a claim graph, the version of a method or of a program a run reports." .
 
 # Projection metadata (World)
 
 arch:projection_version a rdf:Property ; rdfs:comment "The projection version that built the graph, an integer." .
 
-# Reference roles (contract context fragments of specification 0.0.6)
+# Reference roles (contract context fragments of specification 0.0.7)
 
 arch:alignment a rdf:Property ; rdfs:comment "audio_selection 2: a capture_alignment claim the selection relied on." .
 arch:alignment_aligned a rdf:Property ; rdfs:comment "capture_alignment 1: the aligned Artifact revision." .
@@ -55,10 +56,11 @@ arch:dependent_destroy a rdf:Property ; rdfs:comment "destroy: a dependent Artif
 arch:dependent_source_gone a rdf:Property ; rdfs:comment "destroy: a dependent whose source is gone." .
 arch:destroys a rdf:Property ; rdfs:comment "destroy: the Artifact whose content is destroyed." .
 arch:external_survivor a rdf:Property ; rdfs:comment "destroy: evidence of a copy the archive cannot remove." .
-arch:match_corpus a rdf:Property ; rdfs:comment "work_match 1: an occurrence in the compared corpus." .
+arch:match_corpus a rdf:Property ; rdfs:comment "work_match: an occurrence in the compared corpus." .
+arch:measured_stream a rdf:Property ; rdfs:comment "span_suggestions 1: the audio_stream claim revision the spans were measured against." .
 arch:migration_source a rdf:Property ; rdfs:comment "Migration translations: the frozen source bundle Artifact." .
-arch:parameters a rdf:Property ; rdfs:comment "work_match 1: the Artifact holding the method's parameters." .
-arch:performance a rdf:Property ; rdfs:comment "performance_work: the performance or occurrence claim." .
+arch:parameters a rdf:Property ; rdfs:comment "work_match, derivation_run 1: the Artifact revision holding the method's parameters as canonical JSON." .
+arch:performance a rdf:Property ; rdfs:comment "performance_work: the performance or occurrence claim; work_match: the compared occurrence." .
 arch:piece a rdf:Property ; rdfs:comment "audio_selection: an Artifact revision a span is cut from; in a claim graph, a version 1 span." .
 arch:reference a rdf:Property ; rdfs:comment "capture_alignment 1: the reference Artifact revision." .
 arch:retires a rdf:Property ; rdfs:comment "retire: the retired object's revision." .
@@ -87,3 +89,18 @@ arch:performance_kind a rdf:Property ; rdfs:comment "selection_kind 1: the selec
 arch:credit a rdf:Property ; rdfs:comment "artist_credit 1: one ordered credit node. Minted by World." .
 arch:verdict a rdf:Property ; rdfs:comment "judgment 1: affirmed, rejected, or withdrawn." .
 arch:reason a rdf:Property ; rdfs:comment "judgment 1: the judgment's reason." .
+
+# Derivation runs and what they make (specification 0.0.7, revision 3)
+
+arch:method a rdf:Property ; rdfs:comment "derivation_run 1, work_match 2: the method node, with its dcterms:identifier and arch:version." .
+arch:audio_stream a rdf:Property ; rdfs:comment "audio_stream 1: links the described Artifact revision to the claim's stream node. Minted by World." .
+arch:stream_index a rdf:Property ; rdfs:comment "audio_stream 1: the stream's zero-based index in its container." .
+arch:codec a rdf:Property ; rdfs:comment "audio_stream 1: the codec's name as the probing method reports it." .
+arch:channel_count a rdf:Property ; rdfs:comment "audio_stream 1: the number of channels." .
+arch:sample_count a rdf:Property ; rdfs:comment "audio_stream 1: the exact number of sample frames decoded at the stream's sample rate." .
+arch:bits_per_sample a rdf:Property ; rdfs:comment "audio_stream 1: the PCM sample width, when the probe states it." .
+arch:suggested_spans a rdf:Property ; rdfs:comment "span_suggestions 1: one suggested span node, in order." .
+arch:span_class a rdf:Property ; rdfs:comment "span_suggestions 1: music, talk, quiet, or unknown." .
+arch:score a rdf:Property ; rdfs:comment "work_match: the match score as xsd:decimal, meaningful only within its scale and direction." .
+arch:score_scale a rdf:Property ; rdfs:comment "work_match: what the score measures." .
+arch:score_direction a rdf:Property ; rdfs:comment "work_match: higher_is_closer or lower_is_closer." .

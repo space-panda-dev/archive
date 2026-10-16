@@ -43,6 +43,9 @@ EXAMPLES = ROOT / "world/examples"
 EXAMPLE_WORK_PLACEHOLDER = "urn:uuid:replace-with-work-id"
 EXAMPLE_SELECTION_PLACEHOLDER = "urn:uuid:replace-with-selection-id"
 EXAMPLE_OCCURRENCE_PLACEHOLDER = "urn:uuid:replace-with-occurrence-id"
+# The Door chain export holds no derivation runs; the fixture archive answers
+# these examples (test_derivation.py).
+FIXTURE_EXAMPLES = {"recording-duration.sparql", "suggested-spans-of-recording.sparql"}
 
 
 XSD_INTEGER = "http://www.w3.org/2001/XMLSchema#integer"
@@ -155,6 +158,8 @@ def example_queries(export):
     }
     queries = {}
     for path in sorted(EXAMPLES.glob("*.sparql")):
+        if path.name in FIXTURE_EXAMPLES:
+            continue
         placeholder, subject = subjects.get(path.name, (EXAMPLE_WORK_PLACEHOLDER, work["object_id"]))
         text = path.read_text()
         if placeholder not in text:
@@ -661,20 +666,22 @@ class IncrementalRefreshTests(unittest.TestCase):
         self.assertEqual(log.read_text().splitlines(), ["export"])
 
     def test_an_earlier_revision_rebuilds_in_full(self):
-        # A store built before projection 6 linked records to their
-        # contracts, as the deployed shadow's was. Extending it would leave
-        # its older records without the links.
+        # A store built before the latest addition to projection 6 (revision
+        # 3 projects specification 0.0.7's runs). Extending it would leave
+        # its older records without what the addition projects.
         store = self.tmp / "world"
-        with patch.dict("world.world.PROJECTION_REVISIONS", {PROJECTION_VERSION: 1}):
+        current = world_module.PROJECTION_REVISIONS[PROJECTION_VERSION]
+        self.assertEqual(current, 3)
+        with patch.dict("world.world.PROJECTION_REVISIONS", {PROJECTION_VERSION: current - 1}):
             rebuild_store(self.archive_root, store, export_file=DOOR_CHAIN_CUT_EXPORT)
         selected = (store / f"CURRENT-p{PROJECTION_VERSION}").read_text().strip()
-        self.assertEqual(selected, f"{self.cut['snapshot']}-p{PROJECTION_VERSION}")
+        self.assertEqual(selected, f"{self.cut['snapshot']}-p{PROJECTION_VERSION}r{current - 1}")
         command, log = fake_archive(self.tmp / "bin", DOOR_CHAIN_EXPORT,
                                     {self.cut["snapshot"]: DOOR_CHAIN_SINCE_EXPORT})
         self.assert_full(store, command, "predates an addition")
         self.assertEqual(log.read_text().splitlines(), ["export"])
         rebuilt = (store / f"CURRENT-p{PROJECTION_VERSION}").read_text().strip()
-        self.assertEqual(rebuilt, f"{self.final['snapshot']}-p{PROJECTION_VERSION}r2")
+        self.assertEqual(rebuilt, f"{self.final['snapshot']}-p{PROJECTION_VERSION}r{current}")
         self.assertEqual(nquads(_read_current(store, PROJECTION_VERSION)), nquads(build_projection(self.final)))
         # The earlier generation still opens, so a relay can serve it until the rebuild.
         self.assertEqual(_read_current(store, PROJECTION_VERSION).snapshot, self.final["snapshot"])
