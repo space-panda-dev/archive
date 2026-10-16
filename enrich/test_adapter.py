@@ -274,6 +274,100 @@ class Proposals(unittest.TestCase):
                          "sha256:3059f5b5865eceddb40d160a3e85d3655f2e6e77ba2be1b2c5d290fdd36fdfb8")
 
 
+    def test_a_door_answer_that_is_not_an_object_is_refused(self) -> None:
+        for name, output in (("door-text", "not json"), ("door-list", "[]")):
+            door = fake_program(self.tmp, name, f"echo '{output}'\n")
+            with self.assertRaisesRegex(adapter.AdapterError, "other than a JSON object"):
+                self.propose(self.run_result(), door=door)
+
+    def test_a_prediction_where_a_commit_was_asked_is_refused(self) -> None:
+        # The real Door, made to predict instead of commit: the revisions are
+        # the planned ones, so only the status tells the two apart.
+        before = support.head(self.root)
+        predicting = fake_program(self.tmp, "door-predicting", f'exec "{support.DOOR}" "$@" --dry-run\n')
+        with self.assertRaisesRegex(adapter.AdapterError, "'status': 'predicted'") as refused:
+            self.propose(self.run_result(), door=predicting)
+        self.assertNotIn("'revision_ids': []", str(refused.exception))
+        self.assertEqual(support.head(self.root), before)
+
+
+PARAMETERS = {"threshold": 3}
+
+
+def run_claim(used: str) -> dict:
+    """A fixture plan record for a derivation run that pins `used`."""
+    return {"key": "run", "namespace": adapter.RUN_NAMESPACE, "name": adapter.new_run_name(), "shape": "claim",
+            "contracts": [{"id": adapter.RUN_CONTRACT[0], "version": adapter.RUN_CONTRACT[1]}],
+            "payload": {"method": {"id": "test-method", "version": "1"},
+                        "software": [{"name": "tool", "version": "1.0"}],
+                        "started_at": "2026-01-01T00:00:00Z", "ended_at": "2026-01-01T00:00:01Z"},
+            "refs": [{"role": "used", "pin": used}]}
+
+
+@needs_door
+class RecordedRuns(unittest.TestCase):
+    """Archives holding runs and parameters the fixture builder admitted
+    through Door, in shapes the adapter itself never proposes."""
+
+    def setUp(self) -> None:
+        self.tmp = support.scratch(self, "recorded-")
+        self.wav = support.sine_wav(self.tmp / "a.wav", 8000, "0.5")
+        self.env = support.environment()
+
+    def reader(self, root: Path) -> adapter.ArchiveReader:
+        return adapter.ArchiveReader(root, support.ARCHIVE, self.env)
+
+    def test_a_run_that_kept_no_output_is_not_equivalent(self) -> None:
+        bare, manifest = support.build_archive(self, {"wav": self.wav},
+                                               ({"name": "run", "command": "admit", "records": [run_claim("wav")]},))
+        wav = manifest["objects"]["wav"]
+        stream = {"key": "stream", "namespace": STREAM[0], "name": "stream-of-run", "shape": "claim",
+                  "contracts": [{"id": STREAM[0], "version": STREAM[1]}], "payload": dict(PAYLOAD),
+                  "refs": [{"role": "artifact", "pin": "wav"}, {"role": "run", "pin": "run"}]}
+        kept, kept_manifest = support.build_archive(self, {"wav": self.wav}, (
+            {"name": "run", "command": "admit", "records": [run_claim("wav")]},
+            {"name": "output", "command": "admit", "records": [stream]}))
+
+        def same(manifest_: dict) -> adapter.RunResult:
+            pinned = manifest_["objects"]["wav"]
+            return result(agent=manifest_["operator_id"],
+                          used=(adapter.Pin("used", pinned["object_id"], pinned["revision_id"]),))
+
+        # Anchor: with an output, the same run is found.
+        found = self.reader(kept).equivalent_run(same(kept_manifest))
+        self.assertEqual(found["revision_id"], kept_manifest["objects"]["run"]["revision_id"])
+        # The bare run matches in every field but has made nothing.
+        reader = self.reader(bare)
+        recorded = reader.head(manifest["objects"]["run"]["object_id"])
+        self.assertEqual((recorded["agent"], recorded["payload"]["method"]),
+                         (manifest["operator_id"], {"id": "test-method", "version": "1"}))
+        self.assertEqual(recorded["refs"], [{"role": "used", "id": wav["object_id"], "revision_id": wav["revision_id"]}])
+        self.assertIsNone(reader.equivalent_run(same(manifest)))
+
+    def test_parameters_are_reused_only_from_a_current_revision(self) -> None:
+        data = adapter.canonical(PARAMETERS)
+        old, new = self.tmp / "old.json", self.tmp / "new.json"
+        old.write_bytes(data)
+        new.write_bytes(adapter.canonical({"threshold": 4}))
+        root, manifest = support.build_archive(self, {"wav": self.wav}, (
+            {"name": "parameters", "command": "admit", "records": [
+                {"key": "parameters", "namespace": "archive.core/artifact", "name": "parameters-test",
+                 "shape": "artifact", "content": "old.json"}]},
+            {"name": "revision", "command": "admit", "records": [
+                {"key": "parameters-2", "revises": "parameters", "shape": "artifact", "content": "new.json"}]}),
+            files=(old, new))
+        reader = self.reader(root)
+        digest = adapter.digest_of(data)
+        # Anchor: the archive does hold these bytes, in a superseded revision.
+        holding = [r for r in reader.records if r["shape"] == "artifact"
+                   and r["payload"]["content"]["digest"] == digest]
+        self.assertEqual(len(holding), 1)
+        self.assertNotEqual(holding[0]["revision_id"], manifest["objects"]["parameters-2"]["revision_id"])
+        self.assertIsNone(reader.artifact_with_digest(digest))
+        current = reader.artifact_with_digest(adapter.digest_of(new.read_bytes()))
+        self.assertEqual(current["revision_id"], manifest["objects"]["parameters-2"]["revision_id"])
+
+
 @needs_door
 class Reading(unittest.TestCase):
     def setUp(self) -> None:
@@ -287,6 +381,20 @@ class Reading(unittest.TestCase):
         echo = fake_program(self.tmp, "archive", "echo not json\n")
         with self.assertRaisesRegex(adapter.AdapterError, "is not complete"):
             adapter.ArchiveReader(self.tmp, echo)
+
+    def test_an_export_that_is_not_complete_is_refused(self) -> None:
+        # A real export, copied, with only its status changed.
+        root, _ = support.build_archive(self, {"wav": support.sine_wav(self.tmp / "a.wav", 8000, "0.5")})
+        export = support.export(root)
+
+        def exporter(name: str, status: str) -> str:
+            (self.tmp / f"{name}.json").write_text(json.dumps({**export, "status": status}))
+            return fake_program(self.tmp, name, f"cat '{self.tmp / name}.json'\n")
+
+        # Anchor: the copy loads while its status is ok.
+        self.assertEqual(adapter.ArchiveReader(root, exporter("archive-ok", "ok")).archive_id, export["archive_id"])
+        with self.assertRaisesRegex(adapter.AdapterError, "status 'incomplete'"):
+            adapter.ArchiveReader(root, exporter("archive-incomplete", "incomplete"))
 
     def test_a_missing_archive_command_is_refused(self) -> None:
         with self.assertRaisesRegex(adapter.AdapterError, "could not run"):

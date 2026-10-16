@@ -140,10 +140,13 @@ def empty_wav(path: Path) -> Path:
     return path
 
 
-def build_archive(test: unittest.TestCase, contents: dict[str, Path]) -> tuple[Path, dict[str, Any]]:
+def build_archive(test: unittest.TestCase, contents: dict[str, Path], steps: tuple[dict[str, Any], ...] = (),
+                  files: tuple[Path, ...] = ()) -> tuple[Path, dict[str, Any]]:
     """A scratch archive whose Artifacts hold `contents`, admitted by the
-    fixture builder through `archive init` and `door admit`. Returns the root
-    and the builder's manifest, whose objects are keyed by the content keys."""
+    fixture builder through `archive init` and `door admit`, followed by any
+    further fixture plan `steps`, whose records may name `files` as content.
+    Returns the root and the builder's manifest, whose objects are keyed by
+    the plan keys."""
     tmp = scratch(test, "enrich-")
     content = tmp / "content"
     content.mkdir()
@@ -152,8 +155,10 @@ def build_archive(test: unittest.TestCase, contents: dict[str, Path]) -> tuple[P
         shutil.copyfile(source, content / source.name)
         records.append({"key": key, "namespace": "archive.core/artifact", "name": f"capture_{key}",
                         "shape": "artifact", "content": source.name})
+    for source in files:
+        shutil.copyfile(source, content / source.name)
     plan = {"protocol": "archive-fixture/1", "operator": "enrich-operator",
-            "steps": [{"name": "audio", "command": "admit", "records": records}]}
+            "steps": [{"name": "audio", "command": "admit", "records": records}, *steps]}
     (tmp / "plan.json").write_text(json.dumps(plan))
     root = tmp / "archive"
     built = subprocess.run([sys.executable, str(REPOSITORY / "fixture" / "build.py"), str(root),

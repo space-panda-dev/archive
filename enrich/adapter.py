@@ -450,9 +450,15 @@ def propose(reader: ArchiveReader, result: RunResult, *, door: str = "door",
         for path, (_, draft) in zip(manifest["records"], drafts):
             (proposal / path).write_bytes(canonical(draft))
         command = [door, "admit", "--proposal", str(proposal)] + (["--dry-run"] if dry_run else [])
-        answer = json.loads(_run(command, reader.root, "door admit", env))
+        output = _run(command, reader.root, "door admit", env)
     finally:
         shutil.rmtree(proposal, ignore_errors=True)
+    try:
+        answer = json.loads(output)
+    except ValueError:
+        answer = None
+    if not isinstance(answer, dict):
+        raise AdapterError(f"door admit answered something other than a JSON object: {output[:300]!r}")
     expected_status = "predicted" if dry_run else "committed"
     if answer.get("status") != expected_status or answer.get("revision_ids") != planned:
         raise AdapterError(f"Door answered {answer} but the adapter planned {planned}")
