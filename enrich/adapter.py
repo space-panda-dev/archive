@@ -136,11 +136,14 @@ class Output:
     """One claim a run made. `name` is a token unique among the run's
     outputs; the claim's identity name is the run's name, a hyphen, and this
     token, in the namespace of its contract, so it is new with every run.
-    `refs` are its own pins; the adapter adds the `run` pin."""
+    `refs` are its own pins; the adapter adds the `run` pin. When
+    `parameters_role` is set, the adapter also pins the run's parameters
+    Artifact in that role, since a new one exists only inside `propose`."""
     contract: tuple[str, str]
     name: str
     payload: dict[str, Any]
     refs: tuple[Pin, ...] = ()
+    parameters_role: str | None = None
 
 
 @dataclass(frozen=True)
@@ -362,6 +365,11 @@ def _check_result(result: RunResult) -> None:
     for output in result.outputs:
         if any(pin.role == "run" for pin in output.refs):
             raise AdapterError("an output's run pin is the adapter's to add")
+        if output.parameters_role is not None:
+            if result.parameters is None:
+                raise AdapterError("an output pins the run's parameters, but the run has none")
+            if output.parameters_role == "run" or any(pin.role == output.parameters_role for pin in output.refs):
+                raise AdapterError(f"an output's {output.parameters_role} pin is the adapter's to add")
 
 
 def propose(reader: ArchiveReader, result: RunResult, *, door: str = "door",
@@ -389,13 +397,13 @@ def propose(reader: ArchiveReader, result: RunResult, *, door: str = "door",
             raise AdapterError(f"used revision {pin.revision_id} of {pin.object_id} is not in the archive")
 
     parameters_report = None
+    parameters_pin: dict[str, str] | None = None
     data = result.parameter_bytes()
     if data is not None:
         digest = digest_of(data)
         existing = reader.artifact_with_digest(digest)
         if existing is not None:
-            run_refs.append({"role": "parameters", "id": existing["object_id"],
-                             "revision_id": existing["revision_id"]})
+            parameters_pin = {"id": existing["object_id"], "revision_id": existing["revision_id"]}
             parameters_report = {"object_id": existing["object_id"], "revision_id": existing["revision_id"],
                                  "digest": digest, "reused": True}
         else:
@@ -412,10 +420,12 @@ def propose(reader: ArchiveReader, result: RunResult, *, door: str = "door",
             drafts.append(("parameters", artifact))
             identities.append({"object_id": artifact_id, "namespace": ARTIFACT_NAMESPACE, "name": name})
             contents.append({"digest": digest, "size": len(data), "annex_key": key, "staging_remote": remote})
-            run_refs.append({"role": "parameters", "id": artifact_id, "revision_id": revision_of(artifact)})
+            parameters_pin = {"id": artifact_id, "revision_id": revision_of(artifact)}
             parameters_report = {"object_id": artifact_id, "revision_id": revision_of(artifact),
                                  "digest": digest, "reused": False}
 
+    if parameters_pin is not None:
+        run_refs.append({"role": "parameters", **parameters_pin})
     run = {"spec": reader.spec, "object_id": run_id, "shape": "claim", "by": by, "agent": result.agent,
            "payload": {"method": {"id": result.method_id, "version": result.method_version},
                        "software": [{"name": n, "version": v} for n, v in result.software],
@@ -432,6 +442,8 @@ def propose(reader: ArchiveReader, result: RunResult, *, door: str = "door",
         draft = {"spec": reader.spec, "object_id": output_id, "shape": "claim", "by": by, "agent": result.agent,
                  "payload": output.payload,
                  "refs": [pin.ref() for pin in output.refs]
+                 + ([{"role": output.parameters_role, **parameters_pin}]
+                    if output.parameters_role is not None and parameters_pin is not None else [])
                  + [{"role": "run", "id": run_id, "revision_id": run_revision}],
                  "supersedes": [], "contracts": [reader.citation(output.contract)]}
         drafts.append((name, draft))

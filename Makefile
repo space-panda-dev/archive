@@ -7,8 +7,8 @@ check:
 claims:
 	python3 scripts/check.py --claims
 
-# PYTHON must have world/requirements-test.txt installed; the enrich suite
-# also needs ffmpeg and ffprobe on PATH.
+# PYTHON must have world/requirements-test.txt and enrich/requirements.txt
+# installed; the enrich suite also needs ffmpeg and ffprobe on PATH.
 PYTHON ?= python3
 
 test: test-haskell test-python

@@ -240,9 +240,9 @@ These are boundaries for later phases, not decisions made by this ledger.
 | Enrichment build configuration | translate | In progress | Configuration stays separate and is recorded as run input (ADR 0006, ADR 0007). The `enrich/` adapter admits a run's parameters as a canonical JSON Artifact and reuses it when the bytes match. |
 | Object+revision derivation stamp | keep the mechanism | Planned | Disposable stamps bind exact evidence and support quiet history (INV-4, INV-5). |
 | Desired enrichment discovery | defer | Planned | The policy/mechanism boundary and grammar are open. |
-| Standalone probe/classifier recipes | translate | In progress | Tools take files and propose results through Door (ADR 0006). The probe is ported as `enrich/probe.py`; the classifier is not. |
+| Standalone probe/classifier recipes | translate | In progress | Tools take files and propose results through Door (ADR 0006). The probe is ported as `enrich/probe.py` and the work matcher as `enrich/match.py`, a numpy and scipy method under its own identifier (ADR 0067); the classifier is not. |
 | Unrecorded classifier configuration | rewrite | Planned | Parameters and presets must be recorded as run inputs (ADR 0006); the `enrich/` adapter's `parameters` is where they go. |
-| Recipe proposal to Door | translate | In progress | Keep the call chain and assert the real dispatcher reaches Door (INV-2). `enrich probe` proposes through `door admit`, and its tests read the committed claims back with `archive show` and World. |
+| Recipe proposal to Door | translate | In progress | Keep the call chain and assert the real dispatcher reaches Door (INV-2). `enrich probe` and `enrich match` propose through `door admit`, and their tests read the committed claims back with `archive show` and World. |
 | V2 hot placement rule | rewrite | Planned | Desired placement belongs in authorized policy, not annex expressions (ADR 0007). |
 | V2 cold placement rule | rewrite | Planned | Same; no-policy planning yields an empty plan. |
 | Facts copied into annex metadata | delete | Planned | ADR 0008 explicitly rejects the mechanism. |
