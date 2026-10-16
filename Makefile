@@ -25,6 +25,7 @@ test-python:
 	  archive_datadir="$(CURDIR)" ARCHIVE_REQUIRE_INTEGRATION=1 sh -c '\
 	  $(PYTHON) -m unittest discover -s world/tests && \
 	  $(PYTHON) -m unittest discover -s relay/tests && \
+	  $(PYTHON) -m unittest discover -s enrich/tests && \
 	  $(PYTHON) -m unittest discover -s shadow -p "test_*.py" && \
 	  $(PYTHON) -m unittest discover -s migration -p "test_*.py" && \
 	  $(PYTHON) -m unittest discover -s fixture -p "test_*.py" && \

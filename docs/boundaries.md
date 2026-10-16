@@ -61,6 +61,8 @@ The decisions behind these boundaries: Archive stands alone
 door admit | transition          the only commands that change archival meaning
 door serve --socket <path>       the same commands for applications, on a private socket
 relay/relay.py --config <file>   Door's service and World's query over HTTP, for the tailnet
+enrich/media.py --root <dir> --digest <d> <file>
+                                 waveform peaks and a listening copy: regenerable derived media
 door verify                      full verification of HEAD and a fresh checkpoint
 archive init | status | doctor   setup, state, whole-archive check
 archive maintenance repack       coordinated packing of loose Git objects
@@ -102,7 +104,13 @@ probe ([ADR 0065](decisions/0065-audio-stream-facts.md)), which needs `ffmpeg`
 and `ffprobe` and counts sample frames only by decoding them. The second is
 the span detector ([ADR 0066](decisions/0066-span-suggestions.md)), which
 needs `ffmpeg` and numpy, measures against a probed stream claim, and
-suggests classed spans in integer samples from one fixed signal set.
+suggests classed spans in integer samples from one fixed signal set. The
+third, `enrich/media.py`, makes waveform peaks and a listening copy of a recording
+into a derived-media root laid out by content digest
+([ADR 0069](decisions/0069-derived-media.md)). That root is regenerable and
+never admitted. The relay serves it read-only, by digest, to the operator's
+login only, for content World knows as an Artifact's; it reads the layout
+from `enrich/derived.py` and never serves an original's bytes.
 
 World's answers are standard SPARQL results, and what each projection version
 emits is declared in [`world/projection/`](../world/projection/6/projection.json)
