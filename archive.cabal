@@ -1,0 +1,142 @@
+cabal-version: 3.0
+name: archive
+version: 0.0.1.0
+build-type: Simple
+license: AGPL-3.0-or-later
+data-files:
+    spec/VERSION
+  , spec/archive-spec.md
+  , spec/0.0.1/context.jsonld
+  , spec/0.0.2/context.jsonld
+  , spec/0.0.3/context.jsonld
+  , spec/0.0.4/context.jsonld
+  , spec/0.0.5/context.jsonld
+  , spec/0.0.6/context.jsonld
+  , spec/0.0.1/contracts.json
+  , spec/0.0.2/contracts.json
+  , spec/0.0.3/contracts.json
+  , spec/0.0.4/contracts.json
+  , spec/0.0.5/contracts.json
+  , spec/0.0.6/contracts.json
+  , spec/contracts/*.json
+
+library
+  c-sources: door/src/Archive/ProcessPinned.c
+  autogen-modules: Paths_archive
+  other-modules: Paths_archive
+  exposed-modules:
+      Archive.Door.AdmissionDryRun
+    , Archive.Door.AdmissionCommit
+    , Archive.Door.AdmissionPlan
+    , Archive.Door.Canonical
+    , Archive.Door.Catalog
+    , Archive.Door.Bootstrap
+    , Archive.Door.Contracts
+    , Archive.Door.Identity
+    , Archive.Door.Json
+    , Archive.Door.Layout
+    , Archive.Door.MutationError
+    , Archive.Door.Proposal
+    , Archive.Door.RecordCommit
+    , Archive.Door.References
+    , Archive.Door.Refusal
+    , Archive.Door.TransitionDryRun
+    , Archive.Door.TransitionCommit
+    , Archive.Door.Types
+    , Archive.Door.VerifiedCheckpoint
+    , Archive.Process
+    , Archive.Executables
+    , Archive.Doctor.Checks
+    , Archive.GitSnapshot
+    , Archive.Read.Core
+  hs-source-dirs: door/src
+  build-depends:
+      aeson >=2.2.1 && <2.4
+    , base >=4.18 && <5
+    , bytestring
+    , cryptohash-sha256
+    , containers
+    , directory
+    , filepath
+    , process
+    , scientific
+    , text
+    , time
+    , unix
+    , vector
+    , zlib
+    , cryptohash-sha1
+  default-language: GHC2021
+  ghc-options: -Wall -Werror
+
+executable door
+  main-is: Main.hs
+  hs-source-dirs: door/app
+  build-depends:
+      aeson >=2.2.1 && <2.4
+    , archive
+    , base >=4.18 && <5
+    , bytestring
+    , directory
+    , filepath
+    , network
+    , text
+    , unix
+  default-language: GHC2021
+  ghc-options: -Wall -Werror
+
+executable archive
+  main-is: Main.hs
+  hs-source-dirs: archive/app
+  build-depends:
+      aeson >=2.2.1 && <2.4
+    , archive
+    , base >=4.18 && <5
+    , bytestring
+    , containers
+    , text
+  default-language: GHC2021
+  ghc-options: -Wall -Werror
+
+test-suite door-test
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  hs-source-dirs: door/test
+  build-tool-depends:
+      archive:archive
+    , archive:door
+  build-depends:
+      aeson >=2.2.1 && <2.4
+    , archive
+    , base >=4.18 && <5
+    , bytestring
+    , containers
+    , cryptohash-sha256
+    , directory
+    , network
+    , process
+    , text
+    , unix
+    , vector
+  default-language: GHC2021
+  ghc-options: -Wall -Werror
+
+test-suite archive-test
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  hs-source-dirs: archive/test
+  build-tool-depends:
+      archive:archive
+    , archive:door
+  build-depends:
+      aeson >=2.2.1 && <2.4
+    , archive
+    , base >=4.18 && <5
+    , bytestring
+    , containers
+    , directory
+    , filepath
+    , process
+    , text
+  default-language: GHC2021
+  ghc-options: -Wall -Werror

@@ -1,0 +1,87 @@
+# World projection 6: one graph per claim or assessment revision,
+# <{archive}#revision={revision_id}>. It holds the relations that exact
+# revision asserts, so competing claims stay separate and attributable.
+# Every shape is closed (ADR 0059).
+
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix arch: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#> .
+@prefix wsh: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#world-projection-6/shapes/> .
+
+wsh:Asserted a sh:NodeShape ;
+  rdfs:comment "A revision, or an object (performance_work version 1), as the subject of what the graph's claim asserts." ;
+  sh:targetSubjectsOf arch:piece, arch:tracks, arch:alignment, arch:reference, arch:alignment_aligned,
+    arch:reference_rate, arch:aligned_rate, arch:max_error_samples, arch:anchors, arch:selection, arch:work,
+    arch:performance_kind, dcterms:title, arch:credit, arch:session_part, arch:assessment_of, arch:verdict,
+    arch:reason ;
+  sh:closed true ;
+  sh:property [ sh:path arch:piece ; sh:nodeKind sh:IRI ; rdfs:comment "audio_selection version 1: each span." ] ;
+  sh:property [ sh:path arch:tracks ; sh:nodeKind sh:IRI ; rdfs:comment "audio_selection version 2: each track." ] ;
+  sh:property [ sh:path arch:alignment ; sh:nodeKind sh:IRI ; rdfs:comment "audio_selection version 2: a capture_alignment revision relied on." ] ;
+  sh:property [ sh:path arch:reference ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:alignment_aligned ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:reference_rate ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:aligned_rate ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:max_error_samples ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:anchors ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:selection ; sh:nodeKind sh:IRI ; rdfs:comment "song_occurrence: each selection revision." ] ;
+  sh:property [ sh:path arch:work ; sh:nodeKind sh:IRI ; rdfs:comment "performance_work: the Work linked to the performance." ] ;
+  sh:property [ sh:path arch:performance_kind ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+                rdfs:comment "selection_kind: a concept in the performance-kinds scheme of the domain graph." ] ;
+  sh:property [ sh:path dcterms:title ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:credit ; sh:nodeKind sh:IRI ; rdfs:comment "artist_credit: each credit, in order." ] ;
+  sh:property [ sh:path arch:session_part ; sh:nodeKind sh:IRI ; rdfs:comment "session_parts: each part, in order." ] ;
+  sh:property [ sh:path arch:assessment_of ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:verdict ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:in ( "affirmed" "rejected" "withdrawn" ) ] ;
+  sh:property [ sh:path arch:reason ; sh:maxCount 1 ; sh:datatype xsd:string ] .
+
+wsh:Correspondence a sh:NodeShape ;
+  rdfs:comment "work_musicbrainz_correspondence: a local Work concept mapped to a MusicBrainz Work concept." ;
+  sh:targetSubjectsOf skos:exactMatch, skos:closeMatch ;
+  sh:closed true ;
+  sh:property [ sh:path skos:exactMatch ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path skos:closeMatch ; sh:nodeKind sh:IRI ] .
+
+wsh:Span a sh:NodeShape ;
+  rdfs:comment "One span of samples of one Artifact revision; rdf:value is its position from 0." ;
+  sh:targetObjectsOf arch:piece, arch:pieces ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:start_sample ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:end_sample ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:sample_rate ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path prov:wasDerivedFrom ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
+
+wsh:Track a sh:NodeShape ;
+  rdfs:comment "One source's ordered spans; rdf:value is the track's position from 0." ;
+  sh:targetObjectsOf arch:tracks ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:pieces ; sh:minCount 1 ; sh:nodeKind sh:IRI ] .
+
+wsh:Anchor a sh:NodeShape ;
+  rdfs:comment "A reference sample and the aligned sample recorded at the same instant; rdf:value is its position from 0." ;
+  sh:targetObjectsOf arch:anchors ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:reference_sample ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:aligned_sample ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] .
+
+wsh:Credit a sh:NodeShape ;
+  rdfs:comment "One credited person or organisation revision; rdf:value is the credit order from 0." ;
+  sh:targetObjectsOf arch:credit ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:credited_artist ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
+
+wsh:Part a sh:NodeShape ;
+  rdfs:comment "One part of a recording session, an Artifact revision; rdf:value is its recording order from 0." ;
+  sh:targetObjectsOf arch:session_part ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path prov:wasDerivedFrom ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .

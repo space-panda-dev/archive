@@ -1,0 +1,26 @@
+# World projection 6: the domain graph, <{archive}#world:domain>.
+# SKOS concept schemes and concepts that claims point into: the local Work
+# catalogue, the MusicBrainz catalogue, and the performance kinds (ADR 0059).
+
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix wsh: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#world-projection-6/shapes/> .
+
+wsh:Scheme a sh:NodeShape ;
+  rdfs:comment "<{archive}#catalogue>, <{archive}#catalogue:musicbrainz>, or <{archive}#catalogue:performance-kinds>." ;
+  sh:targetClass skos:ConceptScheme ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:type ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( skos:ConceptScheme ) ] .
+
+wsh:Concept a sh:NodeShape ;
+  rdfs:comment "A local Work (foaf:focus the Work object), a MusicBrainz Work (foaf:focus its MusicBrainz IRI), or a performance kind (skos:notation its name)." ;
+  sh:targetClass skos:Concept ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:type ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( skos:Concept ) ] ;
+  sh:property [ sh:path skos:inScheme ; sh:minCount 1 ; sh:maxCount 1 ; sh:class skos:ConceptScheme ] ;
+  sh:property [ sh:path foaf:focus ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path skos:notation ; sh:maxCount 1 ; sh:datatype xsd:string ] .

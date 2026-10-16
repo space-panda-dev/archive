@@ -1,0 +1,16 @@
+{
+  "case": "AppleDouble sidecar declared as an original capture",
+  "origin": "minimized from an authorized copy of a real record and its referenced bytes",
+  "declared": {
+    "digest": "sha256:c7a73214d451af958aa0f20a44d69e3365b5ca7e77dea30f61316972d4ce6af8",
+    "size": 4096,
+    "occurrence_kind": "original",
+    "source": "own_capture",
+    "name": "._capture.wav"
+  },
+  "observed": {
+    "header_hex": "00051607000200004d6163204f53205820202020202020200002000000090000",
+    "content_type": "AppleDouble"
+  },
+  "expected_refusal": "capture bytes are an AppleDouble sidecar, not the declared audio content"
+}

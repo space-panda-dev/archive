@@ -1,0 +1,304 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#door-service-1",
+  "title": "Door service protocol (ADR 0054, ADR 0058)",
+  "description": "One request line and one answer line per connection on door serve's Unix socket. Each line is one JSON value followed by a newline; a request line is at most 65536 bytes and must arrive within 30 seconds.",
+  "$defs": {
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "proposal"
+      ],
+      "properties": {
+        "command": {
+          "enum": [
+            "admit-dry-run",
+            "admit",
+            "transition-dry-run",
+            "transition"
+          ]
+        },
+        "proposal": {
+          "type": "string",
+          "description": "Absolute path of a proposal directory Door can read (ADR 0023, ADR 0028)."
+        }
+      }
+    },
+    "admission_prediction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "revision_ids",
+        "records",
+        "content_verified",
+        "retry"
+      ],
+      "properties": {
+        "status": {
+          "const": "predicted"
+        },
+        "revision_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "content_verified": {
+          "const": false
+        },
+        "retry": {
+          "type": "boolean"
+        }
+      }
+    },
+    "admission_commit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "revision_ids",
+        "retry"
+      ],
+      "properties": {
+        "status": {
+          "const": "committed"
+        },
+        "revision_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        },
+        "retry": {
+          "type": "boolean"
+        }
+      }
+    },
+    "transition_prediction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "revision_ids",
+        "retired_objects",
+        "destroyed_digests",
+        "authorization_recheck_required",
+        "state_recheck_required",
+        "retry"
+      ],
+      "properties": {
+        "status": {
+          "const": "predicted"
+        },
+        "revision_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        },
+        "retired_objects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "destroyed_digests": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        },
+        "authorization_recheck_required": {
+          "const": true
+        },
+        "state_recheck_required": {
+          "const": true
+        },
+        "retry": {
+          "type": "boolean"
+        }
+      }
+    },
+    "transition_commit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "revision_ids",
+        "retired_objects",
+        "destroyed_digests",
+        "retry"
+      ],
+      "properties": {
+        "status": {
+          "const": "committed"
+        },
+        "revision_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        },
+        "retired_objects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "destroyed_digests": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        },
+        "retry": {
+          "type": "boolean"
+        }
+      }
+    },
+    "refusal_code": {
+      "description": "Stable refusal codes. Codes are only ever added; a client treats an unknown code like internal_error.",
+      "oneOf": [
+        {
+          "const": "request_malformed",
+          "description": "The service request itself is not a valid request. Fix the client."
+        },
+        {
+          "const": "proposal_malformed",
+          "description": "The proposal directory, manifest, or a draft cannot be read as a proposal. Fix the proposal."
+        },
+        {
+          "const": "proposal_refused",
+          "description": "The proposal is well formed, but Door refuses it against this archive. Change the proposal."
+        },
+        {
+          "const": "expected_head_stale",
+          "description": "An expected head no longer matches the archive. Read the current heads, rebuild the proposal, and send it again."
+        },
+        {
+          "const": "archive_unreadable",
+          "description": "Door could not read the archive's committed state. Nothing was written; the operator must look."
+        },
+        {
+          "const": "integrity_failure",
+          "description": "Bytes or committed evidence did not verify. Nothing was admitted; the operator must look."
+        },
+        {
+          "const": "configuration_failure",
+          "description": "Door's configuration, such as its Git or git-annex executable, is wrong or changed. Nothing was written."
+        },
+        {
+          "const": "io_failure",
+          "description": "An operating-system read or write failed."
+        },
+        {
+          "const": "subprocess_failure",
+          "description": "A program Door runs, such as Git or git-annex, failed."
+        },
+        {
+          "const": "operation_failed",
+          "description": "The operation failed in a way that has no narrower code yet."
+        },
+        {
+          "const": "outcome_uncertain",
+          "description": "Door cannot tell whether the write committed. Send the identical proposal again: a committed batch answers as a retry."
+        },
+        {
+          "const": "internal_error",
+          "description": "Door failed unexpectedly. Report it."
+        }
+      ]
+    },
+    "refusal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/refusal_code"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "description": "For people; not stable."
+        },
+        "unadmitted_keys": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          },
+          "description": "Content transferred before the failure; it stays present, unadmitted storage."
+        }
+      }
+    },
+    "answer": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ok",
+            "result"
+          ],
+          "properties": {
+            "ok": {
+              "const": true
+            },
+            "result": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/admission_prediction"
+                },
+                {
+                  "$ref": "#/$defs/admission_commit"
+                },
+                {
+                  "$ref": "#/$defs/transition_prediction"
+                },
+                {
+                  "$ref": "#/$defs/transition_commit"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ok",
+            "error"
+          ],
+          "properties": {
+            "ok": {
+              "const": false
+            },
+            "error": {
+              "$ref": "#/$defs/refusal"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "$ref": "#/$defs/answer"
+}

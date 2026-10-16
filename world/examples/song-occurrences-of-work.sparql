@@ -1,0 +1,24 @@
+# Follow version 2 links through exact occurrence and selection revisions.
+# Each step stays in the named graph of the Claim that asserted it.
+PREFIX arch: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#>
+PREFIX prov: <http://www.w3.org/ns/prov#>
+
+SELECT ?occurrence ?selection ?piece ?source ?start ?end ?rate ?workClaim WHERE {
+  GRAPH ?workClaim {
+    ?occurrence arch:work ?workRevision .
+  }
+  GRAPH ?records {
+    ?workRevision arch:object_id <urn:uuid:replace-with-work-id> .
+  }
+  GRAPH ?occurrence {
+    ?occurrence arch:selection ?selection .
+  }
+  GRAPH ?selection {
+    ?selection arch:piece ?piece .
+    ?piece prov:wasDerivedFrom ?source ;
+           arch:start_sample ?start ;
+           arch:end_sample ?end ;
+           arch:sample_rate ?rate .
+  }
+}
+ORDER BY ?occurrence ?selection ?piece ?workClaim

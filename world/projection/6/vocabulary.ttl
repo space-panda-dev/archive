@@ -1,0 +1,89 @@
+# The Archive terms World projection 6 emits. Inherited terms (PROV-O, Web
+# Annotation, SKOS, Dublin Core, Activity Streams, FOAF) keep their own
+# meaning, narrowed as ADR 0012 says; the shapes files say how each is used.
+# Most terms come from the core context or a contract's context fragment in
+# the archive's specification; World mints `credit`, `performance_kind`,
+# `projection_version`, `WorldProjection`, and `world-projection-6`.
+
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix arch: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#> .
+
+arch:world-projection-6 a owl:Ontology ;
+  rdfs:label "World projection 6" ;
+  rdfs:comment "The projection a World store declares with dcterms:conformsTo when it was built by projection version 6." .
+
+# Classes
+
+arch:WorldProjection a rdfs:Class ; rdfs:comment "A World projection of one archive, <{archive}#world>." .
+arch:Artifact a rdfs:Class ; rdfs:comment "A record revision of shape artifact: an object whose bytes the archive keeps. Not prov:Entity's meaning (ADR 0012)." .
+arch:Entity a rdfs:Class ; rdfs:comment "A record revision of shape entity: a durable subject the operator asserts. arch:Entity is not prov:Entity." .
+arch:Claim a rdfs:Class ; rdfs:comment "A record revision of shape claim: a typed statement about other things." .
+arch:Assessment a rdfs:Class ; rdfs:comment "A record revision of shape assessment: a judgment of an exact claim revision." .
+
+# The record envelope (core context)
+
+arch:shape a rdf:Property ; rdfs:comment "The record's shape class." .
+arch:revision_id a rdf:Property ; rdfs:comment "The revision identifier, sha256 of the canonical draft." .
+arch:object_id a rdf:Property ; rdfs:comment "The object the revision describes." .
+arch:payload a rdf:Property ; rdfs:comment "The record's payload, as rdf:JSON." .
+arch:refs a rdf:Property ; rdfs:comment "Links a revision to the reified statement of one of its references." .
+arch:supersedes a rdf:Property ; rdfs:comment "Links a revision to its supersession statement, and, as a role, to the revision it supersedes." .
+arch:source a rdf:Property ; rdfs:comment "Imported source identity, as rdf:JSON; never Archive identity." .
+arch:contracts a rdf:Property ; rdfs:comment "The record's contract citations, as rdf:JSON." .
+arch:role a rdf:Property ; rdfs:comment "A reference statement's role predicate." .
+arch:id a rdf:Property ; rdfs:comment "A reference statement's target object identifier, as a string." .
+arch:spec a rdf:Property ; rdfs:comment "The archive's specification, archive/<version>." .
+arch:version a rdf:Property ; rdfs:comment "A contract bundle's version." .
+
+# Projection metadata (World)
+
+arch:projection_version a rdf:Property ; rdfs:comment "The projection version that built the graph, an integer." .
+
+# Reference roles (contract context fragments of specification 0.0.6)
+
+arch:alignment a rdf:Property ; rdfs:comment "audio_selection 2: a capture_alignment claim the selection relied on." .
+arch:alignment_aligned a rdf:Property ; rdfs:comment "capture_alignment 1: the aligned Artifact revision." .
+arch:appoints a rdf:Property ; rdfs:comment "operator_initialization 1: the appointed operator." .
+arch:assessment_of a rdf:Property ; rdfs:comment "An assessment's judged claim revision." .
+arch:author a rdf:Property ; rdfs:comment "A transition's author." .
+arch:authorizer a rdf:Property ; rdfs:comment "A transition's authorizer." .
+arch:covers a rdf:Property ; rdfs:comment "publication_approval 1: a claim the approval covers." .
+arch:credited_artist a rdf:Property ; rdfs:comment "artist_credit 1: a credited person or organisation." .
+arch:dependent_destroy a rdf:Property ; rdfs:comment "destroy: a dependent Artifact destroyed with the target." .
+arch:dependent_source_gone a rdf:Property ; rdfs:comment "destroy: a dependent whose source is gone." .
+arch:destroys a rdf:Property ; rdfs:comment "destroy: the Artifact whose content is destroyed." .
+arch:external_survivor a rdf:Property ; rdfs:comment "destroy: evidence of a copy the archive cannot remove." .
+arch:match_corpus a rdf:Property ; rdfs:comment "work_match 1: an occurrence in the compared corpus." .
+arch:migration_source a rdf:Property ; rdfs:comment "Migration translations: the frozen source bundle Artifact." .
+arch:parameters a rdf:Property ; rdfs:comment "work_match 1: the Artifact holding the method's parameters." .
+arch:performance a rdf:Property ; rdfs:comment "performance_work: the performance or occurrence claim." .
+arch:piece a rdf:Property ; rdfs:comment "audio_selection: an Artifact revision a span is cut from; in a claim graph, a version 1 span." .
+arch:reference a rdf:Property ; rdfs:comment "capture_alignment 1: the reference Artifact revision." .
+arch:retires a rdf:Property ; rdfs:comment "retire: the retired object's revision." .
+arch:selection a rdf:Property ; rdfs:comment "A selection claim revision a fact is about, or an occurrence's selection." .
+arch:session a rdf:Property ; rdfs:comment "session_parts 1: the recording_session Entity revision." .
+arch:session_part a rdf:Property ; rdfs:comment "session_parts 1: a part; in a claim graph, the ordered part node." .
+arch:transition_predecessor a rdf:Property ; rdfs:comment "A transition's immediately preceding transition in one batch." .
+arch:translated_assessment a rdf:Property ; rdfs:comment "migration translation 1: a translated assessment." .
+arch:withdraws a rdf:Property ; rdfs:comment "publication_withdrawal 1: the withdrawn approval." .
+arch:work a rdf:Property ; rdfs:comment "A musical_work Entity revision, or object for performance_work 1." .
+
+# What a claim asserts (claim graphs)
+
+arch:tracks a rdf:Property ; rdfs:comment "audio_selection 2: one track node per simultaneous source." .
+arch:pieces a rdf:Property ; rdfs:comment "audio_selection 2: one span node of a track." .
+arch:start_sample a rdf:Property ; rdfs:comment "A span's first sample, inclusive." .
+arch:end_sample a rdf:Property ; rdfs:comment "A span's end sample, exclusive." .
+arch:sample_rate a rdf:Property ; rdfs:comment "The Artifact's sample rate, in Hz." .
+arch:reference_rate a rdf:Property ; rdfs:comment "capture_alignment 1: the reference's nominal sample rate." .
+arch:aligned_rate a rdf:Property ; rdfs:comment "capture_alignment 1: the aligned recording's nominal sample rate." .
+arch:max_error_samples a rdf:Property ; rdfs:comment "capture_alignment 1: the method's residual bound." .
+arch:anchors a rdf:Property ; rdfs:comment "capture_alignment 1: one anchor node." .
+arch:reference_sample a rdf:Property ; rdfs:comment "An anchor's reference sample." .
+arch:aligned_sample a rdf:Property ; rdfs:comment "An anchor's aligned sample." .
+arch:performance_kind a rdf:Property ; rdfs:comment "selection_kind 1: the selection's kind, a concept in the performance-kinds scheme. Minted by World." .
+arch:credit a rdf:Property ; rdfs:comment "artist_credit 1: one ordered credit node. Minted by World." .
+arch:verdict a rdf:Property ; rdfs:comment "judgment 1: affirmed, rejected, or withdrawn." .
+arch:reason a rdf:Property ; rdfs:comment "judgment 1: the judgment's reason." .

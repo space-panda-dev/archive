@@ -1,0 +1,28 @@
+# From a song occurrence, list every source track of each audio selection it
+# groups, with each span's exact Artifact revision and sample bounds, and any
+# alignment the selection relied on. Each step stays in the named graph of
+# the Claim revision that asserted it; every revision is shown, none is chosen.
+PREFIX arch: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#>
+PREFIX prov: <http://www.w3.org/ns/prov#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+SELECT ?occurrence ?selection ?track ?piece ?source ?start ?end ?rate ?alignment WHERE {
+  GRAPH ?records {
+    ?occurrence arch:object_id <urn:uuid:replace-with-occurrence-id> .
+  }
+  GRAPH ?occurrence {
+    ?occurrence arch:selection ?selection .
+  }
+  GRAPH ?selection {
+    ?selection arch:tracks ?trackNode .
+    ?trackNode rdf:value ?track ;
+               arch:pieces ?pieceNode .
+    ?pieceNode rdf:value ?piece ;
+               prov:wasDerivedFrom ?source ;
+               arch:start_sample ?start ;
+               arch:end_sample ?end ;
+               arch:sample_rate ?rate .
+    OPTIONAL { ?selection arch:alignment ?alignment . }
+  }
+}
+ORDER BY ?occurrence ?selection ?track ?piece

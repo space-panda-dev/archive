@@ -1,0 +1,1341 @@
+{-# LANGUAGE OverloadedStrings #-}
+
+-- | The first reader for specification-owned contract resources.
+--
+-- Contract bytes are evidence about the validator that will interpret a
+-- claim.  This module therefore refuses malformed, non-canonical, changed,
+-- open, or network-dependent bundles before a caller can use their schema.
+module Archive.Door.Contracts
+  ( ContractBundle (..)
+  , loadContract
+  , loadCoreContext
+  , validateContractBundle
+  , validateCoreContext
+  , validateCoreContextForSpecification
+  , validateContractInstance
+  , ReferenceTargetRule (..)
+  , contractReferenceTargets
+  , distinctTrackContentRule
+  ) where
+
+import Archive.Door.Json (decodeUnique)
+import Archive.Door.Layout
+  ( archiveRoot
+  , contractPath
+  , parseSha256Digest
+  , specContextPath
+  )
+import Control.Exception (IOException, try)
+import Crypto.Hash.SHA256 qualified as SHA256
+import Data.Aeson (Value (..))
+import Data.Aeson.Key qualified as Key
+import Data.Aeson.KeyMap qualified as KeyMap
+import Data.Aeson.RFC8785 (encodeCanonical)
+import Data.ByteString qualified as ByteString
+import Data.ByteString.Lazy qualified as LazyByteString
+import Data.Foldable (toList)
+import Data.List (sort)
+import Data.Text (Text)
+import Data.Text qualified as Text
+import Data.Scientific (floatingOrInteger)
+import qualified Data.Set as Set
+import Data.Time (UTCTime, ZonedTime, defaultTimeLocale, parseTimeM)
+
+data ContractBundle = ContractBundle
+  { contractBundleId :: Text
+  , contractBundleVersion :: Text
+  , contractBundleSchema :: Value
+  , contractBundleContext :: KeyMap.KeyMap Value
+  , contractBundleDigest :: Text
+  }
+  deriving (Eq, Show)
+
+data ReferenceTargetRule = ReferenceTargetRule
+  { referenceTargetShape :: Text
+  , referenceTargetKind :: Maybe Text
+  -- | A nonempty set of accepted Entity kinds (`kinds`), or empty when the
+  -- rule names a single `kind` or none.
+  , referenceTargetKinds :: [Text]
+  , referenceTargetContract :: Maybe (Text, Text)
+  , referenceTargetMany :: Bool
+  } deriving (Eq, Show)
+
+-- | Load a cited bundle only through its digest-addressed path.  The bytes'
+-- digest, canonical form, identifier, and version all have to agree with the
+-- citation; a caller cannot redirect a citation to a differently named file.
+loadContract :: FilePath -> Text -> Text -> Text -> IO (Either Text ContractBundle)
+loadContract root expectedId expectedVersion digestText = do
+  case (archiveRoot root, parseSha256Digest digestText) of
+    (Left problem, _) -> pure (Left problem)
+    (_, Left problem) -> pure (Left problem)
+    (Right archive, Right digest) -> do
+      let path = contractPath archive digest
+      result <- readBytes path
+      pure (result >>= validateContractBytes expectedId expectedVersion digestText)
+
+-- | Load the specification's local core context.  It is not digest-addressed,
+-- but it is still parsed strictly and rejected if its local profile is not the
+-- one used by the accepted core protocol.
+loadCoreContext :: FilePath -> Text -> IO (Either Text Value)
+loadCoreContext root specification = do
+  case archiveRoot root >>= (`specContextPath` specification) of
+    Left problem -> pure (Left problem)
+    Right path -> readBytes path >>= pure . (>>= decodeAndValidateCoreFor specification)
+
+decodeAndValidateCoreFor :: Text -> LazyByteString.ByteString -> Either Text Value
+decodeAndValidateCoreFor specification bytes = do
+  value <- decode bytes
+  validateCoreContextForSpecification specification value
+  pure value
+
+validateContractBundle :: Text -> Text -> Text -> Value -> Either Text ContractBundle
+validateContractBundle expectedId expectedVersion digestText value = do
+  _ <- parseSha256Digest digestText
+  validateBundleValue expectedId expectedVersion digestText value
+
+validateCoreContext :: Value -> Either Text ()
+validateCoreContext (Object outer) = do
+  requireExactKeys "core context" ["@context"] outer
+  inner <- requiredObject "@context" outer
+  rejectContextDirectives "core context" inner
+  let actualKeys = Set.fromList (map Key.toText (KeyMap.keys inner))
+  keys <- case filter ((== actualKeys) . Set.fromList) [reviewContextKeys, worldContextKeys, coreContextKeys] of
+    catalog : _ -> Right catalog
+    [] -> Left "core context has an unknown term catalog"
+  requireExactKeys "core context terms" keys inner
+  expectJsonLdVersion inner
+  expectProtected inner
+  mapM_ (checkCoreString inner)
+    [ ("arch", "urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#")
+    , ("as", "http://www.w3.org/ns/activitystreams#")
+    , ("dcterms", "http://purl.org/dc/terms/")
+    , ("prov", "http://www.w3.org/ns/prov#")
+    , ("rdf", "http://www.w3.org/1999/02/22-rdf-syntax-ns#")
+    , ("rdfs", "http://www.w3.org/2000/01/rdf-schema#")
+    , ("xsd", "http://www.w3.org/2001/XMLSchema#")
+    , ("spec", "arch:spec"), ("revision_id", "arch:revision_id")
+    , ("object_id", "arch:object_id"), ("by", "as:generator")
+    , ("agent", "dcterms:creator"), ("payload", "arch:payload")
+    , ("refs", "arch:refs"), ("supersedes", "arch:supersedes")
+    , ("source", "arch:source"), ("contracts", "arch:contracts")
+    , ("contract", "arch:contract"), ("reference", "arch:reference")
+    , ("archive_id", "arch:archive_id"), ("layout", "arch:layout")
+    , ("artifact", "arch:Artifact"), ("entity", "arch:Entity")
+    , ("claim", "arch:Claim"), ("assessment", "arch:Assessment")
+    , ("label", "rdfs:label"), ("person", "prov:Person")
+    , ("organisation", "prov:Organization"), ("software", "prov:SoftwareAgent")
+    , ("model", "arch:ModelAgent"), ("process", "arch:ProcessAgent")
+    , ("id", "arch:id"), ("namespace", "arch:namespace")
+    , ("name", "arch:name"), ("revision", "arch:revision")
+    , ("content", "arch:content"), ("digest", "arch:digest")
+    , ("size", "arch:size"), ("schema", "arch:schema")
+    , ("version", "arch:version"), ("protocol", "arch:protocol")
+    , ("records", "arch:records"), ("identities", "arch:identities")
+    , ("contents", "arch:contents"), ("expected_heads", "arch:expected_heads")
+    , ("expected", "arch:expected"), ("annex_key", "arch:annex_key")
+    , ("staging_remote", "arch:staging_remote")
+    ]
+  case KeyMap.lookup (Key.fromText "skos") inner of
+    Nothing -> Right ()
+    Just _ -> checkCoreString inner ("skos", "http://www.w3.org/2004/02/skos/core#")
+  case KeyMap.lookup (Key.fromText "musical_work") inner of
+    Nothing -> Right ()
+    Just _ -> checkCoreString inner ("musical_work", "arch:MusicalWork")
+  case KeyMap.lookup (Key.fromText "recording_session") inner of
+    Nothing -> Right ()
+    Just _ -> checkCoreString inner ("recording_session", "arch:RecordingSession")
+  requiredString "arch" inner >>= expect "Archive namespace" "urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#"
+  requiredString "by" inner >>= expect "by mapping" "as:generator"
+  requiredString "agent" inner >>= expect "agent mapping" "dcterms:creator"
+  validateCoreObjectMapping inner "at" "prov:generatedAtTime" "xsd:dateTime"
+  validateCoreObjectMapping inner "shape" "arch:shape" "@vocab"
+  validateCoreObjectMapping inner "kind" "rdf:type" "@vocab"
+  validateCoreObjectMapping inner "role" "arch:role" "@vocab"
+  mapM_ (requiredKey inner)
+    [ "spec", "revision_id", "object_id", "shape", "payload", "refs"
+    , "supersedes", "source", "contracts", "artifact", "entity", "claim"
+    , "assessment", "label", "id", "content", "digest", "size"
+    ]
+  pure ()
+validateCoreContext _ = Left "core context must be a JSON object"
+
+validateCoreContextForSpecification :: Text -> Value -> Either Text ()
+validateCoreContextForSpecification specification value = do
+  validateCoreContext value
+  context <- objectValue "core context" value >>= requiredObject "@context"
+  let keys = Set.fromList (map Key.toText (KeyMap.keys context))
+      expected = case specification of
+        "archive/0.0.1" -> Set.fromList coreContextKeys
+        "archive/0.0.2" -> Set.fromList coreContextKeys
+        "archive/0.0.3" -> Set.fromList worldContextKeys
+        "archive/0.0.4" -> Set.fromList worldContextKeys
+        "archive/0.0.5" -> Set.fromList reviewContextKeys
+        "archive/0.0.6" -> Set.fromList reviewContextKeys
+        _ -> Set.empty
+  if not (Set.null expected) && keys == expected
+    then Right ()
+    else Left "core context terms do not match the selected specification version"
+
+coreContextKeys :: [Text]
+coreContextKeys =
+  [ "@version", "@protected", "arch", "as", "dcterms", "prov", "rdf", "rdfs", "xsd"
+  , "spec", "revision_id", "object_id", "shape", "by", "agent", "at", "payload"
+  , "refs", "supersedes", "source", "contracts", "contract", "reference", "archive_id"
+  , "layout", "artifact", "entity", "claim", "assessment", "kind", "label", "person"
+  , "organisation", "software", "model", "process", "role", "id", "namespace", "name"
+  , "revision", "content", "digest", "size", "schema", "version", "protocol", "records"
+  , "identities", "contents", "expected_heads", "expected", "annex_key", "staging_remote"
+  ]
+
+worldContextKeys :: [Text]
+worldContextKeys = coreContextKeys <> ["skos", "musical_work"]
+
+reviewContextKeys :: [Text]
+reviewContextKeys = worldContextKeys <> ["recording_session"]
+
+expectJsonLdVersion :: KeyMap.KeyMap Value -> Either Text ()
+expectJsonLdVersion fields = case KeyMap.lookup "@version" fields of
+  Just (Number value) | value == 1.1 -> Right ()
+  _ -> Left "core context @version must be 1.1"
+
+expectProtected :: KeyMap.KeyMap Value -> Either Text ()
+expectProtected fields = case KeyMap.lookup "@protected" fields of
+  Just (Bool True) -> Right ()
+  _ -> Left "core context @protected must be true"
+
+checkCoreString :: KeyMap.KeyMap Value -> (Text, Text) -> Either Text ()
+checkCoreString fields (name, expected) =
+  requiredString name fields >>= expect (name <> " mapping") expected
+
+validateCoreObjectMapping :: KeyMap.KeyMap Value -> Text -> Text -> Text -> Either Text ()
+validateCoreObjectMapping fields name expectedId expectedType = do
+  mapping <- requiredObject name fields
+  requireExactKeys (name <> " mapping") ["@id", "@type"] mapping
+  requiredString "@id" mapping >>= expect (name <> " @id") expectedId
+  requiredString "@type" mapping >>= expect (name <> " @type") expectedType
+
+-- Kept separate from 'loadContract' so the byte-level checks are also usable
+-- by pure tests and by archive initialization before a citation is written.
+validateBundleValue :: Text -> Text -> Text -> Value -> Either Text ContractBundle
+validateBundleValue expectedId expectedVersion digest value = do
+  fields <- objectValue "contract bundle" value
+  requireExactKeys "contract bundle" ["id", "version", "schema", "context"] fields
+  bundleId <- requiredString "id" fields
+  bundleVersion <- requiredString "version" fields
+  if bundleId /= expectedId
+    then Left "contract identifier does not match citation"
+    else if bundleVersion /= expectedVersion
+      then Left "contract version does not match citation"
+      else pure ()
+  schema <- requiredValue "schema" fields
+  validateSchema schema
+  context <- requiredObject "context" fields
+  validateContractContext context
+  pure ContractBundle
+    { contractBundleId = bundleId
+    , contractBundleVersion = bundleVersion
+    , contractBundleSchema = schema
+    , contractBundleContext = context
+    , contractBundleDigest = digest
+    }
+
+validateSchema :: Value -> Either Text ()
+validateSchema schema@(Object fields) = do
+  marker <- requiredString "$schema" fields
+  expect "JSON Schema marker" "https://json-schema.org/draft/2020-12/schema" marker
+  additional <- requiredBool "additionalProperties" fields
+  if additional then Left "contract schema must be closed" else pure ()
+  maybe (Right ()) validateReferenceTargetRules
+    (KeyMap.lookup (Key.fromText "x-archive-reference-targets") fields)
+  maybe (Right ()) validateOrderedSpansRule
+    (KeyMap.lookup "x-archive-ordered-sample-spans" fields)
+  maybe (Right ()) validateSortedRefsRule
+    (KeyMap.lookup "x-archive-unique-sorted-refs" fields)
+  maybe (Right ()) validateTrackSpansRule
+    (KeyMap.lookup "x-archive-track-sample-spans" fields)
+  maybe (Right ()) (validateSingleRoleRule "distinct track content rule")
+    (KeyMap.lookup "x-archive-distinct-track-content" fields)
+  maybe (Right ()) validateMonotonicAnchorsRule
+    (KeyMap.lookup "x-archive-monotonic-anchors" fields)
+  maybe (Right ()) validateDistinctRefsRule
+    (KeyMap.lookup "x-archive-distinct-refs" fields)
+  maybe (Right ()) (validateSingleRoleRule "ordered distinct references rule")
+    (KeyMap.lookup "x-archive-ordered-distinct-refs" fields)
+  case (KeyMap.member "x-archive-distinct-track-content" fields, KeyMap.member "x-archive-track-sample-spans" fields) of
+    (True, False) -> Left "distinct track content rule requires a track sample spans rule"
+    _ -> Right ()
+  walkSchema schema [] schema
+validateSchema _ = Left "contract schema must be a JSON object"
+
+profileRuleNames :: [Text]
+profileRuleNames =
+  [ "x-archive-reference-targets", "x-archive-ordered-sample-spans", "x-archive-unique-sorted-refs"
+  , "x-archive-track-sample-spans", "x-archive-distinct-track-content"
+  , "x-archive-monotonic-anchors", "x-archive-distinct-refs", "x-archive-ordered-distinct-refs"
+  ]
+
+walkSchema :: Value -> [Text] -> Value -> Either Text ()
+walkSchema root path (Object fields) = do
+  if not (null path) && any ((`KeyMap.member` fields) . Key.fromText) profileRuleNames
+    then Left "contract profile rules are allowed only at the schema root"
+    else pure ()
+  rejectUnknownSchemaKeywords path fields
+  validateRef root fields
+  validateSchemaKeywordTypes fields
+  mapM_ (\(key, value) -> walkSchema root (Key.toText key : path) value)
+    (nestedSchemas fields)
+walkSchema _ path _ = Left (schemaPath path <> " must be an object")
+
+-- The evaluator deliberately supports a small, closed subset of 2020-12.  A
+-- bundle is specification-owned data, so silently accepting a new keyword
+-- would be worse than refusing a bundle until the evaluator grows.
+schemaKeywords :: [Text]
+schemaKeywords =
+  [ "$schema", "$defs", "$ref", "type", "const", "enum", "required"
+  , "properties", "additionalProperties", "items", "minItems", "maxItems"
+  , "contains", "minContains", "maxContains", "allOf", "pattern"
+  , "minLength", "maxLength", "format", "minimum"
+  , "$comment", "title", "description", "default", "deprecated"
+  , "examples", "readOnly", "writeOnly"
+  ] <> profileRuleNames
+
+rejectUnknownSchemaKeywords :: [Text] -> KeyMap.KeyMap Value -> Either Text ()
+rejectUnknownSchemaKeywords path fields =
+  case filter (`notElem` schemaKeywords) (map (Key.toText . fst) (KeyMap.toList fields)) of
+    [] -> Right ()
+    names -> Left (schemaPath path <> " contains unsupported keyword(s): "
+      <> Text.intercalate ", " names)
+
+validateReferenceTargetRules :: Value -> Either Text ()
+validateReferenceTargetRules (Object roles) = mapM_ validateRole (KeyMap.toList roles)
+  where
+    validateRole (role, value)
+      | Text.null (Key.toText role) = Left "contract reference target role must not be empty"
+      | otherwise = do
+          fields <- objectValue "contract reference target rule" value
+          shape <- requiredString "shape" fields
+          if shape `notElem` ["artifact", "assessment", "claim", "entity"]
+            then Left "contract reference target shape must be artifact, assessment, claim, or entity"
+            else pure ()
+          kind <- case KeyMap.lookup "kind" fields of
+            Nothing -> Right Nothing
+            Just (String value') | not (Text.null value') -> Right (Just value')
+            _ -> Left "contract reference target kind must be a non-empty string"
+          kinds <- optionalKinds fields
+          targetContract <- optionalTargetContract fields
+          many <- optionalMany fields
+          let expectedKeys = ["shape"]
+                <> ["kind" | kind /= Nothing]
+                <> ["kinds" | not (null kinds)]
+                <> ["contract" | targetContract /= Nothing]
+                <> ["many" | KeyMap.member "many" fields]
+          requireExactKeys "contract reference target rule" expectedKeys fields
+          if (kind /= Nothing || not (null kinds)) && shape /= "entity"
+            then Left "contract reference target kind is valid only for entity shape"
+            else if kind /= Nothing && not (null kinds)
+              then Left "contract reference target may name kind or kinds, not both"
+              else if targetContract /= Nothing && shape /= "claim"
+                then Left "contract reference target contract is valid only for claim shape"
+                else if many && kind /= Nothing
+                  then Left "repeated Entity kind rules are unsupported"
+                  else Right ()
+validateReferenceTargetRules _ = Left "contract reference targets must be an object"
+
+optionalTargetContract :: KeyMap.KeyMap Value -> Either Text (Maybe (Text, Text))
+optionalTargetContract fields = case KeyMap.lookup "contract" fields of
+  Nothing -> Right Nothing
+  Just (Object citation) -> do
+    requireExactKeys "contract reference target citation" ["id", "version"] citation
+    identifier <- requiredString "id" citation
+    version <- requiredString "version" citation
+    pure (Just (identifier, version))
+  Just _ -> Left "contract reference target contract must be an object"
+
+optionalKinds :: KeyMap.KeyMap Value -> Either Text [Text]
+optionalKinds fields = case KeyMap.lookup "kinds" fields of
+  Nothing -> Right []
+  Just (Array values) -> do
+    names <- mapM kindName (toList values)
+    if null names || length names /= length (unique names)
+      then Left "contract reference target kinds must be a nonempty set"
+      else Right names
+  Just _ -> Left "contract reference target kinds must be an array"
+  where
+    kindName (String value) | not (Text.null value) = Right value
+    kindName _ = Left "contract reference target kinds must contain non-empty strings"
+
+optionalMany :: KeyMap.KeyMap Value -> Either Text Bool
+optionalMany fields = case KeyMap.lookup "many" fields of
+  Nothing -> Right False
+  Just (Bool value) -> Right value
+  Just _ -> Left "contract reference target many must be a boolean"
+
+validateOrderedSpansRule :: Value -> Either Text ()
+validateOrderedSpansRule (Object fields) = do
+  requireExactKeys "ordered sample spans rule" ["payload", "role", "start", "end", "rate"] fields
+  mapM_ (`requiredString` fields) ["payload", "role", "start", "end", "rate"]
+  pure ()
+validateOrderedSpansRule _ = Left "ordered sample spans rule must be an object"
+
+validateSortedRefsRule :: Value -> Either Text ()
+validateSortedRefsRule (Object fields) = do
+  requireExactKeys "unique sorted references rule" ["role"] fields
+  _ <- requiredString "role" fields
+  pure ()
+validateSortedRefsRule _ = Left "unique sorted references rule must be an object"
+
+validateTrackSpansRule :: Value -> Either Text ()
+validateTrackSpansRule (Object fields) = do
+  let names = ["payload", "pieces", "role", "start", "end", "rate"]
+  requireExactKeys "track sample spans rule" names fields
+  mapM_ (`requiredString` fields) names
+validateTrackSpansRule _ = Left "track sample spans rule must be an object"
+
+validateSingleRoleRule :: Text -> Value -> Either Text ()
+validateSingleRoleRule label (Object fields) = do
+  requireExactKeys label ["role"] fields
+  _ <- requiredString "role" fields
+  pure ()
+validateSingleRoleRule label _ = Left (label <> " must be an object")
+
+validateMonotonicAnchorsRule :: Value -> Either Text ()
+validateMonotonicAnchorsRule (Object fields) = do
+  requireExactKeys "monotonic anchors rule" ["payload", "fields"] fields
+  _ <- requiredString "payload" fields
+  names <- requiredStrings "fields" fields
+  if length names == 2 && length (unique names) == 2
+    then Right ()
+    else Left "monotonic anchors rule must name two distinct fields"
+validateMonotonicAnchorsRule _ = Left "monotonic anchors rule must be an object"
+
+validateDistinctRefsRule :: Value -> Either Text ()
+validateDistinctRefsRule (Object fields) = do
+  requireExactKeys "distinct references rule" ["roles"] fields
+  names <- requiredStrings "roles" fields
+  if length names >= 2 && length names == length (unique names)
+    then Right ()
+    else Left "distinct references rule must name at least two distinct roles"
+validateDistinctRefsRule _ = Left "distinct references rule must be an object"
+
+requiredStrings :: Text -> KeyMap.KeyMap Value -> Either Text [Text]
+requiredStrings name fields = case KeyMap.lookup (Key.fromText name) fields of
+  Just (Array values) -> mapM one (toList values)
+  _ -> Left (name <> " must be an array of strings")
+  where
+    one (String value) | not (Text.null value) = Right value
+    one _ = Left (name <> " must contain non-empty strings")
+
+contractReferenceTargets :: Value -> Either Text [(Text, ReferenceTargetRule)]
+contractReferenceTargets (Object fields) = case KeyMap.lookup (Key.fromText "x-archive-reference-targets") fields of
+  Nothing -> Right []
+  Just (Object roles) -> mapM parseRole (KeyMap.toList roles)
+  Just _ -> Left "contract reference targets must be an object"
+  where
+    parseRole (role, Object rule) = do
+      let roleName = Key.toText role
+      shape <- requiredString "shape" rule
+      kind <- case KeyMap.lookup (Key.fromText "kind") rule of
+        Nothing -> Right Nothing
+        Just (String value) -> Right (Just value)
+        Just _ -> Left "contract reference target kind must be a string"
+      kinds <- optionalKinds rule
+      targetContract <- optionalTargetContract rule
+      many <- optionalMany rule
+      pure (roleName, ReferenceTargetRule shape kind kinds targetContract many)
+    parseRole _ = Left "contract reference target rule must be an object"
+contractReferenceTargets _ = Left "contract schema must be an object"
+
+validateRef :: Value -> KeyMap.KeyMap Value -> Either Text ()
+validateRef root fields = case KeyMap.lookup "$ref" fields of
+  Nothing -> Right ()
+  Just (String ref)
+    | Text.isPrefixOf "#" ref -> case resolvePointer root ref of
+        Just _ -> Right ()
+        Nothing -> Left "contract schema contains an unresolved local $ref"
+    | otherwise -> Left "contract schema contains a remote $ref"
+  Just _ -> Left "contract schema $ref must be a string"
+
+validateSchemaKeywordTypes :: KeyMap.KeyMap Value -> Either Text ()
+validateSchemaKeywordTypes fields = do
+  maybe (Right ()) validateTypeKeyword (KeyMap.lookup "type" fields)
+  maybe (Right ()) (const (Right ())) (KeyMap.lookup "const" fields)
+  maybe (Right ()) validateEnumKeyword (KeyMap.lookup "enum" fields)
+  maybe (Right ()) validateRequiredKeyword (KeyMap.lookup "required" fields)
+  maybe (Right ()) validatePropertiesKeyword (KeyMap.lookup "properties" fields)
+  maybe (Right ()) validateDefsKeyword (KeyMap.lookup "$defs" fields)
+  maybe (Right ()) validateAdditionalKeyword (KeyMap.lookup "additionalProperties" fields)
+  maybe (Right ()) (validateIntegerKeyword "minItems") (KeyMap.lookup "minItems" fields)
+  maybe (Right ()) (validateIntegerKeyword "maxItems") (KeyMap.lookup "maxItems" fields)
+  maybe (Right ()) (validateIntegerKeyword "minContains") (KeyMap.lookup "minContains" fields)
+  maybe (Right ()) (validateIntegerKeyword "maxContains") (KeyMap.lookup "maxContains" fields)
+  maybe (Right ()) (validateIntegerKeyword "minLength") (KeyMap.lookup "minLength" fields)
+  maybe (Right ()) (validateIntegerKeyword "maxLength") (KeyMap.lookup "maxLength" fields)
+  maybe (Right ()) (validateNumberKeyword "minimum") (KeyMap.lookup "minimum" fields)
+  maybe (Right ()) validateStringKeyword (KeyMap.lookup "pattern" fields)
+  maybe (Right ()) validateFormatKeyword (KeyMap.lookup "format" fields)
+  validateArrayKeyword "allOf" fields
+  validateSchemaKeyword "items" fields
+  validateSchemaKeyword "contains" fields
+  validateContainsBounds fields
+
+validateTypeKeyword :: Value -> Either Text ()
+validateTypeKeyword (String name)
+  | name `elem` typeNames = Right ()
+  | otherwise = Left "contract schema has an unsupported type"
+validateTypeKeyword (Array names)
+  | null namesList = Left "contract schema type array must not be empty"
+  | length namesList /= length (unique namesList) = Left "contract schema type array has duplicates"
+  | all (`elem` typeNames) namesList = Right ()
+  | otherwise = Left "contract schema has an unsupported type"
+  where
+    namesList = case traverse asString (toList names) of
+      Right values -> values
+      Left _ -> []
+    asString :: Value -> Either Text Text
+    asString (String name) = Right name
+    asString _ = Left "contract schema type must contain only strings"
+validateTypeKeyword _ = Left "contract schema type must be a string or array"
+
+typeNames :: [Text]
+typeNames = ["null", "boolean", "object", "array", "number", "integer", "string"]
+
+unique :: Eq a => [a] -> [a]
+unique [] = []
+unique (value : values) = value : unique (filter (/= value) values)
+
+validateEnumKeyword :: Value -> Either Text ()
+validateEnumKeyword (Array values)
+  | null (toList values) = Left "contract schema enum must not be empty"
+  | otherwise = Right ()
+validateEnumKeyword _ = Left "contract schema enum must be an array"
+
+validateRequiredKeyword :: Value -> Either Text ()
+validateRequiredKeyword (Array values)
+  | length names == length (toList values)
+      && all validName names && length names == length (unique names) = Right ()
+  | otherwise = Left "contract schema required must contain unique strings"
+  where
+    names = [name | String name <- toList values]
+    validName name = not (Text.null name)
+validateRequiredKeyword _ = Left "contract schema required must be an array"
+
+validatePropertiesKeyword :: Value -> Either Text ()
+validatePropertiesKeyword (Object _) = Right ()
+validatePropertiesKeyword _ = Left "contract schema properties must be an object"
+
+validateDefsKeyword :: Value -> Either Text ()
+validateDefsKeyword (Object _) = Right ()
+validateDefsKeyword _ = Left "contract schema $defs must be an object"
+
+validateAdditionalKeyword :: Value -> Either Text ()
+validateAdditionalKeyword (Bool _) = Right ()
+validateAdditionalKeyword value@(Object _) = validateSchemaKeywordValue "additionalProperties" value
+validateAdditionalKeyword _ = Left "contract schema additionalProperties must be boolean or schema"
+
+validateArrayKeyword :: Text -> KeyMap.KeyMap Value -> Either Text ()
+validateArrayKeyword name fields = case KeyMap.lookup (Key.fromText name) fields of
+  Nothing -> Right ()
+  Just (Array _) -> Right ()
+  Just _ -> Left ("contract schema " <> name <> " must be an array")
+
+validateSchemaKeyword :: Text -> KeyMap.KeyMap Value -> Either Text ()
+validateSchemaKeyword name fields = maybe (Right ()) (validateSchemaKeywordValue name)
+  (KeyMap.lookup (Key.fromText name) fields)
+
+validateSchemaKeywordValue :: Text -> Value -> Either Text ()
+validateSchemaKeywordValue _ (Object _) = Right ()
+validateSchemaKeywordValue name _ = Left ("contract schema " <> name <> " must be a schema object")
+
+validateIntegerKeyword :: Text -> Value -> Either Text ()
+validateIntegerKeyword name (Number value) =
+  case floatingOrInteger value :: Either Double Integer of
+    Right integer | integer >= 0 -> Right ()
+    _ -> Left ("contract schema " <> name <> " must be a non-negative integer")
+validateIntegerKeyword name _ = Left ("contract schema " <> name <> " must be a non-negative integer")
+
+validateNumberKeyword :: Text -> Value -> Either Text ()
+validateNumberKeyword _ (Number _) = Right ()
+validateNumberKeyword name _ = Left ("contract schema " <> name <> " must be a number")
+
+validateStringKeyword :: Value -> Either Text ()
+validateStringKeyword value@(String _) = compilePattern value >> Right ()
+validateStringKeyword _ = Left "contract schema pattern must be a string"
+
+validateFormatKeyword :: Value -> Either Text ()
+validateFormatKeyword (String "date-time") = Right ()
+validateFormatKeyword _ = Left "contract schema format must be date-time"
+
+validateContainsBounds :: KeyMap.KeyMap Value -> Either Text ()
+validateContainsBounds fields = do
+  let containsPresent = KeyMap.member "contains" fields
+  if not containsPresent && (KeyMap.member "minContains" fields || KeyMap.member "maxContains" fields)
+    then Left "contract schema minContains/maxContains require contains"
+    else pure ()
+  minValue <- integerValue "minContains" (KeyMap.lookup "minContains" fields)
+  maxValue <- integerValue "maxContains" (KeyMap.lookup "maxContains" fields)
+  case (minValue, maxValue) of
+    (Just lower, Just upper) | lower > upper -> Left "contract schema minContains exceeds maxContains"
+    _ -> Right ()
+
+integerValue :: Text -> Maybe Value -> Either Text (Maybe Integer)
+integerValue _ Nothing = Right Nothing
+integerValue name (Just (Number value)) = case floatingOrInteger value :: Either Double Integer of
+  Right integer | integer >= 0 -> Right (Just integer)
+  _ -> Left ("contract schema " <> name <> " must be a non-negative integer")
+integerValue name (Just _) = Left ("contract schema " <> name <> " must be a non-negative integer")
+
+nestedSchemas :: KeyMap.KeyMap Value -> [(Key.Key, Value)]
+nestedSchemas fields = concatMap one (KeyMap.toList fields)
+  where
+    one (key, value) = case Key.toText key of
+      "$defs" -> case value of
+        Object definitions -> KeyMap.toList definitions
+        _ -> []
+      "properties" -> case value of
+        Object properties -> KeyMap.toList properties
+        _ -> []
+      "allOf" -> case value of
+        Array schemas -> zipWith (\index schema -> (Key.fromText ("allOf[" <> Text.pack (show index) <> "]"), schema)) [0 :: Int ..] (toList schemas)
+        _ -> []
+      "items" -> [(Key.fromText "items", value)]
+      "contains" -> [(Key.fromText "contains", value)]
+      "additionalProperties" -> case value of
+        Object _ -> [(key, value)]
+        _ -> []
+      _ -> []
+
+schemaPath :: [Text] -> Text
+schemaPath [] = "contract schema"
+schemaPath path = "contract schema at " <> Text.intercalate "." (reverse path)
+
+-- | Validate the instance object that a cited contract owns.  The first
+-- argument is the installed JSON Schema and the second is exactly
+-- @{"payload": ..., "refs": ...}@.  Schema errors are refused rather than
+-- treated as a non-match, which keeps an incomplete evaluator fail-closed.
+validateContractInstance :: Value -> Value -> Either Text ()
+validateContractInstance schema instanceValue = do
+  validateSchema schema
+  matches <- evaluateSchema schema [] schema instanceValue
+  if not matches
+    then Left "contract instance does not satisfy its schema"
+    else validateContractProfile schema instanceValue
+
+validateContractProfile :: Value -> Value -> Either Text ()
+validateContractProfile (Object schema) (Object instanceValue) = do
+  case KeyMap.lookup "x-archive-ordered-sample-spans" schema of
+    Nothing -> pure ()
+    Just (Object rule) -> validateOrderedSpansInstance rule instanceValue
+    Just _ -> Left "ordered sample spans rule must be an object"
+  case KeyMap.lookup "x-archive-unique-sorted-refs" schema of
+    Nothing -> pure ()
+    Just (Object rule) -> validateSortedRefsInstance rule instanceValue
+    Just _ -> Left "unique sorted references rule must be an object"
+  case KeyMap.lookup "x-archive-track-sample-spans" schema of
+    Nothing -> pure ()
+    Just (Object rule) -> validateTrackSpansInstance rule instanceValue
+    Just _ -> Left "track sample spans rule must be an object"
+  case KeyMap.lookup "x-archive-monotonic-anchors" schema of
+    Nothing -> pure ()
+    Just (Object rule) -> validateMonotonicAnchorsInstance rule instanceValue
+    Just _ -> Left "monotonic anchors rule must be an object"
+  case KeyMap.lookup "x-archive-distinct-refs" schema of
+    Nothing -> pure ()
+    Just (Object rule) -> validateDistinctRefsInstance rule instanceValue
+    Just _ -> Left "distinct references rule must be an object"
+  case KeyMap.lookup "x-archive-ordered-distinct-refs" schema of
+    Nothing -> pure ()
+    Just (Object rule) -> validateOrderedDistinctRefsInstance rule instanceValue
+    Just _ -> Left "ordered distinct references rule must be an object"
+validateContractProfile _ _ = Left "contract profile requires an object instance"
+
+-- | Spans are grouped by track, and references of the span role follow the
+-- tracks in order.  Bounds are compared only between consecutive spans of one
+-- track that pin the same Artifact object: different recordings have
+-- different clocks, so their sample offsets are not comparable here.
+validateTrackSpansInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
+validateTrackSpansInstance rule instanceValue = do
+  (role, tracks) <- trackSpans rule instanceValue
+  startName <- requiredString "start" rule
+  endName <- requiredString "end" rule
+  rateName <- requiredString "rate" rule
+  refs <- instanceReferences instanceValue
+  roleRefs <- referencesWithRole role refs
+  let spanCount = sum (map length tracks)
+  if null tracks || any null tracks || spanCount /= length roleRefs
+    then Left "track spans and span references must be nonempty and equal in number"
+    else pure ()
+  pieceObjects <- mapM refObject roleRefs
+  let pinned = splitPlaces (map length tracks) pieceObjects
+  mapM_ (validateTrack startName endName rateName) (zip tracks pinned)
+  where
+    validateTrack startName endName rateName (pieces, objects) = do
+      bounds <- mapM (spanBounds startName endName rateName) pieces
+      let consecutive = zip (zip objects bounds) (drop 1 (zip objects bounds))
+      if all (\((left, (_, leftEnd)), (right, (rightStart, _))) -> left /= right || rightStart >= leftEnd) consecutive
+        then Right ()
+        else Left "spans of one track that pin the same Artifact must not overlap or run backwards"
+    spanBounds startName endName rateName (Object piece) = do
+      start <- requiredInteger startName piece
+      end <- requiredInteger endName piece
+      rate <- requiredInteger rateName piece
+      if start >= 0 && end > start && rate > 0
+        then Right (start, end)
+        else Left "sample span requires 0 <= start < end and positive sample rate"
+    spanBounds _ _ _ _ = Left "sample span must be an object"
+
+trackSpans :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text (Text, [[Value]])
+trackSpans rule instanceValue = do
+  payloadName <- requiredString "payload" rule
+  piecesName <- requiredString "pieces" rule
+  role <- requiredString "role" rule
+  payload <- requiredObject "payload" instanceValue
+  tracks <- case KeyMap.lookup (Key.fromText payloadName) payload of
+    Just (Array values) -> Right (toList values)
+    _ -> Left "track sample spans payload must be an array"
+  pieces <- mapM (trackPieces piecesName) tracks
+  pure (role, pieces)
+  where
+    trackPieces piecesName (Object track) = case KeyMap.lookup (Key.fromText piecesName) track of
+      Just (Array values) -> Right (toList values)
+      _ -> Left "track must contain a span array"
+    trackPieces _ _ = Left "track must be an object"
+
+-- | For a schema with a distinct-track-content rule, the span role and the
+-- number of span references in each track, in reference order.  Door needs
+-- committed Artifact revisions to compare digests, so the comparison itself
+-- happens where the snapshot is available.
+distinctTrackContentRule :: Value -> Value -> Either Text (Maybe (Text, [Int]))
+distinctTrackContentRule (Object schema) (Object instanceValue) =
+  case (KeyMap.lookup "x-archive-distinct-track-content" schema, KeyMap.lookup "x-archive-track-sample-spans" schema) of
+    (Nothing, _) -> Right Nothing
+    (Just (Object distinctRule), Just (Object spansRule)) -> do
+      role <- requiredString "role" distinctRule
+      (spanRole, tracks) <- trackSpans spansRule instanceValue
+      if role /= spanRole
+        then Left "distinct track content rule must name the span reference role"
+        else Right (Just (role, map length tracks))
+    _ -> Left "distinct track content rule requires a track sample spans rule"
+distinctTrackContentRule _ _ = Left "contract profile requires an object instance"
+
+validateMonotonicAnchorsInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
+validateMonotonicAnchorsInstance rule instanceValue = do
+  payloadName <- requiredString "payload" rule
+  names <- requiredStrings "fields" rule
+  payload <- requiredObject "payload" instanceValue
+  anchors <- case KeyMap.lookup (Key.fromText payloadName) payload of
+    Just (Array values) | not (null values) -> Right (toList values)
+    _ -> Left "monotonic anchors payload must be a nonempty array"
+  rows <- mapM (anchorRow names) anchors
+  let increasing column = and (zipWith (<) (map (!! column) rows) (drop 1 (map (!! column) rows)))
+  if all increasing [0 .. length names - 1]
+    then Right ()
+    else Left "anchors must strictly increase in every named field"
+  where
+    anchorRow names (Object anchor) = mapM (`requiredInteger` anchor) names
+    anchorRow _ _ = Left "anchor must be an object"
+
+validateDistinctRefsInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
+validateDistinctRefsInstance rule instanceValue = do
+  roles <- requiredStrings "roles" rule
+  refs <- instanceReferences instanceValue
+  objects <- concat <$> mapM (\role -> referencesWithRole role refs >>= mapM refObject) roles
+  if length objects == length (unique objects)
+    then Right ()
+    else Left ("references in roles " <> Text.intercalate ", " roles <> " must name different objects")
+
+validateOrderedDistinctRefsInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
+validateOrderedDistinctRefsInstance rule instanceValue = do
+  role <- requiredString "role" rule
+  refs <- instanceReferences instanceValue
+  objects <- referencesWithRole role refs >>= mapM refObject
+  if length objects == length (unique objects)
+    then Right ()
+    else Left (role <> " references must name different objects")
+
+referencesWithRole :: Text -> [Value] -> Either Text [Value]
+referencesWithRole role refs = do
+  roles <- mapM refRole refs
+  pure [ref | (ref, actual) <- zip refs roles, actual == role]
+  where
+    refRole (Object fields) = requiredString "role" fields
+    refRole _ = Left "contract instance reference must be an object"
+
+refObject :: Value -> Either Text Text
+refObject (Object fields) = requiredString "id" fields
+refObject _ = Left "contract instance reference must be an object"
+
+splitPlaces :: [Int] -> [a] -> [[a]]
+splitPlaces [] _ = []
+splitPlaces (count : counts) values = take count values : splitPlaces counts (drop count values)
+
+validateOrderedSpansInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
+validateOrderedSpansInstance rule instanceValue = do
+  payloadName <- requiredString "payload" rule
+  role <- requiredString "role" rule
+  startName <- requiredString "start" rule
+  endName <- requiredString "end" rule
+  rateName <- requiredString "rate" rule
+  payload <- requiredObject "payload" instanceValue
+  pieces <- case KeyMap.lookup (Key.fromText payloadName) payload of
+    Just (Array values) -> Right (toList values)
+    _ -> Left "ordered sample spans payload must be an array"
+  refs <- instanceReferences instanceValue
+  if null pieces || length pieces /= length refs
+    then Left "ordered sample spans and piece references must have equal nonzero length"
+    else pure ()
+  mapM_ (validatePiece startName endName rateName) pieces
+  mapM_ (validateRefRole role) refs
+  where
+    validatePiece startName endName rateName (Object piece) = do
+      start <- requiredInteger startName piece
+      end <- requiredInteger endName piece
+      rate <- requiredInteger rateName piece
+      if start >= 0 && end > start && rate > 0
+        then Right ()
+        else Left "sample span requires 0 <= start < end and positive sample rate"
+    validatePiece _ _ _ _ = Left "sample span must be an object"
+
+validateSortedRefsInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
+validateSortedRefsInstance rule instanceValue = do
+  role <- requiredString "role" rule
+  refs <- instanceReferences instanceValue
+  mapM_ (validateRefRole role) refs
+  keys <- mapM refKey refs
+  if not (null keys) && keys == sort (unique keys) && length keys == length (unique keys)
+    then Right ()
+    else Left "references must be nonempty, unique, and sorted by object and revision"
+
+instanceReferences :: KeyMap.KeyMap Value -> Either Text [Value]
+instanceReferences instanceValue = case KeyMap.lookup "refs" instanceValue of
+  Just (Array values) -> Right (toList values)
+  _ -> Left "contract instance refs must be an array"
+
+validateRefRole :: Text -> Value -> Either Text ()
+validateRefRole expected (Object fields) = do
+  actual <- requiredString "role" fields
+  if actual == expected then Right () else Left ("reference role must be " <> expected)
+validateRefRole _ _ = Left "contract instance reference must be an object"
+
+refKey :: Value -> Either Text (Text, Text)
+refKey (Object fields) = (,) <$> requiredString "id" fields <*> requiredString "revision_id" fields
+refKey _ = Left "contract instance reference must be an object"
+
+requiredInteger :: Text -> KeyMap.KeyMap Value -> Either Text Integer
+requiredInteger name fields = case KeyMap.lookup (Key.fromText name) fields of
+  Just (Number value) -> case floatingOrInteger value :: Either Double Integer of
+    Right integer -> Right integer
+    Left _ -> Left (name <> " must be an integer")
+  _ -> Left (name <> " must be an integer")
+
+evaluateSchema :: Value -> [Text] -> Value -> Value -> Either Text Bool
+evaluateSchema root path (Object fields) value = do
+  validateSchemaNodeForEvaluation root path fields
+  referenced <- case KeyMap.lookup "$ref" fields of
+    Nothing -> pure Nothing
+    Just (String reference) -> case resolvePointer root reference of
+      Just target -> pure (Just target)
+      Nothing -> Left "contract schema contains an unresolved local $ref"
+    Just _ -> Left "contract schema $ref must be a string"
+  referenceMatch <- maybe (pure True) (\target -> evaluateSchema root path target value) referenced
+  keywordMatch <- and <$> sequence
+    [ evaluateType fields value
+    , evaluateConst fields value
+    , evaluateEnum fields value
+    , evaluateMinimum fields value
+    , evaluateObject root path fields value
+    , evaluateArray root path fields value
+    , evaluateString fields value
+    , evaluateAllOf root path fields value
+    ]
+  pure (referenceMatch && keywordMatch)
+evaluateSchema _ path _ _ = Left (schemaPath path <> " must be an object")
+
+validateSchemaNodeForEvaluation :: Value -> [Text] -> KeyMap.KeyMap Value -> Either Text ()
+validateSchemaNodeForEvaluation root path fields = do
+  rejectUnknownSchemaKeywords path fields
+  validateRef root fields
+  validateSchemaKeywordTypes fields
+
+evaluateType :: KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateType fields value = case KeyMap.lookup "type" fields of
+  Nothing -> Right True
+  Just typeValue -> do
+    names <- case typeValue of
+      String name -> Right [name]
+      Array values -> mapM asString (toList values)
+      _ -> Left "contract schema type must be a string or array"
+    pure (any (`valueHasType` value) names)
+  where
+    asString (String name) = Right name
+    asString _ = Left "contract schema type must contain only strings"
+
+valueHasType :: Text -> Value -> Bool
+valueHasType "null" Null = True
+valueHasType "boolean" (Bool _) = True
+valueHasType "object" (Object _) = True
+valueHasType "array" (Array _) = True
+valueHasType "number" (Number _) = True
+valueHasType "integer" (Number value) = case floatingOrInteger value :: Either Double Integer of
+  Right _ -> True
+  Left _ -> False
+valueHasType "string" (String _) = True
+valueHasType _ _ = False
+
+evaluateConst :: KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateConst fields value = Right (maybe True (== value) (KeyMap.lookup "const" fields))
+
+evaluateEnum :: KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateEnum fields value = Right (maybe True (value `elem`) (arrayValues <$> KeyMap.lookup "enum" fields))
+  where
+    arrayValues (Array values) = toList values
+    arrayValues _ = []
+
+evaluateMinimum :: KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateMinimum fields (Number value) = case KeyMap.lookup "minimum" fields of
+  Nothing -> Right True
+  Just (Number lower) -> Right (value >= lower)
+  Just _ -> Left "contract schema minimum must be a number"
+evaluateMinimum _ _ = Right True
+
+evaluateObject :: Value -> [Text] -> KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateObject root path fields (Object object) = do
+  requiredMatch <- case KeyMap.lookup "required" fields of
+    Nothing -> Right True
+    Just (Array names) -> pure (all (`KeyMap.member` object) [Key.fromText name | String name <- toList names])
+    Just _ -> Left "contract schema required must be an array"
+  properties <- case KeyMap.lookup "properties" fields of
+    Nothing -> Right KeyMap.empty
+    Just (Object definitions) -> Right definitions
+    Just _ -> Left "contract schema properties must be an object"
+  propertyMatch <- and <$> mapM (validateProperty properties) (KeyMap.toList object)
+  pure (requiredMatch && propertyMatch)
+  where
+    validateProperty properties (key, item) = case KeyMap.lookup key properties of
+      Just propertySchema -> evaluateSchema root (Key.toText key : path) propertySchema item
+      Nothing -> case KeyMap.lookup "additionalProperties" fields of
+        Nothing -> Right True
+        Just (Bool allowed) -> Right allowed
+        Just additionalSchema -> evaluateSchema root (Key.toText key : path) additionalSchema item
+evaluateObject _ _ fields _ = pure (not (hasObjectOnlyConstraint fields))
+
+hasObjectOnlyConstraint :: KeyMap.KeyMap Value -> Bool
+hasObjectOnlyConstraint fields = any (`KeyMap.member` fields)
+  ["required", "properties"]
+
+evaluateArray :: Value -> [Text] -> KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateArray root path fields (Array values) = do
+  itemMatch <- case KeyMap.lookup "items" fields of
+    Nothing -> Right True
+    Just (Object itemSchema) -> and <$> mapM (evaluateSchema root ("items" : path) (Object itemSchema)) (toList values)
+    Just _ -> Left "contract schema items must be a schema object"
+  minMatch <- compareArrayBound "minItems" (>=) fields (toList values)
+  maxMatch <- compareArrayBound "maxItems" (<=) fields (toList values)
+  containsMatch <- case KeyMap.lookup "contains" fields of
+    Nothing -> Right True
+    Just (Object containsSchema) -> do
+      matches <- mapM (evaluateSchema root ("contains" : path) (Object containsSchema)) (toList values)
+      let count = fromIntegral (length (filter id matches)) :: Integer
+          lower = maybe 1 id (integerField "minContains" fields)
+          upper = integerField "maxContains" fields
+      pure (count >= lower && maybe True (count <=) upper)
+    Just _ -> Left "contract schema contains must be a schema object"
+  pure (itemMatch && minMatch && maxMatch && containsMatch)
+evaluateArray _ _ fields _ = pure (not (hasArrayOnlyConstraint fields))
+
+hasArrayOnlyConstraint :: KeyMap.KeyMap Value -> Bool
+hasArrayOnlyConstraint fields = any (`KeyMap.member` fields)
+  ["items", "minItems", "maxItems", "contains", "minContains", "maxContains"]
+
+compareArrayBound :: Text -> (Integer -> Integer -> Bool) -> KeyMap.KeyMap Value -> VectorLike -> Either Text Bool
+compareArrayBound name comparison fields values = case integerField name fields of
+  Nothing -> Right True
+  Just bound -> Right (lengthLike values `comparison` bound)
+
+-- Keeping this alias local avoids exposing aeson's vector type in the module's
+-- API while retaining a small, readable helper signature.
+type VectorLike = [Value]
+
+lengthLike :: VectorLike -> Integer
+lengthLike = fromIntegral . length
+
+integerField :: Text -> KeyMap.KeyMap Value -> Maybe Integer
+integerField name fields = case KeyMap.lookup (Key.fromText name) fields of
+  Just (Number value) -> case floatingOrInteger value :: Either Double Integer of
+    Right integer | integer >= 0 -> Just integer
+    _ -> Nothing
+  _ -> Nothing
+
+evaluateString :: KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateString fields (String value) = do
+  patternMatch <- case KeyMap.lookup "pattern" fields of
+    Nothing -> Right True
+    Just patternValue -> matchesPattern <$> compilePattern patternValue <*> pure value
+  lengthMatch <- case KeyMap.lookup "minLength" fields of
+    Nothing -> Right True
+    Just (Number number) -> case floatingOrInteger number :: Either Double Integer of
+      Right lower -> Right (fromIntegral (Text.length value) >= (lower :: Integer))
+      Left _ -> Left "contract schema minLength must be an integer"
+    Just _ -> Left "contract schema minLength must be an integer"
+  -- Data.Text counts Unicode scalar values, which is JSON Schema's
+  -- code-point definition of string length.
+  maxLengthMatch <- case KeyMap.lookup "maxLength" fields of
+    Nothing -> Right True
+    Just (Number number) -> case floatingOrInteger number :: Either Double Integer of
+      Right upper -> Right (fromIntegral (Text.length value) <= (upper :: Integer))
+      Left _ -> Left "contract schema maxLength must be an integer"
+    Just _ -> Left "contract schema maxLength must be an integer"
+  formatMatch <- case KeyMap.lookup "format" fields of
+    Nothing -> Right True
+    Just (String "date-time") -> Right (validDateTime value)
+    Just _ -> Left "contract schema format must be date-time"
+  pure (patternMatch && lengthMatch && maxLengthMatch && formatMatch)
+evaluateString _ _ = Right True
+
+evaluateAllOf :: Value -> [Text] -> KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateAllOf root path fields value = case KeyMap.lookup "allOf" fields of
+  Nothing -> Right True
+  Just (Array schemas) -> and <$> mapM (\schema -> evaluateSchema root ("allOf" : path) schema value) (toList schemas)
+  Just _ -> Left "contract schema allOf must be an array"
+
+-- Contract patterns use a small, closed regular-expression subset instead of
+-- a regex engine with dialect-dependent behaviour: anchored patterns built from
+-- literals, escaped metacharacters, ASCII character classes without negation,
+-- groups with alternation, and the quantifiers ?, *, +, {n}, and {n,m}.  Any
+-- other syntax is an unsupported contract, rejected while the bundle loads.
+data PatternNode
+  = PatternLiteral Char
+  | PatternClass [Char]
+  | PatternGroup [[PatternNode]]
+  | PatternRepeat PatternNode Int (Maybe Int)
+
+newtype ContractPattern = ContractPattern [PatternNode]
+
+compilePattern :: Value -> Either Text ContractPattern
+compilePattern (String patternText) = parsePattern patternText
+compilePattern _ = Left "contract schema pattern must be a string"
+
+parsePattern :: Text -> Either Text ContractPattern
+parsePattern source = case Text.uncons source of
+  Just ('^', rest) | Just (body, '$') <- Text.unsnoc rest -> do
+    (alternatives, remaining) <- parseAlternatives (Text.unpack body)
+    case (alternatives, remaining) of
+      ([sequence'], []) -> Right (ContractPattern sequence')
+      (_, []) -> Right (ContractPattern [PatternGroup alternatives])
+      _ -> Left "contract schema pattern has an unbalanced group"
+  _ -> Left "contract schema pattern must be anchored"
+
+-- | Parse alternatives up to an unconsumed ')' or the end of input.
+parseAlternatives :: String -> Either Text ([[PatternNode]], String)
+parseAlternatives input = do
+  (first, rest) <- parseSequence input
+  case rest of
+    '|' : more -> do
+      (others, remaining) <- parseAlternatives more
+      Right (first : others, remaining)
+    _ -> Right ([first], rest)
+
+parseSequence :: String -> Either Text ([PatternNode], String)
+parseSequence input = case input of
+  [] -> Right ([], [])
+  ')' : _ -> Right ([], input)
+  '|' : _ -> Right ([], input)
+  _ -> do
+    (atom, afterAtom) <- parseAtom input
+    (node, afterQuantifier) <- parseQuantifier atom afterAtom
+    (nodes, rest) <- parseSequence afterQuantifier
+    Right (node : nodes, rest)
+
+parseAtom :: String -> Either Text (PatternNode, String)
+parseAtom input = case input of
+  '\\' : character : rest
+    | character `elem` ('-' : metaCharacters) -> Right (PatternLiteral character, rest)
+    | otherwise -> Left "contract schema pattern uses an unsupported escape"
+  '[' : rest -> case break (== ']') rest of
+    (body, ']' : afterClass) -> do
+      characters <- parseClass body
+      Right (PatternClass characters, afterClass)
+    _ -> Left "contract schema pattern has an unterminated class"
+  '(' : '?' : _ -> Left "contract schema pattern uses unsupported group syntax"
+  '(' : rest -> do
+    (alternatives, remaining) <- parseAlternatives rest
+    case remaining of
+      ')' : afterGroup -> Right (PatternGroup alternatives, afterGroup)
+      _ -> Left "contract schema pattern has an unbalanced group"
+  character : rest
+    | character `elem` metaCharacters -> Left "contract schema pattern uses unsupported syntax"
+    | otherwise -> Right (PatternLiteral character, rest)
+  [] -> Left "contract schema pattern is incomplete"
+
+metaCharacters :: String
+metaCharacters = ".*+?()|{}[]\\^$"
+
+-- | A class is a nonempty run of ASCII letters and digits and ranges between
+-- them; negation and escapes inside classes are unsupported.
+parseClass :: String -> Either Text [Char]
+parseClass [] = Left "contract schema pattern has an empty class"
+parseClass body = go body
+  where
+    go [] = Right []
+    go (low : '-' : high : rest)
+      | classCharacter low && classCharacter high && low <= high = (enumFromTo low high <>) <$> go rest
+      | otherwise = Left "contract schema pattern uses an unsupported character class"
+    go (character : rest)
+      | classCharacter character = (character :) <$> go rest
+      | otherwise = Left "contract schema pattern uses an unsupported character class"
+    classCharacter character =
+      ('0' <= character && character <= '9') || ('a' <= character && character <= 'z')
+        || ('A' <= character && character <= 'Z')
+
+parseQuantifier :: PatternNode -> String -> Either Text (PatternNode, String)
+parseQuantifier atom input = case input of
+  '?' : rest -> Right (PatternRepeat atom 0 (Just 1), rest)
+  '*' : rest -> Right (PatternRepeat atom 0 Nothing, rest)
+  '+' : rest -> Right (PatternRepeat atom 1 Nothing, rest)
+  '{' : rest -> case break (== '}') rest of
+    (bounds, '}' : afterBounds) -> do
+      (lower, upper) <- parseBounds bounds
+      Right (PatternRepeat atom lower upper, afterBounds)
+    _ -> Left "contract schema pattern has an unterminated quantifier"
+  _ -> Right (atom, input)
+
+parseBounds :: String -> Either Text (Int, Maybe Int)
+parseBounds bounds = case break (== ',') bounds of
+  (exact, []) -> do
+    count <- natural exact
+    if count > 0 then Right (count, Just count) else invalid
+  (lower, ',' : []) -> do
+    count <- natural lower
+    Right (count, Nothing)
+  (lower, ',' : upper) -> do
+    low <- natural lower
+    high <- natural upper
+    if high > 0 && low <= high then Right (low, Just high) else invalid
+  _ -> invalid
+  where
+    natural digits
+      | not (null digits) && all (\character -> '0' <= character && character <= '9') digits
+          && length digits <= 6 = Right (read digits)
+      | otherwise = invalid
+    invalid = Left "contract schema pattern quantifier must be a valid count"
+
+matchesPattern :: ContractPattern -> Text -> Bool
+matchesPattern (ContractPattern nodes) value = any null (matchSequence nodes (Text.unpack value))
+
+-- | Every way the nodes can consume a prefix, as the remaining suffixes.
+matchSequence :: [PatternNode] -> String -> [String]
+matchSequence [] input = [input]
+matchSequence (node : nodes) input = concatMap (matchSequence nodes) (matchNode node input)
+
+matchNode :: PatternNode -> String -> [String]
+matchNode node input = case node of
+  PatternLiteral expected -> case input of
+    character : rest | character == expected -> [rest]
+    _ -> []
+  PatternClass allowed -> case input of
+    character : rest | character `elem` allowed -> [rest]
+    _ -> []
+  PatternGroup alternatives -> concatMap (`matchSequence` input) alternatives
+  PatternRepeat inner lower upper -> repeatNode inner lower upper input
+
+-- | Each further repetition must consume input, so an unbounded repeat of a
+-- pattern that can match the empty string still terminates.
+repeatNode :: PatternNode -> Int -> Maybe Int -> String -> [String]
+repeatNode inner lower upper input
+  | lower > 0 = concatMap (repeatNode inner (lower - 1) (subtract 1 <$> upper)) (matchNode inner input)
+  | upper == Just 0 = [input]
+  | otherwise = input : concatMap continue (matchNode inner input)
+  where
+    continue rest
+      | length rest < length input = repeatNode inner 0 (subtract 1 <$> upper) rest
+      | otherwise = []
+
+validDateTime :: Text -> Bool
+validDateTime value
+  | Text.isSuffixOf "Z" value = case parseTimeM True defaultTimeLocale "%Y-%m-%dT%H:%M:%S%QZ" (Text.unpack value) :: Maybe UTCTime of
+      Just _ -> True
+      Nothing -> False
+  | otherwise = case parseTimeM True defaultTimeLocale "%Y-%m-%dT%H:%M:%S%Q%z" (Text.unpack value) :: Maybe ZonedTime of
+      Just _ -> True
+      Nothing -> False
+
+resolvePointer :: Value -> Text -> Maybe Value
+resolvePointer root pointer
+  | pointer == "#" = Just root
+  | Just path <- Text.stripPrefix "#/" pointer =
+      resolveSegments root (map decodePointerSegment (Text.splitOn "/" path))
+  | otherwise = Nothing
+
+resolveSegments :: Value -> [Text] -> Maybe Value
+resolveSegments value [] = Just value
+resolveSegments (Object fields) (segment : rest) =
+  KeyMap.lookup (Key.fromText segment) fields >>= (`resolveSegments` rest)
+resolveSegments (Array values) (segment : rest) = do
+  index <- readNatural segment
+  value <- atMay (toList values) index
+  resolveSegments value rest
+resolveSegments _ _ = Nothing
+
+atMay :: [a] -> Int -> Maybe a
+atMay values index
+  | index < 0 = Nothing
+  | otherwise = case drop index values of
+      value : _ -> Just value
+      [] -> Nothing
+
+decodePointerSegment :: Text -> Text
+decodePointerSegment = replace "~1" "/" . replace "~0" "~"
+
+replace :: Text -> Text -> Text -> Text
+replace needle replacement input
+  | Text.null needle = input
+  | otherwise = case Text.breakOn needle input of
+      (before, after)
+        | Text.null after -> input
+        | otherwise -> before <> replacement <> replace needle replacement (Text.drop (Text.length needle) after)
+
+readNatural :: Text -> Maybe Int
+readNatural value
+  | Text.null value = Nothing
+  | Text.head value == '0' && Text.length value > 1 = Nothing
+  | Text.all (\character -> '0' <= character && character <= '9') value =
+      case reads (Text.unpack value) of
+        [(index, "")] -> Just index
+        _ -> Nothing
+  | otherwise = Nothing
+
+validateContractContext :: KeyMap.KeyMap Value -> Either Text ()
+validateContractContext context = do
+  rejectContextDirectives "contract context" context
+  mapM_ validateTermDefinition (KeyMap.toList context)
+  pure ()
+
+validateTermDefinition :: (Key.Key, Value) -> Either Text ()
+validateTermDefinition (key, value)
+  | Key.toText key `elem` coreContextNames =
+      Left ("contract context redefines core term or prefix: " <> Key.toText key)
+  | Text.null (Key.toText key) || Text.head (Key.toText key) == '@' =
+      Left "contract context term name must be non-empty and not a directive"
+  | otherwise = case value of
+      String term
+        | Text.null term -> Left "contract context term definition must not be empty"
+        | otherwise -> pure ()
+      Object definition -> validateTermDefinitionObject definition
+      _ -> Left "contract context term definition must be a string or object"
+
+validateTermDefinitionObject :: KeyMap.KeyMap Value -> Either Text ()
+validateTermDefinitionObject definition = do
+  let allowed = ["@id", "@type"]
+      unknown = filter (`notElem` allowed) (map (Key.toText . fst) (KeyMap.toList definition))
+  case unknown of
+    [] -> pure ()
+    names -> Left ("contract context definition has unknown keys: " <> Text.intercalate ", " names)
+  identifier <- requiredString "@id" definition
+  if Text.null identifier
+    then Left "contract context definition @id must not be empty"
+    else pure ()
+  case KeyMap.lookup "@type" definition of
+    Nothing -> pure ()
+    Just (String value)
+      | Text.null value -> Left "contract context definition @type must not be empty"
+      | otherwise -> pure ()
+    Just _ -> Left "contract context definition @type must be a string"
+
+coreContextNames :: [Text]
+coreContextNames =
+  [ "arch", "as", "dcterms", "prov", "rdf", "rdfs", "xsd"
+  , "spec", "revision_id", "object_id", "shape", "by", "agent", "at"
+  , "payload", "refs", "supersedes", "source", "contracts", "contract"
+  , "reference", "archive_id", "layout", "artifact", "entity", "claim"
+  , "assessment", "kind", "label", "person", "organisation", "software"
+  , "model", "process", "role", "id", "namespace", "name", "revision"
+  , "content", "digest", "size", "schema", "version", "protocol", "records"
+  , "identities", "contents", "expected_heads", "expected", "annex_key"
+  , "staging_remote"
+  ]
+
+rejectContextDirectives :: Text -> KeyMap.KeyMap Value -> Either Text ()
+rejectContextDirectives label fields = do
+  let forbidden = filter (`KeyMap.member` fields) ["@context", "@import"]
+  case forbidden of
+    [] -> pure ()
+    names -> Left (label <> " contains forbidden directive(s): "
+      <> Text.intercalate ", " (map Key.toText names))
+  mapM_ (rejectNestedDirectives label . snd) (KeyMap.toList fields)
+
+rejectNestedDirectives :: Text -> Value -> Either Text ()
+rejectNestedDirectives label (Object fields) = rejectContextDirectives label fields
+rejectNestedDirectives label (Array values) = mapM_ (rejectNestedDirectives label) (toList values)
+rejectNestedDirectives _ _ = pure ()
+
+requiredKey :: KeyMap.KeyMap Value -> Text -> Either Text ()
+requiredKey fields name
+  | KeyMap.member (Key.fromText name) fields = Right ()
+  | otherwise = Left ("core context is missing " <> name)
+
+requireExactKeys :: Text -> [Text] -> KeyMap.KeyMap Value -> Either Text ()
+requireExactKeys label expected fields =
+  let actual = sort (map (Key.toText . fst) (KeyMap.toList fields))
+      wanted = sort expected
+  in if actual == wanted
+       then Right ()
+       else Left (label <> " must contain exactly " <> Text.intercalate ", " wanted)
+
+objectValue :: Text -> Value -> Either Text (KeyMap.KeyMap Value)
+objectValue _label (Object fields) = Right fields
+objectValue label _ = Left (label <> " must be a JSON object")
+
+requiredObject :: Text -> KeyMap.KeyMap Value -> Either Text (KeyMap.KeyMap Value)
+requiredObject name fields = maybe (Left (name <> " is required")) (objectValue name)
+  (KeyMap.lookup (Key.fromText name) fields)
+
+requiredValue :: Text -> KeyMap.KeyMap Value -> Either Text Value
+requiredValue name fields = maybe (Left (name <> " is required")) Right
+  (KeyMap.lookup (Key.fromText name) fields)
+
+requiredString :: Text -> KeyMap.KeyMap Value -> Either Text Text
+requiredString name fields = case KeyMap.lookup (Key.fromText name) fields of
+  Just (String value) | not (Text.null value) -> Right value
+  Just (String _) -> Left (name <> " must not be empty")
+  Just _ -> Left (name <> " must be a string")
+  Nothing -> Left (name <> " is required")
+
+requiredBool :: Text -> KeyMap.KeyMap Value -> Either Text Bool
+requiredBool name fields = case KeyMap.lookup (Key.fromText name) fields of
+  Just (Bool value) -> Right value
+  Just _ -> Left (name <> " must be a boolean")
+  Nothing -> Left (name <> " is required")
+
+expect :: Text -> Text -> Text -> Either Text ()
+expect label wanted actual
+  | actual == wanted = Right ()
+  | otherwise = Left (label <> " must be " <> wanted)
+
+decode :: LazyByteString.ByteString -> Either Text Value
+decode bytes = case decodeUnique bytes of
+  Left problem -> Left (Text.pack problem)
+  Right value -> Right value
+
+readBytes :: FilePath -> IO (Either Text LazyByteString.ByteString)
+readBytes path = do
+  result <- try (LazyByteString.readFile path) :: IO (Either IOException LazyByteString.ByteString)
+  pure $ case result of
+    Left problem -> Left ("unable to read " <> Text.pack path <> ": " <> Text.pack (show problem))
+    Right bytes -> Right bytes
+
+validateContractBytes :: Text -> Text -> Text -> LazyByteString.ByteString -> Either Text ContractBundle
+validateContractBytes expectedId expectedVersion digestText bytes = do
+  _ <- parseSha256Digest digestText
+  value <- decode bytes
+  let canonical = encodeCanonical value
+      actualDigest = "sha256:" <> hex (SHA256.hashlazy bytes)
+  if actualDigest /= digestText
+    then Left "contract bytes do not match cited digest"
+    else if canonical /= bytes
+      then Left "contract bytes are not RFC 8785 canonical"
+      else validateBundleValue expectedId expectedVersion digestText value
+
+hex :: ByteString.ByteString -> Text
+hex = Text.pack . concatMap byteHex . ByteString.unpack
+  where
+    byteHex byte = [digits !! fromIntegral (byte `div` 16), digits !! fromIntegral (byte `mod` 16)]
+    digits = "0123456789abcdef"

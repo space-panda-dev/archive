@@ -1,0 +1,31 @@
+# World projection 6: the context graph, <{archive}#world:context>.
+# The projection's own description, the core context, and every contract
+# bundle the archive has installed, cited or not (ADR 0059).
+
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix arch: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#> .
+@prefix wsh: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#world-projection-6/shapes/> .
+
+wsh:Projection a sh:NodeShape ;
+  rdfs:comment "The projection itself, <{archive}#world>: its version and the archive's specification." ;
+  sh:targetClass arch:WorldProjection ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:type ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( arch:WorldProjection ) ] ;
+  sh:property [ sh:path arch:projection_version ; sh:minCount 1 ; sh:maxCount 1 ; sh:hasValue 6 ] ;
+  sh:property [ sh:path dcterms:conformsTo ; sh:minCount 1 ; sh:maxCount 1 ; sh:hasValue arch:world-projection-6 ] ;
+  sh:property [ sh:path arch:spec ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ;
+                sh:pattern "^archive/[0-9]+\\.[0-9]+\\.[0-9]+$" ] .
+
+wsh:Definition a sh:NodeShape ;
+  rdfs:comment "The core context, <{archive}#world:core-context>, identified by the specification; or an installed contract bundle, <{archive}#world:contract:{id}:{version}>, identified by its contract identifier and version. prov:value holds the bytes as JSON." ;
+  sh:targetClass prov:Entity ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:type ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( prov:Entity ) ] ;
+  sh:property [ sh:path dcterms:identifier ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path prov:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype rdf:JSON ] ;
+  sh:property [ sh:path arch:version ; sh:maxCount 1 ; sh:datatype xsd:string ] .

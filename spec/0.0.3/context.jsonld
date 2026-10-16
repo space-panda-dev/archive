@@ -1,0 +1,72 @@
+{
+  "@context": {
+    "@version": 1.1,
+    "@protected": true,
+    "arch": "urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#",
+    "as": "http://www.w3.org/ns/activitystreams#",
+    "dcterms": "http://purl.org/dc/terms/",
+    "prov": "http://www.w3.org/ns/prov#",
+    "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "spec": "arch:spec",
+    "revision_id": "arch:revision_id",
+    "object_id": "arch:object_id",
+    "shape": {
+      "@id": "arch:shape",
+      "@type": "@vocab"
+    },
+    "by": "as:generator",
+    "agent": "dcterms:creator",
+    "at": {
+      "@id": "prov:generatedAtTime",
+      "@type": "xsd:dateTime"
+    },
+    "payload": "arch:payload",
+    "refs": "arch:refs",
+    "supersedes": "arch:supersedes",
+    "source": "arch:source",
+    "contracts": "arch:contracts",
+    "contract": "arch:contract",
+    "reference": "arch:reference",
+    "archive_id": "arch:archive_id",
+    "layout": "arch:layout",
+    "artifact": "arch:Artifact",
+    "entity": "arch:Entity",
+    "claim": "arch:Claim",
+    "assessment": "arch:Assessment",
+    "kind": {
+      "@id": "rdf:type",
+      "@type": "@vocab"
+    },
+    "label": "rdfs:label",
+    "person": "prov:Person",
+    "organisation": "prov:Organization",
+    "software": "prov:SoftwareAgent",
+    "model": "arch:ModelAgent",
+    "process": "arch:ProcessAgent",
+    "role": {
+      "@id": "arch:role",
+      "@type": "@vocab"
+    },
+    "id": "arch:id",
+    "namespace": "arch:namespace",
+    "name": "arch:name",
+    "revision": "arch:revision",
+    "content": "arch:content",
+    "digest": "arch:digest",
+    "size": "arch:size",
+    "schema": "arch:schema",
+    "version": "arch:version",
+    "protocol": "arch:protocol",
+    "records": "arch:records",
+    "identities": "arch:identities",
+    "contents": "arch:contents",
+    "expected_heads": "arch:expected_heads",
+    "expected": "arch:expected",
+    "annex_key": "arch:annex_key",
+    "staging_remote": "arch:staging_remote",
+    "skos": "http://www.w3.org/2004/02/skos/core#",
+    "musical_work": "arch:MusicalWork"
+  }
+}

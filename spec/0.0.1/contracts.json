@@ -1,0 +1,20 @@
+{
+  "spec": "archive/0.0.1",
+  "contracts": [
+    {
+      "id": "archive.transition/destroy",
+      "version": "1",
+      "digest": "sha256:06fa0b87ea9b112bef8f3111dd26561dad209f1ae251b638d9936882eff1128a"
+    },
+    {
+      "id": "archive.transition/operator_initialization",
+      "version": "1",
+      "digest": "sha256:7ccd017a4ee2eeaf7c05005d018b2ca18f677d87f810f743d7c3561154794bff"
+    },
+    {
+      "id": "archive.transition/retire",
+      "version": "1",
+      "digest": "sha256:d8250cc5f5afa9725accb8d1d51ac83b9eef2c51ae4e1bc3e57ea0938e815654"
+    }
+  ]
+}

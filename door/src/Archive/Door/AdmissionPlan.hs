@@ -1,0 +1,209 @@
+{-# LANGUAGE OverloadedStrings #-}
+
+-- | The pure admission decision below the command boundary.
+--
+-- This seam binds a proposal to a snapshot of committed records without
+-- choosing a git-annex command or a placement policy.  The caller supplies a
+-- snapshot read from Git HEAD, then rechecks both the snapshot and the
+-- retained proposal before performing the one-commit operation.
+module Archive.Door.AdmissionPlan
+  ( AdmissionPlan (..)
+  , AdmissionSnapshot (..)
+  , planAdmission
+  ) where
+
+import Archive.Door.Canonical (canonicalizeDraftStrict)
+import Archive.Door.Refusal (PlanRefusal (..), refuse)
+import Archive.Door.Identity (allocateObjectId)
+import Archive.Door.Proposal
+  ( ExpectedHead (..)
+  , IdentityAllocation (..)
+  , Proposal (..)
+  , ProposalKind (..)
+  , ProposalManifest (..)
+  , ProposalRecord (..)
+  , validateProposal
+  )
+import Archive.Door.References
+  ( StoreIndex
+  , insertRecord
+  , validateReferences
+  )
+import Archive.Door.Types
+  ( ContractCitation (..)
+  , DraftEnvelope (..)
+  , ObjectId
+  , objectIdText
+  , Reference (referenceRevision)
+  , RecordBody (..)
+  , RevisionId, parseRevisionId, revisionIdText
+  )
+import Data.Aeson (Value)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
+import Data.Text (Text)
+
+data AdmissionSnapshot = AdmissionSnapshot
+  { snapshotArchiveId :: Text
+  , snapshotHeads :: Map Text Text
+  , snapshotRevisions :: Set Text
+  , snapshotRevisionBatches :: Map Text Text
+  , snapshotReferenceIndex :: StoreIndex
+  , snapshotTransitionContracts :: Set (Text, Text, Text)
+  }
+
+data AdmissionPlan = AdmissionPlan
+  { plannedAdmissionSnapshot :: Text
+  , plannedGitExecutableIdentity :: Text
+  , plannedRevisions :: [Text]
+  , plannedRecords :: [(Text, Value)]
+  , planIsRetry :: Bool
+  } deriving (Eq, Show)
+
+planAdmission :: AdmissionSnapshot -> Proposal -> Either PlanRefusal AdmissionPlan
+planAdmission snapshot proposal = do
+  refuse $ if proposalKind proposal /= AdmissionProposal
+    then Left "admission planning requires an admission proposal"
+    else pure ()
+  refuse (validateProposal proposal)
+  prepared <- refuse (mapM prepareRecord (proposalRecords proposal))
+  refuse (requireDistinct "computed revision_id" (map preparedRevision prepared))
+  let revisions = map preparedRevision prepared
+      present = map (`Set.member` snapshotRevisions snapshot) revisions
+      batchEvidence = map (\revision -> Map.lookup revision (snapshotRevisionBatches snapshot)) revisions
+      completeRetry = case sequence batchEvidence of
+        Just batches@(batch : _)
+          | allEqual batches && and present ->
+              let committedBatch = Map.keysSet
+                    (Map.filter (== batch) (snapshotRevisionBatches snapshot))
+              in committedBatch == Set.fromList revisions
+        Nothing -> False
+        _ -> False
+  refuse $ if any id present && not completeRetry
+    then Left "existing revisions are not evidenced as one committed admission batch"
+    else pure ()
+  refuse (mapM_ (rejectUnsupported snapshot) (proposalRecords proposal))
+  refuse (validateAllocations snapshot proposal prepared completeRetry)
+  if completeRetry
+    then pure ()
+    else do
+      validateExpectedHeads snapshot proposal prepared
+      refuse (validateLinearHeads snapshot prepared)
+  refuse (validateReferencesInOrder snapshot prepared)
+  pure AdmissionPlan
+    { plannedAdmissionSnapshot = ""
+    , plannedGitExecutableIdentity = ""
+    , plannedRevisions = revisions
+    , plannedRecords = [(preparedRevision item, preparedCanonical item) | item <- prepared]
+    , planIsRetry = completeRetry
+    }
+  where
+    allEqual [] = True
+    allEqual (value : values) = all (== value) values
+
+rejectUnsupported :: AdmissionSnapshot -> ProposalRecord -> Either Text ()
+rejectUnsupported snapshot record = case envelopeBody (proposalRecordDraft record) of
+  ClaimRecord _ -> rejectCitations
+  AssessmentRecord _ -> rejectCitations
+  _ -> Right ()
+  where
+    rejectCitations =
+      if any (\citation -> citationTuple citation `Set.member` snapshotTransitionContracts snapshot)
+          (envelopeContracts (proposalRecordDraft record))
+        then Left "unsupported: transition contracts cannot be admitted generically"
+        else Right ()
+    citationTuple citation =
+      (contractId citation, contractVersion citation, contractDigest citation)
+
+data Prepared = Prepared
+  { preparedRevision :: Text
+  , preparedCanonical :: Value
+  , preparedObject :: Text
+  , preparedDraft :: DraftEnvelope
+  }
+
+prepareRecord :: ProposalRecord -> Either Text Prepared
+prepareRecord record = do
+  (revision, canonical) <- canonicalizeDraftStrict (proposalRecordValue record)
+  pure Prepared
+    { preparedRevision = revision
+    , preparedCanonical = canonical
+    , preparedObject = objectText (envelopeObject draft)
+    , preparedDraft = draft
+    }
+  where
+    draft = proposalRecordDraft record
+
+validateAllocations :: AdmissionSnapshot -> Proposal -> [Prepared] -> Bool -> Either Text ()
+validateAllocations snapshot proposal prepared completeRetry = do
+  let allocations = manifestIdentities (proposalManifest proposal)
+      draftObjects = Set.fromList (map preparedObject prepared)
+      existingObjects = Map.keysSet (snapshotHeads snapshot)
+      newObjects = draftObjects `Set.difference` existingObjects
+      allocatedObjects = Set.fromList (map identityObjectId allocations)
+  mapM_ (validateAllocation snapshot) allocations
+  if completeRetry
+    then if allocatedObjects `Set.isSubsetOf` draftObjects then pure ()
+      else Left "identities must refer to drafted objects"
+  else if allocatedObjects /= newObjects
+    then Left "identities must contain exactly one allocation for each new object"
+    else pure ()
+
+validateAllocation :: AdmissionSnapshot -> IdentityAllocation -> Either Text ()
+validateAllocation snapshot allocation = do
+  derived <- allocateObjectId (snapshotArchiveId snapshot)
+    (identityNamespace allocation) (identityName allocation)
+  if derived == identityObjectId allocation
+    then Right ()
+    else Left "identity allocation object_id does not match UUIDv5 allocation"
+
+validateExpectedHeads :: AdmissionSnapshot -> Proposal -> [Prepared] -> Either PlanRefusal ()
+validateExpectedHeads snapshot proposal _ = mapM_ check (manifestExpectedHeads (proposalManifest proposal))
+  where
+    check expected = case Map.lookup (expectedObjectId expected) (snapshotHeads snapshot) of
+      Nothing
+        | expectedRevisionId expected == Nothing -> Right ()
+        | otherwise -> Left (PlanRefused "expected head names a missing object")
+      Just actual
+        | expectedRevisionId expected == Just actual -> Right ()
+        | otherwise -> Left (PlanStale "expected head is stale")
+
+validateReferencesInOrder :: AdmissionSnapshot -> [Prepared] -> Either Text ()
+validateReferencesInOrder snapshot = go (snapshotReferenceIndex snapshot)
+  where
+    go _ [] = Right ()
+    go index (item : rest) = do
+      revision <- parseRevisionId (preparedRevision item)
+      validateReferences index revision (preparedDraft item)
+      go (insertRecord revision (preparedDraft item) index) rest
+
+validateLinearHeads :: AdmissionSnapshot -> [Prepared] -> Either Text ()
+validateLinearHeads snapshot = go (snapshotHeads snapshot)
+  where
+    go _ [] = Right ()
+    go heads (item : rest) = do
+      let objectId = preparedObject item
+          superseded =
+            [ revisionText revision
+            | reference <- envelopeSupersedes (preparedDraft item)
+            , Just revision <- [referenceRevision reference]
+            ]
+      case (Map.lookup objectId heads, superseded) of
+        (Nothing, []) -> pure ()
+        (Just current, [previous])
+          | current == previous -> pure ()
+        _ -> Left "proposed revisions must extend one linear supersession head"
+      go (Map.insert objectId (preparedRevision item) heads) rest
+
+requireDistinct :: Text -> [Text] -> Either Text ()
+requireDistinct label values
+  | Set.size (Set.fromList values) == length values = Right ()
+  | otherwise = Left (label <> " must be unique")
+
+objectText :: ObjectId -> Text
+objectText = objectIdText
+
+revisionText :: RevisionId -> Text
+revisionText = revisionIdText

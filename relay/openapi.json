@@ -1,0 +1,1497 @@
+{
+  "openapi": "3.1.0",
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "info": {
+    "title": "Archive relay",
+    "version": "1",
+    "license": {
+      "name": "CC0-1.0",
+      "identifier": "CC0-1.0"
+    },
+    "description": "HTTP over Door's service and World's query (ADR 0056, ADR 0060). Every answer is JSON: {ok, archive, result} or {ok: false, error: {code, message}}. Codes are stable; messages are not. The archive block names the archive, its specification, the relay's role, and the World projection versions it serves."
+  },
+  "components": {
+    "schemas": {
+      "RefusalCode": {
+        "description": "Stable codes (ADR 0058, ADR 0060). Codes are only added; a client treats an unknown code by its HTTP status.",
+        "oneOf": [
+          {
+            "const": "agent_mismatch",
+            "description": "Relay (403): A draft names an agent other than the caller's."
+          },
+          {
+            "const": "archive_unreadable",
+            "description": "Door (503): Door could not read the archive's committed state. Nothing was written; the operator must look."
+          },
+          {
+            "const": "body_too_large",
+            "description": "Relay (413): The body is larger than 1 MiB."
+          },
+          {
+            "const": "commits_disabled",
+            "description": "Relay (403): This relay runs in dry-run mode; it passes only dry runs to Door."
+          },
+          {
+            "const": "configuration_failure",
+            "description": "Door (500): Door's configuration, such as its Git or git-annex executable, is wrong or changed. Nothing was written."
+          },
+          {
+            "const": "content_not_relayed",
+            "description": "Relay (422): An admission lists content; content admission stays with operator tools."
+          },
+          {
+            "const": "door_failed",
+            "description": "Relay (502): Door's service did not give a usable answer to a dry run."
+          },
+          {
+            "const": "door_unreachable",
+            "description": "Relay (503): Door's service could not be reached; nothing was sent to it."
+          },
+          {
+            "const": "expected_head_stale",
+            "description": "Door (409): An expected head no longer matches the archive. Read the current heads, rebuild the proposal, and send it again."
+          },
+          {
+            "const": "forbidden_identity",
+            "description": "Relay (403): The caller's tailnet login is not allowed."
+          },
+          {
+            "const": "forbidden_origin",
+            "description": "Relay (403): The request's Origin is not listed."
+          },
+          {
+            "const": "integrity_failure",
+            "description": "Door (500): Bytes or committed evidence did not verify. Nothing was admitted; the operator must look."
+          },
+          {
+            "const": "internal_error",
+            "description": "Relay (500): The relay or Door failed unexpectedly. Door (500): Door failed unexpectedly. Report it."
+          },
+          {
+            "const": "io_failure",
+            "description": "Door (500): An operating-system read or write failed."
+          },
+          {
+            "const": "length_required",
+            "description": "Relay (411): The request has no Content-Length."
+          },
+          {
+            "const": "method_not_allowed",
+            "description": "Relay (405): The route answers another method, named in Allow."
+          },
+          {
+            "const": "not_found",
+            "description": "Relay (404): No such route."
+          },
+          {
+            "const": "operation_failed",
+            "description": "Door (500): The operation failed in a way that has no narrower code yet."
+          },
+          {
+            "const": "outcome_uncertain",
+            "description": "Door (503): Door cannot tell whether the write committed. Send the identical proposal again: a committed batch answers as a retry."
+          },
+          {
+            "const": "projection_not_served",
+            "description": "Relay (404): The requested projection version is not served; the archive block lists those that are."
+          },
+          {
+            "const": "proposal_malformed",
+            "description": "Door (422): The proposal directory, manifest, or a draft cannot be read as a proposal. Fix the proposal."
+          },
+          {
+            "const": "proposal_refused",
+            "description": "Door (422): The proposal is well formed, but Door refuses it against this archive. Change the proposal."
+          },
+          {
+            "const": "query_invalid",
+            "description": "Relay (400): The query is not valid SPARQL 1.1, or the engine could not evaluate it."
+          },
+          {
+            "const": "query_refused",
+            "description": "Relay (400): The query asks for something World does not answer, such as SERVICE."
+          },
+          {
+            "const": "query_timeout",
+            "description": "Relay (504): The query ran past the relay's time limit and was stopped."
+          },
+          {
+            "const": "query_too_many_rows",
+            "description": "Relay (422): The answer would exceed the relay's row bound; nothing is returned, never a truncated answer."
+          },
+          {
+            "const": "request_malformed",
+            "description": "Relay (400): The request is not a valid request for its route: its body, its Content-Length, or its fields. From Door: the relay sent Door an invalid request, which is a relay fault. Door (502): The service request itself is not a valid request. Fix the client."
+          },
+          {
+            "const": "subprocess_failure",
+            "description": "Door (500): A program Door runs, such as Git or git-annex, failed."
+          },
+          {
+            "const": "unsupported_media_type",
+            "description": "Relay (415): The body is not application/json."
+          },
+          {
+            "const": "world_unavailable",
+            "description": "Relay (503): World's store cannot be read."
+          }
+        ]
+      },
+      "Error": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/RefusalCode"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "description": "For people; not stable."
+          },
+          "unadmitted_keys": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "Archive": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "archive_id",
+          "spec",
+          "role",
+          "projections"
+        ],
+        "description": "Present on every answer to an allowed caller.",
+        "properties": {
+          "archive_id": {
+            "type": "string",
+            "pattern": "^urn:uuid:[0-9a-f-]{36}$"
+          },
+          "spec": {
+            "type": "string",
+            "pattern": "^archive/[0-9]+\\.[0-9]+\\.[0-9]+$"
+          },
+          "role": {
+            "enum": [
+              "shadow",
+              "scratch",
+              "live"
+            ],
+            "description": "Fixed in the relay's configuration. Commit only where it is scratch."
+          },
+          "projections": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "The World projection versions served."
+          }
+        }
+      },
+      "Failure": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "error"
+        ],
+        "properties": {
+          "ok": {
+            "const": false
+          },
+          "error": {
+            "$ref": "#/components/schemas/Error"
+          },
+          "archive": {
+            "$ref": "#/components/schemas/Archive"
+          }
+        }
+      },
+      "SparqlTerm": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "value"
+            ],
+            "properties": {
+              "type": {
+                "const": "uri"
+              },
+              "value": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "value"
+            ],
+            "properties": {
+              "type": {
+                "const": "bnode"
+              },
+              "value": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "value"
+            ],
+            "properties": {
+              "type": {
+                "const": "literal"
+              },
+              "value": {
+                "type": "string"
+              },
+              "datatype": {
+                "type": "string"
+              },
+              "xml:lang": {
+                "type": "string"
+              }
+            },
+            "not": {
+              "required": [
+                "datatype",
+                "xml:lang"
+              ]
+            }
+          }
+        ]
+      },
+      "SparqlResults": {
+        "description": "W3C SPARQL 1.1 Query Results JSON Format.",
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "head",
+              "results"
+            ],
+            "properties": {
+              "head": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "vars"
+                ],
+                "properties": {
+                  "vars": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "results": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "bindings"
+                ],
+                "properties": {
+                  "bindings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "$ref": "#/components/schemas/SparqlTerm"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "head",
+              "boolean"
+            ],
+            "properties": {
+              "head": {
+                "type": "object",
+                "additionalProperties": false
+              },
+              "boolean": {
+                "type": "boolean"
+              }
+            }
+          }
+        ]
+      },
+      "QueryRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "query",
+          "projection"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "A SPARQL 1.1 SELECT, ASK, CONSTRUCT, or DESCRIBE query. World's data is in named graphs; the default graph is empty."
+          },
+          "projection": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The projection version the client was written for. Required, so a new version never changes an old client's answers."
+          },
+          "rdf_format": {
+            "enum": [
+              "application/n-triples",
+              "text/turtle",
+              "application/ld+json"
+            ],
+            "default": "application/n-triples",
+            "description": "The media type of a CONSTRUCT or DESCRIBE answer. SELECT and ASK answers are always SPARQL Results JSON."
+          }
+        }
+      },
+      "QueryResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "snapshot",
+          "projection",
+          "media_type",
+          "data"
+        ],
+        "properties": {
+          "snapshot": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
+            "description": "The archive commit the answer reflects."
+          },
+          "projection": {
+            "type": "integer"
+          },
+          "media_type": {
+            "enum": [
+              "application/sparql-results+json",
+              "application/n-triples",
+              "text/turtle",
+              "application/ld+json"
+            ]
+          },
+          "data": {
+            "description": "SPARQL Results JSON for SELECT and ASK. For CONSTRUCT and DESCRIBE, N-Triples or Turtle text, or expanded JSON-LD as a JSON array, as rdf_format asked.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SparqlResults"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "Proposal": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "manifest",
+          "records"
+        ],
+        "description": "A Door proposal (ADR 0023, ADR 0028): the manifest, and each draft it names under records/<name>.json. Every draft's agent must be the caller's.",
+        "properties": {
+          "manifest": {
+            "type": "object"
+          },
+          "records": {
+            "type": "object",
+            "minProperties": 1,
+            "propertyNames": {
+              "pattern": "^records/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.json$"
+            },
+            "additionalProperties": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "DoorResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "door"
+        ],
+        "properties": {
+          "door": {
+            "description": "Door's own result, exactly as door/service.schema.json describes it.",
+            "type": "object"
+          },
+          "world": {
+            "description": "After a commit only.",
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "status",
+                  "snapshot",
+                  "projections"
+                ],
+                "properties": {
+                  "status": {
+                    "const": "refreshed"
+                  },
+                  "snapshot": {
+                    "type": "string"
+                  },
+                  "projections": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "enum": [
+                        "incremental",
+                        "full",
+                        "unchanged"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "status",
+                  "detail"
+                ],
+                "description": "Door committed, but World did not refresh; queries answer from an earlier snapshot until a later refresh succeeds.",
+                "properties": {
+                  "status": {
+                    "const": "stale"
+                  },
+                  "detail": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "healthy",
+          "writes",
+          "door",
+          "world"
+        ],
+        "properties": {
+          "healthy": {
+            "type": "boolean"
+          },
+          "writes": {
+            "enum": [
+              "dry-run",
+              "commit"
+            ]
+          },
+          "door": {
+            "enum": [
+              "reachable",
+              "unreachable"
+            ]
+          },
+          "world": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "status",
+                  "snapshot"
+                ],
+                "properties": {
+                  "status": {
+                    "const": "ok"
+                  },
+                  "snapshot": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "status",
+                  "detail"
+                ],
+                "properties": {
+                  "status": {
+                    "const": "unavailable"
+                  },
+                  "detail": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "HealthAnswer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "archive",
+          "result"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "description": "True exactly when healthy."
+          },
+          "archive": {
+            "$ref": "#/components/schemas/Archive"
+          },
+          "result": {
+            "$ref": "#/components/schemas/Health"
+          }
+        }
+      },
+      "QueryAnswer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "archive",
+          "result"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "archive": {
+            "$ref": "#/components/schemas/Archive"
+          },
+          "result": {
+            "$ref": "#/components/schemas/QueryResult"
+          }
+        }
+      },
+      "DoorAnswer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "archive",
+          "result"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "archive": {
+            "$ref": "#/components/schemas/Archive"
+          },
+          "result": {
+            "$ref": "#/components/schemas/DoorResult"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "tailnet": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Tailscale-User-Login",
+        "description": "Set by tailscale serve from the caller's tailnet identity; the relay allows only configured logins and binds each to one agent."
+      }
+    }
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "The archive, the relay's role and write mode, and whether Door and World answer",
+        "security": [
+          {
+            "tailnet": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Door and World both answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthAnswer"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Door or World does not answer; the body says which.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/HealthAnswer"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Failure"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden_identity, forbidden_origin, agent_mismatch, or commits_disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found, or projection_not_served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "method_not_allowed; Allow names the method.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error, or a server-side Door code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/world/query": {
+      "post": {
+        "summary": "Answer one read-only SPARQL query from one projection version",
+        "security": [
+          {
+            "tailnet": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A standard answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryAnswer"
+                }
+              }
+            },
+            "headers": {
+              "Content-Encoding": {
+                "description": "gzip when the request allowed it and the answer is 1 KiB or more.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "gzip"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden_identity, forbidden_origin, agent_mismatch, or commits_disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found, or projection_not_served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "method_not_allowed; Allow names the method.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error, or a server-side Door code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request_malformed, query_invalid, or query_refused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "411": {
+            "description": "length_required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "body_too_large.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "unsupported_media_type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "query_too_many_rows.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "world_unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "query_timeout.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "description": "Answers are cached per projection generation and warmed after a refresh (ADR 0063). Send Accept-Encoding: gzip to receive any answer of 1 KiB or more gzipped.",
+        "parameters": [
+          {
+            "name": "Accept-Encoding",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Include gzip to receive a gzipped answer (RFC 9110)."
+          }
+        ]
+      }
+    },
+    "/door/admit-dry-run": {
+      "post": {
+        "summary": "Predict an admission; writes nothing",
+        "security": [
+          {
+            "tailnet": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Proposal"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Door's answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoorAnswer"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden_identity, forbidden_origin, agent_mismatch, or commits_disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found, or projection_not_served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "method_not_allowed; Allow names the method.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error, or a server-side Door code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request_malformed, query_invalid, or query_refused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "411": {
+            "description": "length_required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "body_too_large.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "unsupported_media_type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "expected_head_stale: re-read the heads and rebuild the proposal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "proposal_refused, proposal_malformed, or content_not_relayed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "door_failed, or request_malformed from Door.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "door_unreachable, archive_unreadable, or outcome_uncertain (send the identical proposal again).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/door/transition-dry-run": {
+      "post": {
+        "summary": "Predict a transition; writes nothing",
+        "security": [
+          {
+            "tailnet": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Proposal"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Door's answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoorAnswer"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden_identity, forbidden_origin, agent_mismatch, or commits_disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found, or projection_not_served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "method_not_allowed; Allow names the method.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error, or a server-side Door code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request_malformed, query_invalid, or query_refused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "411": {
+            "description": "length_required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "body_too_large.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "unsupported_media_type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "expected_head_stale: re-read the heads and rebuild the proposal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "proposal_refused, proposal_malformed, or content_not_relayed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "door_failed, or request_malformed from Door.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "door_unreachable, archive_unreadable, or outcome_uncertain (send the identical proposal again).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/door/admit": {
+      "post": {
+        "summary": "Admit metadata records, then refresh World",
+        "security": [
+          {
+            "tailnet": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Proposal"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Door's answer, and World's refresh",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoorAnswer"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden_identity, forbidden_origin, agent_mismatch, or commits_disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found, or projection_not_served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "method_not_allowed; Allow names the method.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error, or a server-side Door code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request_malformed, query_invalid, or query_refused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "411": {
+            "description": "length_required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "body_too_large.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "unsupported_media_type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "expected_head_stale: re-read the heads and rebuild the proposal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "proposal_refused, proposal_malformed, or content_not_relayed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "door_failed, or request_malformed from Door.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "door_unreachable, archive_unreadable, or outcome_uncertain (send the identical proposal again).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/door/transition": {
+      "post": {
+        "summary": "Commit a transition, then refresh World",
+        "security": [
+          {
+            "tailnet": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Proposal"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Door's answer, and World's refresh",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoorAnswer"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden_identity, forbidden_origin, agent_mismatch, or commits_disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found, or projection_not_served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "method_not_allowed; Allow names the method.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error, or a server-side Door code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request_malformed, query_invalid, or query_refused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "411": {
+            "description": "length_required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "body_too_large.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "unsupported_media_type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "expected_head_stale: re-read the heads and rebuild the proposal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "proposal_refused, proposal_malformed, or content_not_relayed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "door_failed, or request_malformed from Door.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "door_unreachable, archive_unreadable, or outcome_uncertain (send the identical proposal again).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

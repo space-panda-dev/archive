@@ -1,0 +1,599 @@
+{
+  "git_annex_executable": "/opt/homebrew/Cellar/git-annex/10.20260901/bin/git-annex",
+  "git_annex_version": "git-annex version: 10.20260901",
+  "git_executable": "/nix/store/rim5n939lwjc8mah63ld1q31i6n7bvf0-git-2.55.0/bin/git",
+  "git_version": "git version 2.55.0",
+  "limitations": [
+    "This synthetic local probe does not satisfy the approved-real-archive-copy gate in docs/open-questions.md.",
+    "It does not establish SSH transport, the managed repository target, Door durability, or filesystem power-loss behavior."
+  ],
+  "operations": [
+    {
+      "after": {
+        "branch_bytes_sha256": "99e4cda14c415a046b03e79717732eba57717ce04ddee043ff6fc44feef2edb1",
+        "commit": "2ce6efb94ed6cf67d35ce57bf56b3682ee022a9e",
+        "files": [
+          {
+            "mode": "100644",
+            "path": "b1a/5de/SHA256E-s47--ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e.bin.log",
+            "sha256": "09ff6dd241238609af84184936acd253636a81383cb5f04f71b9d93f60a6dd02",
+            "size": 102
+          },
+          {
+            "mode": "100644",
+            "path": "remote.log",
+            "sha256": "5a5c8bdaf6aeb645c6917be61df2a53bd35d1fed476509e6ae583d76aded4b43",
+            "size": 105
+          },
+          {
+            "mode": "100644",
+            "path": "uuid.log",
+            "sha256": "2d252b9cd7d1b3359dba74e2cfaebaa07b69085bfaab81fb190f5a6a923b2acd",
+            "size": 159
+          }
+        ],
+        "ref": "refs/heads/git-annex",
+        "tree": "6e972a76e2710425362dc32db517ce0316975048"
+      },
+      "before": {
+        "branch_bytes_sha256": "4fd990c1d2347fc5fe7317249f6d40fdf25f258949f5a8b41f4811453f5b32c4",
+        "commit": "484eb2a7fa3970547d81b01af64de173b9c88766",
+        "files": [
+          {
+            "mode": "100644",
+            "path": "b1a/5de/SHA256E-s47--ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e.bin.log",
+            "sha256": "a542473f9eba387e2d34f9a16193f92a9633361466f82398a3bd8202c73757de",
+            "size": 102
+          },
+          {
+            "mode": "100644",
+            "path": "remote.log",
+            "sha256": "5a5c8bdaf6aeb645c6917be61df2a53bd35d1fed476509e6ae583d76aded4b43",
+            "size": 105
+          },
+          {
+            "mode": "100644",
+            "path": "uuid.log",
+            "sha256": "2d252b9cd7d1b3359dba74e2cfaebaa07b69085bfaab81fb190f5a6a923b2acd",
+            "size": 159
+          }
+        ],
+        "ref": "refs/heads/git-annex",
+        "tree": "80ae3fff0a7567e2d91c822a129dc2f72e08f58f"
+      },
+      "branch_bytes_changed": true,
+      "branch_changed": true,
+      "command": {
+        "argv": [
+          "/opt/homebrew/Cellar/git-annex/10.20260901/bin/git-annex",
+          "get",
+          "--from=synthetic",
+          "payload.bin"
+        ],
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "get payload.bin (from synthetic...) \n\r100%  47 B            192 KiB/s 0s\r                                  \rok\n(recording state in git...)"
+      },
+      "label": "get_first"
+    },
+    {
+      "after": {
+        "branch_bytes_sha256": "99e4cda14c415a046b03e79717732eba57717ce04ddee043ff6fc44feef2edb1",
+        "commit": "2ce6efb94ed6cf67d35ce57bf56b3682ee022a9e",
+        "files": [
+          {
+            "mode": "100644",
+            "path": "b1a/5de/SHA256E-s47--ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e.bin.log",
+            "sha256": "09ff6dd241238609af84184936acd253636a81383cb5f04f71b9d93f60a6dd02",
+            "size": 102
+          },
+          {
+            "mode": "100644",
+            "path": "remote.log",
+            "sha256": "5a5c8bdaf6aeb645c6917be61df2a53bd35d1fed476509e6ae583d76aded4b43",
+            "size": 105
+          },
+          {
+            "mode": "100644",
+            "path": "uuid.log",
+            "sha256": "2d252b9cd7d1b3359dba74e2cfaebaa07b69085bfaab81fb190f5a6a923b2acd",
+            "size": 159
+          }
+        ],
+        "ref": "refs/heads/git-annex",
+        "tree": "6e972a76e2710425362dc32db517ce0316975048"
+      },
+      "before": {
+        "branch_bytes_sha256": "99e4cda14c415a046b03e79717732eba57717ce04ddee043ff6fc44feef2edb1",
+        "commit": "2ce6efb94ed6cf67d35ce57bf56b3682ee022a9e",
+        "files": [
+          {
+            "mode": "100644",
+            "path": "b1a/5de/SHA256E-s47--ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e.bin.log",
+            "sha256": "09ff6dd241238609af84184936acd253636a81383cb5f04f71b9d93f60a6dd02",
+            "size": 102
+          },
+          {
+            "mode": "100644",
+            "path": "remote.log",
+            "sha256": "5a5c8bdaf6aeb645c6917be61df2a53bd35d1fed476509e6ae583d76aded4b43",
+            "size": 105
+          },
+          {
+            "mode": "100644",
+            "path": "uuid.log",
+            "sha256": "2d252b9cd7d1b3359dba74e2cfaebaa07b69085bfaab81fb190f5a6a923b2acd",
+            "size": 159
+          }
+        ],
+        "ref": "refs/heads/git-annex",
+        "tree": "6e972a76e2710425362dc32db517ce0316975048"
+      },
+      "branch_bytes_changed": false,
+      "branch_changed": false,
+      "command": {
+        "argv": [
+          "/opt/homebrew/Cellar/git-annex/10.20260901/bin/git-annex",
+          "get",
+          "--from=synthetic",
+          "payload.bin"
+        ],
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": ""
+      },
+      "label": "get_retry"
+    },
+    {
+      "after": {
+        "branch_bytes_sha256": "99e4cda14c415a046b03e79717732eba57717ce04ddee043ff6fc44feef2edb1",
+        "commit": "2ce6efb94ed6cf67d35ce57bf56b3682ee022a9e",
+        "files": [
+          {
+            "mode": "100644",
+            "path": "b1a/5de/SHA256E-s47--ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e.bin.log",
+            "sha256": "09ff6dd241238609af84184936acd253636a81383cb5f04f71b9d93f60a6dd02",
+            "size": 102
+          },
+          {
+            "mode": "100644",
+            "path": "remote.log",
+            "sha256": "5a5c8bdaf6aeb645c6917be61df2a53bd35d1fed476509e6ae583d76aded4b43",
+            "size": 105
+          },
+          {
+            "mode": "100644",
+            "path": "uuid.log",
+            "sha256": "2d252b9cd7d1b3359dba74e2cfaebaa07b69085bfaab81fb190f5a6a923b2acd",
+            "size": 159
+          }
+        ],
+        "ref": "refs/heads/git-annex",
+        "tree": "6e972a76e2710425362dc32db517ce0316975048"
+      },
+      "before": {
+        "branch_bytes_sha256": "99e4cda14c415a046b03e79717732eba57717ce04ddee043ff6fc44feef2edb1",
+        "commit": "2ce6efb94ed6cf67d35ce57bf56b3682ee022a9e",
+        "files": [
+          {
+            "mode": "100644",
+            "path": "b1a/5de/SHA256E-s47--ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e.bin.log",
+            "sha256": "09ff6dd241238609af84184936acd253636a81383cb5f04f71b9d93f60a6dd02",
+            "size": 102
+          },
+          {
+            "mode": "100644",
+            "path": "remote.log",
+            "sha256": "5a5c8bdaf6aeb645c6917be61df2a53bd35d1fed476509e6ae583d76aded4b43",
+            "size": 105
+          },
+          {
+            "mode": "100644",
+            "path": "uuid.log",
+            "sha256": "2d252b9cd7d1b3359dba74e2cfaebaa07b69085bfaab81fb190f5a6a923b2acd",
+            "size": 159
+          }
+        ],
+        "ref": "refs/heads/git-annex",
+        "tree": "6e972a76e2710425362dc32db517ce0316975048"
+      },
+      "branch_bytes_changed": false,
+      "branch_changed": false,
+      "command": {
+        "argv": [
+          "/opt/homebrew/Cellar/git-annex/10.20260901/bin/git-annex",
+          "whereis",
+          "--json",
+          "payload.bin"
+        ],
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"command\":\"whereis\",\"error-messages\":[],\"file\":\"payload.bin\",\"input\":[\"payload.bin\"],\"key\":\"SHA256E-s47--ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e.bin\",\"note\":\"2 copies\\n\\t07cffebc-48f8-4328-a9ee-c9ecd250e1a4 -- synthetic admission experiment [here]\\n\\te57497c9-fc72-43fa-bca8-62a52ffabbeb -- [synthetic]\\n\",\"success\":true,\"untrusted\":[],\"whereis\":[{\"description\":\"synthetic admission experiment\",\"here\":true,\"urls\":[],\"uuid\":\"07cffebc-48f8-4328-a9ee-c9ecd250e1a4\"},{\"description\":\"[synthetic]\",\"here\":false,\"urls\":[],\"uuid\":\"e57497c9-fc72-43fa-bca8-62a52ffabbeb\"}]}"
+      },
+      "label": "whereis_read_only"
+    },
+    {
+      "after": {
+        "branch_bytes_sha256": "99e4cda14c415a046b03e79717732eba57717ce04ddee043ff6fc44feef2edb1",
+        "commit": "2ce6efb94ed6cf67d35ce57bf56b3682ee022a9e",
+        "files": [
+          {
+            "mode": "100644",
+            "path": "b1a/5de/SHA256E-s47--ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e.bin.log",
+            "sha256": "09ff6dd241238609af84184936acd253636a81383cb5f04f71b9d93f60a6dd02",
+            "size": 102
+          },
+          {
+            "mode": "100644",
+            "path": "remote.log",
+            "sha256": "5a5c8bdaf6aeb645c6917be61df2a53bd35d1fed476509e6ae583d76aded4b43",
+            "size": 105
+          },
+          {
+            "mode": "100644",
+            "path": "uuid.log",
+            "sha256": "2d252b9cd7d1b3359dba74e2cfaebaa07b69085bfaab81fb190f5a6a923b2acd",
+            "size": 159
+          }
+        ],
+        "ref": "refs/heads/git-annex",
+        "tree": "6e972a76e2710425362dc32db517ce0316975048"
+      },
+      "before": {
+        "branch_bytes_sha256": "99e4cda14c415a046b03e79717732eba57717ce04ddee043ff6fc44feef2edb1",
+        "commit": "2ce6efb94ed6cf67d35ce57bf56b3682ee022a9e",
+        "files": [
+          {
+            "mode": "100644",
+            "path": "b1a/5de/SHA256E-s47--ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e.bin.log",
+            "sha256": "09ff6dd241238609af84184936acd253636a81383cb5f04f71b9d93f60a6dd02",
+            "size": 102
+          },
+          {
+            "mode": "100644",
+            "path": "remote.log",
+            "sha256": "5a5c8bdaf6aeb645c6917be61df2a53bd35d1fed476509e6ae583d76aded4b43",
+            "size": 105
+          },
+          {
+            "mode": "100644",
+            "path": "uuid.log",
+            "sha256": "2d252b9cd7d1b3359dba74e2cfaebaa07b69085bfaab81fb190f5a6a923b2acd",
+            "size": 159
+          }
+        ],
+        "ref": "refs/heads/git-annex",
+        "tree": "6e972a76e2710425362dc32db517ce0316975048"
+      },
+      "branch_bytes_changed": false,
+      "branch_changed": false,
+      "command": {
+        "argv": [
+          "/opt/homebrew/Cellar/git-annex/10.20260901/bin/git-annex",
+          "whereis",
+          "--json",
+          "payload.bin"
+        ],
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"command\":\"whereis\",\"error-messages\":[],\"file\":\"payload.bin\",\"input\":[\"payload.bin\"],\"key\":\"SHA256E-s47--ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e.bin\",\"note\":\"2 copies\\n\\t07cffebc-48f8-4328-a9ee-c9ecd250e1a4 -- synthetic admission experiment [here]\\n\\te57497c9-fc72-43fa-bca8-62a52ffabbeb -- [synthetic]\\n\",\"success\":true,\"untrusted\":[],\"whereis\":[{\"description\":\"synthetic admission experiment\",\"here\":true,\"urls\":[],\"uuid\":\"07cffebc-48f8-4328-a9ee-c9ecd250e1a4\"},{\"description\":\"[synthetic]\",\"here\":false,\"urls\":[],\"uuid\":\"e57497c9-fc72-43fa-bca8-62a52ffabbeb\"}]}"
+      },
+      "label": "whereis_read_only_retry"
+    },
+    {
+      "after": {
+        "branch_bytes_sha256": "99e4cda14c415a046b03e79717732eba57717ce04ddee043ff6fc44feef2edb1",
+        "commit": "2ce6efb94ed6cf67d35ce57bf56b3682ee022a9e",
+        "files": [
+          {
+            "mode": "100644",
+            "path": "b1a/5de/SHA256E-s47--ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e.bin.log",
+            "sha256": "09ff6dd241238609af84184936acd253636a81383cb5f04f71b9d93f60a6dd02",
+            "size": 102
+          },
+          {
+            "mode": "100644",
+            "path": "remote.log",
+            "sha256": "5a5c8bdaf6aeb645c6917be61df2a53bd35d1fed476509e6ae583d76aded4b43",
+            "size": 105
+          },
+          {
+            "mode": "100644",
+            "path": "uuid.log",
+            "sha256": "2d252b9cd7d1b3359dba74e2cfaebaa07b69085bfaab81fb190f5a6a923b2acd",
+            "size": 159
+          }
+        ],
+        "ref": "refs/heads/git-annex",
+        "tree": "6e972a76e2710425362dc32db517ce0316975048"
+      },
+      "before": {
+        "branch_bytes_sha256": "99e4cda14c415a046b03e79717732eba57717ce04ddee043ff6fc44feef2edb1",
+        "commit": "2ce6efb94ed6cf67d35ce57bf56b3682ee022a9e",
+        "files": [
+          {
+            "mode": "100644",
+            "path": "b1a/5de/SHA256E-s47--ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e.bin.log",
+            "sha256": "09ff6dd241238609af84184936acd253636a81383cb5f04f71b9d93f60a6dd02",
+            "size": 102
+          },
+          {
+            "mode": "100644",
+            "path": "remote.log",
+            "sha256": "5a5c8bdaf6aeb645c6917be61df2a53bd35d1fed476509e6ae583d76aded4b43",
+            "size": 105
+          },
+          {
+            "mode": "100644",
+            "path": "uuid.log",
+            "sha256": "2d252b9cd7d1b3359dba74e2cfaebaa07b69085bfaab81fb190f5a6a923b2acd",
+            "size": 159
+          }
+        ],
+        "ref": "refs/heads/git-annex",
+        "tree": "6e972a76e2710425362dc32db517ce0316975048"
+      },
+      "branch_bytes_changed": false,
+      "branch_changed": false,
+      "command": {
+        "argv": [
+          "/opt/homebrew/Cellar/git-annex/10.20260901/bin/git-annex",
+          "info",
+          "--json",
+          "payload.bin"
+        ],
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"command\":\"info payload.bin\",\"error-messages\":[],\"file\":\"payload.bin\",\"input\":[\"payload.bin\"],\"key\":\"SHA256E-s47--ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e.bin\",\"present\":true,\"size\":\"47 bytes\",\"success\":true}"
+      },
+      "label": "info_read_only"
+    },
+    {
+      "after": {
+        "branch_bytes_sha256": "99e4cda14c415a046b03e79717732eba57717ce04ddee043ff6fc44feef2edb1",
+        "commit": "2ce6efb94ed6cf67d35ce57bf56b3682ee022a9e",
+        "files": [
+          {
+            "mode": "100644",
+            "path": "b1a/5de/SHA256E-s47--ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e.bin.log",
+            "sha256": "09ff6dd241238609af84184936acd253636a81383cb5f04f71b9d93f60a6dd02",
+            "size": 102
+          },
+          {
+            "mode": "100644",
+            "path": "remote.log",
+            "sha256": "5a5c8bdaf6aeb645c6917be61df2a53bd35d1fed476509e6ae583d76aded4b43",
+            "size": 105
+          },
+          {
+            "mode": "100644",
+            "path": "uuid.log",
+            "sha256": "2d252b9cd7d1b3359dba74e2cfaebaa07b69085bfaab81fb190f5a6a923b2acd",
+            "size": 159
+          }
+        ],
+        "ref": "refs/heads/git-annex",
+        "tree": "6e972a76e2710425362dc32db517ce0316975048"
+      },
+      "before": {
+        "branch_bytes_sha256": "99e4cda14c415a046b03e79717732eba57717ce04ddee043ff6fc44feef2edb1",
+        "commit": "2ce6efb94ed6cf67d35ce57bf56b3682ee022a9e",
+        "files": [
+          {
+            "mode": "100644",
+            "path": "b1a/5de/SHA256E-s47--ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e.bin.log",
+            "sha256": "09ff6dd241238609af84184936acd253636a81383cb5f04f71b9d93f60a6dd02",
+            "size": 102
+          },
+          {
+            "mode": "100644",
+            "path": "remote.log",
+            "sha256": "5a5c8bdaf6aeb645c6917be61df2a53bd35d1fed476509e6ae583d76aded4b43",
+            "size": 105
+          },
+          {
+            "mode": "100644",
+            "path": "uuid.log",
+            "sha256": "2d252b9cd7d1b3359dba74e2cfaebaa07b69085bfaab81fb190f5a6a923b2acd",
+            "size": 159
+          }
+        ],
+        "ref": "refs/heads/git-annex",
+        "tree": "6e972a76e2710425362dc32db517ce0316975048"
+      },
+      "branch_bytes_changed": false,
+      "branch_changed": false,
+      "command": {
+        "argv": [
+          "/opt/homebrew/Cellar/git-annex/10.20260901/bin/git-annex",
+          "info",
+          "--json",
+          "payload.bin"
+        ],
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"command\":\"info payload.bin\",\"error-messages\":[],\"file\":\"payload.bin\",\"input\":[\"payload.bin\"],\"key\":\"SHA256E-s47--ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e.bin\",\"present\":true,\"size\":\"47 bytes\",\"success\":true}"
+      },
+      "label": "info_read_only_retry"
+    },
+    {
+      "after": {
+        "branch_bytes_sha256": "25983623351a052d3089245bb3ce04a18adb3ae0c0776e62e999cf1e6daf2e7a",
+        "commit": "45941b4ad5cb98a13388db6cd45bcd296c913bee",
+        "files": [
+          {
+            "mode": "100644",
+            "path": "activity.log",
+            "sha256": "9139aa5c593f7a8e2f8dc7e2eea7d8168d6d2c3159119e786fab54fa568f883a",
+            "size": 64
+          },
+          {
+            "mode": "100644",
+            "path": "b1a/5de/SHA256E-s47--ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e.bin.log",
+            "sha256": "09ff6dd241238609af84184936acd253636a81383cb5f04f71b9d93f60a6dd02",
+            "size": 102
+          },
+          {
+            "mode": "100644",
+            "path": "remote.log",
+            "sha256": "5a5c8bdaf6aeb645c6917be61df2a53bd35d1fed476509e6ae583d76aded4b43",
+            "size": 105
+          },
+          {
+            "mode": "100644",
+            "path": "uuid.log",
+            "sha256": "2d252b9cd7d1b3359dba74e2cfaebaa07b69085bfaab81fb190f5a6a923b2acd",
+            "size": 159
+          }
+        ],
+        "ref": "refs/heads/git-annex",
+        "tree": "5139e3596411887da15a748dc2cb83fda0e248a3"
+      },
+      "before": {
+        "branch_bytes_sha256": "99e4cda14c415a046b03e79717732eba57717ce04ddee043ff6fc44feef2edb1",
+        "commit": "2ce6efb94ed6cf67d35ce57bf56b3682ee022a9e",
+        "files": [
+          {
+            "mode": "100644",
+            "path": "b1a/5de/SHA256E-s47--ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e.bin.log",
+            "sha256": "09ff6dd241238609af84184936acd253636a81383cb5f04f71b9d93f60a6dd02",
+            "size": 102
+          },
+          {
+            "mode": "100644",
+            "path": "remote.log",
+            "sha256": "5a5c8bdaf6aeb645c6917be61df2a53bd35d1fed476509e6ae583d76aded4b43",
+            "size": 105
+          },
+          {
+            "mode": "100644",
+            "path": "uuid.log",
+            "sha256": "2d252b9cd7d1b3359dba74e2cfaebaa07b69085bfaab81fb190f5a6a923b2acd",
+            "size": 159
+          }
+        ],
+        "ref": "refs/heads/git-annex",
+        "tree": "6e972a76e2710425362dc32db517ce0316975048"
+      },
+      "branch_bytes_changed": true,
+      "branch_changed": true,
+      "command": {
+        "argv": [
+          "/opt/homebrew/Cellar/git-annex/10.20260901/bin/git-annex",
+          "fsck",
+          "--from=synthetic",
+          "payload.bin"
+        ],
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "fsck payload.bin (checksum...) ok\n(recording state in git...)"
+      },
+      "label": "fsck_from_first"
+    },
+    {
+      "after": {
+        "branch_bytes_sha256": "3a0e8b829fc9fb2330414cfcefa48328dbab3d29ae30df798a7112a230a255ab",
+        "commit": "57e7f60ca00204ceee46e1a731fb9f0960229d5f",
+        "files": [
+          {
+            "mode": "100644",
+            "path": "activity.log",
+            "sha256": "49b4bfa28cfeb396e4a3a72e44388b8a1029831fa70e44e6819ea4d9098ee9ea",
+            "size": 64
+          },
+          {
+            "mode": "100644",
+            "path": "b1a/5de/SHA256E-s47--ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e.bin.log",
+            "sha256": "09ff6dd241238609af84184936acd253636a81383cb5f04f71b9d93f60a6dd02",
+            "size": 102
+          },
+          {
+            "mode": "100644",
+            "path": "remote.log",
+            "sha256": "5a5c8bdaf6aeb645c6917be61df2a53bd35d1fed476509e6ae583d76aded4b43",
+            "size": 105
+          },
+          {
+            "mode": "100644",
+            "path": "uuid.log",
+            "sha256": "2d252b9cd7d1b3359dba74e2cfaebaa07b69085bfaab81fb190f5a6a923b2acd",
+            "size": 159
+          }
+        ],
+        "ref": "refs/heads/git-annex",
+        "tree": "7cffa6abc88b8dd23ca8d3795a0efe03d6dbfea6"
+      },
+      "before": {
+        "branch_bytes_sha256": "25983623351a052d3089245bb3ce04a18adb3ae0c0776e62e999cf1e6daf2e7a",
+        "commit": "45941b4ad5cb98a13388db6cd45bcd296c913bee",
+        "files": [
+          {
+            "mode": "100644",
+            "path": "activity.log",
+            "sha256": "9139aa5c593f7a8e2f8dc7e2eea7d8168d6d2c3159119e786fab54fa568f883a",
+            "size": 64
+          },
+          {
+            "mode": "100644",
+            "path": "b1a/5de/SHA256E-s47--ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e.bin.log",
+            "sha256": "09ff6dd241238609af84184936acd253636a81383cb5f04f71b9d93f60a6dd02",
+            "size": 102
+          },
+          {
+            "mode": "100644",
+            "path": "remote.log",
+            "sha256": "5a5c8bdaf6aeb645c6917be61df2a53bd35d1fed476509e6ae583d76aded4b43",
+            "size": 105
+          },
+          {
+            "mode": "100644",
+            "path": "uuid.log",
+            "sha256": "2d252b9cd7d1b3359dba74e2cfaebaa07b69085bfaab81fb190f5a6a923b2acd",
+            "size": 159
+          }
+        ],
+        "ref": "refs/heads/git-annex",
+        "tree": "5139e3596411887da15a748dc2cb83fda0e248a3"
+      },
+      "branch_bytes_changed": true,
+      "branch_changed": true,
+      "command": {
+        "argv": [
+          "/opt/homebrew/Cellar/git-annex/10.20260901/bin/git-annex",
+          "fsck",
+          "--from=synthetic",
+          "payload.bin"
+        ],
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "fsck payload.bin (checksum...) ok\n(recording state in git...)"
+      },
+      "label": "fsck_from_retry"
+    }
+  ],
+  "platform": {
+    "machine": "arm64",
+    "release": "24.5.0",
+    "system": "Darwin"
+  },
+  "remote": {
+    "network_contact": false,
+    "type": "directory"
+  },
+  "result": {
+    "first_get_changed_branch": true,
+    "fsck_first_changed_branch": true,
+    "fsck_retry_changed_branch": true,
+    "read_only_checks_changed_branch": false,
+    "retrieved_bytes_sha256": "ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e",
+    "retry_get_changed_branch": false
+  },
+  "schema": "archive-git-annex-experiment/1",
+  "scope": "synthetic-local-only",
+  "synthetic_fixture": {
+    "annex_key": "SHA256E-s47--ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e.bin",
+    "filename": "payload.bin",
+    "sha256": "ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b742e",
+    "size": 47
+  }
+}

@@ -1,0 +1,11 @@
+# Find each version 1 structural performance-to-work assertion. Version 1
+# checks Claim shape only and does not establish a song occurrence. The
+# relation stays in its exact performance claim revision's named graph.
+PREFIX arch: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#>
+
+SELECT ?performance ?performanceClaim WHERE {
+  GRAPH ?performanceClaim {
+    ?performance arch:work <urn:uuid:replace-with-work-id> .
+  }
+}
+ORDER BY ?performance ?performanceClaim

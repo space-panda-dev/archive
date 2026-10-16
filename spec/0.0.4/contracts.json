@@ -1,0 +1,55 @@
+{
+  "spec": "archive/0.0.4",
+  "contracts": [
+    {
+      "id": "archive.claim/audio_selection",
+      "version": "1",
+      "digest": "sha256:bfde7fb0daaf7ab9af80eabe8d4e684e07f3a9dbf5cbec68266ddf4b9493cc28"
+    },
+    {
+      "id": "archive.claim/performance_work",
+      "version": "1",
+      "digest": "sha256:0611de3ef1aaf6dadb9589bcb0fedda1c312943f8b0de19ae3be1d80d5bd64a5"
+    },
+    {
+      "id": "archive.claim/performance_work",
+      "version": "2",
+      "digest": "sha256:320b1bb020c95a0192e759f6c512de91b5ab0cd364fd2022bc8efb553fdafb61"
+    },
+    {
+      "id": "archive.claim/song_occurrence",
+      "version": "1",
+      "digest": "sha256:990e8f3a0938bb7ddd25f42a112f135b08460514038096807b573a6101a1a16f"
+    },
+    {
+      "id": "archive.claim/work_musicbrainz_correspondence",
+      "version": "1",
+      "digest": "sha256:12de96a609531ca20a54c175b146667036f0b1aefcc569cad76d34be056f7e48"
+    },
+    {
+      "id": "archive.transition/destroy",
+      "version": "1",
+      "digest": "sha256:06fa0b87ea9b112bef8f3111dd26561dad209f1ae251b638d9936882eff1128a"
+    },
+    {
+      "id": "archive.transition/destroy",
+      "version": "2",
+      "digest": "sha256:39f9b4820ebf15722202c6a5bdf10ec811d536a37db7c833d9f6231f88950ee9"
+    },
+    {
+      "id": "archive.transition/operator_initialization",
+      "version": "1",
+      "digest": "sha256:7ccd017a4ee2eeaf7c05005d018b2ca18f677d87f810f743d7c3561154794bff"
+    },
+    {
+      "id": "archive.transition/retire",
+      "version": "1",
+      "digest": "sha256:d8250cc5f5afa9725accb8d1d51ac83b9eef2c51ae4e1bc3e57ea0938e815654"
+    },
+    {
+      "id": "archive.transition/retire",
+      "version": "2",
+      "digest": "sha256:be06f7c3499f15295b62adeff7589800cd78cf90ade9965d401dd30cb385343b"
+    }
+  ]
+}

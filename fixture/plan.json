@@ -1,0 +1,222 @@
+{
+  "protocol": "archive-fixture/1",
+  "description": "Synthetic records that cite every contract in the specification's catalog. fixture/build.py admits them through the real Door into a fresh archive (ADR 0059). Every label, title, and byte is invented.",
+  "operator": "fixture-operator",
+  "steps": [
+    {
+      "name": "entities",
+      "command": "admit",
+      "records": [
+        {"key": "guest", "namespace": "archive.core/entity", "name": "fixture-guest", "shape": "entity",
+         "payload": {"kind": "person", "label": "Fixture Guest"}},
+        {"key": "ensemble", "namespace": "archive.core/entity", "name": "fixture-ensemble", "shape": "entity",
+         "payload": {"kind": "organisation", "label": "Fixture Ensemble"}},
+        {"key": "work-a", "namespace": "archive.audio/song", "name": "song-00000000-0000-4000-8000-00000000000a", "shape": "entity",
+         "payload": {"kind": "musical_work", "label": "Fixture Work A"}},
+        {"key": "work-b", "namespace": "archive.audio/song", "name": "song-00000000-0000-4000-8000-00000000000b", "shape": "entity",
+         "payload": {"kind": "musical_work", "label": "Fixture Work B"}},
+        {"key": "session", "namespace": "archive.audio/session", "name": "session-0000000000000000000000000000000000000000000000000000000000000001", "shape": "entity",
+         "payload": {"kind": "recording_session", "label": "Fixture Session"}}
+      ]
+    },
+    {
+      "name": "content",
+      "command": "admit",
+      "records": [
+        {"key": "take-a", "namespace": "archive.core/artifact", "name": "fixture-take-a", "shape": "artifact", "content": "take-a.bin"},
+        {"key": "take-b", "namespace": "archive.core/artifact", "name": "fixture-take-b", "shape": "artifact", "content": "take-b.bin"},
+        {"key": "take-c", "namespace": "archive.core/artifact", "name": "fixture-take-c", "shape": "artifact", "content": "take-c.bin"},
+        {"key": "take-d", "namespace": "archive.core/artifact", "name": "fixture-take-d", "shape": "artifact", "content": "take-d.bin"},
+        {"key": "bundle", "namespace": "archive.core/artifact", "name": "fixture-migration-bundle", "shape": "artifact", "content": "bundle.bin"},
+        {"key": "parameters", "namespace": "archive.core/artifact", "name": "fixture-match-parameters", "shape": "artifact", "content": "parameters.bin"}
+      ]
+    },
+    {
+      "name": "correspondences",
+      "command": "admit",
+      "records": [
+        {"key": "correspondence-exact", "namespace": "archive.claim/work_musicbrainz_correspondence", "name": "fixture-work-a-exact", "shape": "claim",
+         "contracts": [{"id": "archive.claim/work_musicbrainz_correspondence", "version": "1"}],
+         "payload": {"external_work": "https://musicbrainz.org/work/11111111-1111-4111-8111-111111111111", "mapping": "skos:exactMatch"},
+         "refs": [{"role": "work", "pin": "work-a"}]},
+        {"key": "correspondence-close", "namespace": "archive.claim/work_musicbrainz_correspondence", "name": "fixture-work-a-close", "shape": "claim",
+         "contracts": [{"id": "archive.claim/work_musicbrainz_correspondence", "version": "1"}],
+         "payload": {"external_work": "https://musicbrainz.org/work/22222222-2222-4222-8222-222222222222", "mapping": "skos:closeMatch"},
+         "refs": [{"role": "work", "pin": "work-a"}]}
+      ]
+    },
+    {
+      "name": "single-source rendition",
+      "command": "admit",
+      "records": [
+        {"key": "selection-v1", "namespace": "archive.claim/audio_selection", "name": "fixture-selection-v1", "shape": "claim",
+         "contracts": [{"id": "archive.claim/audio_selection", "version": "1"}],
+         "payload": {"pieces": [{"start_sample": 10, "end_sample": 200, "sample_rate": 48000}]},
+         "refs": [{"role": "piece", "pin": "take-a"}]},
+        {"key": "occurrence-v1", "namespace": "archive.claim/song_occurrence", "name": "fixture-occurrence-v1", "shape": "claim",
+         "contracts": [{"id": "archive.claim/song_occurrence", "version": "1"}],
+         "payload": {}, "refs": [{"role": "selection", "pin": "selection-v1"}]},
+        {"key": "performance-v1", "namespace": "archive.claim/performance_work", "name": "fixture-performance-v1", "shape": "claim",
+         "contracts": [{"id": "archive.claim/performance_work", "version": "1"}],
+         "payload": {}, "refs": [{"role": "performance", "pin": "occurrence-v1"}, {"role": "work", "pin": "work-a"}]},
+        {"key": "link-v2", "namespace": "archive.claim/performance_work", "name": "fixture-link-v2", "shape": "claim",
+         "contracts": [{"id": "archive.claim/performance_work", "version": "2"}],
+         "payload": {}, "refs": [{"role": "performance", "pin": "occurrence-v1"}, {"role": "work", "pin": "work-a"}]}
+      ]
+    },
+    {
+      "name": "two-source rendition",
+      "command": "admit",
+      "records": [
+        {"key": "alignment", "namespace": "archive.claim/capture_alignment", "name": "fixture-alignment", "shape": "claim",
+         "contracts": [{"id": "archive.claim/capture_alignment", "version": "1"}],
+         "payload": {"reference_rate": 48000, "aligned_rate": 48000, "max_error_samples": 1,
+                     "method": {"id": "manual", "version": "1"},
+                     "anchors": [{"reference_sample": 0, "aligned_sample": 0},
+                                 {"reference_sample": 48000, "aligned_sample": 48001},
+                                 {"reference_sample": 96000, "aligned_sample": 96003}]},
+         "refs": [{"role": "reference", "pin": "take-a"}, {"role": "aligned", "pin": "take-b"}, {"role": "run", "pin": "selection-v1"}]},
+        {"key": "selection-v2", "namespace": "archive.claim/audio_selection", "name": "fixture-selection-v2", "shape": "claim",
+         "contracts": [{"id": "archive.claim/audio_selection", "version": "2"}],
+         "payload": {"tracks": [{"pieces": [{"start_sample": 10, "end_sample": 200, "sample_rate": 48000}]},
+                                {"pieces": [{"start_sample": 11, "end_sample": 201, "sample_rate": 48000}]}]},
+         "refs": [{"role": "piece", "pin": "take-a"}, {"role": "piece", "pin": "take-b"}, {"role": "alignment", "pin": "alignment"}]},
+        {"key": "occurrence-v2", "namespace": "archive.claim/song_occurrence", "name": "fixture-occurrence-v2", "shape": "claim",
+         "contracts": [{"id": "archive.claim/song_occurrence", "version": "2"}],
+         "payload": {}, "refs": [{"role": "selection", "pin": "selection-v2"}]},
+        {"key": "link-v3", "namespace": "archive.claim/performance_work", "name": "fixture-link-v3", "shape": "claim",
+         "contracts": [{"id": "archive.claim/performance_work", "version": "3"}],
+         "payload": {}, "refs": [{"role": "performance", "pin": "occurrence-v2"}, {"role": "work", "pin": "work-a"}]},
+        {"key": "kind", "namespace": "archive.claim/selection_kind", "name": "fixture-kind", "shape": "claim",
+         "contracts": [{"id": "archive.claim/selection_kind", "version": "1"}],
+         "payload": {"kind": "original"}, "refs": [{"role": "selection", "pin": "selection-v2"}]},
+        {"key": "title", "namespace": "archive.claim/selection_title", "name": "fixture-title", "shape": "claim",
+         "contracts": [{"id": "archive.claim/selection_title", "version": "1"}],
+         "payload": {"title": "Fixture Title"}, "refs": [{"role": "selection", "pin": "selection-v2"}]},
+        {"key": "title-alternate", "namespace": "archive.claim/selection_title", "name": "fixture-title-alternate", "shape": "claim",
+         "contracts": [{"id": "archive.claim/selection_title", "version": "1"}],
+         "payload": {"title": "Fixture Title (alternate)"}, "refs": [{"role": "selection", "pin": "selection-v2"}]},
+        {"key": "credit", "namespace": "archive.claim/artist_credit", "name": "fixture-credit", "shape": "claim",
+         "contracts": [{"id": "archive.claim/artist_credit", "version": "1"}],
+         "payload": {}, "refs": [{"role": "selection", "pin": "selection-v2"}, {"role": "artist", "pin": "ensemble"}, {"role": "artist", "pin": "guest"}]},
+        {"key": "parts", "namespace": "archive.claim/session_parts", "name": "fixture-parts", "shape": "claim",
+         "contracts": [{"id": "archive.claim/session_parts", "version": "1"}],
+         "payload": {}, "refs": [{"role": "session", "pin": "session"}, {"role": "part", "pin": "take-a"}, {"role": "part", "pin": "take-b"}]}
+      ]
+    },
+    {
+      "name": "review",
+      "command": "admit",
+      "records": [
+        {"key": "judgment", "namespace": "archive.assessment/judgment", "name": "fixture-judgment", "shape": "assessment",
+         "contracts": [{"id": "archive.assessment/judgment", "version": "1"}],
+         "payload": {"verdict": "affirmed", "reason": "Checked against the fixture notes"},
+         "refs": [{"role": "assessment_of", "pin": "title"}]},
+        {"key": "session-renamed", "revises": "session", "shape": "entity",
+         "payload": {"kind": "recording_session", "label": "Fixture Session (renamed)"}}
+      ]
+    },
+    {
+      "name": "migration",
+      "command": "admit",
+      "records": [
+        {"key": "selection-migrated", "namespace": "archive.claim/audio_selection", "name": "fixture-selection-migrated", "shape": "claim",
+         "source": {"schema": "audio_segment", "id": "segment-fixture"},
+         "contracts": [{"id": "archive.claim/audio_selection", "version": "2"}],
+         "payload": {"tracks": [{"pieces": [{"start_sample": 10, "end_sample": 201006, "sample_rate": 48000}]}]},
+         "refs": [{"role": "piece", "pin": "take-a"}]},
+        {"key": "selection-translation", "namespace": "archive.migration/selection_translation", "name": "fixture-selection-translation", "shape": "claim",
+         "contracts": [{"id": "archive.migration/selection_translation", "version": "1"}],
+         "payload": {"boundary_rule": "round-half-even/1", "chain_position": 0, "chain_root": "segment-fixture",
+                     "locator": {"length": 512, "member": "records/audio-segments/segment-fixture.json",
+                                 "member_sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                                 "offset": 1024, "sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+                     "probe": {"sample_rate": 48000, "tool": "ffprobe", "tool_version": "7.1"},
+                     "rule": "v2-audio-segment-chain/1",
+                     "source": {"id": "segment-fixture", "schema": "audio_segment"},
+                     "source_seconds": {"start": "0.000208", "end": "4.1876"}},
+         "refs": [{"role": "translated", "pin": "selection-migrated"}, {"role": "migration_source", "pin": "bundle"}]},
+        {"key": "occurrence-migrated", "namespace": "archive.claim/song_occurrence", "name": "fixture-occurrence-migrated", "shape": "claim",
+         "contracts": [{"id": "archive.claim/song_occurrence", "version": "2"}],
+         "payload": {}, "refs": [{"role": "selection", "pin": "selection-migrated"}]},
+        {"key": "translation", "namespace": "archive.migration/translation", "name": "fixture-translation", "shape": "claim",
+         "contracts": [{"id": "archive.migration/translation", "version": "1"}],
+         "payload": {"locator": {"length": 512, "member": "records/song-performances/performance-fixture.json",
+                                 "member_sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                                 "offset": 2048, "sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+                     "part_position": 1,
+                     "rule": "v2-song-performance/1",
+                     "source": {"id": "performance-fixture", "schema": "song_performance"}},
+         "refs": [{"role": "translated", "pin": "occurrence-migrated"}, {"role": "translated_assessment", "pin": "judgment"},
+                  {"role": "migration_source", "pin": "bundle"}]}
+      ]
+    },
+    {
+      "name": "match",
+      "command": "admit",
+      "records": [
+        {"key": "work-match", "namespace": "archive.claim/work_match", "name": "fixture-work-match", "shape": "claim",
+         "contracts": [{"id": "archive.claim/work_match", "version": "1"}],
+         "payload": {"direction": "lower_is_closer", "method": {"id": "fixture-matcher", "version": "1"}, "scale": "distance", "score": "0.25"},
+         "refs": [{"role": "occurrence", "pin": "occurrence-v2"}, {"role": "work", "pin": "work-b"},
+                  {"role": "corpus", "pin": "occurrence-migrated"}, {"role": "run", "pin": "translation"},
+                  {"role": "parameters", "pin": "parameters"}]}
+      ]
+    },
+    {
+      "name": "publication",
+      "command": "transition",
+      "records": [
+        {"key": "publication", "namespace": "archive.transition/publication_approval", "name": "fixture-publication", "shape": "claim",
+         "contracts": [{"id": "archive.transition/publication_approval", "version": "1"}],
+         "payload": {"destination": "fixture-circle", "decision": "approve"},
+         "refs": [{"role": "authorizer", "pin": "operator"}, {"role": "covers", "pin": "title"}]}
+      ]
+    },
+    {
+      "name": "withdrawal",
+      "command": "transition",
+      "records": [
+        {"key": "withdrawal", "namespace": "archive.transition/publication_withdrawal", "name": "fixture-withdrawal", "shape": "claim",
+         "contracts": [{"id": "archive.transition/publication_withdrawal", "version": "1"}],
+         "payload": {"reason": "Fixture withdrawal"},
+         "refs": [{"role": "authorizer", "pin": "operator"}, {"role": "withdraws", "pin": "publication"}]}
+      ]
+    },
+    {
+      "name": "retire",
+      "command": "transition",
+      "records": [
+        {"key": "retire-v1", "namespace": "archive.transition/retire", "name": "fixture-retire-v1", "shape": "claim",
+         "contracts": [{"id": "archive.transition/retire", "version": "1"}],
+         "payload": {"reason": "Fixture retirement"},
+         "refs": [{"role": "author", "pin": "operator"}, {"role": "authorizer", "pin": "operator"}, {"role": "retires", "pin": "take-c"}]}
+      ]
+    },
+    {
+      "name": "destroy",
+      "command": "transition",
+      "records": [
+        {"key": "destroy-v1", "namespace": "archive.transition/destroy", "name": "fixture-destroy-v1", "shape": "claim",
+         "contracts": [{"id": "archive.transition/destroy", "version": "1"}],
+         "payload": {"content": "$content:take-c.bin", "reason": "Fixture destruction", "external_survivors": []},
+         "refs": [{"role": "author", "pin": "operator"}, {"role": "authorizer", "pin": "operator"}, {"role": "destroys", "pin": "take-c"}]}
+      ]
+    },
+    {
+      "name": "retire then destroy",
+      "command": "transition",
+      "records": [
+        {"key": "retire-v2", "namespace": "archive.transition/retire", "name": "fixture-retire-v2", "shape": "claim",
+         "contracts": [{"id": "archive.transition/retire", "version": "2"}],
+         "payload": {"reason": "Fixture retirement before destruction"},
+         "refs": [{"role": "author", "pin": "operator"}, {"role": "authorizer", "pin": "operator"}, {"role": "retires", "pin": "take-d"}]},
+        {"key": "destroy-v2", "namespace": "archive.transition/destroy", "name": "fixture-destroy-v2", "shape": "claim",
+         "contracts": [{"id": "archive.transition/destroy", "version": "2"}],
+         "payload": {"content": "$content:take-d.bin", "reason": "Fixture destruction in a chain", "external_survivors": []},
+         "refs": [{"role": "author", "pin": "operator"}, {"role": "authorizer", "pin": "operator"}, {"role": "destroys", "pin": "take-d"},
+                  {"role": "transition_predecessor", "pin": "retire-v2"}]}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,80 @@
+# Decisions
+
+These records explain why the architecture is the way it is. Each states a
+decision, the reason it needed deciding, and the alternatives it rejected. The
+rejected alternatives matter most: they stop the same question from being
+reopened without new information.
+
+The set was consolidated before the first release, so each record describes a
+settled theme rather than one step of the discussion that produced it. The
+earlier, step-by-step records remain in Git history.
+
+To change a decision, add a new record that supersedes the old one and mark the
+old one `Status: superseded by NNNN`; do not rewrite accepted records. Undecided
+matters belong in [open-questions.md](../open-questions.md), not here.
+
+| # | Decision |
+|---|---|
+| [0001](0001-archive-preserves-evidence.md) | Archive preserves evidence, is curated, and stands alone |
+| [0002](0002-one-door.md) | One Door governs archival meaning |
+| [0003](0003-record-model.md) | The record model |
+| [0004](0004-deletion.md) | Deletion: retire and destroy |
+| [0005](0005-claims-review-and-authority.md) | Claims, review, and two kinds of authority |
+| [0006](0006-enrichment.md) | Enrichment derives without mutating, and stays reproducible |
+| [0007](0007-policy.md) | Policy declares desired state |
+| [0008](0008-plan-and-apply.md) | Plan, then apply; history stays quiet |
+| [0009](0009-copies-and-custody.md) | Copies, custody, and storage |
+| [0010](0010-publication.md) | Publication: destinations, approval, and rights |
+| [0011](0011-world.md) | World is a projection |
+| [0012](0012-inherited-meaning.md) | Inherit meaning; keep Archive's contracts |
+| [0013](0013-physical-collections.md) | Physical collections |
+| [0014](0014-boundaries-and-languages.md) | Spool, languages, and repository boundaries |
+| [0015](0015-porting-from-v2.md) | Porting from the V2 spike by translation |
+| [0016](0016-disclosure.md) | Disclosure: content leaving the operator's custody |
+| [0017](0017-licensing.md) | Licensing: copyleft code, public-domain contracts |
+| [0018](0018-people-in-the-archive.md) | People in the archive who are not its operator |
+| [0019](0019-publication-approval-is-a-transition.md) | Publication approval is a transition claim |
+| [0020](0020-archive-on-disk-layout.md) | The archive on-disk layout |
+| [0021](0021-portable-identifiers.md) | Portable archive and object identifiers |
+| [0022](0022-normative-record-envelope.md) | The normative record envelope |
+| [0023](0023-admission-and-staging.md) | Admission uses metadata proposals and git-annex staging |
+| [0024](0024-retire-and-destroy-records.md) | Retire and destroy records keep decisions, not execution state |
+| [0025](0025-versioned-json-ld-contexts.md) | JSON-LD contexts are local and versioned with their contracts |
+| [0026](0026-initialization-and-identity-allocation.md) | Initialization bootstraps one archive and one operator |
+| [0027](0027-core-payloads-and-installed-contracts.md) | Core payloads are closed; kind payloads use installed contracts |
+| [0028](0028-transition-proposals-and-dispatch.md) | Door dispatches atomic transition proposals by exact contract |
+| [0029](0029-core-context-and-bootstrap-contract.md) | The core context and bootstrap contract are exact local resources |
+| [0030](0030-durable-transition-order.md) | Transition batches retain their authorization order |
+| [0031](0031-power-loss-durability.md) | Door acknowledges only durable commits |
+| [0032](0032-managed-placement-over-ssh.md) | Managed placement names a location, not a host |
+| [0033](0033-operator-configured-executables.md) | Git executable paths are operator configuration |
+| [0034](0034-git-object-store-coordination.md) | Coordinate Git object-store maintenance with Door |
+| [0035](0035-v2-migration-preserves-evidence-and-claims.md) | V2 migration preserves source evidence and admits supported claims |
+| [0036](0036-v2-frozen-migration-bundle.md) | The first V2 migration is one frozen, accounted bundle |
+| [0037 proposed](0037-proposed-private-managed-copy.md) | Whole-Archive copy scope |
+| [0038 proposed](0038-proposed-private-placement-protocol.md) | Placement configuration and wire protocol |
+| [0039 proposed](0039-proposed-hosted-plaintext-placement.md) | Hosted plaintext managed placement and authenticated seedbox projections |
+| [0040](0040-audio-section-song-route.md) | V2 audio-section-to-song claim route |
+| [0041](0041-world-v1-projection.md) | World v1 builds a disposable, provenance-preserving graph |
+| [0042](0042-work-correspondence.md) | A work correspondence is an attributable mapping claim |
+| [0043](0043-geographic-evidence-and-route-handoff.md) | Geographic observations and route handoff |
+| [0044](0044-audio-selections-and-song-occurrences.md) | Audio selections and song occurrences have separate identities |
+| [0045](0045-audio-claim-contracts.md) | Audio claims bind exact selections to occurrences |
+| [0046](0046-world-release-before-v2-migration.md) | Sequence World contracts before the V2 migration route |
+| [0047](0047-v2-audio-route-source-rules.md) | Source translation rules for the V2 audio route |
+| [0048](0048-review-app-write-contracts.md) | Review application write contracts |
+| [0049](0049-v2-migration-route-contracts.md) | V2 migration route contracts |
+| [0050](0050-operator-confirmed-renditions.md) | Operator-confirmed renditions in the V2 migration |
+| [0051](0051-publication-transition-dispatch.md) | Door dispatches publication transitions |
+| [0052](0052-incremental-admission-verification.md) | Door verifies admissions incrementally from its own checkpoint |
+| [0053](0053-fanned-out-record-and-content-paths.md) | Layout archive/2 fans out record and content paths |
+| [0054](0054-door-service-for-applications.md) | A long-running Door service for applications |
+| [0055](0055-incremental-world-refresh.md) | World refreshes incrementally |
+| [0056](0056-tailnet-relay.md) | A tailnet relay for the operator's browser |
+| [0057](0057-specification-contract-catalogs.md) | Each specification version lists its contracts |
+| [0058](0058-door-refusal-codes.md) | Door's refusals carry stable codes |
+| [0059](0059-world-read-contract.md) | World publishes a versioned read contract |
+| [0060](0060-relay-interface-and-role.md) | The relay publishes its interface and its role |
+| [0061](0061-scratch-archives.md) | Scratch archives for testing real commits |
+| [0062](0062-release-bundle-and-ci.md) | Releases carry an image and a bundle, and CI checks both |
+| [0063](0063-relay-read-speed.md) | Relay reads at interactive speed: cache, concurrency, and gzip |

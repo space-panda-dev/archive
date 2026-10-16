@@ -1,0 +1,6 @@
+/dist-newstyle/
+__pycache__/
+*.pyc
+/world/.venv/
+/world/.store/
+/.claude/

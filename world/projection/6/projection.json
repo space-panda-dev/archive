@@ -1,0 +1,18 @@
+{
+  "protocol": "archive-world-projection/1",
+  "projection_version": 6,
+  "iri": "urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#world-projection-6",
+  "description": "What World projection 6 emits, as named graphs whose content each SHACL file declares. {archive} stands for the archive identifier, a urn:uuid IRI. ADR 0059 says how this description changes.",
+  "default_graph": "World puts nothing in the default graph. A query without GRAPH, FROM, or FROM NAMED finds nothing; name the graphs.",
+  "graphs": [
+    {"kind": "records", "pattern": "^{archive}#world:records$", "shapes": "records.ttl",
+     "description": "Every record revision, its references, and the programs that wrote them."},
+    {"kind": "context", "pattern": "^{archive}#world:context$", "shapes": "context.ttl",
+     "description": "The projection's version and specification, the core context, and every installed contract bundle."},
+    {"kind": "domain", "pattern": "^{archive}#world:domain$", "shapes": "domain.ttl",
+     "description": "SKOS concept schemes and concepts that claims point into."},
+    {"kind": "revision", "pattern": "^{archive}#revision=sha256:[0-9a-f]{64}$", "shapes": "revision.ttl",
+     "description": "One graph per claim or assessment revision, holding exactly what that revision asserts."}
+  ],
+  "vocabulary": "vocabulary.ttl"
+}

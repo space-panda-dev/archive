@@ -1,0 +1,102 @@
+# World projection 6: the records graph, <{archive}#world:records>.
+# One node per record revision, one reified statement per reference, and one
+# node per writing program. Every shape is closed: a predicate not declared
+# here is a conformance failure (ADR 0059).
+
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix oa: <http://www.w3.org/ns/oa#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix as: <http://www.w3.org/ns/activitystreams#> .
+@prefix arch: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#> .
+@prefix wsh: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#world-projection-6/shapes/> .
+
+wsh:Revision a sh:NodeShape ;
+  rdfs:comment "One record revision, named <{archive}#revision={revision_id}>. Claims and assessments are also Web Annotations." ;
+  sh:targetClass prov:Entity ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:type ; sh:minCount 2 ; sh:maxCount 3 ;
+                sh:in ( prov:Entity arch:Artifact arch:Entity arch:Claim arch:Assessment oa:Annotation ) ] ;
+  sh:property [ sh:path arch:shape ; sh:minCount 1 ; sh:maxCount 1 ;
+                sh:in ( arch:Artifact arch:Entity arch:Claim arch:Assessment ) ] ;
+  sh:property [ sh:path dcterms:type ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ;
+                sh:in ( "artifact" "entity" "claim" "assessment" ) ;
+                rdfs:comment "The shape's name as a plain string; the same fact as arch:shape." ] ;
+  sh:property [ sh:path arch:revision_id ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ;
+                sh:pattern "^sha256:[0-9a-f]{64}$" ] ;
+  sh:property [ sh:path arch:object_id ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+                sh:pattern "^urn:uuid:[0-9a-f-]{36}$" ] ;
+  sh:property [ sh:path as:generator ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+                rdfs:comment "The record's `by`: the program that wrote it, a Package URL." ] ;
+  sh:property [ sh:path dcterms:creator ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+                rdfs:comment "The record's `agent`." ] ;
+  sh:property [ sh:path prov:wasAttributedTo ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path prov:generatedAtTime ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:dateTime ] ;
+  sh:property [ sh:path arch:payload ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype rdf:JSON ] ;
+  sh:property [ sh:path oa:hasBody ; sh:maxCount 1 ; sh:datatype rdf:JSON ;
+                rdfs:comment "Claims and assessments only: the payload again." ] ;
+  sh:property [ sh:path oa:hasTarget ; sh:nodeKind sh:IRI ;
+                rdfs:comment "Claims and assessments only: each reference target." ] ;
+  sh:property [ sh:path arch:refs ; sh:class rdf:Statement ] ;
+  sh:property [ sh:path arch:supersedes ; sh:nodeKind sh:IRI ;
+                rdfs:comment "Both the link to a supersession statement and, as the role predicate, the superseded revision." ] ;
+  sh:property [ sh:path arch:source ; sh:maxCount 1 ; sh:datatype rdf:JSON ] ;
+  sh:property [ sh:path arch:contracts ; sh:maxCount 1 ; sh:datatype rdf:JSON ] ;
+  sh:property [ sh:path dcterms:conformsTo ; sh:nodeKind sh:IRI ;
+                sh:pattern "#world:contract:[^:]+:[^:]+$" ;
+                rdfs:comment "Each contract the record cites: the bundle's node in the context graph, <{archive}#world:contract:{id}:{version}>. The same citations as arch:contracts, as links (revision 2)." ] ;
+  # One direct triple per reference, by its role's predicate. These are the
+  # reference roles of specification 0.0.6's contracts.
+  sh:property [ sh:path prov:wasDerivedFrom ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path prov:wasGeneratedBy ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:alignment ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:alignment_aligned ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:appoints ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:assessment_of ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:author ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:authorizer ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:covers ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:credited_artist ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:dependent_destroy ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:dependent_source_gone ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:destroys ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:external_survivor ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:match_corpus ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:migration_source ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:parameters ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:performance ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:piece ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:reference ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:retires ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:selection ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:session ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:session_part ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:transition_predecessor ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:translated_assessment ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:withdraws ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:work ; sh:nodeKind sh:IRI ] .
+
+wsh:Reference a sh:NodeShape ;
+  rdfs:comment "One reference or supersession, reified, named <{archive}#world:reference:{revision}:{refs|supersedes}:{index}>." ;
+  sh:targetClass rdf:Statement ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:type ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( rdf:Statement ) ] ;
+  sh:property [ sh:path rdf:subject ; sh:minCount 1 ; sh:maxCount 1 ; sh:class prov:Entity ] ;
+  sh:property [ sh:path rdf:predicate ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path rdf:object ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+                rdfs:comment "The pinned revision, or the object when the reference is unpinned." ] ;
+  sh:property [ sh:path arch:role ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+                sh:equals rdf:predicate ] ;
+  sh:property [ sh:path arch:id ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ;
+                sh:pattern "^urn:uuid:[0-9a-f-]{36}$" ] ;
+  sh:property [ sh:path arch:revision_id ; sh:maxCount 1 ; sh:datatype xsd:string ;
+                sh:pattern "^sha256:[0-9a-f]{64}$" ] .
+
+wsh:Program a sh:NodeShape ;
+  rdfs:comment "A program named by some record's `by`." ;
+  sh:targetClass prov:SoftwareAgent ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:type ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( prov:SoftwareAgent ) ] .

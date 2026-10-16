@@ -1,0 +1,13 @@
+{
+  "case": "derived marker content changed after the record was written",
+  "origin": "minimized from an authorized copy of a real record and its referenced bytes",
+  "declared": {
+    "digest": "sha256:1c94c8455f7c7488afe12a706f4dc74523c63d57911fed3749cece9139166d93",
+    "size": 1066502588
+  },
+  "observed": {
+    "digest": "sha256:91d87e72945862626f4ece284efe2d7e879fafc9d94826fe8803ac29b64aa2a6",
+    "size": 1067543980
+  },
+  "expected_refusal": "declared content identity does not match the staged bytes"
+}

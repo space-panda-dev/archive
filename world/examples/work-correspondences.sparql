@@ -1,0 +1,21 @@
+# Show every correspondence claim for a local Work, retaining mapping term,
+# exact immutable claim revision, and asserting agent. Each mapping stays in
+# its own claim-revision named graph, so competing claims remain separate.
+PREFIX prov: <http://www.w3.org/ns/prov#>
+PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+
+SELECT ?externalWork ?mapping ?claimRevision ?agent WHERE {
+  GRAPH ?domain {
+    ?localConcept foaf:focus <urn:uuid:replace-with-work-id> .
+    ?externalConcept foaf:focus ?externalWork .
+  }
+  GRAPH ?claimRevision {
+    ?localConcept ?mapping ?externalConcept .
+    VALUES ?mapping { skos:exactMatch skos:closeMatch }
+  }
+  GRAPH ?records {
+    ?claimRevision prov:wasAttributedTo ?agent .
+  }
+}
+ORDER BY ?externalWork ?mapping ?claimRevision

@@ -1,0 +1,38 @@
+# Show every title, kind, and artist credit asserted about an audio
+# selection, each with its own exact claim revision and asserting agent.
+# Competing claims appear as separate rows; no winner is chosen. Judgments of
+# a claim are listed beside it when one exists.
+PREFIX arch: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+PREFIX prov: <http://www.w3.org/ns/prov#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+
+SELECT ?fact ?value ?position ?claim ?agent ?verdict WHERE {
+  GRAPH ?records {
+    ?selection arch:object_id <urn:uuid:replace-with-selection-id> .
+    ?claim prov:wasAttributedTo ?agent .
+  }
+  {
+    GRAPH ?claim { ?selection dcterms:title ?value . }
+    BIND("title" AS ?fact)
+  } UNION {
+    GRAPH ?claim { ?selection arch:performance_kind ?concept . }
+    GRAPH ?domain { ?concept skos:notation ?value . }
+    BIND("kind" AS ?fact)
+  } UNION {
+    GRAPH ?claim {
+      ?selection arch:credit ?credit .
+      ?credit rdf:value ?position ;
+              arch:credited_artist ?value .
+    }
+    BIND("artist" AS ?fact)
+  }
+  OPTIONAL {
+    GRAPH ?judgment {
+      ?judgment arch:assessment_of ?claim ;
+                arch:verdict ?verdict .
+    }
+  }
+}
+ORDER BY ?fact ?position ?value ?claim

@@ -1,0 +1,42 @@
+# A release (ADR 0062): the image, published by digest, and the bundle a
+# client builds against, attached to the GitHub release with the digest.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
+      - run: nix flake check -L
+      - run: nix build -L .#image -o image
+      - run: nix build -L .#bundle -o bundle
+      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish the image and the bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          name="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/archive"
+          docker load < image
+          docker tag archive:latest "$name:$TAG"
+          docker push "$name:$TAG"
+          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$name:$TAG")
+          echo "$digest" > image-digest.txt
+          cp bundle/archive-release-bundle.tar.gz .
+          sha256sum archive-release-bundle.tar.gz >> image-digest.txt
+          gh release create "$TAG" archive-release-bundle.tar.gz image-digest.txt \
+            --notes "Image: \`$digest\`. Pull it by digest; the tag may move. See ADR 0062."
