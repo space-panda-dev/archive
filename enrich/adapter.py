@@ -361,11 +361,30 @@ class Staging:
         """Copy a file into the repository and add it, as `stage` does for
         bytes, without holding the file in memory. The source is only read.
         The key must be that of `digest` and `size`, so a file that changed
-        after it was hashed is refused, never staged as the hashed content."""
+        after it was hashed is refused, never staged as the hashed content.
+        The copy is hashed before it is added: refused bytes are removed and
+        never committed, so a later run with the right bytes is not blocked
+        by a wrong file already staged under the name."""
         self._repository()
         target = self.path / filename
         if not os.path.lexists(target):
-            shutil.copyfile(source, target)
+            partial = self.path / f".{filename}.partial"
+            try:
+                hasher, copied = hashlib.sha256(), 0
+                with open(source, "rb") as reading, open(partial, "wb") as writing:
+                    for block in iter(lambda: reading.read(1 << 20), b""):
+                        hasher.update(block)
+                        copied += len(block)
+                        writing.write(block)
+                if ("sha256:" + hasher.hexdigest(), copied) != (digest, size):
+                    raise AdapterError(f"{source} is no longer the content that was hashed ({digest}, "
+                                       f"{size} bytes); nothing was staged")
+                os.replace(partial, target)
+            except OSError as exc:
+                raise AdapterError(f"{source} could not be copied into the staging repository: {exc}") from exc
+            finally:
+                if os.path.lexists(partial):
+                    os.unlink(partial)
             _run([self.annex, "add", "-q", filename], self.path, "git-annex add", self.env)
             _run([self.git, "commit", "-q", "-m", f"Stage {filename}"], self.path, "staging commit", self.env)
         return self._added(filename, self.key_for(digest, size, filename))

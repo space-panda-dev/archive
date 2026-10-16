@@ -301,9 +301,11 @@ if reader.equivalent_run(result) is None:           # optional quiet-history che
   the [capture importer](../capture/README.md) stages recordings:
   `stage_file(source, digest, size, filename)` copies a file in without
   holding it in memory and only reads the source, and `key_for(digest, size,
-  filename)` predicts its key. A staged key that is not the key of the stated
-  digest and size is refused, so a file that changed after it was hashed is
-  never offered as the hashed content. `remote` names the remote added when
+  filename)` predicts its key. The copy is hashed before git-annex adds it,
+  and a copy that is not the stated digest and size is removed and refused,
+  so a file that changed after it was hashed is never offered as the hashed
+  content and never left staged under its name; a staged key that is not the
+  stated one is refused too. `remote` names the remote added when
   no remote has the repository's path.
 - **A dry run** stages nothing and configures no remote; Door predicts the
   revisions without fetching anything.
