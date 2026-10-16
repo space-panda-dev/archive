@@ -208,7 +208,15 @@ def _chroma_bins(size: int, sample_rate: int, low_hz: int, high_hz: int) -> tupl
     usable = (frequencies >= low_hz) & (frequencies <= min(high_hz, sample_rate / 2))
     pitch = np.full(frequencies.shape, -1)
     pitch[usable] = np.mod(np.rint(12.0 * np.log2(frequencies[usable] / 440.0) + 69.0).astype(int), 12)
-    return n_fft, [np.flatnonzero(pitch == c) for c in range(12)]
+    bins = [np.flatnonzero(pitch == c) for c in range(12)]
+    # A pitch class without a bin would read as silent in every hop, and a
+    # chroma without any would leave a flat novelty curve that looks like
+    # music without changes; neither is a measurement.
+    missing = [c for c in range(12) if len(bins[c]) == 0]
+    if missing:
+        raise SignalError("chroma_novelty", f"at {sample_rate} Hz a {size}-sample hop has no FFT bin between "
+                                            f"{low_hz} and {high_hz} Hz for pitch classes {missing} (0 is C)")
+    return n_fft, bins
 
 
 def _measure(block: np.ndarray, window: np.ndarray, n_fft: int,

@@ -182,7 +182,8 @@ likely to be called `talk`.
 **Failing loudly.** A signal that cannot be computed refuses the whole
 detection and nothing is proposed: loudness when the stream fills fewer than
 two windows, chroma novelty when it fills no more blocks than the kernel
-spans, and any signal whose values are not finite (samples that decode to
+spans or when the stream's rate leaves a pitch class without an FFT bin
+between `chroma_min_hz` and `chroma_max_hz` (a rate of a few hundred hertz), and any signal whose values are not finite (samples that decode to
 NaN, for example). More than 10,000 spans, which a claim cannot hold, is
 refused too.
 
@@ -212,8 +213,11 @@ produces evidence, so:
 - **Quiet spans.** V2 had no quiet class; the review application cut long
   quiet inside a span. Here a long quiet run is its own span.
 - **Exact classification.** Ranks and their mean are exact fractions, so a
-  span on a threshold is classed the same way on every machine. V2 rounded
-  them to three places. V2's `likely_song`, `likely_talk`, and `uncertain`
+  span exactly on a threshold is classed by the rule as written, not by
+  rounding. V2 rounded them to three places. The features being ranked are
+  still floating point, so their order, and with it a rank, can differ in the
+  last bit between numpy and FFT builds; that is why numpy's version is in
+  the run's software. V2's `likely_song`, `likely_talk`, and `uncertain`
   are `music`, `talk`, and `unknown`.
 - **Presets are evidence.** The `jam` and `show` values are V2's, written as
   integer milliseconds and decibels, and recorded as the run's parameters
