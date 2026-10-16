@@ -930,7 +930,11 @@ def make_handler(relay: Relay) -> type[BaseHTTPRequestHandler]:
                 if origin in config.origins:
                     self.send_header("Access-Control-Allow-Origin", origin)
                     self.send_header("Access-Control-Expose-Headers", "Accept-Ranges, Content-Range, Content-Length, ETag")
-                    self.send_header("Vary", "Origin")
+                # Always: the answer is cached for a year, and one made for a
+                # request without Origin (an audio element's) must not be
+                # reused for a listed origin's request, which needs the
+                # CORS headers.
+                self.send_header("Vary", "Origin")
                 self.send_header("Content-Type", derived.KINDS[kind].media_type)
                 self.send_header("Content-Length", str(last - first + 1))
                 if wanted is not None:

@@ -233,6 +233,11 @@ class MediaChecks(unittest.TestCase):
         _, headers, _ = self.get(harness, self.path("kept"), Origin=ORIGIN, Range="bytes=0-3")
         self.assertEqual(headers["Access-Control-Allow-Origin"], ORIGIN)
         self.assertIn("Content-Range", headers["Access-Control-Expose-Headers"])
+        # A year-long cached answer to a request without Origin (an audio
+        # element's) must not be reused for a listed origin's: it varies.
+        _, headers, _ = self.get(harness, self.path("kept"))
+        self.assertNotIn("Access-Control-Allow-Origin", headers)
+        self.assertIn("Origin", headers["Vary"])
         status, headers, _ = self.get(harness, self.path("kept"), method="OPTIONS", Origin=ORIGIN)
         self.assertEqual(status, 204)
         self.assertIn("Range", headers["Access-Control-Allow-Headers"])
