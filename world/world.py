@@ -55,7 +55,7 @@ PROJECTION_VERSION = 6
 # older records would lack what the addition projects.
 PROJECTION_REVISIONS = {6: 3}
 XSD = "http://www.w3.org/2001/XMLSchema#"
-UTC_INSTANT = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z\Z")
+UTC_INSTANT = re.compile(r"([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.([0-9]+))?Z\Z")
 DECIMAL = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?\Z")
 SPAN_CLASSES = {"music", "talk", "quiet", "unknown"}
 # Core-context terms that name a record's own fields or shape classes. D-15
@@ -760,12 +760,24 @@ def _pinned_claim_citing(ref: Any, records_by_revision: dict[str, dict[str, Any]
     return records_by_revision[ref["revision_id"]]
 
 
-def _instant_order(value: str) -> tuple[str, Any]:
-    """An RFC 3339 UTC instant as a comparable key; Door admits any number of
-    fractional digits, which ``datetime`` would not."""
+def _instant_order(value: Any) -> tuple[int, Any] | None:
+    """An RFC 3339 UTC instant as a comparable key, or None when it is not
+    one. Door admits any number of fractional digits, which ``datetime``
+    would not, and second 60, which it reads as the next minute's first
+    second; the key does the same, so World orders instants as Door does."""
+    from datetime import date
     from decimal import Decimal
-    whole, _, fraction = value[:-1].partition(".")
-    return whole, Decimal("0." + (fraction or "0"))
+    match = UTC_INSTANT.fullmatch(value) if isinstance(value, str) else None
+    if match is None:
+        return None
+    year, month, day, hour, minute, second = (int(group) for group in match.groups()[:6])
+    try:
+        days = date(year, month, day).toordinal()
+    except ValueError:
+        return None
+    if hour > 23 or minute > 59 or second > 60:
+        return None
+    return (days * 86400 + hour * 3600 + minute * 60 + second, Decimal("0." + (match.group(7) or "0")))
 
 
 def _project_derivation_claim(store: Store, archive_id: str, core_terms: dict[str, Any],
@@ -824,13 +836,13 @@ def _project_derivation_claim(store: Store, archive_id: str, core_terms: dict[st
         if not isinstance(payload, dict) or set(payload) != {"method", "software", "started_at", "ended_at"}:
             raise ProjectionError(f"derivation run {revision} has an invalid closed payload")
         started, ended, software = payload["started_at"], payload["ended_at"], payload["software"]
-        if not all(isinstance(value, str) and UTC_INSTANT.fullmatch(value) for value in (started, ended)) \
-                or _instant_order(ended) < _instant_order(started):
+        start_key, end_key = _instant_order(started), _instant_order(ended)
+        if start_key is None or end_key is None or end_key < start_key:
             raise ProjectionError(f"derivation run {revision} needs ordered UTC instants")
-        if not isinstance(software, list) or any(
+        if not isinstance(software, list) or len(software) > 32 or any(
                 not isinstance(item, dict) or set(item) != {"name", "version"}
                 or not all(isinstance(item[key], str) and item[key] for key in item) for item in software):
-            raise ProjectionError(f"derivation run {revision} needs software as name and version pairs")
+            raise ProjectionError(f"derivation run {revision} needs software as at most 32 name and version pairs")
         parameters = [ref for ref in refs if ref.get("role") == "parameters"]
         if len(parameters) > 1 or any(ref.get("role") not in {"used", "parameters"} for ref in refs):
             raise ProjectionError(f"derivation run {revision} may pin only inputs and one parameters Artifact")
@@ -931,6 +943,11 @@ def _project_derivation_claim(store: Store, archive_id: str, core_terms: dict[st
                 or not isinstance(payload["scale"], str) or not payload["scale"] \
                 or payload["direction"] not in {"higher_is_closer", "lower_is_closer"}:
             raise ProjectionError(f"work match {revision} has an invalid closed payload")
+        # Door's distinctness rule: the occurrence and every corpus entry name
+        # different objects (a selection is outside the rule).
+        distinct = [ref.get("id") for ref in refs if ref.get("role") in {"occurrence", "corpus"}]
+        if len(distinct) != len(set(distinct)):
+            raise ProjectionError(f"work match {revision} occurrence and corpus references must name different objects")
         [audio] = compared
         if audio["role"] == "occurrence":
             _pinned_claim_citing(audio, records_by_revision, "archive.claim/song_occurrence", "2", revision)
@@ -944,8 +961,6 @@ def _project_derivation_claim(store: Store, archive_id: str, core_terms: dict[st
                 _add(store, claim_ref, claim_ref, term(contract, "work"), _record_uri(archive_id, ref["revision_id"]))
             elif ref["role"] == "corpus":
                 _pinned_claim_citing(ref, records_by_revision, "archive.claim/song_occurrence", "2", revision)
-                if ref["id"] == audio["id"]:
-                    raise ProjectionError(f"work match {revision} compares an occurrence with itself")
                 _add(store, claim_ref, claim_ref, term(contract, "corpus"), _record_uri(archive_id, ref["revision_id"]))
             elif ref["role"] == "parameters":
                 _add(store, claim_ref, claim_ref, term(contract, "parameters"), record(ref, "artifact"))

@@ -329,6 +329,22 @@ class DerivationRefusalTests(unittest.TestCase):
         self.record("run-probe")["payload"]["started_at"] = "2026-01-01T00:00:00+01:00"
         self.refused("ordered UTC instants")
 
+    def test_a_run_on_a_day_the_calendar_lacks(self):
+        # Door's date-time format refuses February 30; the pattern alone
+        # would not.
+        payload = self.record("run-probe")["payload"]
+        payload["started_at"], payload["ended_at"] = "2026-02-30T00:00:00Z", "2026-03-01T00:00:00Z"
+        self.refused("ordered UTC instants")
+
+    def test_a_run_at_hour_24(self):
+        payload = self.record("run-probe")["payload"]
+        payload["started_at"], payload["ended_at"] = "2025-12-31T24:00:00Z", "2026-01-01T00:00:01Z"
+        self.refused("ordered UTC instants")
+
+    def test_a_run_with_more_than_32_programs(self):
+        self.record("run-detect")["payload"]["software"] = [{"name": "x", "version": "1"}] * 33
+        self.refused("at most 32 name and version pairs")
+
     def test_a_run_with_malformed_software(self):
         self.record("run-detect")["payload"]["software"] = [{"name": "x"}]
         self.refused("name and version pairs")
@@ -421,7 +437,14 @@ class DerivationRefusalTests(unittest.TestCase):
 
     def test_a_match_whose_corpus_holds_its_occurrence(self):
         self.pin_to(self.ref("work-match-occurrence", "corpus"), "occurrence-v2")
-        self.refused("compares an occurrence with itself")
+        self.refused("must name different objects")
+
+    def test_a_match_whose_corpus_names_one_occurrence_twice(self):
+        # Door refuses a repeated corpus entry under the same distinctness
+        # rule; a selection match has no occurrence to collide with.
+        refs = self.record("work-match-selection")["refs"]
+        refs.append(dict(next(ref for ref in refs if ref["role"] == "corpus")))
+        self.refused("must name different objects")
 
     def test_a_match_with_a_score_that_is_not_a_decimal(self):
         self.record("work-match-occurrence")["payload"]["score"] = "1e3"
@@ -439,6 +462,17 @@ class DerivationRefusalTests(unittest.TestCase):
         self.pin_to(self.ref("alignment-v2", "run"), "title")
         self.refused("derivation_run version 1")
 
+    def test_an_alignment_version_2_without_a_run_still_projects(self):
+        # The run is optional in version 2 (ADR 0067): skipping its check is
+        # not a refusal, and the anchors are projected all the same.
+        record = self.record("alignment-v2")
+        record["refs"] = [ref for ref in record["refs"] if ref["role"] != "run"]
+        self.assertEqual(sorted(ref["role"] for ref in record["refs"]), ["aligned", "reference"])
+        projection = build_projection(self.export)
+        graph = f"{self.export['archive_id']}#revision={record['revision_id']}"
+        anchors = rows(query(projection, f"SELECT ?n WHERE {{ GRAPH <{graph}> {{ <{graph}> <{ARCH}anchors> ?n }} }}"))
+        self.assertEqual(len(anchors), len(record["payload"]["anchors"]))
+
 
 class InstantOrderTests(unittest.TestCase):
     def test_fractions_of_any_length_compare_as_numbers(self):
@@ -446,6 +480,21 @@ class InstantOrderTests(unittest.TestCase):
         self.assertLess(order("2026-01-01T00:00:01.25Z"), order("2026-01-01T00:00:01.5Z"))
         self.assertLess(order("2026-01-01T00:00:01Z"), order("2026-01-01T00:00:01.0000000001Z"))
         self.assertEqual(order("2026-01-01T00:00:01Z"), order("2026-01-01T00:00:01.000Z"))
+
+    def test_second_60_is_the_next_minutes_first_second_as_door_reads_it(self):
+        # Door admits a leap second and orders it as the following second, so
+        # a run from 12:00:60 to 12:01:00 is ordered, not backwards.
+        order = world_module._instant_order
+        self.assertEqual(order("2016-12-31T23:59:60Z"), order("2017-01-01T00:00:00Z"))
+        self.assertLess(order("2026-01-01T12:00:59.9Z"), order("2026-01-01T12:00:60Z"))
+
+    def test_what_is_not_an_instant_has_no_order(self):
+        order = world_module._instant_order
+        self.assertIsNotNone(order("2024-02-29T23:59:59Z"))
+        for value in ("2026-02-29T00:00:00Z", "2026-13-01T00:00:00Z", "2026-01-01T24:00:00Z",
+                      "2026-01-01T00:60:00Z", "2026-01-01T00:00:61Z", "2026-01-01T00:00:00", 20260101, None):
+            with self.subTest(value=value):
+                self.assertIsNone(order(value))
 
 
 if __name__ == "__main__":
