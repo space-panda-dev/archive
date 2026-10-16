@@ -9,15 +9,20 @@ quantification for cover song identification", in numpy and scipy:
    each peak's squared magnitude spread over the twelve pitch classes (bin 0
    is A at the reference frequency) with a squared-cosine window one
    semitone wide, normalised to a maximum of one;
-3. the optimal transposition index: the circular shift of the reference's
-   mean profile that best agrees with the query's, applied to every reference
-   frame, so a performance in another key compares as the same song;
-4. consecutive frames stacked into one vector, and a binary cross-recurrence
+3. each profile rounded to integer units (`profile_units` per unit), so
+   everything after it is exact integer arithmetic: the marks below depend on
+   no linear-algebra library, rounding mode, or thread count, none of which a
+   run records;
+4. the optimal transposition index: the circular shift of the reference's
+   summed profile that best agrees with the query's, applied to every
+   reference frame, so a performance in another key compares as the same song;
+5. consecutive frames stacked into one vector, and a binary cross-recurrence
    matrix that marks a pair of vectors when each is among the other's
-   nearest fraction of neighbours (by row and by column);
-5. Qmax, the length of the longest locally aligned path through that matrix,
+   nearest fraction of neighbours (by row and by column), by exact squared
+   distance;
+6. Qmax, the length of the longest locally aligned path through that matrix,
    with gap penalties, computed in exact integer units;
-6. the score `sqrt(min(N_query, N_reference)) / Qmax`, where N counts stacked
+7. the score `sqrt(min(N_query, N_reference)) / Qmax`, where N counts stacked
    vectors, written as exact decimal text rounded half to even. Lower is
    closer; a pair with no aligned path (Qmax 0) has no score.
 
@@ -66,6 +71,7 @@ SETTINGS: dict[str, Any] = {
     "reference_hz": 440,
     "pitch_classes": 12,
     "pitch_window_semitones": "1",
+    "profile_units": 65536,
     "stack_frames": 9,
     "neighbour_fraction": "0.095",
     "gap_onset": "0.5",
@@ -225,14 +231,17 @@ def profiles(audio: numpy.ndarray) -> numpy.ndarray:
     return numpy.divide(result, peak, out=numpy.zeros_like(result), where=peak > 0)
 
 
+def quantize(p: numpy.ndarray) -> numpy.ndarray:
+    """Profiles in integer units, rounded half to even. What follows is exact."""
+    return numpy.rint(numpy.asarray(p, dtype=numpy.float64) * SETTINGS["profile_units"]).astype(numpy.int64)
+
+
 def transposition(query: numpy.ndarray, reference: numpy.ndarray) -> int:
     """The shift of the reference's pitch classes that best agrees with the
-    query's, over the mean profiles; ties go to the smallest shift."""
-    def mean(p: numpy.ndarray) -> numpy.ndarray:
-        m = p.mean(axis=0)
-        return m / m.max() if m.max() > 0 else m
-    q, r = mean(query), mean(reference)
-    agreement = [float(numpy.dot(q, numpy.roll(r, shift))) for shift in range(len(q))]
+    query's, over the profiles summed in integer units; ties go to the
+    smallest shift."""
+    q, r = quantize(query).sum(axis=0), quantize(reference).sum(axis=0)
+    agreement = [int(numpy.dot(q, numpy.roll(r, shift))) for shift in range(len(q))]
     return int(numpy.argmax(agreement))
 
 
@@ -245,11 +254,12 @@ def stack(p: numpy.ndarray) -> numpy.ndarray:
 
 def cross_recurrence(query: numpy.ndarray, reference: numpy.ndarray) -> numpy.ndarray:
     """The binary matrix: query vectors by rows, transposed reference vectors
-    by columns, marking mutual nearest neighbours."""
+    by columns, marking mutual nearest neighbours. Distances are squared
+    Euclidean distances of integer vectors, computed exactly in int64 (no
+    BLAS: numpy multiplies integer matrices itself), so ties are exact."""
     shifted = numpy.roll(reference, transposition(query, reference), axis=1)
-    a, b = stack(query), stack(shifted)
-    squared = (a * a).sum(axis=1)[:, None] + (b * b).sum(axis=1)[None, :] - 2 * (a @ b.T)
-    distance = numpy.sqrt(numpy.maximum(squared, 0))
+    a, b = stack(quantize(query)), stack(quantize(shifted))
+    distance = (a * a).sum(axis=1)[:, None] + (b * b).sum(axis=1)[None, :] - 2 * (a @ b.T)
     fraction = Decimal(SETTINGS["neighbour_fraction"])
     k_row = max(1, math.ceil(fraction * distance.shape[1]))
     k_column = max(1, math.ceil(fraction * distance.shape[0]))

@@ -129,8 +129,15 @@ The method is `archive-enrich/chroma-oti-qmax` version 1, made by
 cover-song measure of Serrà, Serra, and Andrzejak (2009) in numpy and scipy:
 pitch-class profiles of spectral peaks, the optimal transposition index, a
 binary cross-recurrence matrix of stacked frames that marks mutual nearest
-neighbours, and the Qmax local alignment with gap penalties, computed in exact
-integer units. The score is `sqrt(min(N_query, N_reference)) / Qmax`, rounded
+neighbours, and the Qmax local alignment with gap penalties. Each profile is
+rounded to integer units (`profile_units`) before the transposition, so the
+distances, the marks, and Qmax are exact integer arithmetic: they depend on
+no linear-algebra library (the BLAS behind numpy differs between a pip wheel
+and the flake), thread count, or summation order, none of which a run
+records. The profiles themselves are floating-point and depend on the numpy
+and scipy versions the run records and, in the last bits, on the machine; a
+value within a rounding error of half a unit can round the other way elsewhere.
+The score is `sqrt(min(N_query, N_reference)) / Qmax`, rounded
 half to even to six places; lower is closer, and a pair with no aligned path
 has no score. `match.py <query> <reference>...` scores whole files with no
 archive involved.

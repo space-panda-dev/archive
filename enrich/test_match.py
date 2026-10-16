@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
+import json
+import math
 import unittest
+from decimal import Decimal
 from fractions import Fraction
 
 import numpy
@@ -61,6 +66,19 @@ class Scores(unittest.TestCase):
         self.assertEqual(match.qmax(skipping), Fraction(3))
         self.assertEqual(match.qmax(numpy.zeros((3, 3), dtype=bool)), Fraction(0))
 
+    def test_marks_are_exact_on_tied_distances(self) -> None:
+        """Profiles on a grid of tenths tie often; floating-point distances
+        (a BLAS product) break those ties by rounding, which no run records.
+        The marks must equal an exact computation in rational arithmetic."""
+        rng = numpy.random.default_rng(0)
+        for trial in range(8):
+            query = rng.integers(0, 4, (24, 12)) / 10
+            reference = rng.integers(0, 4, (27, 12)) / 10
+            expected = exact_marks(query, reference, match.transposition(query, reference))
+            # Anchor: the inputs are full of ties and both kinds of cell occur.
+            self.assertTrue(expected.any() and not expected.all())
+            self.assertTrue(numpy.array_equal(match.cross_recurrence(query, reference), expected), trial)
+
     def test_no_aligned_path_has_no_score(self) -> None:
         self.assertIsNone(match.score_text(100, Fraction(0)))
 
@@ -84,6 +102,24 @@ class Scores(unittest.TestCase):
             match.profiles(numpy.zeros(RATE))
         with self.assertRaisesRegex(match.MatchError, "cannot be stacked"):
             match.stack(numpy.zeros((match.SETTINGS["stack_frames"] - 1, 12)))
+
+
+def exact_marks(query, reference, shift: int):
+    """The cross-recurrence matrix in Python integers: each profile value in
+    rounded units, stacked, squared distances, and mutual nearest neighbours."""
+    units, m = match.SETTINGS["profile_units"], match.SETTINGS["stack_frames"]
+
+    def stacked(p):
+        rows = [[round(Fraction(str(x)) * units) for x in row] for row in p]
+        return [sum(rows[i:i + m], []) for i in range(len(rows) - m + 1)]
+    a, b = stacked(query), stacked(numpy.roll(reference, shift, axis=1))
+    distance = [[sum((x - y) ** 2 for x, y in zip(u, v)) for v in b] for u in a]
+    fraction = Fraction(match.SETTINGS["neighbour_fraction"])
+    k_row, k_column = max(1, math.ceil(fraction * len(b))), max(1, math.ceil(fraction * len(a)))
+    by_row = [sorted(row)[k_row - 1] for row in distance]
+    by_column = [sorted(row[j] for row in distance)[k_column - 1] for j in range(len(b))]
+    return numpy.array([[d <= by_row[i] and d <= by_column[j] for j, d in enumerate(row)]
+                        for i, row in enumerate(distance)])
 
 
 def adapter_decimal(text: str):
@@ -148,6 +184,22 @@ class Decoding(unittest.TestCase):
         garbage.write_bytes(b"not audio at all")
         with self.assertRaisesRegex(match.MatchError, "could not read"):
             match.stream_rate(garbage, support.FFPROBE)
+
+    def test_the_standalone_tool_scores_whole_files(self) -> None:
+        other = support.write_wav(self.tmp / "other.wav", support.tune_samples(support.OTHER_TUNE, 22050), 22050)
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            self.assertEqual(match.main([str(self.wav), str(self.wav), str(other)]), 0)
+        answer = json.loads(printed.getvalue())
+        self.assertEqual((answer["method"]["id"], answer["direction"]), (match.METHOD_ID, "lower_is_closer"))
+        scores = {path: Decimal(score["score"]) for path, score in answer["scores"].items()}
+        self.assertNotEqual(scores[str(self.wav)], scores[str(other)])
+        self.assertLess(scores[str(self.wav)], scores[str(other)])
+        failed = io.StringIO()
+        with contextlib.redirect_stderr(failed):
+            self.assertEqual(match.main([str(self.wav), str(self.tmp / "absent.wav")]), 1)
+            self.assertEqual(match.main([str(self.wav)]), 2)
+        self.assertEqual(json.loads(failed.getvalue().splitlines()[0])["status"], "failed")
 
     def test_programs_that_cannot_run_or_fail_are_refused(self) -> None:
         missing = str(self.tmp / "no-such-program")
