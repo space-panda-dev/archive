@@ -175,7 +175,7 @@ These are boundaries for later phases, not decisions made by this ledger.
 | Contract catalog | rewrite | Ported | Archive 0.0.2 verifies and copies the exact five specification-owned bundles while retaining the immutable version 1 bytes (D-6, D-8, ADR 0030); 0.0.5 verifies and copies all twenty-four, keeping every earlier bundle's bytes (D-13, D-14); 0.0.7 copies thirty (D-15). |
 | `archive init` | rewrite | Ported | Initialization creates the accepted layout, identities, local resources, bootstrap records, Git repository, and git-annex repository in one archival commit (D-1, D-2, D-7, D-10). |
 | `door admit` | rewrite | In progress | Dry-run and persistent modes enforce exact proposals, heads, one lock, one commit, and quiet retry, including content; persistent success still predates ADR 0031's power-loss contract (D-4, ADR 0023). |
-| `door transition` | rewrite | Ported | Dry-run and persistent modes dispatch exact retire/destroy contracts, replay immutable history, and enforce authorization, heads, state, durable v2 order, one lock, one commit, and quiet retry (D-9, ADR 0030, INV-2). |
+| `door transition` | rewrite | Ported | Dry-run and persistent modes dispatch exact retire/destroy contracts, replay immutable history, and enforce authorization, heads, state, durable v2 order, one lock, one commit, and quiet retry (D-9, ADR 0030, INV-2). The specification upgrade of 0.0.7 is installed but refused as unsupported until its dispatch exists (D-15, ADR 0068). |
 
 ## Reading modules and contracts
 
