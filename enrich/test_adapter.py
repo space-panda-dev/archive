@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -180,6 +181,74 @@ class Proposals(unittest.TestCase):
         commit = support.head(staging.path)
         staging.stage(data, name)
         self.assertEqual(support.head(staging.path), commit)
+
+    def test_a_staged_file_has_the_key_of_its_digest_and_its_source_is_only_read(self) -> None:
+        source = self.tmp / "input.bin"
+        source.write_bytes(b"recorded bytes")
+        os.chmod(source, 0o444)
+        def state() -> tuple:
+            # The staged copy shares no inode with the source (st_nlink).
+            status = source.stat()
+            return status.st_mtime_ns, status.st_mode, status.st_nlink, source.read_bytes()
+
+        before = state()
+        digest, size = adapter.digest_of(source.read_bytes()), source.stat().st_size
+        staging = self.staging()
+        key = staging.stage_file(source, digest, size, "x.wav")
+        self.assertEqual(key, f"SHA256E-s{size}--{digest.removeprefix('sha256:')}.wav")
+        self.assertEqual(state(), before)
+        # Staging it again writes nothing.
+        commit = support.head(staging.path)
+        self.assertEqual(staging.stage_file(source, digest, size, "x.wav"), key)
+        self.assertEqual(support.head(staging.path), commit)
+
+    def test_a_file_that_is_not_its_hashed_content_is_refused_and_not_staged(self) -> None:
+        hashed = b"what was hashed"
+        source = self.tmp / "changed.bin"
+        source.write_bytes(b"changed after hashing")
+        staging = self.staging()
+        staging.stage(b"{}", "seed.json")
+        commit = support.head(staging.path)
+        with self.assertRaisesRegex(adapter.AdapterError, "no longer the content that was hashed"):
+            staging.stage_file(source, adapter.digest_of(hashed), len(hashed), "y.wav")
+        # Nothing was committed or left behind under the name...
+        self.assertEqual(support.head(staging.path), commit)
+        self.assertEqual(sorted(p.name for p in staging.path.iterdir()), [".git", "seed.json"])
+        # ...so the right bytes are staged under it afterwards.
+        source.write_bytes(hashed)
+        self.assertEqual(staging.stage_file(source, adapter.digest_of(hashed), len(hashed), "y.wav"),
+                         staging.key_for(adapter.digest_of(hashed), len(hashed), "y.wav"))
+
+    def test_a_source_that_cannot_be_read_is_an_adapter_error(self) -> None:
+        staging = self.staging()
+        staging.stage(b"{}", "seed.json")
+        commit = support.head(staging.path)
+        with self.assertRaisesRegex(adapter.AdapterError, "could not be copied"):
+            staging.stage_file(self.tmp / "gone.wav", adapter.digest_of(b"x"), 1, "gone.wav")
+        self.assertEqual(support.head(staging.path), commit)
+        self.assertEqual(sorted(p.name for p in staging.path.iterdir()), [".git", "seed.json"])
+
+    def test_a_staged_key_other_than_the_stated_one_is_refused(self) -> None:
+        # The bytes match their digest, but the repository keys them with
+        # another backend: the key check after the add still refuses.
+        staging = self.staging()
+        staging.stage(b"{}", "seed.json")
+        subprocess.run(["git", "config", "annex.backend", "SHA256"], cwd=staging.path, check=True)
+        source = self.tmp / "same.bin"
+        source.write_bytes(b"recorded")
+        with self.assertRaisesRegex(adapter.AdapterError, "not the key"):
+            staging.stage_file(source, adapter.digest_of(b"recorded"), len(b"recorded"), "z.wav")
+
+    def test_a_named_remote_is_added_under_its_name(self) -> None:
+        staging = adapter.Staging(self.tmp / "named", self.env["ARCHIVE_GIT_EXECUTABLE"],
+                                  self.env["ARCHIVE_GIT_ANNEX_EXECUTABLE"], self.env, remote="capture-staging")
+        staging.stage(b"{}", "seed.json")
+        self.assertEqual(staging.remote_name(self.root, create=True), "capture-staging")
+        remotes = subprocess.run(["git", "remote"], cwd=self.root, capture_output=True, text=True).stdout.split()
+        self.assertIn("capture-staging", remotes)
+        self.assertNotIn(adapter.STAGING_REMOTE, remotes)
+        # The default staging of another tool finds the same repository by its path.
+        self.assertEqual(self.staging(self.tmp / "named").remote_name(self.root, create=True), "capture-staging")
 
     def test_a_staging_repository_with_another_backend_is_refused(self) -> None:
         staging = self.staging()

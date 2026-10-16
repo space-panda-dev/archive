@@ -340,7 +340,8 @@ class MediaChecks(unittest.TestCase):
         self.assertEqual(asked.call_count, 2)
 
     def commit_an_entity(self) -> None:
-        proposal = entity_proposal(self.manifest["archive_id"], f"media-{uuid.uuid4()}", agent=self.operator)
+        proposal = entity_proposal(self.manifest["archive_id"], f"media-{uuid.uuid4()}", agent=self.operator,
+                                   spec=self.manifest["spec"])
         directory = self.work / "proposal"
         (directory / "records").mkdir(parents=True)
         (directory / "manifest.json").write_text(json.dumps(proposal["manifest"]))

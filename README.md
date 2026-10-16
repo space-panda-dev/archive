@@ -240,7 +240,8 @@ relay/               HTTP for the operator's browser: Door's service, World's qu
 world/               experimental, rebuildable semantic projection
 world/projection/    what each World projection version emits: SHACL shapes and vocabulary
 fixture/             published synthetic records and the builder that admits them through Door
-enrich/              enrichment tools, the adapter that proposes their runs to Door, derived media
+enrich/              enrichment tools, the adapter that proposes their runs to Door, and derived media
+capture/             the native importer of recorder files: grammars, sessions, and the enrichment chain
 ```
 
 ## Contributing

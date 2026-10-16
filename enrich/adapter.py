@@ -296,13 +296,15 @@ class Staging:
     configured remote (ADR 0023). The remote's configuration in the archive is
     operational, not evidence; the bytes count only once Door admits them."""
 
-    def __init__(self, path: Path, git: str, annex: str, env: dict[str, str] | None = None):
+    def __init__(self, path: Path, git: str, annex: str, env: dict[str, str] | None = None,
+                 remote: str = STAGING_REMOTE):
         self.path = Path(path).absolute()
-        self.git, self.annex, self.env = git, annex, env
+        self.git, self.annex, self.env, self.remote = git, annex, env, remote
 
     def remote_name(self, archive_root: Path, create: bool) -> str:
         """The archive's remote for this repository: an existing remote whose
-        URL is this path, else `enrich-staging`, added when `create` is set."""
+        URL is this path, else this staging's remote name (`enrich-staging`
+        by default), added when `create` is set."""
         listed = subprocess.run([self.git, "config", "--get-regexp", r"^remote\..*\.url$"], cwd=archive_root,
                                 env=self.env, capture_output=True, text=True)
         if listed.returncode not in (0, 1):  # 1 means no remote is configured
@@ -315,37 +317,80 @@ class Staging:
             names[name] = url
             if os.path.realpath(url) == mine:
                 return name
-        if STAGING_REMOTE in names:
-            raise AdapterError(f"the archive's remote {STAGING_REMOTE} is {names[STAGING_REMOTE]}, "
+        if self.remote in names:
+            raise AdapterError(f"the archive's remote {self.remote} is {names[self.remote]}, "
                                f"not the staging repository {self.path}")
         if create:
-            _run([self.git, "remote", "add", STAGING_REMOTE, str(self.path)], archive_root,
+            _run([self.git, "remote", "add", self.remote, str(self.path)], archive_root,
                  "adding the staging remote", self.env)
-        return STAGING_REMOTE
+        return self.remote
 
     def expected_key(self, data: bytes, filename: str) -> str:
         """git-annex's SHA256E key for these bytes under this file name."""
-        extension = "".join(Path(filename).suffixes)
-        return f"SHA256E-s{len(data)}--{hashlib.sha256(data).hexdigest()}{extension}"
+        return self.key_for(digest_of(data), len(data), filename)
 
-    def stage(self, data: bytes, filename: str) -> str:
-        """Add the bytes to the repository, creating it when absent, and
-        return their annex key. Staged bytes already present write nothing."""
+    def key_for(self, digest: str, size: int, filename: str) -> str:
+        """git-annex's SHA256E key for content of this digest and size under
+        this file name."""
+        extension = "".join(Path(filename).suffixes)
+        return f"SHA256E-s{size}--{digest.removeprefix('sha256:')}{extension}"
+
+    def _repository(self) -> None:
         if not self.path.exists() or not any(self.path.iterdir()):
             self.path.mkdir(parents=True, exist_ok=True)
             _run([self.git, "init", "-q"], self.path, "git init for the staging repository", self.env)
             _run([self.annex, "init", "-q", "enrich staging"], self.path, "git-annex init", self.env)
         elif not (self.path / ".git").exists():
             raise AdapterError(f"{self.path} is neither empty nor a git repository")
+
+    def _added(self, filename: str, expected: str) -> str:
+        key = _run([self.annex, "lookupkey", filename], self.path, "git-annex lookupkey", self.env).strip()
+        if key != expected:
+            raise AdapterError(f"staged {filename} has key {key}, not the key of the proposed bytes")
+        return key
+
+    def stage(self, data: bytes, filename: str) -> str:
+        """Add the bytes to the repository, creating it when absent, and
+        return their annex key. Staged bytes already present write nothing."""
+        self._repository()
         target = self.path / filename
         if not target.exists():
             target.write_bytes(data)
             _run([self.annex, "add", "-q", filename], self.path, "git-annex add", self.env)
             _run([self.git, "commit", "-q", "-m", f"Stage {filename}"], self.path, "staging commit", self.env)
-        key = _run([self.annex, "lookupkey", filename], self.path, "git-annex lookupkey", self.env).strip()
-        if key != self.expected_key(data, filename):
-            raise AdapterError(f"staged {filename} has key {key}, not the key of the proposed bytes")
-        return key
+        return self._added(filename, self.expected_key(data, filename))
+
+    def stage_file(self, source: Path, digest: str, size: int, filename: str) -> str:
+        """Copy a file into the repository and add it, as `stage` does for
+        bytes, without holding the file in memory. The source is only read.
+        The key must be that of `digest` and `size`, so a file that changed
+        after it was hashed is refused, never staged as the hashed content.
+        The copy is hashed before it is added: refused bytes are removed and
+        never committed, so a later run with the right bytes is not blocked
+        by a wrong file already staged under the name."""
+        self._repository()
+        target = self.path / filename
+        if not os.path.lexists(target):
+            partial = self.path / f".{filename}.partial"
+            try:
+                hasher, copied = hashlib.sha256(), 0
+                with open(source, "rb") as reading, open(partial, "wb") as writing:
+                    for block in iter(lambda: reading.read(1 << 20), b""):
+                        hasher.update(block)
+                        copied += len(block)
+                        writing.write(block)
+                if ("sha256:" + hasher.hexdigest(), copied) != (digest, size):
+                    raise AdapterError(f"{source} is no longer the content that was hashed ({digest}, "
+                                       f"{size} bytes); nothing was staged")
+                os.replace(partial, target)
+            except OSError as exc:
+                raise AdapterError(f"{source} could not be copied into the staging repository: {exc}") from exc
+            finally:
+                if os.path.lexists(partial):
+                    os.unlink(partial)
+            _run([self.annex, "add", "-q", filename], self.path, "git-annex add", self.env)
+            _run([self.git, "commit", "-q", "-m", f"Stage {filename}"], self.path, "staging commit", self.env)
+        return self._added(filename, self.key_for(digest, size, filename))
 
 
 # -- the proposal ------------------------------------------------------------

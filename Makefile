@@ -29,4 +29,5 @@ test-python:
 	  $(PYTHON) -m unittest discover -s shadow -p "test_*.py" && \
 	  $(PYTHON) -m unittest discover -s migration -p "test_*.py" && \
 	  $(PYTHON) -m unittest discover -s fixture -p "test_*.py" && \
-	  $(PYTHON) -m unittest discover -s enrich -p "test_*.py"'
+	  $(PYTHON) -m unittest discover -s enrich -p "test_*.py" && \
+	  $(PYTHON) -m unittest discover -s capture -p "test_*.py"'
