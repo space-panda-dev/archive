@@ -28,8 +28,10 @@
           '' + gitIdentity;
         });
 
-      # World, the relay, and their tests. pyshacl and owlrl are not in
-      # nixpkgs; these are the newest releases that accept its rdflib.
+      # World, the relay, enrich, capture, and their tests. pyshacl and owlrl
+      # are not in nixpkgs; these are the newest releases that accept its rdflib.
+      # numpy is the span detector's, the work matcher's, and derived
+      # media's; scipy the matcher's (enrich/requirements.txt).
       pythonFor = pkgs: pkgs.python3.withPackages (ps:
         let
           wheel = { pname, version, sha256, dependencies }: ps.buildPythonPackage {
@@ -52,31 +54,36 @@
             sha256 = "d7e0c21b25e948bb643dbc5db6258da64a90a8ac89055c1fe562b469031072aa";
             dependencies = [ ps.rdflib owlrl ps.packaging ps.prettytable ];
           };
-        in [ ps.pyoxigraph ps.rdflib ps.jsonschema pyshacl ]);
+        in [ ps.pyoxigraph ps.rdflib ps.jsonschema pyshacl ps.numpy ps.scipy ]);
 
-      # The Python parts and commands for World, the relay, and the fixture.
+      # The Python parts and commands for World, the relay, enrichment, and
+      # the fixture. The relay reads enrich/derived.py, the derived-media layout.
       toolsFor = pkgs:
         let
           archive = archiveFor pkgs;
           python = pythonFor pkgs;
         in pkgs.runCommand "archive-tools" { nativeBuildInputs = [ pkgs.makeWrapper ]; } ''
           mkdir -p $out/share/archive $out/bin
-          cp -r ${self}/world ${self}/relay ${self}/fixture ${self}/spec ${self}/LICENSES $out/share/archive/
+          cp -r ${self}/world ${self}/relay ${self}/fixture ${self}/enrich ${self}/capture ${self}/spec ${self}/LICENSES $out/share/archive/
           chmod -R u+w $out/share/archive
-          rm -f $out/share/archive/fixture/test_*.py
-          rm -rf $out/share/archive/world/tests $out/share/archive/relay/tests
+          rm -f $out/share/archive/fixture/test_*.py $out/share/archive/enrich/test_*.py $out/share/archive/enrich/support.py \
+            $out/share/archive/capture/test_*.py
+          rm -rf $out/share/archive/world/tests $out/share/archive/relay/tests $out/share/archive/enrich/tests
           wrap() {
             makeWrapper ${python}/bin/python3 $out/bin/$1 \
               --add-flags $out/share/archive/$2 \
-              --prefix PATH : ${pkgs.lib.makeBinPath [ archive pkgs.git pkgs.git-annex ]} \
+              --prefix PATH : ${pkgs.lib.makeBinPath [ archive pkgs.git pkgs.git-annex pkgs.ffmpeg-headless ]} \
               --set-default ARCHIVE_GIT_EXECUTABLE ${pkgs.git}/bin/git \
               --set-default ARCHIVE_GIT_ANNEX_EXECUTABLE ${pkgs.git-annex}/bin/git-annex
           }
           wrap world world/world.py
           wrap world-conformance world/conformance.py
           wrap relay relay/relay.py
+          wrap enrich-media enrich/media.py
           wrap archive-fixture fixture/build.py
           wrap archive-fixture-serve fixture/serve.py
+          wrap enrich enrich/enrich.py
+          wrap capture capture/capture.py
         '';
     in
     {
@@ -146,7 +153,7 @@
           # Every Python suite, against the Door and Archive built above;
           # a missing binary fails rather than skips.
           python = pkgs.runCommand "archive-python-tests"
-            { nativeBuildInputs = [ python archive pkgs.git pkgs.git-annex ]; } ''
+            { nativeBuildInputs = [ python archive pkgs.git pkgs.git-annex pkgs.ffmpeg-headless ]; } ''
             cp -r ${self} source
             chmod -R u+w source
             cd source
@@ -158,9 +165,12 @@
             export ARCHIVE_GIT_ANNEX_EXECUTABLE=${pkgs.git-annex}/bin/git-annex
             python -m unittest discover -s world/tests
             python -m unittest discover -s relay/tests
+            python -m unittest discover -s enrich/tests
             python -m unittest discover -s shadow -p 'test_*.py'
             python -m unittest discover -s migration -p 'test_*.py'
             python -m unittest discover -s fixture -p 'test_*.py'
+            python -m unittest discover -s enrich -p 'test_*.py'
+            python -m unittest discover -s capture -p 'test_*.py'
             touch $out
           '';
         });
@@ -177,6 +187,7 @@
               haskell.ghc
               pkgs.git
               pkgs.git-annex
+              pkgs.ffmpeg-headless
               pkgs.perl
               (pythonFor pkgs)
               pkgs.which

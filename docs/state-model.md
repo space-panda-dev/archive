@@ -24,7 +24,10 @@ them unless their behaviour actually differs.
 ## Regenerable state
 
 Loss costs time and computation, not history. Examples: indexes, query
-databases, the "current" projection, views, caches, thumbnails, World's store.
+databases, the "current" projection, views, caches, thumbnails, World's store,
+and the derived-media root of waveform peaks and listening copies
+([ADR 0069](decisions/0069-derived-media.md)), which `enrich/media.py` makes
+again from the content.
 
 Regenerable means rebuildable in principle, not cheaply: rebuilding World may
 take days and need outside data. Regenerable state never changes through Door
@@ -34,6 +37,11 @@ and is never the only copy of anything above.
 
 Bookkeeping a program keeps to do its job: routine verification results, plans
 in progress, leases, retry counts. It belongs to that program and can be lost.
+The staging repositories that `enrich/` and `capture import` add content to
+before proposing it are operational too: Door copies what it admits into the
+archive, and content a failed admission left staged is only a copy of its
+source ([ADR 0023](decisions/0023-admission-and-staging.md)). A recorder
+card is a source, not staging: it is cleared only by the operator.
 A policy may be evaluated millions of times without writing anything; only a
 consequential transition leaves evidence.
 
@@ -73,7 +81,7 @@ answer, not a disaster-recovery design.
 |---|---|---|
 | Door | proposals in flight, staging | every recorded transition |
 | World | its store and indexes | everything it was built from; rebuilding costs time and perhaps outside downloads |
-| Enrichment | caches, intermediate output | admitted results; the rest is recomputed |
+| Enrichment | caches, intermediate output, derived media | admitted results and the content; the rest is recomputed |
 | Annotation | application state, drafts | accepted annotations |
 | Review | application state, queues | recorded assessments |
 | Policy | evaluations, the "current" projection | every policy revision |

@@ -53,7 +53,19 @@ PROJECTION_VERSION = 6
 # build writes, so each addition raises the version's revision. A generation
 # built at an earlier revision is rebuilt in full rather than extended, or its
 # older records would lack what the addition projects.
-PROJECTION_REVISIONS = {6: 2}
+PROJECTION_REVISIONS = {6: 3}
+XSD = "http://www.w3.org/2001/XMLSchema#"
+UTC_INSTANT = re.compile(r"([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.([0-9]+))?Z\Z")
+DECIMAL = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?\Z")
+SPAN_CLASSES = {"music", "talk", "quiet", "unknown"}
+# Core-context terms that name a record's own fields or shape classes. D-15
+# makes `artifact` and `source` reference roles too, but a direct triple by
+# such a role would give the record node a second, unrelated meaning for its
+# predicate (arch:source is the imported-source JSON; arch:Artifact is a
+# class). Those references keep their reified statement and get no direct
+# triple (projection 6, revision 3).
+ENVELOPE_TERMS = ("shape", "revision_id", "object_id", "by", "agent", "at", "payload", "refs", "source",
+                  "contracts", "artifact", "entity", "claim", "assessment")
 class ProjectionError(Exception):
     status = "incomplete"
 
@@ -294,6 +306,7 @@ def _project(store: Store, data: ExportData, known_object: Any = None) -> None:
     supersedes_predicate = _predicate(context, "supersedes")
     source_predicate = _predicate(context, "source")
     contracts_predicate = _predicate(context, "contracts")
+    envelope_predicates = {_predicate(context, term) for term in ENVELOPE_TERMS}
 
     objects = {_required_text(record, "object_id", "record") for record in known_records}
     records_by_revision = {_required_text(record, "revision_id", "record"): record for record in known_records}
@@ -362,7 +375,8 @@ def _project(store: Store, data: ExportData, known_object: Any = None) -> None:
                 _add(store, records_graph, link, RDF + "predicate", nn(role_iri))
                 _add(store, records_graph, link, RDF + "object", target)
                 _add(store, records_graph, link, _predicate(context, "role"), nn(role_iri))
-                _add(store, records_graph, subject, role_iri, target)
+                if role_iri not in envelope_predicates:
+                    _add(store, records_graph, subject, role_iri, target)
                 _add(store, records_graph, link, _predicate(context, "id"), Literal(target_id))
                 if target_revision is not None:
                     _add(store, records_graph, link, _predicate(context, "revision_id"), Literal(target_revision))
@@ -399,6 +413,8 @@ def _project(store: Store, data: ExportData, known_object: Any = None) -> None:
         cited = {(c.get("id"), c.get("version")) for c in claim.get("contracts", []) if isinstance(c, dict)}
         _project_review_claim(store, archive_id, core_terms, contract_contexts, claim, cited,
                               records_by_revision, domain_graph, kind_scheme)
+        _project_derivation_claim(store, archive_id, core_terms, contract_contexts, claim, cited,
+                                  records_by_revision)
         if ("archive.claim/audio_selection", "1") in cited:
             payload = claim.get("payload")
             pieces = payload.get("pieces") if isinstance(payload, dict) and set(payload) == {"pieces"} else None
@@ -632,9 +648,15 @@ def _project_review_claim(store: Store, archive_id: str, core_terms: dict[str, A
                     raise ProjectionError(f"audio selection {revision} pins an alignment without its contract")
                 _add(store, claim_ref, claim_ref, term(contract, "alignment"), pin(ref, "claim"))
 
-    if ("archive.claim/capture_alignment", "1") in cited:
-        contract = ("archive.claim/capture_alignment", "1")
+    # Version 2 projects as version 1 does; only its run is typed (ADR 0067),
+    # and the run stays in the records graph as prov:wasGeneratedBy.
+    for alignment_version in ("1", "2"):
+        if ("archive.claim/capture_alignment", alignment_version) not in cited:
+            continue
+        contract = ("archive.claim/capture_alignment", alignment_version)
         by_role = _claim_refs_by_role(claim, {"reference", "aligned"} | ({"run"} if any(r.get("role") == "run" for r in refs) else set()))
+        if alignment_version == "2" and "run" in by_role:
+            _pinned_claim_citing(by_role["run"], records_by_revision, "archive.claim/derivation_run", "1", revision)
         reference = pin(by_role["reference"], "artifact")
         aligned = pin(by_role["aligned"], "artifact")
         anchors = payload.get("anchors") if isinstance(payload, dict) else None
@@ -726,6 +748,228 @@ def _project_review_assessment(store: Store, archive_id: str, core_terms: dict[s
     _add(store, graph, graph, _predicate(context, "verdict"), Literal(payload["verdict"]))
     if "reason" in payload:
         _add(store, graph, graph, _predicate(context, "reason"), Literal(payload["reason"]))
+
+
+def _pinned_claim_citing(ref: Any, records_by_revision: dict[str, dict[str, Any]], contract: str, version: str,
+                         revision: str) -> dict[str, Any]:
+    """The Claim revision ``ref`` pins, which must cite ``contract`` ``version``."""
+    if not _valid_pinned_record(ref, records_by_revision, "claim") \
+            or not _cites(records_by_revision[ref["revision_id"]], contract, version):
+        role = ref.get("role") if isinstance(ref, dict) else None
+        raise ProjectionError(f"claim {revision} {role!r} must pin a Claim citing {contract} version {version}")
+    return records_by_revision[ref["revision_id"]]
+
+
+def _instant_order(value: Any) -> tuple[int, Any] | None:
+    """An RFC 3339 UTC instant as a comparable key, or None when it is not
+    one. Door admits any number of fractional digits, which ``datetime``
+    would not, and second 60, which it reads as the next minute's first
+    second; the key does the same, so World orders instants as Door does."""
+    from datetime import date
+    from decimal import Decimal
+    match = UTC_INSTANT.fullmatch(value) if isinstance(value, str) else None
+    if match is None:
+        return None
+    year, month, day, hour, minute, second = (int(group) for group in match.groups()[:6])
+    try:
+        days = date(year, month, day).toordinal()
+    except ValueError:
+        return None
+    if hour > 23 or minute > 59 or second > 60:
+        return None
+    return (days * 86400 + hour * 3600 + minute * 60 + second, Decimal("0." + (match.group(7) or "0")))
+
+
+def _project_derivation_claim(store: Store, archive_id: str, core_terms: dict[str, Any],
+                              contract_contexts: dict[tuple[str, str], dict[str, Any]], claim: dict[str, Any],
+                              cited: set[tuple[Any, Any]], records_by_revision: dict[str, dict[str, Any]]) -> None:
+    """Project specification 0.0.7's derivation runs and the claims runs make
+    (ADRs 0064 to 0067) inside each claim's own graph.
+
+    A run is a prov:Activity; a stream's facts hang from the Artifact revision
+    they describe; each suggested span is a node; a match names what it
+    compared, the Work, its corpus, score, and run. Disagreeing runs stay
+    side by side, and nothing here is current.
+    """
+    revision = claim["revision_id"]
+    claim_ref = _record_uri(archive_id, revision)
+    payload = claim.get("payload")
+    refs = claim["refs"]
+
+    def context(contract: tuple[str, str]) -> dict[str, Any]:
+        return {"@context": {**core_terms, **contract_contexts[contract]}}
+
+    def term(contract: tuple[str, str], name: str) -> str:
+        return _predicate(context(contract), name)
+
+    def typed(contract: tuple[str, str], name: str, value: str) -> Literal:
+        entry = context(contract)["@context"].get(name)
+        datatype = entry.get("@type") if isinstance(entry, dict) else None
+        if not isinstance(datatype, str):
+            raise Unsupported(f"{contract[0]} version {contract[1]} does not declare the datatype of {name}")
+        return Literal(value, datatype=nn(_expand_iri(context(contract), datatype)))
+
+    def arch(name: str) -> str:
+        return _expand_iri({"@context": core_terms}, "arch:" + name)
+
+    def record(ref: dict[str, Any], shape: str) -> NamedNode:
+        if not _valid_pinned_record(ref, records_by_revision, shape):
+            raise ProjectionError(f"claim {revision} has an invalid {ref.get('role')!r} pin")
+        return _record_uri(archive_id, ref["revision_id"])
+
+    def run(ref: dict[str, Any]) -> NamedNode:
+        _pinned_claim_citing(ref, records_by_revision, "archive.claim/derivation_run", "1", revision)
+        return _record_uri(archive_id, ref["revision_id"])
+
+    def method(contract: tuple[str, str]) -> None:
+        value = payload.get("method") if isinstance(payload, dict) else None
+        if not isinstance(value, dict) or set(value) != {"id", "version"} \
+                or not all(isinstance(value[key], str) and value[key] for key in value):
+            raise ProjectionError(f"claim {revision} needs a method with an id and version")
+        node = nn(claim_ref.value + ":method")
+        _add(store, claim_ref, claim_ref, term(contract, "method"), node)
+        _add(store, claim_ref, node, DCTERMS + "identifier", Literal(value["id"]))
+        _add(store, claim_ref, node, _predicate({"@context": core_terms}, "version"), Literal(value["version"]))
+
+    if ("archive.claim/derivation_run", "1") in cited:
+        contract = ("archive.claim/derivation_run", "1")
+        if not isinstance(payload, dict) or set(payload) != {"method", "software", "started_at", "ended_at"}:
+            raise ProjectionError(f"derivation run {revision} has an invalid closed payload")
+        started, ended, software = payload["started_at"], payload["ended_at"], payload["software"]
+        start_key, end_key = _instant_order(started), _instant_order(ended)
+        if start_key is None or end_key is None or end_key < start_key:
+            raise ProjectionError(f"derivation run {revision} needs ordered UTC instants")
+        if not isinstance(software, list) or len(software) > 32 or any(
+                not isinstance(item, dict) or set(item) != {"name", "version"}
+                or not all(isinstance(item[key], str) and item[key] for key in item) for item in software):
+            raise ProjectionError(f"derivation run {revision} needs software as at most 32 name and version pairs")
+        parameters = [ref for ref in refs if ref.get("role") == "parameters"]
+        if len(parameters) > 1 or any(ref.get("role") not in {"used", "parameters"} for ref in refs):
+            raise ProjectionError(f"derivation run {revision} may pin only inputs and one parameters Artifact")
+        _add(store, claim_ref, claim_ref, RDF + "type", nn(PROV + "Activity"))
+        method(contract)
+        _add(store, claim_ref, claim_ref, term(contract, "started_at"), typed(contract, "started_at", started))
+        _add(store, claim_ref, claim_ref, term(contract, "ended_at"), typed(contract, "ended_at", ended))
+        # `software` is a core term (D-15) naming prov:SoftwareAgent; each
+        # program is an agent the run was associated with, in reported order.
+        for index, item in enumerate(software):
+            agent = nn(claim_ref.value + ":software=" + str(index))
+            _add(store, claim_ref, claim_ref, PROV + "wasAssociatedWith", agent)
+            _add(store, claim_ref, agent, RDF + "type", nn(_predicate({"@context": core_terms}, "software")))
+            _add(store, claim_ref, agent, RDF + "value", Literal(index))
+            _add(store, claim_ref, agent, FOAF + "name", Literal(item["name"]))
+            _add(store, claim_ref, agent, _predicate({"@context": core_terms}, "version"), Literal(item["version"]))
+        for ref in refs:
+            if ref["role"] == "used":
+                if not any(_valid_pinned_record(ref, records_by_revision, shape) for shape in ("artifact", "claim", "entity")):
+                    raise ProjectionError(f"derivation run {revision} has an invalid 'used' pin")
+                _add(store, claim_ref, claim_ref, term(contract, "used"), _record_uri(archive_id, ref["revision_id"]))
+            else:
+                _add(store, claim_ref, claim_ref, term(contract, "parameters"), record(ref, "artifact"))
+
+    if ("archive.claim/audio_stream", "1") in cited:
+        contract = ("archive.claim/audio_stream", "1")
+        by_role = _claim_refs_by_role(claim, {"artifact", "run"})
+        fields = {"stream_index", "codec", "sample_rate", "channel_count", "sample_count"}
+        if not isinstance(payload, dict) or not fields <= set(payload) <= fields | {"bits_per_sample"} \
+                or not isinstance(payload["codec"], str) or not payload["codec"]:
+            raise ProjectionError(f"audio stream {revision} has an invalid closed payload")
+        values = {"stream_index": _int_field(payload, "stream_index", 0), "codec": payload["codec"],
+                  "sample_rate": _int_field(payload, "sample_rate", 1),
+                  "channel_count": _int_field(payload, "channel_count", 1),
+                  "sample_count": _int_field(payload, "sample_count", 1)}
+        if "bits_per_sample" in payload:
+            values["bits_per_sample"] = _int_field(payload, "bits_per_sample", 1)
+        if values["channel_count"] > 64 or values.get("bits_per_sample", 1) > 64:
+            raise ProjectionError(f"audio stream {revision} has a channel count or sample width above 64")
+        artifact = record(by_role["artifact"], "artifact")
+        # The facts hang from the Artifact revision they describe, so a
+        # client reaches a recording's streams from the recording.
+        stream = nn(claim_ref.value + ":stream")
+        _add(store, claim_ref, artifact, arch("audio_stream"), stream)
+        for key, value in values.items():
+            _add(store, claim_ref, stream, term(contract, key), Literal(value))
+        _add(store, claim_ref, stream, term(contract, "run"), run(by_role["run"]))
+
+    if ("archive.claim/span_suggestions", "1") in cited:
+        contract = ("archive.claim/span_suggestions", "1")
+        by_role = _claim_refs_by_role(claim, {"source", "stream", "run"})
+        source = record(by_role["source"], "artifact")
+        stream_record = _pinned_claim_citing(by_role["stream"], records_by_revision, "archive.claim/audio_stream", "1", revision)
+        measured = [ref for ref in stream_record.get("refs", []) if isinstance(ref, dict) and ref.get("role") == "artifact"]
+        if len(measured) != 1 or (measured[0].get("id"), measured[0].get("revision_id")) != \
+                (by_role["source"]["id"], by_role["source"]["revision_id"]):
+            raise ProjectionError(f"span suggestions {revision} pin a stream of another Artifact revision")
+        if not isinstance(payload, dict) or set(payload) != {"sample_rate", "spans"}:
+            raise ProjectionError(f"span suggestions {revision} have an invalid closed payload")
+        rate = _int_field(payload, "sample_rate", 1)
+        if rate != _int_field(stream_record.get("payload"), "sample_rate", 1):
+            raise ProjectionError(f"span suggestions {revision} differ from their stream's sample rate")
+        count = _int_field(stream_record.get("payload"), "sample_count", 1)
+        spans = payload["spans"]
+        if not isinstance(spans, list) or not 1 <= len(spans) <= 10000:
+            raise ProjectionError(f"span suggestions {revision} need 1 to 10000 spans")
+        _add(store, claim_ref, claim_ref, PROV + "wasDerivedFrom", source)
+        _add(store, claim_ref, claim_ref, term(contract, "stream"), _record_uri(archive_id, by_role["stream"]["revision_id"]))
+        _add(store, claim_ref, claim_ref, term(contract, "run"), run(by_role["run"]))
+        _add(store, claim_ref, claim_ref, term(contract, "sample_rate"), Literal(rate))
+        previous_end = 0
+        for index, span in enumerate(spans):
+            if not isinstance(span, dict) or set(span) != {"start_sample", "end_sample", "class"} \
+                    or span["class"] not in SPAN_CLASSES:
+                raise ProjectionError(f"span suggestions {revision} have an invalid span at {index}")
+            start = _int_field(span, "start_sample", previous_end)
+            end = _int_field(span, "end_sample", start + 1)
+            if end > count:
+                raise ProjectionError(f"span suggestions {revision} span {index} ends past the stream's sample count")
+            previous_end = end
+            node = nn(claim_ref.value + ":span=" + str(index))
+            _add(store, claim_ref, claim_ref, term(contract, "spans"), node)
+            _add(store, claim_ref, node, RDF + "value", Literal(index))
+            _add(store, claim_ref, node, term(contract, "start_sample"), Literal(start))
+            _add(store, claim_ref, node, term(contract, "end_sample"), Literal(end))
+            _add(store, claim_ref, node, term(contract, "class"), Literal(span["class"]))
+
+    if ("archive.claim/work_match", "2") in cited:
+        contract = ("archive.claim/work_match", "2")
+        roles = [ref.get("role") for ref in refs]
+        compared = [ref for ref in refs if ref.get("role") in {"occurrence", "selection"}]
+        if len(compared) != 1 or roles.count("work") != 1 or roles.count("run") != 1 \
+                or roles.count("parameters") > 1 or "corpus" not in roles \
+                or not set(roles) <= {"occurrence", "selection", "work", "corpus", "parameters", "run"}:
+            raise ProjectionError(f"work match {revision} must compare one occurrence or selection with a Work, corpus, and run")
+        if not isinstance(payload, dict) or set(payload) != {"method", "score", "scale", "direction"} \
+                or not isinstance(payload["score"], str) or not DECIMAL.fullmatch(payload["score"]) \
+                or not isinstance(payload["scale"], str) or not payload["scale"] \
+                or payload["direction"] not in {"higher_is_closer", "lower_is_closer"}:
+            raise ProjectionError(f"work match {revision} has an invalid closed payload")
+        # Door's distinctness rule: the occurrence and every corpus entry name
+        # different objects (a selection is outside the rule).
+        distinct = [ref.get("id") for ref in refs if ref.get("role") in {"occurrence", "corpus"}]
+        if len(distinct) != len(set(distinct)):
+            raise ProjectionError(f"work match {revision} occurrence and corpus references must name different objects")
+        [audio] = compared
+        if audio["role"] == "occurrence":
+            _pinned_claim_citing(audio, records_by_revision, "archive.claim/song_occurrence", "2", revision)
+        else:
+            _pinned_claim_citing(audio, records_by_revision, "archive.claim/audio_selection", "2", revision)
+        _add(store, claim_ref, claim_ref, term(contract, audio["role"]), _record_uri(archive_id, audio["revision_id"]))
+        for ref in refs:
+            if ref["role"] == "work":
+                if not _valid_pinned_entity(ref, records_by_revision, "musical_work"):
+                    raise ProjectionError(f"work match {revision} must pin a musical_work")
+                _add(store, claim_ref, claim_ref, term(contract, "work"), _record_uri(archive_id, ref["revision_id"]))
+            elif ref["role"] == "corpus":
+                _pinned_claim_citing(ref, records_by_revision, "archive.claim/song_occurrence", "2", revision)
+                _add(store, claim_ref, claim_ref, term(contract, "corpus"), _record_uri(archive_id, ref["revision_id"]))
+            elif ref["role"] == "parameters":
+                _add(store, claim_ref, claim_ref, term(contract, "parameters"), record(ref, "artifact"))
+            elif ref["role"] == "run":
+                _add(store, claim_ref, claim_ref, term(contract, "run"), run(ref))
+        method(contract)
+        _add(store, claim_ref, claim_ref, term(contract, "score"), Literal(payload["score"], datatype=nn(XSD + "decimal")))
+        _add(store, claim_ref, claim_ref, term(contract, "scale"), Literal(payload["scale"]))
+        _add(store, claim_ref, claim_ref, term(contract, "direction"), Literal(payload["direction"]))
 
 
 def _valid_pinned_entity(ref: Any, records_by_revision: dict[str, dict[str, Any]], kind: str) -> bool:

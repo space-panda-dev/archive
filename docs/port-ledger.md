@@ -112,7 +112,7 @@ These are boundaries for later phases, not decisions made by this ledger.
 | Four record shapes: V2 decision | rewrite | Ported | Judgment becomes `assessment`; governance becomes a transition claim (ADR 0003, ADR 0005, ADR 0015). |
 | Empty/index insertion and stored-head lookup | translate | Ported | Admission and transition planning index exact committed heads and batch revisions without selecting a domain current (S-10, S-18). |
 | Shape names and filename prefixes | translate | Ported | Keep the four shape names while the centralized layout module constructs every digest-addressed record path (D-1, ADR 0015). |
-| Legacy-spec allow-list and legacy parser | defer | Planned | Archive-to-Archive specification migration is open. |
+| Legacy-spec allow-list and legacy parser | defer | Planned | An additive release is adopted by a transition (ADR 0068); migration to a release that is not additive, which a legacy parser would serve, remains open. |
 | Envelope parser | rewrite | Ported | Distinct closed draft and stored parsers enforce P-2, portable identities, contracts, and Door-owned recording time (D-3, D-7, D-8). |
 | Reference parser | rewrite | Ported | Use `{role,id,revision_id?}`; V2 legacy resolution markers need an accepted migration rule (P-4, INV-24). |
 | Source provenance parser | translate | Planned | Preserve source provenance in envelope/references, not payloads (S-11, ADR 0015). |
@@ -134,7 +134,7 @@ These are boundaries for later phases, not decisions made by this ledger.
 | Pending manifest format | rewrite | Ported | The accepted closed proposal manifest names ordered records, identities, contents, and expected heads (ADR 0023). |
 | Idempotent remove-if-missing | keep the mechanism | Ported | Operational cleanup tolerates an already-absent path while reporting real removal failures (S-4). |
 | Streamed Git pathspec stage/unstage/commit | translate | Ported | A temporary index builds exactly the validated record batch and advances the branch by expected-parent compare-and-swap without staging unrelated paths (P-1, INV-2). |
-| Refuse an already-dirty records index | keep the mechanism | Ported | Persistent transition refuses staged changes before constructing its isolated batch commit (S-2, INV-2). |
+| Refuse an already-dirty records index | keep the mechanism | Ported | Persistent transition refuses staged changes before constructing its isolated batch commit; journal recovery refreshes only an index Door itself left at the old commit, so the refusal keeps meaning a change Door did not make (S-2, INV-2). |
 | Durable operation-ID files | defer | Planned | Idempotency is required, but the durable protocol/location is open (S-4; admission/staging question). |
 | CLI option parsing | translate | Ported | Door accepts proposal-directory admission and transition commands with an optional dry-run and refuses stdin mutation (ADR 0023, ADR 0028). |
 | Main writer dispatch | rewrite | In progress | Door dispatches both modes through committed-snapshot validation and persistent commit seams, including content-bearing admission; persistent success still predates ADR 0031's power-loss contract (S-2, S-8, S-11). |
@@ -172,10 +172,10 @@ These are boundaries for later phases, not decisions made by this ledger.
 | Artifact path query | defer | Planned | It depends on layout and external location state. |
 | Claim convenience writer | rewrite | Planned | Empty contracts and missing agent/provenance violate S-11 and S-12. |
 | Whole-store check | translate | Ported | `archive doctor` checks references, exact pins, lineage, assessments, and cited contracts while retaining incomplete-read evidence (S-10, S-12, INV-24). |
-| Contract catalog | rewrite | Ported | Archive 0.0.2 verifies and copies the exact five specification-owned bundles while retaining the immutable version 1 bytes (D-6, D-8, ADR 0030); 0.0.5 verifies and copies all twenty-four, keeping every earlier bundle's bytes (D-13, D-14). |
+| Contract catalog | rewrite | Ported | Archive 0.0.2 verifies and copies the exact five specification-owned bundles while retaining the immutable version 1 bytes (D-6, D-8, ADR 0030); 0.0.5 verifies and copies all twenty-four, keeping every earlier bundle's bytes (D-13, D-14); 0.0.7 copies thirty (D-15). |
 | `archive init` | rewrite | Ported | Initialization creates the accepted layout, identities, local resources, bootstrap records, Git repository, and git-annex repository in one archival commit (D-1, D-2, D-7, D-10). |
 | `door admit` | rewrite | In progress | Dry-run and persistent modes enforce exact proposals, heads, one lock, one commit, and quiet retry, including content; persistent success still predates ADR 0031's power-loss contract (D-4, ADR 0023). |
-| `door transition` | rewrite | Ported | Dry-run and persistent modes dispatch exact retire/destroy contracts, replay immutable history, and enforce authorization, heads, state, durable v2 order, one lock, one commit, and quiet retry (D-9, ADR 0030, INV-2). |
+| `door transition` | rewrite | Ported | Dry-run and persistent modes dispatch exact retire/destroy contracts, replay immutable history, and enforce authorization, heads, state, durable v2 order, one lock, one commit, and quiet retry (D-9, ADR 0030, INV-2). It also commits the 0.0.7 specification upgrade: an additive release this Door carries, authorized by the operator, installed with the new manifest in one commit; the snapshot loader proves every manifest change was one (D-15, ADR 0068). |
 
 ## Reading modules and contracts
 
@@ -197,7 +197,7 @@ These are boundaries for later phases, not decisions made by this ledger.
 | Canonical contract manifest/catalog bytes | translate | Ported | RFC 8785 bundle bytes determine their SHA-256 paths and citations, and the loader verifies both (D-6, D-8). |
 | Artifact contract | rewrite | Planned | Remove location/annex key and add Archive provenance (S-9, S-11). |
 | Entity contract | translate | Planned | Keep stable subject/name distinction (ADR 0012). |
-| Technical metadata contract | translate | Planned | Derived evidence pins exact inputs and records run configuration (ADR 0006). |
+| Technical metadata contract | translate | Ported | Derived evidence pins exact inputs and records run configuration (ADR 0006). Specification 0.0.7 installs `derivation_run` and `audio_stream`, and Door admits them with every rule checked (D-15, ADRs 0064 and 0065); World projects runs, stream facts, span suggestions, and version 2 matches (projection 6, revision 3); `enrich probe` counts streams by decoding and proposes them with their run. |
 | Label contract | defer | Planned | Representation and current rule remain open. |
 | Transcript contract | defer | Planned | Representation/current rule and remote disclosure adapter remain open. |
 | Selection contract | rewrite | Planned | Preserve ordered pins but replace float seconds with exact boundaries (S-15). |
@@ -226,7 +226,7 @@ These are boundaries for later phases, not decisions made by this ledger.
 |---|---|---|---|
 | Native multicall dispatch | keep the mechanism | Planned | One implementation with stable command aliases avoids duplicate seams. |
 | Process, JSON, and hashing helpers | keep the mechanism | Planned | Small fail-closed external boundaries are reusable. |
-| V2 ingest command | rewrite | Planned | Becomes admission/staging through Door; current command commits storage before the contract is settled (INV-2). |
+| V2 ingest command | rewrite | Ported | `capture import` stages content in git-annex and proposes each session in one content-bearing Door batch; it never commits storage itself (INV-2, ADR 0023, ADR 0070). |
 | WAV-only discovery | defer | Planned | Media selection is desired state/policy, not a default admission rule. |
 | Source-plus-filename object ID | rewrite | Ported | Object IDs are deterministic UUIDv5 URNs under the archive UUID and an accepted namespace/name allocation, never a source path or filename (D-2, S-9). |
 | Original copy and draft construction | defer | Planned | Layout, staging, and in-record location are open or rejected. |
@@ -237,12 +237,12 @@ These are boundaries for later phases, not decisions made by this ledger.
 | V2 rule parser and relative dates | defer | Planned | Policy grammar, stable names, freshness, and authorship are open. |
 | Raw TSV apply | rewrite | Planned | Plans must cite policy/evidence and revalidate before acting (S-28, INV-19). |
 | Safe plan path and strict TSV parser | keep the mechanism | Planned | Retain input hardening below a future bound-plan interface. |
-| Enrichment build configuration | translate | Planned | Configuration stays separate and is recorded as run input (ADR 0006, ADR 0007). |
-| Object+revision derivation stamp | keep the mechanism | Planned | Disposable stamps bind exact evidence and support quiet history (INV-4, INV-5). |
+| Enrichment build configuration | translate | In progress | Configuration stays separate and is recorded as run input (ADR 0006, ADR 0007). The `enrich/` adapter admits a run's parameters as a canonical JSON Artifact and reuses it when the bytes match. |
+| Object+revision derivation stamp | keep the mechanism | Ported | The recorded derivation run is the stamp: `enrich` answers `unchanged` before decoding when a run with the same agent, method, software, used revisions, and parameters already has an output, so no stamp file is kept (INV-4, INV-5, ADR 0064). |
 | Desired enrichment discovery | defer | Planned | The policy/mechanism boundary and grammar are open. |
-| Standalone probe/classifier recipes | translate | Planned | Tools take files and propose results through Door (ADR 0006). |
-| Unrecorded classifier configuration | rewrite | Planned | Parameters and presets must be recorded as run inputs (ADR 0006). |
-| Recipe proposal to Door | translate | Planned | Keep the call chain and assert the real dispatcher reaches Door (INV-2). |
+| Standalone probe/classifier recipes | translate | In progress | Tools take files and propose results through Door (ADR 0006). The probe is ported as `enrich/probe.py` and the work matcher as `enrich/match.py`, a numpy and scipy method under its own identifier (ADR 0067). The whole-file classifier is not; `enrich/detector.py` classes each suggested span `music`, `talk`, `quiet`, or `unknown` instead (ADR 0066). |
+| Unrecorded classifier configuration | rewrite | In progress | Parameters and presets must be recorded as run inputs (ADR 0006); the `enrich/` adapter's `parameters` is where they go. The span detector's `jam` and `show` presets and the matcher's settings and limit are recorded there; the whole-file classifier's configuration is not ported. |
+| Recipe proposal to Door | translate | Ported | Keep the call chain and assert the real dispatcher reaches Door (INV-2). `enrich probe`, `enrich detect`, and `enrich match` propose through `door admit`, and their tests read the committed claims back with `archive show` and World; `capture import` runs the same commands as its chain. |
 | V2 hot placement rule | rewrite | Planned | Desired placement belongs in authorized policy, not annex expressions (ADR 0007). |
 | V2 cold placement rule | rewrite | Planned | Same; no-policy planning yields an empty plan. |
 | Facts copied into annex metadata | delete | Planned | ADR 0008 explicitly rejects the mechanism. |
@@ -254,7 +254,7 @@ These are boundaries for later phases, not decisions made by this ledger.
 | Shared native multicall executable | keep the mechanism | Planned | Reuse packaging mechanism with Archive command aliases. |
 | Haskell dependencies and warnings | keep the mechanism | Planned | They support the language boundary in ADR 0014. |
 | V2 package licence | rewrite | Planned | Apply AGPL-3.0-or-later/CC0 split (ADR 0017). |
-| Enrichment binaries excluded from Door package | keep the mechanism | Planned | Standalone tools preserve the enrichment boundary (ADR 0006). |
+| Enrichment binaries excluded from Door package | keep the mechanism | Ported | Standalone tools preserve the enrichment boundary (ADR 0006); `enrich/` (the probe, the span detector, the work matcher, and derived media) lives outside the Cabal package and is wrapped separately by the flake (ADR 0064, ADR 0069). |
 | Root flake pin/system fan-out | keep the mechanism | Ported | The locked Archive flake declares Darwin and Linux systems; reproducible packaging is mechanism, not archive meaning. |
 | V2 Nix Haskell derivation | translate | Ported | The flake builds Archive's native Door and reader package and runs both Cabal suites (ADR 0014). |
 | V2 templates and command aliases in `postInstall` | rewrite | Planned | Install Archive spec/contracts and only accepted commands. |
@@ -291,7 +291,7 @@ These are boundaries for later phases, not decisions made by this ledger.
 | Placement planning | translate | Planned | Planning is read-only and bound to evidence/policy (S-28). |
 | Placement apply/admission | rewrite | Planned | Write changed labels before annex acts, reject stale plans, and use reinject only (ADR 0008, ADR 0015). |
 | Placement plan JSONL/CLI | translate | Planned | Keep serialization after Archive plan schema exists. |
-| Recorder filename/rollover grouping | keep the mechanism | Planned | Deterministic enrichment below policy may run locally; it asserts nothing by itself (ADR 0006). |
+| Recorder filename/rollover grouping | keep the mechanism | Ported | `capture/grammar.py` keeps the recorder names, the size-cap-and-gap rollover rule, and its measured values; the importer proposes its grouping as `session_parts` claims through Door (ADR 0070). |
 | Continuous-recording ID/draft/report admission | defer | Planned | Contract and current semantics are open. |
 | Scale harness isolation and private/public report split | keep the mechanism | Planned | Synthetic bounded measurements remain regenerable and contain no personal data (INV-4, INV-23). |
 | Scale harness Door/read/current calls | rewrite | Planned | Use Archive Door and do not call unresolved current selectors. |
@@ -361,7 +361,7 @@ row's disposition and reason.
 | managed/unmanaged artifact admissions and URI/key combinations | rewrite | Planned | Location and annex key leave the record (S-9, INV-6). |
 | capture time validation | translate | Planned | Preserve exact/unknown capture time; Door stamps only `at` (P-5). |
 | derived artifact pin, missing pin, wrong target | translate | Planned | Exact derivation provenance is settled (ADR 0006). |
-| technical metadata fields and citation | defer | Planned | The kind contract is open. |
+| technical metadata fields and citation | translate | Ported | `audio_stream` version 1 carries exact decoded stream facts and is cited under its digest (ADR 0065); Door's tests refuse each malformed claim and `enrich/test_probe.py` checks the facts against synthetic files. |
 | ordered selection; swapped-order identity; span/negative/string bounds; refs/citations | rewrite | Planned | Use exact sample boundaries and Archive contracts (S-12, S-15). |
 | selection empty/extra-field cardinality | defer | Planned | Contract details are open. |
 | payload-only extra provenance survives | rewrite | Planned | Provenance belongs in envelope/references (S-11). |
@@ -380,8 +380,8 @@ These are the exact labels passed to the V2 shell test's `check` function.
 
 | Test label | Disposition | Status | Reason |
 |---|---|---|---|
-| one artifact per file | rewrite | Planned | Admission and object identity change under ADR 0015 and P-9. |
-| ingesting a card again adds nothing | keep the mechanism | Planned | Preserve quiet idempotency (INV-5). |
+| one artifact per file | rewrite | Ported | `capture import` admits one Artifact per new content, named by its digest; the same content in two files is refused (ADR 0015, P-9, ADR 0070). |
+| ingesting a card again adds nothing | keep the mechanism | Ported | A second `capture import` of a card skips contents already Artifacts and leaves `HEAD` unchanged (INV-5, ADR 0070). |
 | capture date comes from the file | translate | Planned | Keep capture time distinct from Door's `at` (P-5). |
 | the ingested object id matches ingest's own derivation | rewrite | Planned | Source-plus-name can collide; object identity is opaque (S-9, P-9). |
 | rec path prints the object-id-keyed layout (D1) | defer | Planned | The exact on-disk layout is a named open question. |
@@ -397,7 +397,7 @@ These are the exact labels passed to the V2 shell test's `check` function.
 | two claims per recording | defer | Planned | Desired enrichment and claim contracts remain open. |
 | the long one is a performance | defer | Planned | Classification vocabulary and policy remain open. |
 | a second run has nothing to be done | keep the mechanism | Planned | Preserve quiet regenerable work (INV-4, INV-5). |
-| losing make's stamps writes nothing new | keep the mechanism | Planned | Regeneration must not duplicate evidence (INV-4, INV-5). |
+| losing make's stamps writes nothing new | keep the mechanism | Ported | Rerunning a tool on unchanged inputs finds its recorded run and writes nothing, and derived media already complete is not made again; the rerun tests replace the decoder with one that fails if called (INV-4, INV-5). |
 | a claim nobody ruled on is not accepted | translate | Planned | Query Archive assessments, not V2 decisions (ADR 0005). |
 | an accepted claim is accepted | translate | Planned | Preserve exact scoped judgment as an assessment (ADR 0005). |
 | a decision superseded by a rejection no longer accepts | translate | Planned | Translate judgment history to assessments; current rules stay contract-owned (ADR 0005, S-18). |
@@ -500,7 +500,7 @@ V2 migration directory.
 | `test_placement.py`: `test_a_valid_head_is_planned_with_the_expected_key`; `test_a_bad_digest_is_refused_not_guessed`; `test_an_uppercase_digest_is_refused`; `test_a_missing_size_is_refused_not_guessed`; `test_plan_never_reads_a_url_field_it_does_not_already_have` | translate | Planned | Preserve evidence-derived planning and fail-closed inputs (INV-24). |
 | `test_placement.py`: `test_a_derived_artifacts_draft_keeps_its_derived_from_pin`; `test_no_contracts_on_the_head_means_no_contracts_key`; `test_plan_reports_expected_keys_including_the_derived_artifact`; `test_plan_is_empty_on_an_archive_with_no_artifacts`; `test_apply_places_and_admits_both_artifacts`; `test_apply_refuses_when_the_predicted_revision_lineage_is_gone`; `test_apply_with_only_refused_rows_does_nothing` | rewrite | Planned | Use Archive artifacts, contracts, transitions, stale-plan checks, and reinject (S-8, S-12, ADR 0015). |
 | `test_step2_vertical.py`: `test_exact_draft_shape_counts`; `test_legacy_placeholder_performance_and_revision_rows_stay_unresolved`; `test_import_batch_routes_to_git_not_an_entity`; `test_coverage_observation_routes_to_git_not_a_claim`; `test_every_policy_decision_routes_to_git`; `test_job_attempt_provenance_stay_off_the_four_shapes`; `test_original_artifact_occurrence_is_unmanaged_with_joined_name`; `test_adapter_artifact_occurrence_name_is_last_path_component`; `test_derived_artifact_chain_pins_derived_from`; `test_musical_analysis_about_selection_input_artifact`; `test_feature_timeline_about_artifact_directly`; `test_transcript_v2_has_pinned_about_and_two_inputs`; `test_publication_about_selection_input_derived_clip`; `test_source_metadata_four_adapters_observed_and_kind`; `test_purpose_label_on_the_batch_reshapes_onto_its_artifact`; `test_label_about_an_artifact_keeps_one_pinned_about_ref`; `test_generic_batch_edge_is_reported_and_omitted_again`; `test_technical_metadata_emits_with_only_its_own_artifact_pin`; `test_reference_survival_has_zero_unresolved_refs`; `test_loop_stays_within_the_round_bound_and_reports_rounds`; `test_admission_order_matches_canonicalization_order`; `test_a_draft_that_drifts_between_rounds_is_never_admitted`; `test_real_door_admits_the_whole_fixture` | rewrite | Planned | Rebuild the full vertical path with Archive envelopes, exact provenance, JCS, and explicit unresolved routes. |
-| `test_step3_continuity.py`: `test_lr_name_parses_capture_at_track_and_take`; `test_mic_name_parses_a_different_track`; `test_rollover_numbered_suffix_is_not_this_grammar`; `test_lowercase_extension_does_not_match`; `test_non_recorder_name_does_not_match`; `test_invalid_calendar_date_does_not_match`; `test_missing_track_suffix_does_not_match`; `test_true_positive_capped_and_within_gap_chains`; `test_size_only_false_positive_two_short_files_seconds_apart_do_not_chain`; `test_gap_only_false_positive_capped_file_followed_30s_later_does_not_chain`; `test_gap_boundary_is_inclusive`; `test_just_past_the_gap_boundary_does_not_chain`; `test_missing_capture_time_or_duration_never_chains` | keep the mechanism | Planned | Pure deterministic detector tests make no archival claim (ADR 0006). |
+| `test_step3_continuity.py`: `test_lr_name_parses_capture_at_track_and_take`; `test_mic_name_parses_a_different_track`; `test_rollover_numbered_suffix_is_not_this_grammar`; `test_lowercase_extension_does_not_match`; `test_non_recorder_name_does_not_match`; `test_invalid_calendar_date_does_not_match`; `test_missing_track_suffix_does_not_match`; `test_true_positive_capped_and_within_gap_chains`; `test_size_only_false_positive_two_short_files_seconds_apart_do_not_chain`; `test_gap_only_false_positive_capped_file_followed_30s_later_does_not_chain`; `test_gap_boundary_is_inclusive`; `test_just_past_the_gap_boundary_does_not_chain`; `test_missing_capture_time_or_duration_never_chains` | keep the mechanism | Ported | `capture/test_grammar.py` keeps each case; a capped file with no stated duration is refused rather than left unchained (ADR 0006, ADR 0070). |
 | `test_step3_continuity.py`: `test_three_parts_chain_into_one_recording`; `test_tracks_never_chain_into_each_other`; `test_same_capture_time_breaks_ties_on_artifact_id`; `test_part_with_no_capture_time_is_its_own_recording`; `test_part_with_no_duration_is_its_own_recording`; `test_non_own_capture_artifact_is_never_mentioned`; `test_technical_metadata_pinning_a_stale_revision_is_skipped_by_name`; `test_unparseable_duration_is_skipped_by_name`; `test_technical_metadata_value_field_is_not_used_to_find_the_claim`; `test_cli_on_records_file_writes_report_and_drafts`; `test_cli_reads_stdin_by_default`; `test_cli_rejects_both_rec_and_manifest` | translate | Planned | Preserve deterministic reporting and fail-closed pins without admitting a contract. |
 | `test_step3_continuity.py`: `test_exact_recording_and_skip_counts`; `test_skipped_reasons_are_exact`; `test_two_part_lr_chain_offsets_and_gap`; `test_lr_and_mic_recordings_of_the_same_take_are_paired`; `test_one_part_recordings_have_no_second_part`; `test_gap_condition_keeps_capped_takes_separate`; `test_recording_ids_are_deterministic_and_distinct`; `test_draft_value_shape_matches_d2`; `test_draft_about_refs_are_exactly_the_distinct_part_pins`; `test_no_manifest_means_no_contracts_field`; `test_manifest_citation_is_attached_when_present`; `test_real_door_admits_the_recording_and_a_selection_about_the_same_pins` | defer | Planned | Durable continuity contract/current semantics are open. |
 | `test_step3_performance.py`: `test_exact_draft_counts`; `test_annotation_value_shape`; `test_annotation_has_no_input_ref_to_the_artifact`; `test_import_batch_edge_is_reported_and_omitted`; `test_annotation_waits_for_the_selection_pin`; `test_two_segment_performance_is_refused_not_minted`; `test_supersedes_performance_id_is_retained_and_reported_not_a_real_edge`; `test_same_selection_pair_shares_object_id_and_pins_lineage_order`; `test_same_selection_pair_report_text_is_translated_as_a_supersedes_edge`; `test_same_selection_successor_with_its_own_revision_extends_the_lineage`; `test_cycle_between_two_same_selection_performances_is_unresolved`; `test_chain_crossing_selections_partway_is_unresolved`; `test_differing_revision_emits_and_equal_revision_folds`; `test_emitted_revision_shares_the_performance_object_id_and_chains`; `test_performance_with_no_emitted_revision_supersedes_nothing`; `test_missing_predecessor_row_is_unresolved_by_name`; `test_differing_head_unresolves_the_whole_subjects_revisions_not_one` | translate | Planned | Preserve performance-to-annotation mapping, explicit lineage, and no invention (ADR 0003, ADR 0005, INV-24). |

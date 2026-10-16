@@ -19,6 +19,37 @@ unsupported rather than guess.
 - The selection facts of 0.0.5 pin only version 2 selections. Does a
   single-track version 1 selection ever need a title, kind, or credit, or is
   it superseded by a version 2 revision first?
+- The `audio_stream` role `artifact`, the `span_suggestions` role `source`,
+  and the `derivation_run` payload field `software`, named by
+  [ADR 0065](decisions/0065-audio-stream-facts.md),
+  [ADR 0066](decisions/0066-span-suggestions.md), and
+  [ADR 0064](decisions/0064-derivation-runs.md), are core terms that a
+  contract fragment may not redefine, so specification 0.0.7 interprets them
+  as `arch:Artifact`, `arch:source`, and `prov:SoftwareAgent`. D-6 also asks
+  each fragment to define its own payload and role terms, which these three
+  cannot do (the `capture_alignment` role `reference` of 0.0.5 is the earlier
+  case). Should a later contract version rename them? Until one does, World
+  projection 6 (revision 3) keeps an `artifact` or `source` reference only as
+  its reified statement, with no direct triple by `arch:Artifact` or
+  `arch:source`, and reaches the same targets through predicates of its own
+  (`arch:audio_stream`, `prov:wasDerivedFrom`); `software` items become
+  `prov:SoftwareAgent` nodes. Whether that is the lasting projection is part
+  of this question.
+- The role `run` maps to `prov:wasGeneratedBy` and pins the run's Claim
+  revision, so that revision is the activity
+  ([ADR 0064](decisions/0064-derivation-runs.md)). World types every record
+  revision `prov:Entity` in its records graph, and a run's revision
+  `prov:Activity` in the run's own graph, but PROV holds entities and
+  activities disjoint. Should a run's revision and its activity be two
+  nodes, and would that need a contract change or only a new projection?
+- Should Door refuse new `work_match` version 1 claims, which pin no run, now
+  that version 2 exists ([ADR 0067](decisions/0067-matches-and-alignments-pin-runs.md))?
+  Version 1 stays installed for the records that cite it.
+- A `session_parts` claim does not say which recorder source it lists (the
+  Zoom H4essential's `TrLR` or `TrMic`); a client recomputes it from the
+  claim's name. Should a later contract version record the source, and the
+  primary one, in the claim
+  ([ADR 0070](decisions/0070-capture-import.md))?
 - How does an existing archive migrate to a specification version that is not
   additive? (Additive releases are adopted by a transition,
   [ADR 0068](decisions/0068-specification-upgrade.md).)
@@ -111,6 +142,11 @@ unsupported rather than guess.
 - How does an operator declare, ahead of time, what happens to an archive
   after them: a successor, content destroyed or sealed, content that opens after
   a closure period? Time-limited grants would be new to policy.
+- Door refuses a proposal written under a specification context the archive
+  does not hold, and refuses a committed record written under a context only
+  a later commit added. A committed record under a context the archive never
+  held still loads, because archives written before the proposal check may
+  hold one. Should loading refuse it too? A census of the shadow comes first.
 - How is operator succession verified? (Author and authorizer are agents in
   PROV roles: [ADR 0012](decisions/0012-inherited-meaning.md).) ADR 0026 defines
   only initial bootstrap; this succession question remains open.
@@ -131,6 +167,10 @@ unsupported rather than guess.
 - Does predicate-specific evidentiary authority need explicit modelling at all?
   (See [provenance.md](provenance.md).)
 - What are the per-kind rules for computing "current"?
+- Should the work matcher's corpus honour judgments? Today every head
+  `performance_work` link counts, including one a person judged `rejected` or
+  `withdrawn` ([ADR 0067](decisions/0067-matches-and-alignments-pin-runs.md)
+  names no rule).
 
 - How does a person's sensitivity claim select the content it covers ("the
   rehearsals I play in") rather than naming objects one by one
@@ -199,6 +239,15 @@ unsupported rather than guess.
 - Where does program configuration live, and in what format?
 - Where does `enrich.mk`-style mechanism end and derivation policy begin, once
   the policy language exists?
+- When `capture import` stops part way through its enrichment chain, a rerun
+  skips the sessions it committed, because their contents are now Artifacts,
+  and answers `unchanged`. Should the importer report or finish the chain for
+  sessions it recognises as its own? ADR 0070 names only new Artifacts; until
+  a decision, the chain is finished by hand
+  ([shadow runbook](shadow-runbook.md#importing-new-recordings)).
+- At cutover, which archive becomes the real one: the shadow, promoted, or a
+  fresh migration of the same frozen bundle? See the
+  [cutover plan](proposals/cutover-plan.md).
 
 ## The project
 

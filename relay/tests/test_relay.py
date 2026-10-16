@@ -90,13 +90,14 @@ class RelayHarness:
 
     def __init__(self, tmp: Path, archive_root: Path, door_socket: Path, world_store: Path, writes: str = "dry-run",
                  role: str = "shadow", archive_command: str = "archive", query_timeout_seconds: float = 30,
-                 max_rows: int = 10000, query_workers: int = 3, cache_bytes: int = 64 * 1024 * 1024):
+                 max_rows: int = 10000, query_workers: int = 3, cache_bytes: int = 64 * 1024 * 1024,
+                 callers: dict[str, str] | None = None, media_root: Path | None = None):
         self.config = relay.Config(
             host="127.0.0.1", port=0, archive_root=archive_root, door_socket=door_socket,
             world_store=world_store, archive_command=archive_command, staging=private(tmp / "staging"),
-            writes=writes, role=role, origins=frozenset([ORIGIN]), callers={LOGIN: AGENT},
+            writes=writes, role=role, origins=frozenset([ORIGIN]), callers=callers or {LOGIN: AGENT},
             query_timeout_seconds=query_timeout_seconds, max_rows=max_rows, query_workers=query_workers,
-            cache_bytes=cache_bytes)
+            cache_bytes=cache_bytes, media_root=media_root)
         self.relay = relay.Relay(self.config)
         # The server the relay itself runs, so tests see its threading.
         self.server = relay.make_server(self.relay, "127.0.0.1", 0)
@@ -144,7 +145,7 @@ def allocated(archive_id: str, namespace: str, name: str) -> str:
     return "urn:uuid:" + str(uuid.uuid5(uuid.UUID(archive_id[9:]), namespace + "\0" + name))
 
 
-def entity_proposal(archive_id: str, name: str, agent: str = AGENT) -> dict:
+def entity_proposal(archive_id: str, name: str, agent: str = AGENT, spec: str = "archive/0.0.6") -> dict:
     object_id = allocated(archive_id, "archive.core/entity", name)
     return {
         "manifest": {
@@ -155,7 +156,7 @@ def entity_proposal(archive_id: str, name: str, agent: str = AGENT) -> dict:
             "expected_heads": [{"object_id": object_id, "revision_id": None}],
         },
         "records": {"records/entity.json": {
-            "spec": "archive/0.0.6", "object_id": object_id, "shape": "entity",
+            "spec": spec, "object_id": object_id, "shape": "entity",
             "by": "pkg:generic/archive-relay-test@0", "agent": agent,
             "payload": {"kind": "person", "label": name}, "refs": [], "supersedes": [],
         }},
@@ -215,6 +216,30 @@ class CallerChecks(Fixture):
                                              "projections": []})
         self.assertEqual((answer["ok"], answer["result"]["healthy"], answer["result"]["door"],
                           answer["result"]["world"]["status"]), (False, False, "unreachable", "unavailable"))
+
+    def test_answers_report_the_specification_the_manifest_names_now(self) -> None:
+        # A specification upgrade replaces the manifest while the relay runs.
+        harness = self.harness()
+        _, _, before = harness.call("GET", "/health")
+        manifest = self.tmp / "no-archive" / "archive.json"
+        manifest.write_text(json.dumps({"archive_id": ARCHIVE_ID, "layout": "archive/2", "spec": "archive/0.0.7"}))
+        _, _, after = harness.call("GET", "/health")
+        self.assertEqual((before["archive"]["spec"], after["archive"]["spec"]), ("archive/0.0.6", "archive/0.0.7"))
+
+    def test_a_manifest_naming_another_archive_is_an_internal_error(self) -> None:
+        # An upgrade never changes the identifier, so another one means the
+        # root now holds a different archive; the relay names neither.
+        harness = self.harness()
+        other = "urn:uuid:" + str(uuid.uuid4())
+        self.assertNotEqual(other, ARCHIVE_ID)
+        manifest = self.tmp / "no-archive" / "archive.json"
+        manifest.write_text(json.dumps({"archive_id": other, "layout": "archive/2", "spec": "archive/0.0.7"}))
+        logged = io.StringIO()
+        with redirect_stderr(logged):
+            status, _, answer = harness.call("GET", "/health")
+        self.assertEqual((status, answer["error"]["code"]), (500, "internal_error"))
+        self.assertNotIn(other, json.dumps(answer))
+        self.assertIn("names another archive", logged.getvalue())
 
     def test_a_request_without_an_allowed_login_is_refused_without_archive_details(self) -> None:
         harness = self.harness()
@@ -438,6 +463,14 @@ class ConfigChecks(unittest.TestCase):
             with self.subTest(name), self.assertRaises(ValueError):
                 self.load(**changes)
 
+    def test_the_derived_media_root_is_optional(self) -> None:
+        # The deployed relay's configuration predates media and must still load.
+        self.assertIsNone(self.load().media_root)
+        self.assertEqual(self.load(media_root="/m").media_root, Path("/m"))
+        for value in (None, 7, ["/m"]):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.load(media_root=value)
+
     def test_staging_must_be_private(self) -> None:
         staging = self.tmp / "staging"
         staging.mkdir(mode=0o755)
@@ -558,6 +591,9 @@ class DoorChecks(Fixture):
                                      capture_output=True, text=True)
         self.assertEqual(initialized.returncode, 0, initialized.stderr)
         self.archive_id = json.loads(initialized.stdout)["archive_id"]
+        # Door refuses a record whose spec selects a context the archive
+        # does not hold, so drafts follow the archive's own specification.
+        self.spec = json.loads((self.root / "archive.json").read_text())["spec"]
         self.socket = private(self.tmp / "door") / "door.sock"
         self.door = subprocess.Popen([DOOR, "serve", "--socket", str(self.socket)], cwd=self.root,
                                      stderr=subprocess.DEVNULL)
@@ -590,19 +626,19 @@ class DoorChecks(Fixture):
     def test_a_dry_run_is_predicted_and_writes_nothing(self) -> None:
         harness = self.harness()
         before = self.head()
-        status, _, answer = harness.call("POST", "/door/admit-dry-run", entity_proposal(self.archive_id, "dry"))
+        status, _, answer = harness.call("POST", "/door/admit-dry-run", entity_proposal(self.archive_id, "dry", spec=self.spec))
         self.assertEqual(status, 200, answer)
         self.assertEqual(answer["result"]["door"]["status"], "predicted")
         self.assertEqual(len(answer["result"]["door"]["revision_ids"]), 1)
         self.assertEqual(self.head(), before)
         self.assertEqual(list(harness.config.staging.iterdir()), [])
-        status, _, _ = harness.call("POST", "/door/admit", entity_proposal(self.archive_id, "dry"))
+        status, _, _ = harness.call("POST", "/door/admit", entity_proposal(self.archive_id, "dry", spec=self.spec))
         self.assertEqual(status, 403)
         self.assertEqual(self.head(), before)
 
     def test_doors_refusal_codes_are_passed_on(self) -> None:
         harness = self.harness()
-        proposal = entity_proposal(self.archive_id, "refused")
+        proposal = entity_proposal(self.archive_id, "refused", spec=self.spec)
         proposal["manifest"]["identities"][0]["name"] = "not-the-allocated-name"
         status, _, answer = harness.call("POST", "/door/admit-dry-run", proposal)
         self.assertEqual((status, answer["error"]["code"]), (422, "proposal_refused"))
@@ -610,7 +646,7 @@ class DoorChecks(Fixture):
 
     def test_a_stale_expected_head_is_a_conflict(self) -> None:
         harness = self.harness(writes="commit", role="scratch")
-        first = entity_proposal(self.archive_id, "renamed")
+        first = entity_proposal(self.archive_id, "renamed", spec=self.spec)
         status, _, committed = harness.call("POST", "/door/admit", first)
         self.assertEqual(status, 200, committed)
         [revision] = committed["result"]["door"]["revision_ids"]
@@ -630,7 +666,7 @@ class DoorChecks(Fixture):
     def test_a_commit_is_read_back_through_world(self) -> None:
         harness = self.harness(writes="commit", role="scratch")
         before = self.head()
-        proposal = entity_proposal(self.archive_id, "committed")
+        proposal = entity_proposal(self.archive_id, "committed", spec=self.spec)
         predicted = harness.call("POST", "/door/admit-dry-run", proposal)[2]["result"]["door"]["revision_ids"]
         status, _, answer = harness.call("POST", "/door/admit", proposal)
         self.assertEqual(status, 200, answer)
@@ -650,7 +686,7 @@ class DoorChecks(Fixture):
     def test_a_failed_refresh_after_a_commit_is_reported_stale(self) -> None:
         harness = self.harness(writes="commit", role="scratch")
         with patch.object(world, "refresh_served", side_effect=world.ProjectionError("store is broken")):
-            status, _, answer = harness.call("POST", "/door/admit", entity_proposal(self.archive_id, "stale"))
+            status, _, answer = harness.call("POST", "/door/admit", entity_proposal(self.archive_id, "stale", spec=self.spec))
         self.assertEqual((status, answer["result"]["door"]["status"]), (200, "committed"))
         self.assertEqual(answer["result"]["world"], {"status": "stale", "detail": "ProjectionError: store is broken"})
 

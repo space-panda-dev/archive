@@ -1,0 +1,24 @@
+# The duration of each revision of a recording, from every audio stream claim
+# about it: sample count, sample rate, channels, and codec, with the duration
+# in seconds as sample_count / sample_rate (an exact xsd:decimal). Claims of
+# runs that disagree appear side by side, each with its run; none is chosen.
+PREFIX arch: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#>
+PREFIX prov: <http://www.w3.org/ns/prov#>
+
+SELECT ?recording ?streamIndex ?samples ?rate ?seconds ?channels ?codec ?claim ?run WHERE {
+  GRAPH ?records {
+    ?recording arch:object_id <urn:uuid:replace-with-recording-id> ;
+               a arch:Artifact .
+  }
+  GRAPH ?claim {
+    ?recording arch:audio_stream ?stream .
+    ?stream arch:stream_index ?streamIndex ;
+            arch:sample_count ?samples ;
+            arch:sample_rate ?rate ;
+            arch:channel_count ?channels ;
+            arch:codec ?codec ;
+            prov:wasGeneratedBy ?run .
+  }
+  BIND(?samples / ?rate AS ?seconds)
+}
+ORDER BY ?recording ?streamIndex ?claim

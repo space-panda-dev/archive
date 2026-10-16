@@ -31,6 +31,12 @@ ARCH = "urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#"
 UNREACHABLE = {("records", ARCH + "dependent_destroy"), ("records", ARCH + "dependent_source_gone"),
                ("records", ARCH + "external_survivor")}
 
+# Installed by specification 0.0.7 but not cited by the fixture: the fixture
+# archive is born at the current release, and Door refuses an upgrade to the
+# version an archive already has. test_upgrade.py projects an upgrade record
+# made by the real Door from an archive at the previous release.
+UNCITED = {("archive.transition/specification_upgrade", "1")}
+
 
 def integration_binaries():
     """Door and Archive, or a skip; CI sets ARCHIVE_REQUIRE_INTEGRATION so a
@@ -81,10 +87,26 @@ class FixtureArchiveConformanceTests(unittest.TestCase):
     def test_the_fixture_cites_every_contract_in_the_catalog(self):
         # Enumerate the catalog rather than naming today's contracts.
         catalog = json.loads((ROOT / "spec" / self.export["spec"].removeprefix("archive/") / "contracts.json").read_text())
-        expected = {(c["id"], c["version"]) for c in catalog["contracts"]}
+        expected = {(c["id"], c["version"]) for c in catalog["contracts"]} - UNCITED
+        self.assertTrue(UNCITED <= {(c["id"], c["version"]) for c in catalog["contracts"]})
         cited = {(c["id"], c["version"]) for r in self.export["records"] for c in r.get("contracts", [])}
         self.assertEqual(cited, expected)
-        self.assertEqual({r["agent"] for r in self.export["records"]}, {self.manifest["operator_id"]})
+        # The operator asserts every record but a derivation run and what it
+        # made, which the tool asserts under its Package URL (ADR 0064).
+        made_by_runs = {r["revision_id"] for r in self.export["records"]
+                        if any(ref["role"] == "run" and self.cites(ref["revision_id"], "archive.claim/derivation_run")
+                               for ref in r["refs"])}
+        runs = {r["revision_id"] for r in self.export["records"] if self.cites(r["revision_id"], "archive.claim/derivation_run")}
+        self.assertTrue(runs and made_by_runs)
+        for record in self.export["records"]:
+            if record["revision_id"] in runs | made_by_runs:
+                self.assertTrue(record["agent"].startswith("pkg:"), record["revision_id"])
+            else:
+                self.assertEqual(record["agent"], self.manifest["operator_id"])
+
+    def cites(self, revision, contract):
+        [record] = [r for r in self.export["records"] if r["revision_id"] == revision]
+        return any(c["id"] == contract for c in record.get("contracts", []))
 
     def test_every_projection_version_served_conforms(self):
         for version in sorted(PROJECTORS):
@@ -108,10 +130,12 @@ class FixtureArchiveConformanceTests(unittest.TestCase):
 
     def test_every_installed_contract_is_in_the_context_graph(self):
         projection = build_projection(self.export)
-        answer = projection.store.query("""SELECT ?id ?version WHERE { GRAPH ?g {
-            ?c <http://purl.org/dc/terms/identifier> ?id ; <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#version> ?version } }""")
+        # Name the context graph: since revision 3 a run's or match's method
+        # node in its claim graph also has an identifier and a version.
+        answer = projection.store.query(f"""SELECT ?id ?version WHERE {{ GRAPH <{projection.context_graph.value}> {{
+            ?c <http://purl.org/dc/terms/identifier> ?id ; <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#version> ?version }} }}""")
         found = {(row["id"].value, row["version"].value) for row in answer}
-        catalog = json.loads((ROOT / "spec/0.0.6/contracts.json").read_text())
+        catalog = json.loads((ROOT / "spec" / self.export["spec"].removeprefix("archive/") / "contracts.json").read_text())
         self.assertEqual(found, {(c["id"], c["version"]) for c in catalog["contracts"]})
 
 

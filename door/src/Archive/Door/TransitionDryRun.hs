@@ -15,6 +15,7 @@ module Archive.Door.TransitionDryRun
   , dryRunTransition
   , TransitionKind (..)
   , transitionDispatchTable
+  , transitionContractsWithoutHandler
   ) where
 
 import Archive.Door.AdmissionDryRun
@@ -25,6 +26,25 @@ import Archive.Door.AdmissionDryRun
   , validateProposalContracts
   )
 import Archive.Door.Canonical (canonicalizeDraftStrict)
+import Archive.Door.Contracts (ContractBundle)
+import Archive.Door.Json (decodeUnique)
+import Archive.Door.Layout
+  ( archiveManifestBytes
+  , makeArchiveManifest
+  , manifestArchiveId
+  , manifestLayout
+  , manifestSpec
+  , parseArchiveManifest
+  , specVersion
+  )
+import Archive.Door.SpecificationUpgrade
+  ( SpecificationRelease (..)
+  , UpgradeTarget (..)
+  , compareSpecifications
+  , loadUpgradeTarget
+  , upgradeContractId
+  , upgradeContractVersion
+  )
 import Archive.Door.Refusal (PlanRefusal (..), refuse)
 import Archive.Door.Identity (allocateObjectId)
 import Archive.Door.Proposal
@@ -59,6 +79,7 @@ import Archive.GitSnapshot (gitSnapshotErrorMessage)
 import qualified Archive.GitSnapshot as Git
 import Control.Monad (foldM)
 import Data.Aeson (Value (..))
+import qualified Data.ByteString.Lazy as LazyByteString
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Map.Strict (Map)
@@ -77,6 +98,10 @@ data TransitionPlan = TransitionPlan
   , transitionRetry :: Bool
   , resultingRetiredObjects :: Set Text
   , resultingDestroyedDigests :: Set Text
+  , plannedSpecificationFiles :: [(FilePath, LazyByteString.ByteString)]
+  -- ^ For a specification upgrade (ADR 0068), the replaced manifest and the
+  -- new release's documents and bundles, by archive-relative path; empty for
+  -- every other transition and for a retry.
   }
   deriving (Eq, Show)
 
@@ -106,12 +131,14 @@ data TransitionKind
   | Destroy
   | PublicationApproval
   | PublicationWithdrawal
+  | SpecificationUpgrade
   deriving (Eq, Show)
 
 -- | The only transition contracts Door can commit, by exact identifier and
--- version (ADRs 0028, 0051).  Dispatch additionally requires the citation's
--- digest to be installed.  Tests enumerate this table against the installed
--- catalog, so a transition contract cannot ship without a handler.
+-- version (ADRs 0028, 0051, 0068).  Dispatch additionally requires the citation's
+-- digest to be installed.  Tests enumerate this table and
+-- 'transitionContractsWithoutHandler' against the installed catalog, so a
+-- transition contract cannot ship without a handler or a recorded refusal.
 transitionDispatchTable :: [((Text, Text), TransitionKind)]
 transitionDispatchTable =
   [ (("archive.transition/operator_initialization", "1"), OperatorInitialization)
@@ -121,7 +148,15 @@ transitionDispatchTable =
   , (("archive.transition/destroy", "2"), Destroy)
   , (("archive.transition/publication_approval", "1"), PublicationApproval)
   , (("archive.transition/publication_withdrawal", "1"), PublicationWithdrawal)
+  , ((upgradeContractId, upgradeContractVersion), SpecificationUpgrade)
   ]
+
+-- | Installed transition contracts this Door refuses as unsupported. None
+-- today: the specification upgrade, the last one 0.0.7 installed without a
+-- handler, is dispatched (ADR 0068). A later release that installs a
+-- transition before its handler exists lists it here, so it fails loudly.
+transitionContractsWithoutHandler :: [(Text, Text)]
+transitionContractsWithoutHandler = []
 
 -- | The table entry for a draft's single installed transition citation.
 transitionCitationKind :: Set (Text, Text, Text) -> DraftEnvelope -> Maybe (TransitionKind, Text)
@@ -199,25 +234,151 @@ dryRunTransitionVerified root proposal = do
       case snapshotResult' of
         Left problem -> pure (Left (transitionSnapshotError problem))
         Right snapshot -> do
-          contracts <- validateProposalContracts snapshot proposal
-          case contracts of
-            Left problem -> pure (Left (TransitionProposalRejected problem))
-            Right () -> do
-              let result = planTransition snapshot proposal
-              case result of
-                Left (PlanRefused problem) -> pure (Left (TransitionProposalRejected problem))
-                Left (PlanStale problem) -> pure (Left (TransitionProposalStale problem))
-                Right plan -> do
-                  rechecked <- recheckProposal proposal
-                  pure $ case rechecked of
-                    Left problem -> Left (TransitionProposalRejected problem)
-                    Right () -> Right
-                      ( plan
-                          { plannedTransitionSnapshot = Git.snapshotCommit gitSnapshot
-                          , plannedGitExecutableIdentity = Git.snapshotExecutableIdentity gitSnapshot
-                          }
-                      , snapshot
-                      )
+          upgrade <- prepareUpgrade gitSnapshot snapshot proposal
+          case upgrade of
+            Left problem -> pure (Left problem)
+            Right (planning, files) -> do
+              contracts <- validateProposalContracts planning proposal
+              case contracts of
+                Left problem -> pure (Left (TransitionProposalRejected problem))
+                Right () -> do
+                  let result = planTransition planning proposal
+                  case result of
+                    Left (PlanRefused problem) -> pure (Left (TransitionProposalRejected problem))
+                    Left (PlanStale problem) -> pure (Left (TransitionProposalStale problem))
+                    Right plan -> do
+                      rechecked <- recheckProposal proposal
+                      pure $ case rechecked of
+                        Left problem -> Left (TransitionProposalRejected problem)
+                        Right () -> Right
+                          ( plan
+                              { plannedTransitionSnapshot = Git.snapshotCommit gitSnapshot
+                              , plannedGitExecutableIdentity = Git.snapshotExecutableIdentity gitSnapshot
+                              , plannedSpecificationFiles = if transitionRetry plan then [] else files
+                              }
+                          , snapshot
+                          )
+
+-- | A specification upgrade (ADR 0068) is planned against the archive as it
+-- will be once the target release is installed: its added bundles are
+-- dispatchable and its core context is held. The archive's own snapshot is
+-- returned unchanged to the caller for the commit's verification; only
+-- planning sees the prospective one. Any other proposal, and a complete
+-- retry of a committed upgrade, is planned against the snapshot as it is.
+prepareUpgrade
+  :: Git.GitSnapshot
+  -> SnapshotData
+  -> Proposal
+  -> IO (Either TransitionPlanningError (SnapshotData, [(FilePath, LazyByteString.ByteString)]))
+prepareUpgrade gitSnapshot snapshot proposal =
+  case filter citesUpgrade (proposalRecords proposal) of
+    [] -> pure (Right (snapshot, []))
+    upgrades
+      | length upgrades /= 1 || length (proposalRecords proposal) /= 1 ->
+          pure (rejected "a specification upgrade proposal must contain exactly one record")
+    record : _ -> case canonicalizeDraftStrict (proposalRecordValue record) of
+      Left problem -> pure (rejected problem)
+      Right (revision, _)
+        | Map.member revision (snapshotRevisionIntroducers snapshot) -> pure (Right (snapshot, []))
+        | otherwise -> prepareNew record
+  where
+    rejected = Left . TransitionProposalRejected
+    citesUpgrade record = any ((== upgradeContractId) . contractId)
+      (envelopeContracts (proposalRecordDraft record))
+
+    prepareNew record = do
+      manifestResult <- Git.readPath gitSnapshot "archive.json"
+      case manifestResult of
+        Left problem -> pure (Left (TransitionSnapshotFailure problem))
+        Right manifestBytes -> case decodeUnique manifestBytes of
+          Left problem -> pure (Left (TransitionSnapshotIntegrityFailure ("archive.json: " <> Text.pack problem)))
+          Right manifestValue -> case parseArchiveManifest manifestValue of
+            Left problem -> pure (Left (TransitionSnapshotIntegrityFailure problem))
+            Right manifest -> do
+              let current = manifestSpec manifest
+                  draft = proposalRecordDraft record
+              case upgradeRequest current draft of
+                Left problem -> pure (rejected problem)
+                Right to -> do
+                  contextResult <- currentContext current
+                  case contextResult of
+                    Left problem -> pure (Left problem)
+                    Right context -> do
+                      let release = SpecificationRelease
+                            { releaseSpecification = current
+                            , releaseCatalog = Map.keysSet (snapshotInstalled snapshot)
+                            , releaseLayout = manifestLayout manifest
+                            , releaseContext = context
+                            }
+                      targetResult <- loadUpgradeTarget release to
+                      pure $ do
+                        target <- either rejected Right targetResult
+                        requireTargetSpec to draft
+                        upgraded <- either rejected Right
+                          (makeArchiveManifest (manifestArchiveId manifest) to)
+                        let added = targetAddedBundles target
+                            installed = Map.union (snapshotInstalled snapshot)
+                              (Map.fromList [(key, bundle) | (key, bundle) <- added])
+                        mapM_ (requireCitable to installed) (envelopeContracts draft)
+                        pure
+                          ( prospective added target installed
+                          , ("archive.json", archiveManifestBytes upgraded) : targetFiles target
+                          )
+
+    -- The payload's `from` must be the archive's specification and `to` a
+    -- later version; once the target is known to this Door, the record must
+    -- belong to the release it adopts.
+    upgradeRequest current draft = do
+      fields <- case envelopeBody draft of
+        ClaimRecord (Object payload) -> Right payload
+        _ -> Left "a specification upgrade must be a claim with an object payload"
+      from <- requiredText "from" fields
+      to <- requiredText "to" fields
+      _ <- either (Left . ("specification upgrade from: " <>)) Right (specVersion from)
+      _ <- either (Left . ("specification upgrade to: " <>)) Right (specVersion to)
+      order <- compareSpecifications to from
+      case order of
+        LT -> Left ("unsupported: no downgrade exists: " <> to <> " is earlier than " <> from)
+        EQ -> Left ("unsupported: a specification upgrade must name a version later than " <> from)
+        GT -> Right ()
+      if from /= current
+        then Left ("specification upgrade from " <> from
+          <> " does not start at the archive's specification " <> current)
+        else Right ()
+      pure to
+
+    requireTargetSpec to draft =
+      if envelopeSpec draft /= to
+        then rejected ("a specification upgrade record must be written under its target specification "
+          <> to <> ", not " <> envelopeSpec draft)
+        else Right ()
+
+    currentContext current = case specVersion current of
+      Left problem -> pure (Left (TransitionSnapshotIntegrityFailure problem))
+      Right version -> do
+        let path = "spec/" <> Text.unpack version <> "/context.jsonld"
+        bytes <- Git.readPath gitSnapshot path
+        pure $ case bytes of
+          Left problem -> Left (TransitionSnapshotFailure problem)
+          Right content -> case decodeUnique content of
+            Right (Object outer) | Just (Object inner) <- KeyMap.lookup "@context" outer -> Right inner
+            _ -> Left (TransitionSnapshotIntegrityFailure (Text.pack path <> " has no @context object"))
+
+    requireCitable to installed citation =
+      if Map.member (contractId citation, contractVersion citation, contractDigest citation) installed
+        then Right ()
+        else rejected ("proposed contract is not installed at this snapshot or in the catalog of "
+          <> to <> ": " <> contractId citation)
+
+    prospective :: [((Text, Text, Text), ContractBundle)] -> UpgradeTarget
+                -> Map (Text, Text, Text) ContractBundle -> SnapshotData
+    prospective added target installed = snapshot
+      { snapshotInstalled = installed
+      , snapshotTransitionKeys = snapshotTransitionKeys snapshot `Set.union` Set.fromList
+          [ key | (key@(identifier, _, _), _) <- added, Text.isPrefixOf "archive.transition/" identifier ]
+      , snapshotImmutableAdditions = Map.union (snapshotImmutableAdditions snapshot)
+          (Map.fromList [(path, "") | (path, _) <- targetFiles target])
+      }
 
 transitionSnapshotError :: AdmissionSnapshotLoadError -> TransitionPlanningError
 transitionSnapshotError problem = case problem of
@@ -257,6 +418,7 @@ planTransition snapshot proposal = do
     , transitionRetry = retry
     , resultingRetiredObjects = retiredObjects finalState
     , resultingDestroyedDigests = destroyedDigests finalState
+    , plannedSpecificationFiles = []
     }
 
 prepare :: ProposalRecord -> Either Text Prepared
@@ -271,7 +433,14 @@ prepare record = do
 dispatch :: Set (Text, Text, Text) -> DraftEnvelope -> Either Text TransitionKey
 dispatch installed draft = case transitionCitationKind installed draft of
   Just (kind, version) -> Right (TransitionKey kind version)
-  Nothing -> Left "unsupported transition contract"
+  Nothing -> case [ (identifier, version)
+                  | citation <- envelopeContracts draft
+                  , let identifier = contractId citation
+                        version = contractVersion citation
+                  , (identifier, version) `elem` transitionContractsWithoutHandler ] of
+    (identifier, version) : _ -> Left ("unsupported transition contract: " <> identifier
+      <> " version " <> version <> " is installed but this Door has no handler for it")
+    [] -> Left "unsupported transition contract"
 
 validateBatchContracts :: [TransitionKey] -> [Prepared] -> Either Text ()
 validateBatchContracts keys prepared = case prepared of
@@ -701,6 +870,7 @@ validateOne facts state (key, item) = do
   case transitionKind key of
     PublicationApproval -> validateAuthorizer facts draft
     PublicationWithdrawal -> validateAuthorizer facts draft
+    SpecificationUpgrade -> validateAuthorizer facts draft
     _ -> validateActors facts draft
   case transitionKind key of
     OperatorInitialization -> Left "unsupported: operator initialization is initialization-only"
@@ -710,6 +880,15 @@ validateOne facts state (key, item) = do
       covers <- referencesWithRole "covers" (envelopeReferences draft)
       if null covers then Left "publication approval requires at least one covers reference" else pure ()
       mapM_ (\reference -> resolveReference facts reference >> requireCurrent facts reference) covers
+      pure state
+    -- Which versions an upgrade may name, and what it installs, depend on
+    -- the archive's specification and Door's own release files; the caller
+    -- checks those before planning, and the snapshot loader checks them for
+    -- every committed upgrade. Here, as in replay, only its actors.
+    SpecificationUpgrade -> do
+      payload <- transitionPayload draft
+      _ <- requiredText "from" payload
+      _ <- requiredText "to" payload
       pure state
     PublicationWithdrawal -> do
       reference <- oneReference "withdraws" (envelopeReferences draft)

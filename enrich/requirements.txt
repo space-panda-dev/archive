@@ -1,0 +1,4 @@
+# The span detector (detector.py) needs numpy; the work matcher (match.py)
+# needs numpy and scipy. The rest of enrich/ uses only the standard library.
+numpy>=2.0
+scipy>=1.13

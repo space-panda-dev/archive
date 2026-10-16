@@ -5,15 +5,21 @@
 --
 -- Validation belongs to the admission and transition planners.  This module
 -- serializes their final write, installs only new immutable record files, and
--- advances the current branch with an expected-parent compare-and-swap.
+-- advances the current branch with an expected-parent compare-and-swap. A
+-- specification upgrade (ADR 0068) also adds the new release's documents and
+-- bundles and replaces the manifest, in the same commit.
 module Archive.Door.RecordCommit
   ( ArchiveWriteLock
   , ContentLink (..)
+  , ArchiveFile (..)
   , archiveWriteLockGitExecutableIdentity
   , commitRecordBatch
   , commitRecordBatchWithContent
+  , commitRecordBatchWithFiles
   , CommitVerification (..)
   , writeCommitCheckpoint
+  , writeCommitBaseCheckpoint
+  , validateArchiveFilePath
   , configuredRemoteNames
   , runAnnexLocked
   , validateContentPath
@@ -30,6 +36,7 @@ module Archive.Door.RecordCommit
 import Archive.Door.Layout
   ( contentRelativePath
   , digestText
+  , specVersion
   , parseContentRelativePath
   , parseRecordRelativePath
   , recordDirectoryChain
@@ -39,6 +46,7 @@ import Archive.Door.MutationError (MutationError (..), mutationErrorMessage)
 import Archive.Door.VerifiedCheckpoint
   ( VerifiedCheckpoint (..)
   , appendCheckpoint
+  , extendCheckpoint
   , removeCheckpoint
   , summarizeStoredBytes
   , writeCheckpoint
@@ -58,6 +66,7 @@ import Archive.Executables
   )
 import Control.Concurrent.MVar (MVar, newMVar, withMVar)
 import Data.IORef (IORef, modifyIORef, newIORef, readIORef, writeIORef)
+import qualified Data.Map.Strict as Map
 import qualified Data.ByteString.Lazy as LazyByteString
 import qualified Data.ByteString as ByteString
 import Data.Unique (hashUnique, newUnique)
@@ -192,6 +201,11 @@ data OperationJournal = OperationJournal
   -- their exact link blobs. They have no worktree file before the commit, so
   -- recovery only verifies them in a committed tree.
   , journalContent :: [(FilePath, Text)]
+  -- | Specification files a specification upgrade adds or replaces, with
+  -- their exact blobs. Like content links they exist only in the temporary
+  -- index before the commit, so recovery only verifies them in a committed
+  -- tree.
+  , journalFiles :: [(FilePath, Text)]
   } deriving (Eq, Show)
 
 data JournalIndex = JournalIndex
@@ -699,7 +713,58 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
                   case recordsVerified of
                     Left problem -> pure (Left
                       ("committed batch durability barrier failed; operation journal retained: " <> problem))
-                    Right () -> cleanupTemporariesOnly
+                    Right () -> do
+                      installCommittedFiles
+                      cleaned <- cleanupTemporariesOnly
+                      case cleaned of
+                        Left problem -> pure (Left problem)
+                        Right () -> refreshCommittedIndex headValue target
+
+    -- The worktree copies of a committed upgrade's specification files,
+    -- from the committed blobs. This runs after every committed batch, also
+    -- one an interrupted process left, so the worktree manifest follows the
+    -- commit. The commit is the authority: a failure is reported, not undone.
+    installCommittedFiles = mapM_ installCommittedFile (journalFiles journal)
+    installCommittedFile (path, blob) = do
+      contents <- runGitBytesTyped executable rootPath rootFd gitFd Nothing ["cat-file", "blob", Text.unpack blob]
+      installed <- case contents of
+        Left problem -> pure (Left (gitFailureMessage problem))
+        Right bytes
+          | not (blobMatches blob bytes) -> pure (Left "committed blob does not hash to its name")
+          | otherwise -> tryIO (installWorktreeFile rootFd (ArchiveFile path (LazyByteString.fromStrict bytes)))
+      case installed of
+        Left problem -> hPutStrLn stderr ("door: warning: archive commit succeeded but "
+          <> path <> " could not be written to the worktree: " <> Text.unpack problem)
+        Right () -> pure ()
+
+    -- Door builds a batch in a temporary index, so once the ref advances the
+    -- ordinary index still holds the old commit's tree: Door made it stale,
+    -- and recovery refreshes it before the journal goes, whether the process
+    -- that committed is the one finishing or a later Door after a kill.
+    -- Only that exact state is refreshed. An index already at the commit
+    -- needs nothing; any other index holds changes Door did not make, and a
+    -- branch moved past the journaled commit is not Door's state either.
+    -- Both are left alone for the staged-changes check to refuse. A refresh
+    -- that fails retains the journal, so the next Door tries again.
+    refreshCommittedIndex headValue target
+      | headValue /= target = pure (Right ())
+      | otherwise = do
+          compared <- runGitStatus executable rootPath rootFd gitFd Nothing
+            ["diff", "--cached", "--quiet", Text.unpack (journalOldHead journal), "--"]
+          case compared of
+            Left problem -> pure (Left (indexComparisonFailure problem))
+            Right (ExitFailure 1) -> pure (Right ())
+            Right (ExitFailure code) -> pure (Left (indexComparisonFailure
+              ("git diff exited " <> Text.pack (show code))))
+            Right ExitSuccess -> do
+              refreshed <- runGit executable rootPath rootFd gitFd Nothing
+                ["-c", "core.hooksPath=/dev/null", "read-tree", Text.unpack target]
+              pure $ case refreshed of
+                Left problem -> Left
+                  ("could not refresh the archive index to the committed batch; operation journal retained: " <> problem)
+                Right _ -> Right ()
+    indexComparisonFailure problem =
+      "could not compare the archive index with the journaled old commit; operation journal retained: " <> problem
 
     cleanupUncommitted = withPinnedRecords rootFd pinnedRecords $ \recordsFd -> do
       history <- oldHistoryClear
@@ -712,11 +777,14 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
             Left problem -> pure (Left ("could not prove cleanup ownership for interrupted record batch: " <> problem))
             Right () -> cleanupTemporariesOnly
 
+    -- The manifest is the one journaled path the old commit holds: an
+    -- upgrade replaces it. Every other journaled path must be new.
     oldHistoryClear = do
       contents <- runGit executable rootPath rootFd gitFd Nothing
         (["ls-tree", "-r", "--name-only", Text.unpack (journalOldHead journal), "--"]
           <> map journalPath (journalEntries journal)
-          <> map fst (journalContent journal))
+          <> map fst (journalContent journal)
+          <> filter (/= manifestFilePath) (map fst (journalFiles journal)))
       pure $ do
         paths <- contents
         whenEither (Text.null (Text.strip paths))
@@ -735,9 +803,11 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
       ancestor <- runGitStatus executable rootPath rootFd gitFd Nothing
         ["merge-base", "--is-ancestor", Text.unpack target, Text.unpack currentHead]
       listing <- treeEntries target
-        (map journalPath (journalEntries journal) <> map fst (journalContent journal))
+        (map journalPath (journalEntries journal) <> map fst (journalContent journal)
+          <> map fst (journalFiles journal))
       let treeBlobsResult = map (\entry -> listing >>= treeBlob entry) (journalEntries journal)
           contentBlobsResult = map (\link -> listing >>= contentBlob link) (journalContent journal)
+          fileBlobsResult = map (\file -> listing >>= fileBlob file) (journalFiles journal)
       pure $ do
         parentValue <- Text.strip <$> parent
         whenEither (parentValue == journalOldHead journal)
@@ -750,8 +820,12 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
         contentBlobs <- sequence contentBlobsResult
         whenEither (contentBlobs == [blob | (_, blob) <- journalContent journal])
           "journaled commit tree contains a content location with a different link"
+        fileBlobs <- sequence fileBlobsResult
+        whenEither (fileBlobs == [blob | (_, blob) <- journalFiles journal])
+          "journaled commit tree contains a specification file with a different blob"
         let expectedPaths = sort (map (Text.pack . journalPath) (journalEntries journal)
-              <> map (Text.pack . fst) (journalContent journal))
+              <> map (Text.pack . fst) (journalContent journal)
+              <> map (Text.pack . fst) (journalFiles journal))
             actualPaths = sort changes
             expectedBlobs = sort [(Text.pack (journalPath entry), journalBlob entry) | entry <- journalEntries journal]
             actualBlobs = sort treeBlobs
@@ -777,6 +851,11 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
       Just ["120000", "blob", blob] -> Right blob
       Just _ -> Left "journaled commit has an unexpected content tree entry"
       Nothing -> Left "journaled commit is missing a content tree entry"
+
+    fileBlob (path, _) listing = case lookup (Text.pack path) listing of
+      Just ["100644", "blob", blob] -> Right blob
+      Just _ -> Left "journaled commit has an unexpected specification file entry"
+      Nothing -> Left "journaled commit is missing a specification file entry"
 
     treeBlob entry listing = case lookup (Text.pack (journalPath entry)) listing of
       Just ["100644", "blob", blob] -> Right (Text.pack (journalPath entry), Just blob)
@@ -824,7 +903,12 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
         Just _ -> Right path
         Nothing
           | path `elem` map (Text.pack . fst) (journalContent journal) -> Right path
+          | path /= Text.pack manifestFilePath
+              && path `elem` map (Text.pack . fst) (journalFiles journal) -> Right path
           | otherwise -> Left "journaled commit contains an unexpected record path"
+      ["M", path]
+        | path == Text.pack manifestFilePath
+            && path `elem` map (Text.pack . fst) (journalFiles journal) -> Right path
       _ -> Left "journaled commit contains a non-addition or malformed path change"
 
     findEntry _ [] = Nothing
@@ -975,6 +1059,7 @@ encodeOperationJournal journal = do
         ]
       entryLines = map encodeEntry (journalEntries journal)
         <> [ "content\t" <> Text.pack path <> "\t" <> blob | (path, blob) <- journalContent journal ]
+        <> [ "file\t" <> Text.pack path <> "\t" <> blob | (path, blob) <- journalFiles journal ]
       encodeEntry entry = case (journalBlob entry, journalDevice entry, journalFile entry) of
         (Nothing, Nothing, Nothing) -> "entry-preparing\t" <> Text.pack (journalPath entry)
           <> "\t" <> Text.pack (journalTemporary entry)
@@ -1007,10 +1092,13 @@ parseOperationJournal bytes = do
           inode <- maybe (Left "journal index inode identifier is invalid") Right (readMaybe (Text.unpack inodeText))
           Right (JournalIndex (Text.unpack name) device inode)
         _ -> Left "journal index ownership is malformed"
-      let (recordLines, contentLines) = break ("content\t" `Text.isPrefixOf`) entryLines
+      let (recordLines, linkLines) = break (\line -> "content\t" `Text.isPrefixOf` line
+            || "file\t" `Text.isPrefixOf` line) entryLines
+          (contentLines, fileLines) = break ("file\t" `Text.isPrefixOf`) linkLines
       entries <- traverse parseEntry recordLines
       content <- traverse parseContent contentLines
-      Right (OperationJournal oldHead branch phase target index entries content)
+      files <- traverse parseFile fileLines
+      Right (OperationJournal oldHead branch phase target index entries content files)
     _ -> Left "journal header or field order is invalid"
   validateJournal journal
   case encodeOperationJournal journal of
@@ -1032,6 +1120,9 @@ parseOperationJournal bytes = do
     parseContent line = case Text.splitOn "\t" line of
       ["content", path, blob] -> Right (Text.unpack path, blob)
       _ -> Left "journal content entry is malformed"
+    parseFile line = case Text.splitOn "\t" line of
+      ["file", path, blob] -> Right (Text.unpack path, blob)
+      _ -> Left "journal specification file entry is malformed"
 
 validateJournal :: OperationJournal -> Either Text ()
 validateJournal journal = do
@@ -1057,7 +1148,13 @@ validateJournal journal = do
   let contentPaths = map fst (journalContent journal)
   unlessEither (length contentPaths == length (uniqueSorted contentPaths)) "journal has duplicate content paths"
   mapM_ validateContent (journalContent journal)
+  let filePaths = map fst (journalFiles journal)
+  unlessEither (length filePaths == length (uniqueSorted filePaths)) "journal has duplicate specification file paths"
+  mapM_ validateFile (journalFiles journal)
   where
+    validateFile (path, blob) = do
+      validateArchiveFilePath path
+      unlessEither (validObjectId blob) "journal specification file blob identifier is invalid"
     validateContent (path, blob) = do
       _ <- validateContentPath path
       unlessEither (validObjectId blob) "journal content blob identifier is invalid"
@@ -1625,6 +1722,27 @@ writeCommitCheckpoint (ArchiveWriteLock rootPath _ gitFd _) verified commit reco
       pure Nothing
     Right chain -> pure (Just chain)
 
+-- | Record an upgrade commit Door made on top of a verified commit as a new
+-- base checkpoint (ADR 0052). A per-commit addition lists only records
+-- (ADR 0054); this commit also adds specification paths, so the base names
+-- them as added by this commit. The manifest stays named by the commit that
+-- added it: an upgrade replaces it in place.
+writeCommitBaseCheckpoint :: ArchiveWriteLock -> CommitVerification -> Text
+                          -> [(FilePath, LazyByteString.ByteString)] -> [FilePath] -> IO (Maybe Int)
+writeCommitBaseCheckpoint (ArchiveWriteLock rootPath _ gitFd _) verified commit records paths = do
+  written <- case traverse (\(path, bytes) -> (,) path <$> summarizeStoredBytes bytes) records of
+    Left problem -> pure (Left problem)
+    Right summaries -> do
+      let extended = extendCheckpoint (verifiedBase verified) commit summaries
+          added = foldr (\path -> Map.insert path commit) (checkpointAdditions extended)
+            (filter (/= manifestFilePath) paths)
+      writeCheckpoint gitFd (rootPath <> "/.git") extended { checkpointAdditions = added }
+  case written of
+    Left problem -> do
+      hPutStrLn stderr ("door: warning: verification checkpoint was not written: " <> Text.unpack problem)
+      pure Nothing
+    Right () -> pure (Just 0)
+
 -- | What the caller verified about the expected head before committing on top
 -- of it (ADR 0052). 'verifiedObjectsProven' is true only when a checkpoint,
 -- not just a fresh read of the records, vouches for the objects beneath it.
@@ -1667,11 +1785,61 @@ commitRecordBatchWithContent
   -> Maybe CommitVerification
   -> IO (Either MutationError ())
   -> IO (Either MutationError Text)
-commitRecordBatchWithContent (ArchiveWriteLock rootPath rootFd gitFd executable) expectedHead message records contentLinks verification finalCheck =
-  case (traverse (validateRecordPath . fst) records, traverse validateContentLink contentLinks) of
-    (Left problem, _) -> pure (Left (MutationRejected problem))
-    (_, Left problem) -> pure (Left (MutationRejected problem))
-    _ -> commitAt
+commitRecordBatchWithContent lock expectedHead message records contentLinks =
+  commitRecordBatchWithFiles lock expectedHead message records contentLinks []
+
+-- | A file outside @records/@ that a specification upgrade writes in the same
+-- commit as its record (ADR 0068): the replaced manifest, or a document or
+-- bundle of the new release. Nothing else may be written this way.
+data ArchiveFile = ArchiveFile
+  { archiveFilePath :: FilePath
+  , archiveFileBytes :: LazyByteString.ByteString
+  } deriving (Eq, Show)
+
+manifestFilePath :: FilePath
+manifestFilePath = "archive.json"
+
+-- | The manifest, one of a release's three documents under
+-- @spec/<version>/@, or a bundle under its digest path.
+validateArchiveFilePath :: FilePath -> Either Text ()
+validateArchiveFilePath path = case splitDirectories path of
+  ["archive.json"] | path == manifestFilePath -> Right ()
+  ["spec", version, name]
+    | name `elem` ["VERSION", "archive-spec.md", "context.jsonld"]
+    , path == "spec/" <> version <> "/" <> name -> () <$ specVersion ("archive/" <> Text.pack version)
+  ["contracts", name]
+    | path == "contracts/" <> name
+    , Just hex <- Text.stripSuffix ".json" =<< Text.stripPrefix "sha256-" (Text.pack name)
+    , Text.length hex == 64
+    , Text.all (\character -> ('0' <= character && character <= '9') || ('a' <= character && character <= 'f')) hex -> Right ()
+  _ -> Left ("not a specification file path: " <> Text.pack path)
+
+-- | 'commitRecordBatchWithContent', plus specification files. The manifest
+-- must already be committed and is replaced; every other file must be new.
+-- Like content links, the files enter only the temporary index before the
+-- ref update; their worktree copies are written from the commit when the
+-- operation journal is reconciled after it.
+commitRecordBatchWithFiles
+  :: ArchiveWriteLock
+  -> Text
+  -> Text
+  -> [(FilePath, LazyByteString.ByteString)]
+  -> [ContentLink]
+  -> [ArchiveFile]
+  -> Maybe CommitVerification
+  -> IO (Either MutationError ())
+  -> IO (Either MutationError Text)
+commitRecordBatchWithFiles (ArchiveWriteLock rootPath rootFd gitFd executable) expectedHead message records contentLinks archiveFiles verification finalCheck =
+  case ( traverse (validateRecordPath . fst) records
+       , traverse validateContentLink contentLinks
+       , traverse (validateArchiveFilePath . archiveFilePath) archiveFiles ) of
+    (Left problem, _, _) -> pure (Left (MutationRejected problem))
+    (_, Left problem, _) -> pure (Left (MutationRejected problem))
+    (_, _, Left problem) -> pure (Left (MutationRejected problem))
+    _
+      | length (uniqueSorted (map archiveFilePath archiveFiles)) /= length archiveFiles ->
+          pure (Left (MutationRejected "a specification file is named twice"))
+      | otherwise -> commitAt
   where
     commitAt = Exception.mask $ \restore -> do
       pinnedRecordsRef <- newIORef Nothing
@@ -1703,7 +1871,7 @@ commitRecordBatchWithContent (ArchiveWriteLock rootPath rootFd gitFd executable)
         prepared <- prepareCommit
         case prepared of
           Left problem -> pure (Left problem)
-          Right (branch, newLinks) ->
+          Right (branch, newLinks, newFiles) ->
             withNewIndexReservation gitFd $ \reservation -> tryIO $ do
               checked <- finalCheck
               case checked of
@@ -1724,6 +1892,7 @@ commitRecordBatchWithContent (ArchiveWriteLock rootPath rootFd gitFd executable)
                         (zipWith (\(path, _) name -> JournalEntry path name Nothing Nothing Nothing)
                           records temporaryNames)
                         newLinks
+                        newFiles
                   journalState <- newIORef preparing
                   case reservation of
                     IndexReservation _ _ writerRef -> writeIORef writerRef (Just journalState)
@@ -1766,7 +1935,7 @@ commitRecordBatchWithContent (ArchiveWriteLock rootPath rootFd gitFd executable)
                                       Left problem -> pure (Left problem)
                                       Right () -> do
                                         committed <- buildAndAdvance recordsFd branch reservation
-                                          ownedRecords newLinks journalState explicitFailureRef
+                                          ownedRecords newLinks newFiles journalState explicitFailureRef
                                         case committed of
                                           Left problem -> pure (Left problem)
                                           Right commit -> do
@@ -1774,19 +1943,12 @@ commitRecordBatchWithContent (ArchiveWriteLock rootPath rootFd gitFd executable)
                                             case temps of
                                               Left problem -> pure (Left
                                                 ("archive commit succeeded; operation journal retained because staged source cleanup failed: " <> problem))
+                                              -- The ordinary index follows the commit when
+                                              -- the journal is reconciled below: the one path
+                                              -- a killed process's successor also takes.
                                               Right () -> do
-                                                refreshed <- runGitTyped executable rootPath rootFd gitFd Nothing
-                                                  ["-c", "core.hooksPath=/dev/null", "read-tree", Text.unpack commit]
-                                                case refreshed of
-                                                  Left problem | gitPinChanged problem ->
-                                                    pure (Left (gitFailureMessage problem))
-                                                  Left problem -> do
-                                                    hPutStrLn stderr ("door: warning: archive commit succeeded but index refresh failed: " <> Text.unpack (gitFailureMessage problem))
-                                                    installWorktreeLinks
-                                                    pure (Right commit)
-                                                  Right _ -> do
-                                                    installWorktreeLinks
-                                                    pure (Right commit)
+                                                installWorktreeLinks
+                                                pure (Right commit)
 
     closePinnedRecords reference = do
       pinned <- readIORef reference
@@ -1828,9 +1990,11 @@ commitRecordBatchWithContent (ArchiveWriteLock rootPath rootFd gitFd executable)
             Left problem -> pure (Left problem)
             Right branch -> do
               classified <- mapM classifyLink contentLinks
-              pure $ case sequence classified of
-                Left problem -> Left problem
-                Right links -> Right (branch, [link | Just link <- links])
+              files <- mapM classifyFile archiveFiles
+              pure $ case (sequence classified, sequence files) of
+                (Left problem, _) -> Left problem
+                (_, Left problem) -> Left problem
+                (Right links, Right fileBlobs) -> Right (branch, [link | Just link <- links], fileBlobs)
 
     -- A link already committed at this exact path with the same target is
     -- content another artifact admitted earlier; the tree keeps it unchanged.
@@ -1849,6 +2013,25 @@ commitRecordBatchWithContent (ArchiveWriteLock rootPath rootFd gitFd executable)
                 Right Nothing
           _ -> Left ("content path already holds a different entry: " <> Text.pack (contentLinkPath link))
 
+    -- The manifest must be committed already, as a regular file, and is
+    -- replaced; any other specification file must not exist yet.
+    classifyFile file = do
+      let bytes = LazyByteString.toStrict (archiveFileBytes file)
+          path = archiveFilePath file
+      blob <- gitBlobForFileBytes executable rootPath rootFd gitFd bytes
+      existing <- runGit executable rootPath rootFd gitFd Nothing
+        ["ls-tree", "-z", Text.unpack expectedHead, "--", path]
+      pure $ do
+        blobId <- blob
+        listing <- existing
+        case (path == manifestFilePath, filter (not . Text.null) (Text.splitOn "\0" listing)) of
+          (False, []) -> Right (path, blobId)
+          (False, _) -> Left ("specification file already exists: " <> Text.pack path)
+          (True, [entry])
+            | Just old <- Text.stripPrefix "100644 blob " =<< Text.stripSuffix ("\t" <> Text.pack path) entry
+            , old /= blobId -> Right (path, blobId)
+          (True, _) -> Left "the committed manifest is missing, not a regular file, or unchanged"
+
     installWorktreeLinks = do
       installed <- tryIO (mapM_ (installContentLink rootFd) contentLinks)
       case installed of
@@ -1856,19 +2039,20 @@ commitRecordBatchWithContent (ArchiveWriteLock rootPath rootFd gitFd executable)
           ("door: warning: archive commit succeeded but a content location could not be created: " <> Text.unpack problem)
         Right () -> pure ()
 
-    buildAndAdvance recordsFd branch reservation hashed newLinks journalState explicitFailureRef = do
+    buildAndAdvance recordsFd branch reservation hashed newLinks newFiles journalState explicitFailureRef = do
           readTree <- runIndexGit executable rootPath rootFd gitFd reservation
             ["-c", "core.hooksPath=/dev/null", "read-tree", Text.unpack expectedHead]
-          buildFromTree recordsFd branch reservation hashed newLinks journalState explicitFailureRef readTree
+          buildFromTree recordsFd branch reservation hashed newLinks newFiles journalState explicitFailureRef readTree
 
-    buildFromTree recordsFd branch reservation hashed newLinks journalState explicitFailureRef readTree =
+    buildFromTree recordsFd branch reservation hashed newLinks newFiles journalState explicitFailureRef readTree =
       case readTree of
         Left problem -> pure (Left problem)
         Right _ -> do
-          let paths = map installedRecordPath hashed <> map fst newLinks
+          let paths = map installedRecordPath hashed <> map fst newLinks <> map fst newFiles
           indexed <- updateIndexEntries executable rootPath rootFd gitFd reservation
             ([("100644", installedRecordBlob record, installedRecordPath record) | record <- hashed]
-              <> [("120000", blob, path) | (path, blob) <- newLinks])
+              <> [("120000", blob, path) | (path, blob) <- newLinks]
+              <> [("100644", blob, path) | (path, blob) <- newFiles])
           case indexed of
             Left problem -> pure (Left problem)
             Right _ -> do
@@ -1879,7 +2063,7 @@ commitRecordBatchWithContent (ArchiveWriteLock rootPath rootFd gitFd executable)
                 Right names
                   | sort (filter (not . Text.null) (Text.lines names))
                       /= sort (map Text.pack paths) ->
-                      pure (Left "temporary Git index does not contain exactly the record and content batch")
+                      pure (Left "temporary Git index does not contain exactly the record, content, and specification batch")
                   | otherwise -> do
                       tree <- runIndexGit executable rootPath rootFd gitFd reservation ["write-tree"]
                       case tree of
@@ -1978,6 +2162,44 @@ gitBlobForBytes executable rootPath rootFd gitFd bytes = do
           fmap Text.strip <$> runGit executable rootPath rootFd gitFd Nothing
             ["hash-object", "-w", "--no-filters", "--", "/dev/fd/" <> showFd readFd]
 
+-- | Whether bytes hash, as a Git blob, to a name, in the object format the
+-- name's length selects.
+blobMatches :: Text -> ByteString.ByteString -> Bool
+blobMatches name bytes = case Text.length name of
+  40 -> hex (SHA1.hash framed) == name
+  64 -> hex (SHA256.hash framed) == name
+  _ -> False
+  where
+    framed = "blob " <> TextEncoding.encodeUtf8 (Text.pack (show (ByteString.length bytes))) <> "\0" <> bytes
+    hex = Text.pack . concatMap byteHex . ByteString.unpack
+    byteHex byte = ["0123456789abcdef" !! fromIntegral (div byte 16), "0123456789abcdef" !! fromIntegral (mod byte 16)]
+
+-- | Hash bytes of any size as a loose Git blob. A pipe holds only a bounded
+-- amount before its reader starts, and Git starts after the write, so the
+-- bytes go to an unnamed file in the Git directory instead: written, opened
+-- again for reading from its start, and unlinked before Git reads it.
+gitBlobForFileBytes :: Executable -> FilePath -> Fd -> Fd -> ByteString.ByteString
+                    -> IO (Either Text Text)
+gitBlobForFileBytes executable rootPath rootFd gitFd bytes = do
+  unique <- hashUnique <$> newUnique
+  processId <- getProcessID
+  let name = ".archive-door-blob-" <> show processId <> "-" <> show unique
+      create = openFdAt (Just gitFd) name WriteOnly
+        defaultFileFlags { creat = Just ownerFileModes, exclusive = True, nofollow = True, cloexec = True }
+      reopen = openFdAt (Just gitFd) name ReadOnly
+        defaultFileFlags { nofollow = True, nonBlock = True, cloexec = False }
+      removeName = Exception.try (unlinkAt gitFd name) :: IO (Either Exception.IOException ())
+  prepared <- tryIO (Exception.bracket create closeFd (`writeAll` bytes)
+    >> (reopen `Exception.finally` removeName))
+  case prepared of
+    Left problem -> do
+      _ <- removeName
+      pure (Left problem)
+    Right fd -> Exception.bracket (pure fd) closeFd $ \readFd ->
+      runGit executable rootPath rootFd gitFd Nothing
+        ["hash-object", "-w", "--no-filters", "--", "/dev/fd/" <> showFd readFd]
+        >>= pure . fmap Text.strip
+
 -- | Content paths are the D-1 layout's `content/sha256/<h0h1>/<h2h3>/<digest>`
 -- (ADR 0053) and nothing else; their link targets stay inside this
 -- repository's annex object store. The result is the fan-out directories and
@@ -2022,6 +2244,27 @@ installContentLink rootFd link = do
                 existing <- readLinkAt shaFd digest
                 unless (existing == contentLinkTarget link) $
                   failText ("content location already exists with another target: " <> Text.pack (contentLinkPath link))
+
+-- | Write the worktree copy of a committed specification file through the
+-- pinned root: a new file in the same directory, synchronized, then renamed
+-- over the name, so a reader sees the old or the new bytes.
+installWorktreeFile :: Fd -> ArchiveFile -> IO ()
+installWorktreeFile rootFd file = do
+  either failText pure (validateArchiveFilePath (archiveFilePath file))
+  let components = splitDirectories (archiveFilePath file)
+      directories = take (length components - 1) components
+      name = last components
+  withDirectoryChain rootFd directories True $ \directoryFd -> do
+    unique <- hashUnique <$> newUnique
+    processId <- getProcessID
+    let temporary = ".archive-door-file-" <> show processId <> "-" <> show unique
+    Exception.bracket
+      (openFdAt (Just directoryFd) temporary WriteOnly
+        defaultFileFlags { creat = Just ownerFileModes, exclusive = True, nofollow = True, cloexec = True })
+      closeFd
+      (\fd -> writeAll fd (LazyByteString.toStrict (archiveFileBytes file)) >> syncStrongFdOrFail fd)
+    renameAt directoryFd temporary name
+    syncDirectoryFdOrFail directoryFd
 
 -- | Run an action in a directory reached from a pinned descriptor through
 -- each named child, never following a symlink. With 'True', missing
@@ -2549,7 +2792,14 @@ runGit executable rootPath rootFd gitFd indexPath arguments =
 
 runGitTyped :: Executable -> FilePath -> Fd -> Fd -> Maybe FilePath -> [String]
             -> IO (Either GitFailure Text)
-runGitTyped executable rootPath rootFd gitFd indexPath arguments = do
+runGitTyped executable rootPath rootFd gitFd indexPath arguments =
+  fmap (TextEncoding.decodeUtf8With TextError.lenientDecode)
+    <$> runGitBytesTyped executable rootPath rootFd gitFd indexPath arguments
+
+-- | 'runGitTyped' with Git's standard output as exact bytes.
+runGitBytesTyped :: Executable -> FilePath -> Fd -> Fd -> Maybe FilePath -> [String]
+                 -> IO (Either GitFailure ByteString.ByteString)
+runGitBytesTyped executable rootPath rootFd gitFd indexPath arguments = do
   environment <- cleanEnvironment indexPath
   unchanged <- executableStillMatches executable
   rootPinned <- rootDirectoryMatches rootPath rootFd
@@ -2576,7 +2826,7 @@ runGitTyped executable rootPath rootFd gitFd indexPath arguments = do
       else Left GitDirectoryChanged
     (status, stdoutBytes, stderrBytes) <- result
     case status of
-      ExitSuccess -> Right (TextEncoding.decodeUtf8With TextError.lenientDecode stdoutBytes)
+      ExitSuccess -> Right stdoutBytes
       ExitFailure code -> Left
         (GitExitFailure code
           (TextEncoding.decodeUtf8With TextError.lenientDecode stderrBytes))

@@ -1,6 +1,6 @@
 # Archive Specification
 
-Version: 0.0.6
+Version: 0.0.7
 Status: draft
 
 This is the contract an archive is governed by. It is copied into every archive
@@ -272,7 +272,9 @@ lowercase hexadecimal digest in the same path. This is layout `archive/2`
 (ADR 0053); specifications before 0.0.6 used layout `archive/1`, with every
 record directly in `records/` and every content path directly in
 `content/sha256/`. Specification 0.0.6 changes only the layout: it installs
-the same contract bundles and the same core context as 0.0.5.
+the same contract bundles and the same core context as 0.0.5. Specification
+0.0.7 keeps layout `archive/2` and the 0.0.6 core context and adds contract
+bundles (D-15).
 
 `archive.json` MUST contain only the layout version, archive identifier, and
 governing specification identifier. Its layout MUST be `archive/2`. The specification directory and contract
@@ -286,8 +288,9 @@ identities. Object identifiers and source names MUST NOT determine content
 paths. Locks, proposals, plans, indexes, views, caches, and other operational
 or regenerable state MUST NOT be required to recover archival evidence.
 
-Changing the governing specification of an existing archive remains
-unsupported until specification migration is defined.
+Changing the governing specification of an existing archive is possible only
+by the specification upgrade transition of D-15, and only to an additive
+release; every other change of specification remains unsupported.
 
 ### D-2. Portable identifiers (ADR 0021)
 
@@ -563,8 +566,8 @@ supply identity. The core context MUST define `person`, `organisation`,
 `musical_work` in its versioned context. A context for 0.0.1 or 0.0.2 MUST NOT
 accept that later kind. Specification 0.0.5 also defines `recording_session`,
 a local kind with no Library Reference Model equivalent; a context for an
-earlier version MUST NOT accept it. Specification 0.0.6 keeps the 0.0.5 kinds
-and core context unchanged. This Archive-owned term does not establish an RDF
+earlier version MUST NOT accept it. Specifications 0.0.6 and 0.0.7 keep the
+0.0.5 kinds and core context unchanged. This Archive-owned term does not establish an RDF
 equivalence between Archive and MusicBrainz Work types or settle the open LRM
 mapping question.
 
@@ -591,9 +594,9 @@ path, verify the bundle bytes, and then require its identifier and version to
 match. Missing, changed, unknown, or remotely dependent contracts MUST be
 refused on admission and reported as incomplete on read.
 
-Adding contracts outside a specification release, domain assessment and
-enrichment contracts, and current rules remain unsupported until separately
-defined.
+Adding contracts outside a specification release, domain assessment
+contracts, enrichment contracts other than those of D-15, and current rules
+remain unsupported until separately defined.
 
 ### D-9. Transition proposals and dispatch (ADR 0028)
 
@@ -996,15 +999,131 @@ exactly one `musical_work` Entity revision as `work`; an optional
 `parameters` Artifact revision; and exactly one `run` Claim revision. Its
 payload has the `method` (`id`, `version`), the `score` as exact signed
 decimal text, its `scale`, and a `direction` of `higher_is_closer` or
-`lower_is_closer`. No run record contract is defined yet, so no proposer can
-satisfy a match's provenance; implementations MUST NOT read a match as
-identity or as current.
+`lower_is_closer`. Version 1's `run` target is any Claim, so no proposer can
+satisfy a version 1 match's provenance; D-15 defines the run contract and a
+work match version 2 that pins it. Implementations MUST NOT read a match of
+either version as identity or as current.
 
 These bundles extend the contract profile with the reference target shape
 `assessment`. The pattern subset Door evaluates is: anchored patterns of
 literals, escaped metacharacters, ASCII character classes without negation,
 groups with alternation, and the quantifiers `?`, `*`, `+`, `{n}`, and
 `{n,m}`; any other syntax MUST be refused when the bundle is loaded.
+
+### D-15. Derivation runs, audio facts, and upgrades (ADRs 0064 to 0068)
+
+Specification 0.0.7 installs version 1 of `archive.claim/derivation_run`,
+`archive.claim/audio_stream`, `archive.claim/span_suggestions`, and
+`archive.transition/specification_upgrade`, and version 2 of
+`archive.claim/work_match` and `archive.claim/capture_alignment`. Every older
+contract bundle remains installed with its exact earlier bytes. The layout,
+the entity kinds, and the core context are those of 0.0.6.
+
+**Derivation runs.** A derivation run is a Claim describing one execution of
+one method. Its payload MUST contain exactly `method`, with an `id` of 1 to 200
+characters and a `version` of 1 to 100; `software`, an array of 0 to 32
+objects of exactly `name` (1 to 200 characters) and `version` (1 to 100),
+naming the programs and libraries whose behaviour the output depends on, in
+the order the tool reports them; and `started_at` and `ended_at`, RFC 3339
+instants in UTC with a `Z` suffix. `ended_at` MUST NOT be earlier than
+`started_at`. A run MAY pin any number of `used` references, each to an
+Artifact, Claim, or Entity revision the run read, and at most one
+`parameters` reference to the Artifact revision holding the run's
+configuration as canonical JSON. Presets, thresholds, and prompts MUST be in
+that Artifact, never in a run or output payload. The envelope `agent` MUST be
+the tool's Package URL. A run's identity name is `run-` followed by a
+lowercase RFC 9562 UUIDv4, in namespace `archive.derivation/run`, so every run
+is a new object. A claim a run made pins it in role `run`. A run and its
+outputs MUST be proposed in one admission batch, and a run that keeps no
+output MUST NOT be proposed. The `agent` form, the name form, and the batch
+rule are obligations on the proposer; Door checks the payload, the instants,
+and the reference targets.
+
+**Audio stream facts.** An audio stream Claim states the facts of one audio
+stream. It MUST pin exactly one `artifact` Artifact revision and exactly one
+`run` derivation run version 1 Claim revision. Its payload MUST contain exactly
+`stream_index`, the stream's zero-based index in its container; `codec`, 1 to
+100 characters as the probing method reports it; `sample_rate`, a positive
+integer in hertz; `channel_count`, an integer from 1 to 64; `sample_count`, a
+positive integer, the exact number of sample frames decoded at `sample_rate`;
+and, optionally, `bits_per_sample`, an integer from 1 to 64. A method that
+cannot count every frame MUST NOT propose a stream claim. A file with several
+audio streams has one claim per stream. Claims of different runs may
+disagree; all of them remain and none is current.
+
+**Span suggestions.** A span suggestions Claim holds one run's suggested spans
+for one source. It MUST pin exactly one `source` Artifact revision, exactly one
+`stream` audio stream version 1 Claim revision whose `artifact` reference pins
+that same Artifact object and revision, and exactly one `run` derivation run
+version 1 Claim revision. Its payload MUST contain exactly `sample_rate`, equal
+to the stream claim's `sample_rate`, and `spans`, 1 to 10,000 objects of
+exactly integer `start_sample` and `end_sample` and a `class` of `music`,
+`talk`, `quiet`, or `unknown`. Every span MUST satisfy
+`0 <= start_sample < end_sample <= sample_count`, where `sample_count` is the
+pinned stream claim's, and every span MUST start at or after the previous
+span's end. A suggestion is never a selection: it accepts no audio and names
+no excerpt. A suggestion is never current, and a later run's suggestions do
+not supersede an earlier run's.
+
+**Matches and alignments.** `archive.claim/work_match` version 2 is version 1
+with two changes: its `run` reference MUST pin a derivation run version 1
+Claim revision, and the compared audio MUST be exactly one reference, either
+in role `occurrence`, pinning a song occurrence version 2 Claim revision, or
+in role `selection`, pinning an audio selection version 2 Claim revision. Its
+`corpus`, `work`, and `parameters` references, its payload, and the rule that
+`occurrence` and `corpus` references name different objects are unchanged.
+`archive.claim/capture_alignment` version 2 is version 1 whose optional `run`
+reference MUST pin a derivation run version 1 Claim revision. Version 1 of
+both remains installed with its exact bytes. A new match MUST cite version 2:
+Door checks a version 1 match only structurally, as before, and does not
+refuse one whose `run` pins any Claim. A match never establishes a Work.
+
+**Specification upgrade.** An `archive.transition/specification_upgrade`
+version 1 Claim moves an archive from its current specification to a named
+later one. Its payload MUST contain exactly `from` and `to`, each
+`archive/<version>`. It MUST pin exactly one `authorizer` person Entity
+revision, which MUST be the current revision of the active operator's
+appointed person. Door MAY commit an upgrade only when `from` is the archive's
+specification and `to` names a later version whose catalog contains every
+bundle of the current catalog with identical bytes, whose layout equals the
+archive's layout, and whose core context defines every term the current one
+defines, with the same mapping; any other upgrade MUST be refused as
+unsupported. A committed upgrade MUST, in one commit under the archive lock,
+verify each added bundle against the target catalog, install it under its
+digest path, record the new version where the archive records its version,
+and write the transition record citing the upgrade bundle. Expected heads,
+author, and authorizer are checked as for every transition, a complete retry
+changes nothing, and no downgrade exists. `door admit` MUST refuse the
+contract as it refuses every transition contract, and a Door without an
+upgrade handler MUST refuse every upgrade proposal as an unsupported
+transition.
+
+**Terms.** The payload field `software` and the reference roles `artifact` and
+`source` are core terms; these contracts' context fragments do not redefine
+them. Each fragment maps its own payload fields and roles; `run` maps to
+`prov:wasGeneratedBy`, `used` to `prov:used`, and `started_at` and `ended_at`
+to `prov:startedAtTime` and `prov:endedAtTime`.
+
+**Profile rules.** A reference target MAY name `shapes`, a set of at least two
+record shapes, in place of `shape`; a reference in that role MUST pin a
+revision of one of them. `x-archive-ordered-instants` names two payload
+fields, `start` and `end`, that MUST be RFC 3339 instants in UTC with a `Z`
+suffix, the second not earlier than the first. `x-archive-sequential-spans`
+names a nonempty payload array and its integer `start` and `end` fields; every
+element MUST have `0 <= start < end` and MUST start at or after the previous
+element's end. `x-archive-target-measure` names a `role` whose one reference
+pins a Claim, a `rate` field whose value in this payload MUST equal its value
+in the pinned Claim's payload, the pinned Claim's `count` field, and a
+`payload` array whose `end` fields MUST NOT exceed that count.
+`x-archive-same-subject` names a `role` whose one reference pins a Claim, a
+`subject` role of that Claim, and an `equals` role of this record; the pinned
+Claim's one `subject` reference and this record's one `equals` reference MUST
+pin the same object and revision. The roles these two rules name MUST have a
+reference target rule for exactly one Claim. The JSON Schema keyword `maximum`
+is supported. These rules are closed and root-only like the earlier profile
+rules: an unknown or malformed rule MUST be refused when the bundle loads, and
+a generic schema success MUST NOT bypass them. This section defines no
+`current` rule.
 
 ## 7. Not yet defined
 
@@ -1016,7 +1135,8 @@ does:
 - expunging records and their history, and erasing information derived from
   destroyed content;
 - digest algorithm migration;
-- migration of an archive between specification versions.
+- migration of an archive between specification versions, other than the
+  additive upgrade of D-15.
 
 ## 8. Versioning
 

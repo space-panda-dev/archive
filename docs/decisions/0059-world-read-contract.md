@@ -119,6 +119,14 @@ removes its pointer. The release notes give the date it closes.
   than by scanning graph names, and select by contract through the link
   rather than by matching JSON text. At shadow size the first takes 32 ms
   where the scan takes 213 ms.
+- Revision 3 of projection 6 adds specification 0.0.7's runs and what they
+  make (ADRs 0064 to 0067): a derivation run as a `prov:Activity`, audio
+  stream facts on the Artifact revision they describe, each suggested span
+  as a node, and version 2 matches. It is an addition like revision 2, so
+  older generations rebuild in full. A reference whose role the core context
+  maps to a record field or shape class (`source`, `artifact`) keeps its
+  reified statement but gets no direct triple, so `arch:source` keeps its
+  one datatype; how those roles are finally named stays an open question.
 - The first use of the overlap window will be the first rename.
 
 ## Alternatives considered

@@ -71,6 +71,18 @@ class BuilderRefusals(unittest.TestCase):
         self.assertEqual(built.returncode, 1)
         self.assertIn("before it exists", json.loads(built.stderr)["detail"])
 
+    @needs_door
+    def test_an_agent_that_is_neither_operator_nor_tool_stops_the_build(self) -> None:
+        plan = json.loads((HERE / "plan.json").read_text())
+        plan["steps"] = [{"name": "agent", "command": "admit", "records": [
+            {"key": "x", "namespace": "archive.core/entity", "name": "x", "shape": "entity",
+             "agent": "urn:uuid:00000000-0000-4000-8000-000000000000", "payload": {"kind": "person"}}]}]
+        path = self.tmp / "plan.json"
+        path.write_text(json.dumps(plan))
+        built = self.build(self.tmp / "archive", "--plan", str(path))
+        self.assertEqual(built.returncode, 1)
+        self.assertIn("neither the operator nor a Package URL", json.loads(built.stderr)["detail"])
+
 
 @needs_door
 class ServeChecks(unittest.TestCase):

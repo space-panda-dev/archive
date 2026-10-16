@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Read-only admission validation against one immutable Git snapshot.
@@ -39,19 +40,35 @@ import Archive.Door.Contracts
       , contractBundleVersion
       )
   , ReferenceTargetRule (..)
+  , SameSubjectRule (..)
+  , TargetMeasureRule (..)
   , contractReferenceTargets
   , distinctTrackContentRule
+  , sameSubjectRule
+  , targetMeasureRule
   , validateContractBundle
   , validateContractInstance
   , validateCoreContextForSpecification
   )
 import Archive.Door.Json (decodeUnique)
 import Archive.Door.Layout
-  ( digestText
+  ( ArchiveManifest
+  , digestText
   , manifestArchiveId
+  , manifestLayout
   , manifestSpec
   , parseArchiveManifest
   , parseRecordRelativePath
+  , specVersion
+  , specificationLayout
+  )
+import Archive.Door.SpecificationUpgrade
+  ( SpecificationRelease (..)
+  , additiveUpgrade
+  , compareSpecifications
+  , specificationFilePaths
+  , upgradeContractId
+  , upgradeContractVersion
   )
 import Archive.Door.Proposal
   ( Proposal (..)
@@ -67,7 +84,7 @@ import Archive.Door.References
   )
 import Archive.Door.Types
   ( ContractCitation (..)
-  , DraftEnvelope
+  , DraftEnvelope (envelopeSpec)
   , ObjectId
   , objectIdText
   , Reference (..)
@@ -101,7 +118,9 @@ import qualified Archive.GitSnapshot as Git
 import Archive.Read.Core (CommittedRecord (..))
 import Control.Monad (foldM_)
 import qualified Crypto.Hash.SHA256 as SHA256
-import Data.Aeson (Value (Object, String), object, (.=))
+import Data.Aeson (Value (Array, Number, Object, String), object, (.=))
+import Data.Foldable (toList)
+import Data.Scientific (floatingOrInteger)
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as StrictByteString
@@ -494,17 +513,21 @@ loadVerifiedSnapshot snapshot = do
   -- Every committed file is checked below; read them all in bulk first, so
   -- the Git processes do not grow with the number of records.
   prefetched <- Git.prefetchPaths snapshot archivePaths
-  additionsResult <- case prefetched of
+  -- Only the manifest may change after it is added, and only by a
+  -- specification upgrade; 'validateUpgradeHistory' proves every change is
+  -- one (ADR 0068).
+  historyResult <- case prefetched of
     Left problem -> pure (Left problem)
-    Right () -> Git.immutableAdditions snapshot archivePaths
-  case additionsResult of
+    Right () -> Git.archivePathHistory snapshot archivePaths ["archive.json"]
+  case historyResult of
     Left problem -> pure (Left (AdmissionSnapshotGitError problem))
-    Right additions -> do
+    Right (additions, modifications) -> do
+      let upgradeCommits = map snd modifications
       manifestResult <- readCanonicalJson snapshot "archive.json"
       case manifestResult >>= mapIntegrity . parseArchiveManifest of
         Left problem -> pure (Left problem)
         Right manifest -> do
-          resources <- validateResources snapshot additions (manifestSpec manifest)
+          resources <- validateResources snapshot additions upgradeCommits (manifestSpec manifest)
           case resources of
             Left problem -> pure (Left problem)
             Right () -> do
@@ -513,7 +536,7 @@ loadVerifiedSnapshot snapshot = do
                 Left problem -> pure (Left problem)
                 Right installed -> do
                   catalogResult <- mapIntegrity <$> validateInstalledCatalog additions
-                    (manifestSpec manifest) installed
+                    upgradeCommits (manifestSpec manifest) installed
                   case catalogResult of
                     Left problem -> pure (Left problem)
                     Right () -> do
@@ -523,7 +546,9 @@ loadVerifiedSnapshot snapshot = do
                         Right entries -> do
                           immutable <- validateImmutablePaths snapshot additions
                             installed entries
-                          case immutable of
+                          upgrades <- validateUpgradeHistory snapshot additions upgradeCommits
+                            manifest installed entries
+                          case immutable >> upgrades of
                             Left problem -> pure (Left problem)
                             Right () -> do
                               let indexed = indexRecords entries
@@ -534,6 +559,7 @@ loadVerifiedSnapshot snapshot = do
                                   pure $ do
                                     commits <- either (Left . AdmissionSnapshotGitError) Right history
                                     batches <- mapIntegrity (loadIntroducers additions entries)
+                                    mapIntegrity (validateCitationOrder commits additions installed entries)
                                     pure SnapshotData
                                       { snapshotCommitId = Git.snapshotCommit snapshot
                                       , snapshotManifestId = manifestArchiveId manifest
@@ -558,12 +584,15 @@ archivePaths = ["archive.json", "spec", "contracts", "records"]
 firstKey :: (Text, Text, Text) -> Text
 firstKey (value, _, _) = value
 
+-- | The governing specification's three documents were added by the commit
+-- that adopted it: the root commit, or the last specification upgrade.
 validateResources
   :: GitSnapshot
   -> Map.Map FilePath Text
+  -> [Text]
   -> Text
   -> IO (Either AdmissionSnapshotLoadError ())
-validateResources snapshot additions specification = do
+validateResources snapshot additions upgradeCommits specification = do
   let version = case Text.stripPrefix "archive/" specification of
         Just value -> value
         Nothing -> ""
@@ -575,7 +604,8 @@ validateResources snapshot additions specification = do
   contextResult <- readJson snapshot contextPath
   pure $ do
     initialCommit <- mapIntegrity (introducedAt additions "archive.json")
-    mapM_ (mapIntegrity . requireIntroducedAt additions initialCommit)
+    let adoptingCommit = last (initialCommit : upgradeCommits)
+    mapM_ (mapIntegrity . requireIntroducedAt additions adoptingCommit)
       [versionPath, documentPath, contextPath]
     versionBytes <- versionResult
     actualVersion <- mapIntegrity (decodeUtf8 versionPath versionBytes)
@@ -627,15 +657,176 @@ loadContractPath snapshot path = do
               , installedBundle = bundle
               }
 
-validateInstalledCatalog :: Map.Map FilePath Text -> Text -> [Installed]
+-- | Every installed bundle was added by the root commit or by a
+-- specification upgrade ('validateUpgradeHistory' says which upgrade adds
+-- which), and together they are exactly the governing release's catalog.
+validateInstalledCatalog :: Map.Map FilePath Text -> [Text] -> Text -> [Installed]
                          -> IO (Either Text ())
-validateInstalledCatalog additions specification installed = do
+validateInstalledCatalog additions upgradeCommits specification installed = do
   catalog <- loadContractCatalog specification
   pure $ do
     initialCommit <- introducedAt additions "archive.json"
-    mapM_ (requireIntroducedAt additions initialCommit . installedPath) installed
+    mapM_ (requireIntroducedAmong additions (initialCommit : upgradeCommits) . installedPath) installed
     expected <- catalog
     validateInstalledContexts expected installed
+  where
+    requireIntroducedAmong additions' commits path = do
+      actual <- introducedAt additions' path
+      if actual `elem` commits
+        then Right ()
+        else Left (Text.pack path <> " was not introduced with the archive specification")
+
+-- | Prove that every change of the manifest is one specification upgrade
+-- (ADR 0068, D-15). Each changing commit keeps the archive identifier and
+-- layout and names a later specification; it introduces exactly one record,
+-- an upgrade from the previous specification to the new one written under
+-- the new one; and it adds exactly the new release's three documents and the
+-- bundles its catalog adds to the previous one, which must be additive. The
+-- root commit added exactly its own release's bundles, and no upgrade
+-- record exists outside such a commit. A history that fails any of this is
+-- refused as incomplete evidence, never reinterpreted.
+validateUpgradeHistory
+  :: GitSnapshot
+  -> Map.Map FilePath Text
+  -> [Text]
+  -> ArchiveManifest
+  -> [Installed]
+  -> [RecordEntry]
+  -> IO (Either AdmissionSnapshotLoadError ())
+validateUpgradeHistory snapshot additions upgradeCommits current installed entries =
+  case introducedAt additions "archive.json" of
+    Left problem -> pure (Left (AdmissionSnapshotIntegrityError problem))
+    Right initialCommit -> do
+      -- Without an upgrade the manifest never changed, so the root commit's
+      -- manifest is the current one and is not read again.
+      manifests <- if null upgradeCommits
+        then pure [Right current]
+        else mapM manifestAt (initialCommit : upgradeCommits)
+      case sequence manifests of
+        Left problem -> pure (Left problem)
+        Right chain -> do
+          catalogs <- mapM (loadContractCatalog . manifestSpec) chain
+          contexts <- mapM (contextAt . manifestSpec) chain
+          pure $ do
+            loaded <- mapIntegrity (sequence catalogs)
+            held <- sequence contexts
+            mapIntegrity $ do
+              case reverse chain of
+                final : _ | final == current -> Right ()
+                _ -> Left "the last specification upgrade does not name the archive's specification"
+              case loaded of
+                rootCatalog : _ -> requireBundles initialCommit rootCatalog
+                [] -> Left "archive history has no root manifest"
+              mapM_ step (zip3 upgradeCommits (zip chain (drop 1 chain))
+                (zip (zip loaded held) (drop 1 (zip loaded held))))
+              let upgradeRecords = [entry | entry <- entries, citesUpgrade entry]
+                  introducers = [Map.lookup (entryPath entry) additions | entry <- upgradeRecords]
+              if length upgradeRecords == length upgradeCommits
+                  && all (`elem` map Just upgradeCommits) introducers
+                then Right ()
+                else Left "a specification upgrade record exists outside a specification upgrade commit"
+  where
+    manifestAt commit = do
+      bytes <- Git.readPathAt snapshot commit "archive.json"
+      pure $ case bytes of
+        Left problem -> Left (AdmissionSnapshotGitError problem)
+        Right raw -> mapIntegrity $ do
+          value <- decodeBytes "archive.json" raw
+          if encodeCanonical value /= raw
+            then Left ("archive.json at " <> commit <> " is not RFC 8785 canonical")
+            else parseArchiveManifest value
+
+    contextAt specification = case specVersion specification of
+      Left problem -> pure (Left (AdmissionSnapshotIntegrityError problem))
+      Right version -> do
+        value <- readJson snapshot ("spec/" <> Text.unpack version <> "/context.jsonld")
+        pure $ value >>= \case
+          Object outer | Just (Object inner) <- KeyMap.lookup "@context" outer -> Right inner
+          _ -> Left (AdmissionSnapshotIntegrityError
+            ("the core context of " <> specification <> " has no @context object"))
+
+    contractsAddedAt commit = Set.fromList
+      [ installedKey item | item <- installed, Map.lookup (installedPath item) additions == Just commit ]
+    pathsAddedAt prefix commit = Set.fromList
+      [ path | (path, introducer) <- Map.toList additions, introducer == commit
+      , (prefix <> "/") `Text.isPrefixOf` Text.pack path ]
+
+    requireBundles commit expected =
+      if contractsAddedAt commit == expected
+        then Right ()
+        else Left "a commit that adopted a specification did not add exactly the bundles its catalog adds"
+
+    citesUpgrade entry = any (\citation -> contractId citation == upgradeContractId)
+      (envelopeContracts (storedDraft (entryEnvelope entry)))
+
+    step (commit, (previous, next), ((previousCatalog, previousContext), (nextCatalog, nextContext))) = do
+      let from = manifestSpec previous
+          to = manifestSpec next
+      if manifestArchiveId next == manifestArchiveId previous && manifestLayout next == manifestLayout previous
+        then Right ()
+        else Left "a specification upgrade changed the archive identifier or layout"
+      order <- compareSpecifications to from
+      if order == GT then Right () else Left "a specification upgrade does not name a later specification"
+      previousLayout <- specificationLayout from
+      nextLayout <- specificationLayout to
+      additiveUpgrade
+        (SpecificationRelease from previousCatalog previousLayout previousContext)
+        (SpecificationRelease to nextCatalog nextLayout nextContext)
+      requireBundles commit (nextCatalog `Set.difference` previousCatalog)
+      documents <- specificationFilePaths to
+      if pathsAddedAt "spec" commit == Set.fromList documents
+        then Right ()
+        else Left "a specification upgrade commit did not add exactly its release's documents"
+      case [entry | entry <- entries, Map.lookup (entryPath entry) additions == Just commit] of
+        [entry] -> do
+          let draft = storedDraft (entryEnvelope entry)
+              keys = [ (contractId citation, contractVersion citation, contractDigest citation)
+                     | citation <- envelopeContracts draft ]
+          case keys of
+            [(identifier, version, _)]
+              | identifier == upgradeContractId && version == upgradeContractVersion -> Right ()
+            _ -> Left "a specification upgrade commit's record is not one upgrade claim"
+          case envelopeBody draft of
+            ClaimRecord (Object payload)
+              | KeyMap.lookup "from" payload == Just (String from)
+              , KeyMap.lookup "to" payload == Just (String to)
+              , envelopeSpec draft == to -> Right ()
+            _ -> Left "a specification upgrade record does not name the manifest change it made"
+        _ -> Left "a specification upgrade commit must introduce exactly one record"
+
+-- | A record cites only bundles the archive held when it was committed: the
+-- bundle's path was added by the record's commit or an earlier one. Likewise
+-- a record written under a specification whose core context the archive
+-- holds was committed with or after that context, so a specification
+-- upgrade cannot make an earlier record readable after the fact (D-1,
+-- ADR 0068). A record whose context the archive never held is left to the
+-- checks that read it.
+validateCitationOrder :: [Text] -> Map.Map FilePath Text -> [Installed] -> [RecordEntry] -> Either Text ()
+validateCitationOrder commits additions installed entries = mapM_ check entries
+  where
+    position = Map.fromList (zip commits [0 :: Int ..])
+    paths = Map.fromList [(installedKey item, installedPath item) | item <- installed]
+    at path = Map.lookup path additions >>= (`Map.lookup` position)
+    check entry = do
+      contextHeld entry
+      mapM_ (cited entry) (envelopeContracts (storedDraft (entryEnvelope entry)))
+    contextHeld entry =
+      let specification = envelopeSpec (storedDraft (entryEnvelope entry))
+      in case Text.stripPrefix "archive/" specification of
+        Just version
+          | let path = "spec/" <> Text.unpack version <> "/context.jsonld"
+          , Map.member path additions -> case (at path, at (entryPath entry)) of
+              (Just context, Just record) | context <= record -> Right ()
+              _ -> Left (Text.pack (entryPath entry) <> " is written under " <> specification
+                <> " before the archive held its core context")
+        _ -> Right ()
+    cited entry citation =
+      case Map.lookup (contractId citation, contractVersion citation, contractDigest citation) paths of
+        Nothing -> Left ("contract is not installed at this snapshot: " <> contractId citation)
+        Just path -> case (at path, at (entryPath entry)) of
+          (Just bundle, Just record) | bundle <= record -> Right ()
+          _ -> Left (Text.pack (entryPath entry) <> " cites " <> contractId citation
+            <> " before the archive held it")
 
 -- | The installed bundles must be exactly the specification's catalog
 -- (ADR 0057), which Door reads from its own specification files.
@@ -742,6 +933,7 @@ validateProposalContracts snapshot proposal = pure $ do
   where
     committed = map entryTarget (snapshotRecords snapshot)
     validateOne catalog earlier record = do
+      requireLocalContext (proposalRecordDraft record)
       instanceValue <- contractInstance (proposalRecordValue record)
       bundles <- mapM (validateCitation catalog instanceValue)
         (envelopeContracts (proposalRecordDraft record))
@@ -750,9 +942,24 @@ validateProposalContracts snapshot proposal = pure $ do
       validateReferenceTargetRules targets (proposalRecordDraft record) bundles
       mapM_ (validateDistinctTrackContent targets
         (proposalRecordDraft record) instanceValue) bundles
+      mapM_ (validateTargetMeasure targets (proposalRecordDraft record)) bundles
+      mapM_ (validateSameSubject targets (proposalRecordDraft record)) bundles
       (revision, _) <- canonicalizeDraftStrict (proposalRecordValue record)
       pure (earlier <> [Target (objectIdText (envelopeObject (proposalRecordDraft record)))
         revision (proposalRecordDraft record)])
+    -- D-1: the archive holds the local documents that interpret every
+    -- admitted record, so a record's `spec` must select a core context this
+    -- archive already holds (D-6). A record written for a later release than
+    -- the archive governs is refused instead of leaving it incomplete.
+    requireLocalContext draft =
+      let specification = envelopeSpec draft
+          contextPath = case Text.stripPrefix "archive/" specification of
+            Just version -> Just ("spec/" <> Text.unpack version <> "/context.jsonld")
+            Nothing -> Nothing
+      in case contextPath of
+        Just path | Map.member path (snapshotImmutableAdditions snapshot) -> Right ()
+        _ -> Left ("record spec " <> specification
+          <> " selects a core context this archive does not hold")
     validateCitation catalog instanceValue citation = do
       let key = (contractId citation, contractVersion citation, contractDigest citation)
       bundle <- case Map.lookup key catalog of
@@ -786,10 +993,20 @@ validateReferenceTargetRules records draft bundles = do
       if not (referenceTargetMany rule) && length references > 1
         then Left ("contract requires exactly one " <> role <> " reference")
         else mapM_ (validateOne role rule) references
+    -- A rule naming one shape refuses any other; a rule naming several
+    -- accepts a revision of any of them, then applies that shape's checks.
     validateOne role rule reference = do
       target <- referencedEntry records role reference
       let body = envelopeBody (targetDraft target)
-      case referenceTargetShape rule of
+          shape = bodyShape body
+      case referenceTargetShapes rule of
+        [single]
+          | single /= shape -> Left (role <> " reference must target " <> article single)
+        shapes
+          | shape `notElem` shapes -> Left (role <> " reference must target a revision of shape "
+              <> Text.intercalate " or " shapes)
+        _ -> validateShape role rule target body
+    validateShape role rule target body = case bodyShape body of
         "claim" -> case body of
           ClaimRecord _ -> case referenceTargetContract rule of
             Nothing -> Right ()
@@ -823,6 +1040,91 @@ validateReferenceTargetRules records draft bundles = do
                     <> Text.intercalate " or " expected)
           _ -> Left (role <> " reference must target an Entity revision")
         _ -> Left "installed contract has an unsupported reference target shape"
+    article shape = case shape of
+      "claim" -> "a Claim revision"
+      "assessment" -> "an Assessment revision"
+      "artifact" -> "an Artifact revision"
+      "entity" -> "an Entity revision"
+      other -> "a " <> other <> " revision"
+
+bodyShape :: RecordBody -> Text
+bodyShape body = case body of
+  ArtifactRecord _ -> "artifact"
+  EntityRecord _ -> "entity"
+  ClaimRecord _ -> "claim"
+  AssessmentRecord _ -> "assessment"
+
+-- | The one reference a rule reads in a role, or a refusal naming the role.
+singleReference :: DraftEnvelope -> Text -> Either Text Reference
+singleReference draft role =
+  case filter ((== role) . referenceRole) (envelopeReferences draft) of
+    [reference] -> Right reference
+    _ -> Left ("contract requires exactly one " <> role <> " reference")
+
+-- | A pinned Claim's payload as an object.
+targetClaimPayload :: [Target] -> Text -> Reference -> Either Text (KeyMap.KeyMap Value)
+targetClaimPayload records role reference = do
+  target <- referencedEntry records role reference
+  case envelopeBody (targetDraft target) of
+    ClaimRecord (Object payload) -> Right payload
+    _ -> Left (role <> " reference must target a Claim revision")
+
+-- | A record's measurements fit the Claim that measured the audio: its rate
+-- equals the pinned Claim's, and no span ends past the pinned Claim's count.
+validateTargetMeasure :: [Target] -> DraftEnvelope -> ContractBundle -> Either Text ()
+validateTargetMeasure records draft bundle = do
+  rule <- targetMeasureRule (contractBundleSchema bundle)
+  case rule of
+    Nothing -> Right ()
+    Just measure -> do
+      let role = targetMeasureRole measure
+      reference <- singleReference draft role
+      target <- targetClaimPayload records role reference
+      own <- case envelopeBody draft of
+        ClaimRecord (Object payload) -> Right payload
+        _ -> Left "target measure rule applies only to a Claim payload"
+      targetRate <- integerField (targetMeasureRate measure) target
+      targetCount <- integerField (targetMeasureCount measure) target
+      ownRate <- integerField (targetMeasureRate measure) own
+      if ownRate /= targetRate
+        then Left (targetMeasureRate measure <> " must equal the " <> role <> " claim's "
+          <> targetMeasureRate measure)
+        else Right ()
+      spans <- case KeyMap.lookup (Key.fromText (targetMeasurePayload measure)) own of
+        Just (Array values) -> Right (toList values)
+        _ -> Left (targetMeasurePayload measure <> " must be an array")
+      ends <- mapM (spanEnd (targetMeasureEnd measure)) spans
+      if all (<= targetCount) ends
+        then Right ()
+        else Left (targetMeasureEnd measure <> " must not exceed the " <> role <> " claim's "
+          <> targetMeasureCount measure)
+  where
+    spanEnd name (Object piece) = integerField name piece
+    spanEnd _ _ = Left "span must be an object"
+    integerField name fields = case KeyMap.lookup (Key.fromText name) fields of
+      Just (Number value) | Right integer <- (floatingOrInteger value :: Either Double Integer) -> Right integer
+      _ -> Left (name <> " must be an integer")
+
+-- | The pinned Claim is about the very revision this record names: its one
+-- subject reference and this record's one compared reference pin the same
+-- object and revision.
+validateSameSubject :: [Target] -> DraftEnvelope -> ContractBundle -> Either Text ()
+validateSameSubject records draft bundle = do
+  rule <- sameSubjectRule (contractBundleSchema bundle)
+  case rule of
+    Nothing -> Right ()
+    Just same -> do
+      let role = sameSubjectRole same
+      reference <- singleReference draft role
+      target <- referencedEntry records role reference
+      subject <- singleReference (targetDraft target) (sameSubjectSubject same)
+      compared <- singleReference draft (sameSubjectEquals same)
+      if referenceObject subject == referenceObject compared
+          && referenceRevision subject == referenceRevision compared
+          && referenceRevision compared /= Nothing
+        then Right ()
+        else Left (role <> " claim must be about the same " <> sameSubjectEquals same
+          <> " revision as this record's " <> sameSubjectEquals same <> " reference")
 
 referencedEntry :: [Target] -> Text -> Reference -> Either Text Target
 referencedEntry records role reference = do

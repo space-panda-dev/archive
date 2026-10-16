@@ -47,6 +47,21 @@ elsewhere and is governed by the specification kept here.
 > Door admits all of them; publication approval and withdrawal are committed
 > only through `door transition`, authorized by the active operator
 > ([ADR 0051](docs/decisions/0051-publication-transition-dispatch.md)).
+> Specification 0.0.7 adds derivation runs, audio stream facts, span
+> suggestions, and matches and alignments that pin their run
+> ([ADRs 0064](docs/decisions/0064-derivation-runs.md) to
+> [0067](docs/decisions/0067-matches-and-alignments-pin-runs.md); the bundles
+> as proposed are in [0064-contracts](docs/proposals/0064-contracts/)), which
+> Door admits and World projects, and the specification upgrade contract of
+> [ADR 0068](docs/decisions/0068-specification-upgrade.md), by which
+> `door transition` moves a 0.0.6 archive to 0.0.7 in one commit.
+> [`enrich/`](enrich/README.md) proposes machine claims through `door admit`:
+> `enrich probe` (audio stream facts), `enrich detect` (span suggestions), and
+> `enrich match` (work matches), each under a derivation run; `enrich/media.py`
+> makes waveform peaks and listening copies that the relay serves by digest
+> ([ADR 0069](docs/decisions/0069-derived-media.md)). `capture import`
+> ([capture/](capture/README.md), [ADR 0070](docs/decisions/0070-capture-import.md))
+> admits a recorder card's new recordings as sessions and runs that chain.
 > Per-kind current rules remain open.
 > Except where a command is explicitly implemented, the material below
 > describes commitments rather than running software.
@@ -195,13 +210,17 @@ repository.
 
 ## What is provisional
 
-- **The specification** is a small pre-1.0 contract at version 0.0.6
-  ([current spec](spec/archive-spec.md), [0.0.6 release copy](spec/0.0.6/archive-spec.md), [0.0.5 release copy](spec/0.0.5/archive-spec.md), [0.0.4 release copy](spec/0.0.4/archive-spec.md), [0.0.3 release copy](spec/0.0.3/archive-spec.md)); unresolved subjects remain explicitly outside
+- **The specification** is a small pre-1.0 contract at version 0.0.7
+  ([current spec](spec/archive-spec.md), [0.0.7 release copy](spec/0.0.7/archive-spec.md), [0.0.6 release copy](spec/0.0.6/archive-spec.md), [0.0.5 release copy](spec/0.0.5/archive-spec.md), [0.0.4 release copy](spec/0.0.4/archive-spec.md), [0.0.3 release copy](spec/0.0.3/archive-spec.md)); unresolved subjects remain explicitly outside
   its normative protocols.
 - The unresolved V2 audio migration gates are recorded in the
   [release readiness note](docs/proposals/v2-migration-release-readiness.md).
   [ADR 0046](docs/decisions/0046-world-release-before-v2-migration.md)
   places that migration release after the World releases.
+- **Cutover** from the V2 importer has a
+  [proposed plan](docs/proposals/cutover-plan.md): what must be true before the
+  V2 system stops importing and the relay commits, the order, rollback, and
+  where Archive stands against each V2 capability.
 - **Commands beyond the accepted core** remain provisional: `archive plan`,
   `apply`, and `views`.
 
@@ -228,10 +247,14 @@ docs/decisions/      why each decision was made
 spec/                the contract copied into every archive
 docs/proposals/v2-migration-release-readiness.md
                      proposed V2 release boundary and unresolved audio gates
-relay/               HTTP for the operator's browser: Door's service and World's query
+docs/proposals/cutover-plan.md
+                     proposed conditions, order, and rollback for leaving the V2 importer
+relay/               HTTP for the operator's browser: Door's service, World's query, derived media
 world/               experimental, rebuildable semantic projection
 world/projection/    what each World projection version emits: SHACL shapes and vocabulary
 fixture/             published synthetic records and the builder that admits them through Door
+enrich/              enrichment tools, the adapter that proposes their runs to Door, and derived media
+capture/             the native importer of recorder files: grammars, sessions, and the enrichment chain
 ```
 
 ## Contributing

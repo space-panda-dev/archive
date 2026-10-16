@@ -241,7 +241,7 @@ cleanBootstrapEnvironment = filter (not . isGitVariable . fst)
     isGitVariable name = "GIT_" `Text.isPrefixOf` Text.pack name
 
 archiveVersion :: Text
-archiveVersion = "archive/0.0.6"
+archiveVersion = "archive/0.0.7"
 
 archiveProgram :: Text
 archiveProgram = "pkg:hackage/archive@0.0.1.0"
@@ -579,16 +579,16 @@ loadResources :: IO Resources
 loadResources = do
   versionPath <- getDataFileName "spec/VERSION"
   specificationPath <- getDataFileName "spec/archive-spec.md"
-  contextPath <- getDataFileName "spec/0.0.6/context.jsonld"
+  contextPath <- getDataFileName "spec/0.0.7/context.jsonld"
   contractDirectory <- getDataFileName "spec/contracts"
   versionBytes <- LazyByteString.readFile versionPath
   specificationBytes <- LazyByteString.readFile specificationPath
   contextBytes <- LazyByteString.readFile contextPath
-  if versionBytes /= "0.0.6\n"
-    then failIO "installed VERSION does not select archive/0.0.6"
+  if versionBytes /= "0.0.7\n"
+    then failIO "installed VERSION does not select archive/0.0.7"
     else pure ()
   context <- decodeResource contextBytes
-  _ <- ioEither (validateCoreContextForSpecification "archive/0.0.6" context)
+  _ <- ioEither (validateCoreContextForSpecification archiveVersion context)
   -- The specification's own catalog says which bundles it installs
   -- (ADR 0057); no copy of it lives in this source. Each listed bundle is
   -- loaded by its digest path and must carry the listed identifier and

@@ -49,9 +49,16 @@ wsh:Revision a sh:NodeShape ;
                 sh:pattern "#world:contract:[^:]+:[^:]+$" ;
                 rdfs:comment "Each contract the record cites: the bundle's node in the context graph, <{archive}#world:contract:{id}:{version}>. The same citations as arch:contracts, as links (revision 2)." ] ;
   # One direct triple per reference, by its role's predicate. These are the
-  # reference roles of specification 0.0.6's contracts.
+  # reference roles of specification 0.0.7's contracts. The roles `artifact`
+  # and `source` are core terms naming arch:Artifact and arch:source (D-15);
+  # a reference in either keeps its statement but gets no direct triple, so
+  # neither predicate gains a second meaning here (revision 3). A `source`
+  # reference is also prov:wasDerivedFrom.
   sh:property [ sh:path prov:wasDerivedFrom ; sh:nodeKind sh:IRI ] ;
-  sh:property [ sh:path prov:wasGeneratedBy ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path prov:wasGeneratedBy ; sh:nodeKind sh:IRI ;
+                rdfs:comment "Role run: the derivation run that made a claim, or, for work_match 1 and capture_alignment 1, any claim the record names as its run." ] ;
+  sh:property [ sh:path prov:used ; sh:nodeKind sh:IRI ;
+                rdfs:comment "derivation_run 1: each Artifact, Claim, or Entity revision the run read (revision 3)." ] ;
   sh:property [ sh:path arch:alignment ; sh:nodeKind sh:IRI ] ;
   sh:property [ sh:path arch:alignment_aligned ; sh:nodeKind sh:IRI ] ;
   sh:property [ sh:path arch:appoints ; sh:nodeKind sh:IRI ] ;
@@ -65,6 +72,8 @@ wsh:Revision a sh:NodeShape ;
   sh:property [ sh:path arch:destroys ; sh:nodeKind sh:IRI ] ;
   sh:property [ sh:path arch:external_survivor ; sh:nodeKind sh:IRI ] ;
   sh:property [ sh:path arch:match_corpus ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:measured_stream ; sh:nodeKind sh:IRI ;
+                rdfs:comment "span_suggestions 1: the audio_stream claim the spans were measured against (revision 3)." ] ;
   sh:property [ sh:path arch:migration_source ; sh:nodeKind sh:IRI ] ;
   sh:property [ sh:path arch:parameters ; sh:nodeKind sh:IRI ] ;
   sh:property [ sh:path arch:performance ; sh:nodeKind sh:IRI ] ;

@@ -237,6 +237,178 @@ has role `scratch` and commits on; clients commit only where the role is
 archive shares the source's archive identifier and is never evidence: nothing
 is copied back from it.
 
+## Redeploying Door, World, and the relay
+
+Status: proposed. Nothing here is approved. A redeploy against the shadow
+needs its own operation review and the operator's immediate approval; it is
+not covered by the scratch standing approval.
+
+The relay deployed for the shadow runs from a source tree copied before
+ADRs 0064-0070, beside a still older Door build, against the 0.0.6 shadow.
+Nothing in this repository reaches that deployment: its units run their own
+copies, and merging, building, or testing here changes none of its answers.
+Its behaviour changes only when its units are pointed at a new build. This
+section is what such a redeploy involves; the specification upgrade below
+needs it first, because the deployed Door has no `specification_upgrade`
+dispatch.
+
+What a new build changes for the shadow, before any upgrade:
+
+- **Door** carries specification 0.0.7 and still loads and serves the 0.0.6
+  shadow. It now refuses a record written under a specification context the
+  archive does not hold, so a client must write drafts under the archive's
+  own `spec` (the relay's `archive.spec`), never under the newest release.
+  Its first load re-verifies the whole archive, because the verified
+  checkpoint belongs to the Door build that wrote it
+  ([ADR 0052](decisions/0052-incremental-admission-verification.md)).
+  Journal recovery now refreshes a Git index that a killed Door left stale.
+- **World** is projection 6 revision 3. The deployed store's generation was
+  built by revision 2, so the next `world refresh` rebuilds in full ("predates
+  an addition"); the earlier generation keeps answering until it finishes.
+  Its answers for 0.0.6 records are unchanged.
+- **The relay** reads `archive.json` on every answer, so it reports a new
+  specification from the first answer after an upgrade, and treats a manifest
+  naming another archive as an internal error. It adds
+  `GET /media/{digest}/peaks` and `/listen`
+  ([ADR 0069](decisions/0069-derived-media.md)); without `media_root` in its
+  configuration these refuse with `media_not_derived` and ask World nothing,
+  and the existing configuration loads unchanged. It imports
+  `enrich/derived.py`, so the deployed source tree must hold `enrich/` beside
+  `relay/` and `world/` (the flake's `tools` package does).
+- `writes` stays `dry-run` and `role` stays `shadow`.
+
+1. **Review.** Name the source commit, the Door and Archive build made from
+   it, the World virtual environment (the relay needs nothing new; running
+   `enrich/` or `capture/` there needs `enrich/requirements.txt` and ffmpeg),
+   the unit files and their backups, and the rollback: the previous unit
+   files and builds, which stay in place.
+2. **Build beside the old one.** Build Door and Archive from the reviewed
+   commit into a new directory, and copy the source tree (with `enrich/`)
+   into another. Neither replaces the running ones.
+3. **Check before switching.** With the new build, `archive status` and `door
+   verify` on the shadow (the verify takes the archive lock and writes the new
+   build's checkpoint, so the running Door re-verifies in full on its next
+   load); confirm `.git/archive-door-operation` is absent, so no interrupted
+   commit is waiting for recovery.
+4. **Build World** with the new `world.py` into a new store directory, so
+   the running relay keeps reading its own store; a full rebuild is needed
+   anyway. Record the snapshot it names. `world/conformance.py --store
+   <store>` on it must report no problem.
+5. **Switch the units** to the new builds and the new store, restart `door
+   serve` and the relay, and check `/health` (`writes` `dry-run`, role `shadow`, the expected
+   specification and projection) and one read the review client makes. A
+   media route must answer `media_not_derived` until a `media_root` is
+   configured and filled.
+6. **Rollback** is pointing the units back at the previous builds. The old
+   Door reads the shadow as before as long as no upgrade has run. It carries
+   no 0.0.7 catalog, so after the specification upgrade it cannot be relied on
+   to read the shadow, and a rollback past the upgrade is the upgrade's
+   snapshot as well.
+
+## Specification upgrade
+
+Status: proposed. Nothing here is approved. Each run, on a scratch archive,
+the shadow, or any later archive, needs its own operation review and the
+operator's immediate approval for that one run; the scratch standing approval
+above covers making scratch copies, not upgrading one.
+
+The shadow is a 0.0.6 archive. Specification 0.0.7 is additive for it, so it
+can adopt 0.0.7 by one `door transition`
+([ADR 0068](decisions/0068-specification-upgrade.md)): one commit adds the
+upgrade record, `spec/0.0.7/`, and the bundles 0.0.7 adds, and replaces
+`archive.json` with the new version. No downgrade exists; the only way back is
+the Btrfs snapshot taken before the run.
+
+1. **Review.** Name the archive root, the Door build (it must carry 0.0.7, the
+   version in its `spec/VERSION`, and be deployed as in the section above),
+   the operator person's current revision, and the snapshot that is the
+   rollback. Rehearse on a scratch copy first and keep its result with the
+   review.
+2. **Snapshot.** Take a read-only Btrfs snapshot of the archive and record its
+   identifier. Stop writers through the relay and the review application for
+   the run; Door's lock serializes the rest.
+3. **Proposal.** Write a transition proposal directory with one record: a
+   Claim with `spec` `archive/0.0.7`, citing
+   `archive.transition/specification_upgrade` version 1 under the digest the
+   0.0.7 catalog lists, payload `{"from": "archive/0.0.6", "to":
+   "archive/0.0.7"}`, and one `authorizer` reference pinning the current
+   revision of the operator's person. Its identity row uses namespace
+   `archive.transition/specification_upgrade`; `expected_heads` holds a null
+   expectation for the new object and the operator person's current revision.
+4. **Dry run.** Run `door transition --proposal <directory> --dry-run` from the
+   archive root and keep its JSON. It must predict one revision and write
+   nothing.
+5. **Run.** Run `door transition --proposal <directory>` once the operator
+   approves the dry run's result. A refusal writes nothing; record it and stop.
+   An uncertain outcome is answered by sending the identical proposal again: a
+   committed upgrade answers as a retry. If Door was killed after the commit,
+   that next Door finishes the run under the archive lock: it writes the new
+   `archive.json` and `spec/0.0.7/` into the worktree and refreshes the Git
+   index to the commit, so no `git read-tree` by hand is needed. A Git index
+   that holds a change Door did not make is left as it is, and Door refuses
+   the next write until the operator resolves it.
+6. **Check.** `git show --name-status HEAD` lists exactly `M archive.json`, the
+   three `spec/0.0.7/` documents, the added bundles, and the record. `archive
+   status` reports `archive/0.0.7` with no issue, and `archive doctor` passes.
+   World's next refresh rebuilds its projection in full, because the
+   specification changed ([`test_upgrade.py`](../world/tests/test_upgrade.py)
+   rehearses this on a synthetic archive); the relay reports the new version
+   from the next answer on, and clients write later drafts under
+   `archive/0.0.7`.
+7. **Record.** Keep the review, the snapshot identifier, the dry-run and
+   committed JSON, and the checks with the shadow's reports, outside the
+   archive. Delete the snapshot only after the operator accepts the result.
+
+## Importing new recordings
+
+This procedure is **proposed**. [`capture import`](../capture/README.md)
+puts a recorder card's new recordings into an archive as Archive-native
+records ([ADR 0070](decisions/0070-capture-import.md)). Running it against a
+scratch archive is covered by the standing approval above. Every run against
+the shadow, its dry runs included (a dry run is a Door command), needs the
+operator's approval for that run until the operator grants a standing one;
+the real archive is not in scope before cutover.
+
+1. **Mount the card read-only.** The importer only reads its input and never
+   deletes anything, but a read-only mount makes that a property of the
+   machine rather than of the code. Hidden names (`.Trashes`, `._*`) are
+   passed over and listed; any other file the Zoom H4essential grammar does
+   not recognise refuses the whole run, unless `--session-name` names the one
+   session those files form.
+2. **Rehearse on a scratch copy.** Create or reset a scratch archive, then run
+   the import against it with its own staging repository and derived-media
+   root, which must not be inside the card:
+
+   ```sh
+   capture import --archive "$SCRATCH/archive" --staging "$SCRATCH/capture-staging" \
+     --derived-media "$SCRATCH/derived-media" "$CARD" --dry-run
+   capture import --archive "$SCRATCH/archive" --staging "$SCRATCH/capture-staging" \
+     --derived-media "$SCRATCH/derived-media" "$CARD"
+   ```
+
+   Check the answer's sessions (each source's files, in recording order) and
+   chain, and look at the sessions in a review client through the scratch
+   relay.
+3. **Ask for approval to import into the shadow.** The request names the card,
+   the shadow's staging repository and derived-media root, and attaches the
+   scratch run's answer. With approval, run the same command against the
+   shadow, first with `--dry-run`: the predicted session, parts, and Artifact
+   revisions must equal the scratch run's, because the drafts carry no time
+   and both archives share one identifier. Then run it without `--dry-run`.
+4. **Confirm and keep the answer.** A second run must answer `unchanged` and
+   leave the archive's `HEAD` where it was. Keep both answers with the
+   operational reports, outside the archive.
+5. **If the chain stopped**, the answer (on stderr, with exit status 1) lists
+   the sessions already committed and how far the chain got. A rerun of the
+   import does not resume it, because those contents are now Artifacts. Run
+   the remaining `enrich probe`, `enrich detect` (primary source only), and
+   `enrich-media` steps by hand for the Artifacts it names; on the shadow each
+   is a separately approved command.
+6. **The card is the operator's.** Wiping or reusing it is a separate decision,
+   taken only after the shadow's content has been checked against its
+   backups. A rebuilt shadow loses imported sessions until the same cards are
+   imported again, which step 4's rule makes safe.
+
 ## Synthetic harness
 
 From the repository root, these commands create only temporary synthetic trees, use the existing read-only manifest/census tools, and remove the temporary data on exit:

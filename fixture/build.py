@@ -154,8 +154,13 @@ class Builder:
         for ref in record.get("refs", []):
             target, revision = self.pin(ref["pin"])
             refs.append({"role": ref["role"], "id": target, "revision_id": revision})
+        # The operator asserts every record, except a derivation run and its
+        # outputs, whose agent is the tool's Package URL (ADR 0064).
+        agent = record.get("agent", self.operator_id)
+        if not isinstance(agent, str) or not (agent == self.operator_id or agent.startswith("pkg:")):
+            raise BuildError(f"plan key {key!r} names agent {agent!r}, which is neither the operator nor a Package URL")
         draft = {"spec": self.spec, "object_id": target_id, "shape": record["shape"], "by": BY,
-                 "agent": self.operator_id, "payload": payload, "refs": refs, "supersedes": supersedes}
+                 "agent": agent, "payload": payload, "refs": refs, "supersedes": supersedes}
         if "source" in record:
             draft["source"] = record["source"]
         if record.get("contracts"):
