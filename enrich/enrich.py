@@ -6,6 +6,8 @@
                   [--staging <annex>] [--dry-run]
     enrich match --archive <dir> (--selection | --occurrence) <object id> --limit <decimal>
                  [--staging <annex>] [--dry-run]
+    enrich match-windows --archive <dir> --suggestions <object id> [--jobs <n>]
+                 [--staging <annex>] [--dry-run]
 
 The command reads the archive only through `archive export`, runs the tool on
 locally present content, and proposes the run and its claims to `door admit`
@@ -37,6 +39,8 @@ import probe as probe_tool  # noqa: E402
 STREAM_CONTRACT = ("archive.claim/audio_stream", "1")
 SPANS_CONTRACT = ("archive.claim/span_suggestions", "1")
 MATCH_CONTRACT = ("archive.claim/work_match", "2")
+WINDOW_MATCH_CONTRACT = ("archive.claim/work_match", "3")
+SESSION_CONTRACT = ("archive.claim/session_parts", "1")
 SELECTION_CONTRACT = ("archive.claim/audio_selection", "2")
 OCCURRENCE_CONTRACT = ("archive.claim/song_occurrence", "2")
 LINK_CONTRACT = ("archive.claim/performance_work", "3")
@@ -264,13 +268,15 @@ def selection_pieces(reader: adapter.ArchiveReader,
     return [(pinned(reader, ref), piece) for ref, piece in zip(refs, first, strict=True)]
 
 
-def match_corpus(reader: adapter.ArchiveReader, compared_object: str, compared_selections: set[str]
+def match_corpus(reader: adapter.ArchiveReader, compared_object: str | None, compared_selections: set[str],
+                 compared_artifacts: frozenset[str] = frozenset()
                  ) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
     """Every Work that a head `performance_work` version 3 link pins, with the
     occurrences linked to it. A link to a superseded occurrence revision, an
-    occurrence that holds the compared audio, and a Work whose head is not a
-    musical work are skipped with their reason. Nothing is chosen as current:
-    every head link counts."""
+    occurrence that holds the compared audio (or any audio from
+    `compared_artifacts`), and a Work whose head is not a musical work are
+    skipped with their reason. Nothing is chosen as current: every head link
+    counts."""
     works: dict[str, dict[str, Any]] = {}
     skipped: list[dict[str, Any]] = []
     for link in reader.records:
@@ -287,6 +293,8 @@ def match_corpus(reader: adapter.ArchiveReader, compared_object: str, compared_s
             reason = "the link pins a superseded occurrence revision"
         elif occurrence["object_id"] == compared_object or selections & compared_selections:
             reason = "the occurrence holds the compared audio"
+        elif compared_artifacts and occurrence_artifacts(reader, occurrence) & compared_artifacts:
+            reason = "the occurrence's audio comes from the compared session"
         elif work["shape"] != "entity" or work["payload"].get("kind") != "musical_work":
             reason = "the Work's head is not a musical_work Entity"
         if reason:
@@ -296,6 +304,30 @@ def match_corpus(reader: adapter.ArchiveReader, compared_object: str, compared_s
         entry["links"].append(link)
         entry["occurrences"][occurrence["object_id"]] = occurrence
     return works, skipped
+
+
+def occurrence_artifacts(reader: adapter.ArchiveReader, occurrence: dict[str, Any]) -> set[str]:
+    """The Artifacts every selection of an occurrence takes audio from."""
+    found = set()
+    for ref in occurrence["refs"]:
+        if ref["role"] == "selection":
+            found |= {piece["id"] for piece in pinned(reader, ref)["refs"] if piece["role"] == "piece"}
+    return found
+
+
+def session_artifacts(reader: adapter.ArchiveReader, artifact_id: str) -> frozenset[str]:
+    """The Artifact and every part of every source of each session a head
+    `session_parts` claim places it in: the same rehearsal, heard by another
+    microphone or recorded before or after a rollover."""
+    claims = [record for record in reader.records
+              if record["shape"] == "claim" and reader.cites(record, SESSION_CONTRACT)
+              and reader.heads.get(record["object_id"]) is record]
+
+    def refs(record: dict[str, Any], role: str) -> set[str]:
+        return {ref["id"] for ref in record["refs"] if ref["role"] == role}
+    sessions = set().union(*(refs(c, "session") for c in claims if artifact_id in refs(c, "part")))
+    together = {artifact_id}.union(*(refs(c, "part") for c in claims if refs(c, "session") & sessions))
+    return frozenset(together)
 
 
 def run_match(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
@@ -402,6 +434,129 @@ def run_match(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     return 0, {**answer, **admission.as_json()}
 
 
+def run_match_windows(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
+    import cover  # Essentia and numpy are needed by this command only
+
+    env = environment()
+    reader = reader_of(args, env)
+    # Refuse an archive that cannot hold the claims before reading any audio.
+    reader.citation(adapter.RUN_CONTRACT)
+    reader.citation(WINDOW_MATCH_CONTRACT)
+    suggestions = reader.head(args.suggestions)
+    if suggestions["shape"] != "claim" or not reader.cites(suggestions, SPANS_CONTRACT):
+        raise CommandError(f"{suggestions['object_id']} does not cite {SPANS_CONTRACT[0]} version {SPANS_CONTRACT[1]}")
+    by_role = {ref["role"]: ref for ref in suggestions["refs"]}
+    source, stream = pinned(reader, by_role["source"]), pinned(reader, by_role["stream"])
+    rate = suggestions["payload"]["sample_rate"]
+    spans = [cover.Span(span["start_sample"], span["end_sample"], span["class"])
+             for span in suggestions["payload"]["spans"]]
+    works, skipped = match_corpus(reader, None, set(), session_artifacts(reader, source["object_id"]))
+    answer: dict[str, Any] = {"suggestions": pin_of(suggestions), "skipped": skipped}
+    if not works:
+        return NOTHING_PROPOSED, {"status": "nothing_proposed", **answer,
+                                  "detail": "the corpus is empty: no head performance_work version 3 link pins a head "
+                                            f"song occurrence from another session ({len(skipped)} links skipped)"}
+
+    # Every revision the run reads, in a stable order.
+    read = {record["revision_id"]: record for record in (suggestions, source, stream)}
+    works_of: dict[str, set[str]] = {}
+    corpus_pieces: dict[str, tuple[cover.Piece, ...]] = {}
+    for work_id, entry in works.items():
+        read[entry["work"]["revision_id"]] = entry["work"]
+        for link in entry["links"]:
+            read[link["revision_id"]] = link
+        for occurrence_id, occurrence in entry["occurrences"].items():
+            works_of.setdefault(occurrence_id, set()).add(work_id)
+            selection = compared_selection(reader, occurrence)
+            pieces = selection_pieces(reader, selection)
+            for record in (occurrence, selection, *(artifact for artifact, _ in pieces)):
+                read[record["revision_id"]] = record
+            corpus_pieces[occurrence_id] = tuple(
+                cover.Piece(content_path(reader.root, artifact), piece["start_sample"], piece["end_sample"],
+                            piece["sample_rate"]) for artifact, piece in pieces)
+    used = tuple(adapter.Pin("used", r["object_id"], r["revision_id"])
+                 for r in sorted(read.values(), key=lambda r: (r["object_id"], r["revision_id"])))
+    try:
+        software = probe_tool.software(args.ffmpeg, args.ffprobe) + cover.software()
+        settings = cover.parameters()
+    except cover.CoverError as exc:
+        raise CommandError(str(exc)) from exc
+    started = adapter.now()
+    # Rerunning on unchanged inputs writes nothing (INV-5), and decodes nothing.
+    candidate = adapter.RunResult(agent=cover.AGENT, method_id=cover.METHOD_ID, method_version=cover.METHOD_VERSION,
+                                  software=software, started_at=started, ended_at=started, used=used, outputs=(),
+                                  parameters=settings)
+    previous = reader.equivalent_run(candidate)
+    if previous is not None:
+        return 0, {"status": "unchanged", **answer, "run": pin_of(previous)}
+
+    source_path = content_path(reader.root, source)
+    limit = Decimal(cover.SEARCH["suggestion_distance"])
+    runs, outputs = [], []
+    try:
+        with cover.Comparer(args.jobs, args.ffmpeg, args.ffprobe) as comparer:
+            for occurrence_id, measured in comparer.measure_corpus(corpus_pieces).items():
+                if isinstance(measured, cover.TooShort):
+                    answer["skipped"].append({"occurrence": occurrence_id, "reason": str(measured)})
+                elif isinstance(measured, cover.CoverError):
+                    raise CommandError(f"occurrence {occurrence_id} could not be measured: {measured}")
+            if not comparer.corpus:
+                return NOTHING_PROPOSED, {"status": "nothing_proposed", **answer,
+                                          "detail": "no corpus occurrence is long enough to compare"}
+
+            def window_features(start: int, end: int) -> cover.Features:
+                return comparer.features([cover.Piece(source_path, start, end, rate)])
+
+            for number, run in enumerate(cover.runs_of(spans, cover.SEARCH["run_classes"])):
+                result = cover.search_run(run, spans, rate, window_features, comparer.corpus, comparer.distances)
+                best = result.pop("best")
+                result["proposed"] = []
+                runs.append(result)
+                if best is None:
+                    continue
+                result["window"], result["margin"] = best["window"], best["margin"]
+                result["closest"] = [{"occurrence": d.corpus_id, "distance": str(d.value)}
+                                     for d in best["distances"][:5]]
+                # Each Work's closest compared occurrence, and every one of
+                # its occurrences compared at the best window.
+                closest: dict[str, Any] = {}
+                compared: dict[str, list[str]] = {}
+                for distance in best["distances"]:
+                    for work_id in works_of[distance.corpus_id]:
+                        compared.setdefault(work_id, []).append(distance.corpus_id)
+                        if work_id not in closest:
+                            closest[work_id] = distance.value
+                for work_id in sorted(closest):
+                    if closest[work_id] > limit:
+                        continue
+                    work = works[work_id]["work"]
+                    corpus = tuple(adapter.Pin("corpus", works[work_id]["occurrences"][o]["object_id"],
+                                               works[work_id]["occurrences"][o]["revision_id"])
+                                   for o in sorted(compared[work_id]))
+                    result["proposed"].append({"work": pin_of(work), "score": str(closest[work_id])})
+                    outputs.append(adapter.Output(
+                        contract=WINDOW_MATCH_CONTRACT,
+                        name=f"window-{number}-work-" + work_id.removeprefix("urn:uuid:"),
+                        payload={"method": {"id": cover.METHOD_ID, "version": cover.METHOD_VERSION},
+                                 "score": str(closest[work_id]), "scale": cover.SCALE, "direction": cover.DIRECTION,
+                                 "sample_rate": rate, "window": best["window"]},
+                        refs=(adapter.Pin("suggestions", suggestions["object_id"], suggestions["revision_id"]),
+                              adapter.Pin("work", work["object_id"], work["revision_id"]), *corpus),
+                        parameters_role="parameters"))
+    except cover.CoverError as exc:
+        raise CommandError(str(exc)) from exc
+    ended = adapter.now()
+    answer.update({"suggestion_distance": cover.SEARCH["suggestion_distance"], "runs": runs})
+    if not outputs:
+        return NOTHING_PROPOSED, {"status": "nothing_proposed", **answer}
+    run_result = adapter.RunResult(agent=cover.AGENT, method_id=cover.METHOD_ID, method_version=cover.METHOD_VERSION,
+                                   software=software, started_at=started, ended_at=ended, used=used,
+                                   outputs=tuple(outputs), parameters=settings)
+    admission = adapter.propose(reader, run_result, door=args.door, staging=staging_of(args, env),
+                                dry_run=args.dry_run, env=env)
+    return 0, {**answer, **admission.as_json()}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="enrich", description="Propose enrichment results to Door")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -433,7 +588,15 @@ def main(argv: list[str] | None = None) -> int:
     match.add_argument("--limit", required=True,
                        help="decimal text: a Work's best score is proposed only when at or below it")
     common(match)
+    windows = commands.add_parser("match-windows", help="grow windows over a recording's suggested spans, compare "
+                                                        "them with the occurrences linked to each Work, and propose "
+                                                        "work_match version 3 claims")
+    windows.add_argument("--suggestions", required=True, help="a span_suggestions version 1 object identifier")
+    windows.add_argument("--jobs", type=int, default=1, help="processes measuring and comparing audio (default 1)")
+    common(windows)
     args = parser.parse_args(argv)
+    if args.command == "match-windows" and args.jobs < 1:
+        parser.error("--jobs must be at least 1")
     errors: tuple[type[Exception], ...] = (CommandError, adapter.AdapterError, probe_tool.ProbeError)
     try:
         if args.command == "probe":
@@ -442,8 +605,10 @@ def main(argv: list[str] | None = None) -> int:
             import detector  # numpy is needed only here
             errors += (detector.DetectorError,)
             code, answer = run_detect(args)
-        else:
+        elif args.command == "match":
             code, answer = run_match(args)
+        else:
+            code, answer = run_match_windows(args)
     except errors as exc:
         print(json.dumps({"status": "failed", "detail": str(exc)}), file=sys.stderr)
         return 1

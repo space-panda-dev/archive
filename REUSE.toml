@@ -7,7 +7,7 @@ version = 1
 SPDX-PackageName = "Archive"
 
 [[annotations]]
-path = [".gitignore", "Makefile", "flake.nix", "flake.lock", "*.cabal", "cabal.project", "scripts/**", "migration/**", "shadow/**", "archive/**", "door/**", "world/*.py", "world/**/*.py", "world/requirements.txt", "world/requirements-test.txt", "relay/*.py", "relay/**/*.py", "fixture/*.py", "fixture/**/*.py", "enrich/*.py", "enrich/**/*.py", "enrich/requirements.txt", "capture/*.py", ".github/**"]
+path = [".gitignore", "Makefile", "flake.nix", "flake.lock", "*.cabal", "cabal.project", "scripts/**", "migration/**", "shadow/**", "archive/**", "door/**", "world/*.py", "world/**/*.py", "world/requirements.txt", "world/requirements-test.txt", "relay/*.py", "relay/**/*.py", "fixture/*.py", "fixture/**/*.py", "enrich/*.py", "enrich/**/*.py", "enrich/requirements.txt", "enrich/requirements-match.txt", "capture/*.py", ".github/**"]
 SPDX-FileCopyrightText = "The Archive contributors"
 SPDX-License-Identifier = "AGPL-3.0-or-later"
 

@@ -262,3 +262,29 @@ def export(root: Path) -> dict[str, Any]:
 def head(root: Path) -> str:
     return subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True,
                           check=True).stdout.strip()
+
+
+# Two invented chord progressions, as MIDI chords, one chord per second.
+# Essentia's cover similarity scores renditions of one progression the way it
+# scores renditions of a real song (about 0.06), and the two apart (about
+# 0.15); single-line tunes score too far apart for its thresholds.
+PROGRESSION = ((60, 64, 67), (57, 60, 64), (65, 69, 72), (67, 71, 74),
+               (60, 64, 67), (65, 69, 72), (62, 65, 69), (67, 71, 74))
+OTHER_PROGRESSION = ((62, 66, 69), (64, 67, 71), (59, 62, 66), (57, 61, 64),
+                     (62, 66, 69), (55, 59, 62), (57, 61, 64), (64, 68, 71))
+
+
+def progression_samples(chords: tuple[tuple[int, ...], ...], rate: int, transpose: int = 0, repeats: int = 4,
+                        seed: int = 0, chord_seconds: float = 1.0):
+    """Chords of three-harmonic tones with faint noise, as floats, peaking
+    at 0.3: the same progression transposed is the same song in another key."""
+    import numpy
+    rng = numpy.random.default_rng(seed)
+    length = int(chord_seconds * rate)
+    t = numpy.arange(length) / rate
+    envelope = numpy.minimum(1, numpy.minimum(t / 0.01, (chord_seconds - t) / 0.05))
+    parts = [sum(numpy.sin(2 * numpy.pi * 440 * 2 ** ((note + transpose - 69) / 12) * h * t) / h
+                 for note in chord for h in (1, 2, 3)) * envelope for chord in chords * repeats]
+    samples = numpy.concatenate(parts)
+    samples = samples / numpy.abs(samples).max() * 0.3
+    return samples + rng.normal(0, 0.01, size=len(samples))

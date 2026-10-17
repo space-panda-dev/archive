@@ -110,9 +110,14 @@ needs `ffmpeg` and numpy, measures against a probed stream claim, and
 suggests classed spans in integer samples from one fixed signal set. The
 third is the work matcher
 ([ADR 0067](decisions/0067-matches-and-alignments-pin-runs.md)), which needs
-`ffmpeg`, `ffprobe`, numpy, and scipy; numpy and scipy are the only libraries
-outside the standard library that `enrich/` uses. The detector's presets and
-the matcher's score limit are the operator's to calibrate.
+`ffmpeg`, `ffprobe`, numpy, and scipy. The fourth is the window matcher
+([ADR 0071](decisions/0071-essentia-cover-similarity.md),
+[ADR 0072](decisions/0072-windowed-work-matches.md)), which needs Essentia
+2.1b6.dev1438 and therefore CPython 3.14; `enrich/` and `capture/` run on that
+interpreter, built from hash-pinned wheels. numpy, scipy, and Essentia are the
+only libraries outside the standard library that `enrich/` uses. The
+detector's presets and the first matcher's score limit are the operator's to
+calibrate; the window matcher carries the V2 system's calibrated thresholds.
 
 `enrich/media.py` is different: it proposes nothing and never reads or writes
 an archive. It makes waveform peaks and a listening copy of a recording into a
@@ -129,7 +134,8 @@ groups the rest into sessions and sources with a recorder grammar (one named
 module per recorder model; the first is the Zoom H4essential), and proposes
 each session in one content-bearing `door admit` batch from a git-annex
 staging repository. It then runs `enrich probe`, `enrich detect` on the
-primary source, and `enrich/media.py` on what it admitted. `capture send`
+primary source, `enrich/media.py` on what it admitted, and last
+`enrich match-windows` on each detection. `capture send`
 runs where a card is read: it hashes and groups the card there, streams it
 over ssh into an inbox on the archive machine, and runs `capture import` with
 `--expect`, so the importer refuses anything that did not arrive as the

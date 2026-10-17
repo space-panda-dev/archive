@@ -1,0 +1,39 @@
+# The matcher's interpreter (ADR 0071): CPython 3.14 only, because Essentia
+# 2.1b6.dev1438, the build the V2 system calibrated its thresholds with,
+# ships wheels for no other interpreter. Install with
+#
+#     python3.14 -m pip install --require-hashes --only-binary :all: -r enrich/requirements-match.txt
+#
+# Every wheel is pinned by SHA-256 for x86_64 Linux and for macOS; there is
+# no Essentia wheel for any other platform, and the matcher refuses to run
+# there. Another Essentia build is another method version (ADR 0071).
+# numpy and scipy also serve the rest of enrich/ under this interpreter, and
+# pyoxigraph (World's one library, as in world/requirements.txt) lets the
+# enrich tests read their claims back through World.
+# The flake builds the same wheels (flake.nix, matchPythonFor).
+essentia==2.1b6.dev1438 \
+    --hash=sha256:3a4a51f7b59d76b9beb9a1aacdaa9b9c0de89f14b02ab45050f86230241044c5 \
+    --hash=sha256:b387e374008ab3e8f72fbc93d0c91c7fde97da71d26598f19a84750ff870582b \
+    --hash=sha256:1ee6107fe63fb3b50f8aa68466951f6ca1e162a700d8deffd46ab0506dab9acb
+numpy==2.5.4 \
+    --hash=sha256:c668b2f0d651605b58892644b0e302c7157f7159544227758c896982ef384b18 \
+    --hash=sha256:ffa6ce09a1c6a08e9667dd9c97aa0b14184e8d18f2a14b78b2a2328c9147f076 \
+    --hash=sha256:956555e0603a4d38019ae6925711cb9dc43195c076a928accf7ea5d50bddfe53 \
+    --hash=sha256:2c2c4afffdeb7920e445028dd71eb932cac3e704792e964bc2a232426d4f1255 \
+    --hash=sha256:d549420b8858885cea8838a727842249218b9c1da24dd517e25c9c7a948310a3
+scipy==1.18.1 \
+    --hash=sha256:83de5453a7799afc9048b4616bd085cef126e36412f0ea2f6370c36a2a3a51e7 \
+    --hash=sha256:9554bcc6d715ee87a633a3cc8e7703c6628b100dd29cb8a2efc4c0533c7ff729 \
+    --hash=sha256:011413b7426b75012840e35649e00fe0a2c3bae89fed433876e3a99251572efc \
+    --hash=sha256:88f0e784020649f88ea48c9f5ddfa403bf9205820667c0914740b392035afb82 \
+    --hash=sha256:ac0333bdf38309aa3dcbe7e3fa7ea29e7a2c37c6ea306a757b700ded8e4596ad
+pyyaml==6.0.3 \
+    --hash=sha256:8d1fab6bb153a416f9aeb4b8763bc0f22a5586065f86f7664fc23339fc1c1fac \
+    --hash=sha256:34d5fcd24b8445fadc33f9cf348c1047101756fd760b4dacb5c3e99755703310 \
+    --hash=sha256:c458b6d084f9b935061bc36216e8a69a7e293a2f1e68bf956dcd9e6cbcd143f5
+six==1.17.0 \
+    --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274
+pyoxigraph==0.5.2 \
+    --hash=sha256:922a75718d50e1a6621c63b33e4268b83dae467fbb6949f1ee0d36abb1728f57 \
+    --hash=sha256:1f869c77720e8628a35c9ea87c0254e81eab91ff8a61df1cd9eb82c9258a53c3 \
+    --hash=sha256:f52e7e47ff11b7b9510a6810de132c1613aa543ad6305d95de3fcb93b4c1f6ee

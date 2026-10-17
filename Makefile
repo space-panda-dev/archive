@@ -9,7 +9,11 @@ claims:
 
 # PYTHON must have world/requirements-test.txt and enrich/requirements.txt
 # installed; the enrich suite also needs ffmpeg and ffprobe on PATH.
+# ENRICH_PYTHON runs the enrich and capture suites: CPython 3.14 with
+# enrich/requirements-match.txt (ADR 0071), or `nix build .#enrich-python`.
+# Set ARCHIVE_REQUIRE_ESSENTIA=1 to fail rather than skip without Essentia.
 PYTHON ?= python3
+ENRICH_PYTHON ?= $(PYTHON)
 
 test: test-haskell test-python
 
@@ -29,5 +33,5 @@ test-python:
 	  $(PYTHON) -m unittest discover -s shadow -p "test_*.py" && \
 	  $(PYTHON) -m unittest discover -s migration -p "test_*.py" && \
 	  $(PYTHON) -m unittest discover -s fixture -p "test_*.py" && \
-	  $(PYTHON) -m unittest discover -s enrich -p "test_*.py" && \
-	  $(PYTHON) -m unittest discover -s capture -p "test_*.py"'
+	  $(ENRICH_PYTHON) -m unittest discover -s enrich -p "test_*.py" && \
+	  $(ENRICH_PYTHON) -m unittest discover -s capture -p "test_*.py"'
