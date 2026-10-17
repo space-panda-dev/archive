@@ -20,6 +20,8 @@ module Archive.Door.Contracts
   , targetMeasureRule
   , SameSubjectRule (..)
   , sameSubjectRule
+  , SpanWindowRule (..)
+  , spanWindowRule
   ) where
 
 import Archive.Door.Json (decodeUnique)
@@ -177,6 +179,7 @@ validateCoreContextForSpecification specification value = do
         "archive/0.0.5" -> Set.fromList reviewContextKeys
         "archive/0.0.6" -> Set.fromList reviewContextKeys
         "archive/0.0.7" -> Set.fromList reviewContextKeys
+        "archive/0.0.8" -> Set.fromList reviewContextKeys
         _ -> Set.empty
   if not (Set.null expected) && keys == expected
     then Right ()
@@ -276,6 +279,7 @@ validateSchema schema@(Object fields) = do
     (KeyMap.lookup "x-archive-sequential-spans" fields)
   _ <- targetMeasureRule schema
   _ <- sameSubjectRule schema
+  _ <- spanWindowRule schema
   walkSchema schema [] schema
 validateSchema _ = Left "contract schema must be a JSON object"
 
@@ -285,7 +289,7 @@ profileRuleNames =
   , "x-archive-track-sample-spans", "x-archive-distinct-track-content"
   , "x-archive-monotonic-anchors", "x-archive-distinct-refs", "x-archive-ordered-distinct-refs"
   , "x-archive-ordered-instants", "x-archive-sequential-spans", "x-archive-target-measure"
-  , "x-archive-same-subject"
+  , "x-archive-same-subject", "x-archive-span-window"
   ]
 
 walkSchema :: Value -> [Text] -> Value -> Either Text ()
@@ -518,6 +522,41 @@ sameSubjectRule schema@(Object fields) = case KeyMap.lookup "x-archive-same-subj
     requireSingleClaimTarget "same subject rule" schema role
     pure (Just (SameSubjectRule role subject equals))
 sameSubjectRule _ = Left "contract schema must be an object"
+
+-- | @x-archive-span-window@: the record pins one Claim in @role@ whose
+-- payload holds an integer @rate@ field and an array @spans@ of objects with
+-- integer @start@ and @end@ fields.  The record's own payload @rate@ MUST
+-- equal the target's, and its payload object @payload@ is a window whose
+-- @start@ MUST be the @start@ of some element of @spans@ and whose @end@ MUST
+-- be the @end@ of that element or of a later one: a run of whole spans.
+data SpanWindowRule = SpanWindowRule
+  { spanWindowRole :: Text
+  , spanWindowRate :: Text
+  , spanWindowPayload :: Text
+  , spanWindowStart :: Text
+  , spanWindowEnd :: Text
+  , spanWindowSpans :: Text
+  } deriving (Eq, Show)
+
+spanWindowRule :: Value -> Either Text (Maybe SpanWindowRule)
+spanWindowRule schema@(Object fields) = case KeyMap.lookup "x-archive-span-window" fields of
+  Nothing -> Right Nothing
+  Just value -> do
+    let names = ["role", "rate", "payload", "start", "end", "spans"]
+    validateNamedFieldsRule "span window rule" names value
+    rule <- objectValue "span window rule" value
+    role <- requiredString "role" rule
+    rate <- requiredString "rate" rule
+    payload <- requiredString "payload" rule
+    start <- requiredString "start" rule
+    end <- requiredString "end" rule
+    spans <- requiredString "spans" rule
+    if start == end
+      then Left "span window rule must name two distinct bound fields"
+      else Right ()
+    requireSingleClaimTarget "span window rule" schema role
+    pure (Just (SpanWindowRule role rate payload start end spans))
+spanWindowRule _ = Left "contract schema must be an object"
 
 -- | The rules that read a pinned Claim's payload or references need that
 -- role to name exactly one Claim: its target rule says so.

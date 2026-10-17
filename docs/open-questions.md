@@ -171,6 +171,14 @@ unsupported rather than guess.
   `performance_work` link counts, including one a person judged `rejected` or
   `withdrawn` ([ADR 0067](decisions/0067-matches-and-alignments-pin-runs.md)
   names no rule).
+- How does the archive record whether corpus audio is the operator's own
+  recording or a commercial release? The V2 system suggested release matches
+  at a looser distance (about 0.11); until an origin is recorded, every corpus
+  entry is judged at 0.08
+  ([ADR 0071](decisions/0071-essentia-cover-similarity.md)).
+- Should the window search start from more than the first span of each run?
+  A single start reached 57.5% of accepted performances in the V2 system
+  ([ADR 0072](decisions/0072-windowed-work-matches.md)).
 
 - How does a person's sensitivity claim select the content it covers ("the
   rehearsals I play in") rather than naming objects one by one

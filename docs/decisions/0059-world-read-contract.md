@@ -127,6 +127,12 @@ removes its pointer. The release notes give the date it closes.
   maps to a record field or shape class (`source`, `artifact`) keeps its
   reified statement but gets no direct triple, so `arch:source` keeps its
   one datatype; how those roles are finally named stays an open question.
+- Revision 4 of projection 6 adds specification 0.0.8's window matches
+  (ADR 0072): a version 3 match names its suggestions with
+  `arch:compared_suggestions` and its window as a node with `start_sample`,
+  `end_sample`, and `sample_rate`, beside the Work, corpus, score, method,
+  and run a version 2 match names. It is an addition like revisions 2 and 3,
+  so older generations rebuild in full.
 - The first use of the overlap window will be the first rename.
 
 ## Alternatives considered

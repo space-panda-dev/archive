@@ -92,7 +92,7 @@ arch:reason a rdf:Property ; rdfs:comment "judgment 1: the judgment's reason." .
 
 # Derivation runs and what they make (specification 0.0.7, revision 3)
 
-arch:method a rdf:Property ; rdfs:comment "derivation_run 1, work_match 2: the method node, with its dcterms:identifier and arch:version." .
+arch:method a rdf:Property ; rdfs:comment "derivation_run 1, work_match 2 and 3: the method node, with its dcterms:identifier and arch:version." .
 arch:audio_stream a rdf:Property ; rdfs:comment "audio_stream 1: links the described Artifact revision to the claim's stream node. Minted by World." .
 arch:stream_index a rdf:Property ; rdfs:comment "audio_stream 1: the stream's zero-based index in its container." .
 arch:codec a rdf:Property ; rdfs:comment "audio_stream 1: the codec's name as the probing method reports it." .
@@ -104,3 +104,8 @@ arch:span_class a rdf:Property ; rdfs:comment "span_suggestions 1: music, talk, 
 arch:score a rdf:Property ; rdfs:comment "work_match: the match score as xsd:decimal, meaningful only within its scale and direction." .
 arch:score_scale a rdf:Property ; rdfs:comment "work_match: what the score measures." .
 arch:score_direction a rdf:Property ; rdfs:comment "work_match: higher_is_closer or lower_is_closer." .
+
+# Window matches (specification 0.0.8, revision 4)
+
+arch:compared_suggestions a rdf:Property ; rdfs:comment "work_match 3: the span_suggestions claim whose window was compared." .
+arch:window a rdf:Property ; rdfs:comment "work_match 3: the compared window node, with its start_sample, end_sample, and sample_rate. Minted by World." .

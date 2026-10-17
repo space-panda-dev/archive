@@ -11,9 +11,10 @@ proposes each session to `door admit` in one content-bearing batch: an
 Artifact per file, the `recording_session` Entity, and one
 `archive.claim/session_parts` claim per source. Then it runs the enrichment
 chain on the new Artifacts, quickest first: `enrich probe`, `enrich detect`
-on each session's primary source, waveform peaks, and last the listening
-copies, which take most of the time (see `chain`). It reads the archive only through
-`archive export`, proposes only through Door, and never changes its input.
+on each session's primary source, waveform peaks, the listening copies, and
+last `enrich match-windows` on what was detected (see `chain`). It reads the
+archive only through `archive export`, proposes only through Door, and never
+changes its input.
 
 It prints one JSON object. Exit status: 0 when every new session was
 committed and enriched, predicted by a dry run, or there was nothing new; 1
@@ -50,6 +51,8 @@ BY = AGENT = "pkg:generic/archive-capture@0.1.0"
 ARTIFACT_NAMESPACE = adapter.ARTIFACT_NAMESPACE
 SESSION_NAMESPACE = "archive.audio/session"
 PARTS_CONTRACT = ("archive.claim/session_parts", "1")
+SPANS_CONTRACT = ("archive.claim/span_suggestions", "1")
+WINDOW_MATCH_CONTRACT = ("archive.claim/work_match", "3")
 STAGING_REMOTE = "capture-staging"
 # The one source of a session the operator named: files no grammar knows.
 NAMED_SOURCE = "files"
@@ -371,14 +374,18 @@ def run(arguments: list[str], cwd: Path, what: str, env: dict[str, str]) -> str:
 
 def enrich(command: str, artifact: str, args: argparse.Namespace, env: dict[str, str],
            export: Path | None = None) -> tuple[int, dict]:
-    """Run one `enrich` command; 0 and 3 are answers, anything else fails.
-    With ``export``, the command reads that export of the archive's current
+    """Run one `enrich` command on an Artifact (on a span suggestions claim
+    for `match-windows`); 0 and 3 are answers, anything else fails. With
+    ``export``, the command reads that export of the archive's current
     commit instead of exporting the archive again."""
+    target = "--suggestions" if command == "match-windows" else "--artifact"
     arguments = [sys.executable, str(ENRICH / "enrich.py"), command, "--archive", str(args.archive),
-                 "--artifact", artifact, "--staging", str(args.staging), "--door", args.door,
+                 target, artifact, "--staging", str(args.staging), "--door", args.door,
                  "--archive-command", args.archive_command, "--ffmpeg", args.ffmpeg]
-    if command == "probe":
+    if command in ("probe", "match-windows"):
         arguments += ["--ffprobe", args.ffprobe]
+    if command == "match-windows":
+        arguments += ["--jobs", str(args.jobs)]
     if export is not None:
         arguments += ["--export", str(export)]
     try:
@@ -410,8 +417,10 @@ def chain(sessions: list[Session], args: argparse.Namespace, env: dict[str, str]
        a time, against one export of the archive that is brought up to date
        with `archive export --since` after each commit.
     2. Waveform peaks for every Artifact with audio, `--jobs` at a time.
-    3. Listening copies, the slow part, `--jobs` at a time, unless deferred
-       to a later `enrich/media.py` run.
+    3. Listening copies, `--jobs` at a time, unless deferred to a later
+       `enrich/media.py` run.
+    4. `enrich match-windows` on each detection, one at a time, each using
+       `--jobs` processes: the slowest step, so it comes last (ADR 0072).
 
     A file with no countable audio stream is probed and reported, and
     nothing else runs on it. A failure stops the chain once the step it
@@ -442,20 +451,41 @@ def chain(sessions: list[Session], args: argparse.Namespace, env: dict[str, str]
                 continue
             reader.refresh(args.archive_command, env)
             audio.append((session, artifact, entry))
+        detected = []
         for session, artifact, entry in audio:
             if artifact["digest"] in {item.digest for item in session.primary.files}:
                 _, answer = enrich("detect", artifact["object_id"], args, env, current_export())
                 entry["detect"] = answer["status"]
                 reader.refresh(args.archive_command, env)
+                detected.append((entry, suggestions_made_by(reader, answer)))
 
-    for _, _, entry in audio:
-        entry["media"] = {}
-    derive_all("peaks", audio, args, env)
-    if args.defer_listening_copies:
         for _, _, entry in audio:
-            entry["media"]["listen"] = "deferred"
-    else:
-        derive_all("listen", audio, args, env)
+            entry["media"] = {}
+        derive_all("peaks", audio, args, env)
+        if args.defer_listening_copies:
+            for _, _, entry in audio:
+                entry["media"]["listen"] = "deferred"
+        else:
+            derive_all("listen", audio, args, env)
+
+        for entry, suggestions in detected:
+            _, answer = enrich("match-windows", suggestions, args, env, current_export())
+            entry["match"] = {"status": answer["status"],
+                              "proposed": sum(len(run["proposed"]) for run in answer.get("runs", []))}
+            if answer["status"] == "committed":
+                reader.refresh(args.archive_command, env)
+
+
+def suggestions_made_by(reader: adapter.ArchiveReader, answer: dict[str, Any]) -> str:
+    """The span suggestions claim the detector's run made, whether it was
+    committed now or found unchanged from an earlier import."""
+    run = answer.get("run", {}).get("revision_id")
+    made = [record["object_id"] for record in reader.records
+            if record["shape"] == "claim" and reader.cites(record, SPANS_CONTRACT)
+            and any(ref.get("role") == "run" and ref.get("revision_id") == run for ref in record.get("refs", []))]
+    if run is None or len(made) != 1:
+        raise CaptureError(f"enrich detect answered run {run}, which made {len(made)} span suggestions claims, not one")
+    return made[0]
 
 
 def derive_all(kind: str, audio: list[tuple[Session, dict[str, Any], dict[str, Any]]],
@@ -534,7 +564,10 @@ def import_directory(args: argparse.Namespace, grammars: Sequence[Any]) -> dict[
     check_places(args)
     env = environment()
     reader = adapter.ArchiveReader(args.archive, args.archive_command, env)
-    reader.citation(PARTS_CONTRACT)
+    # Refuse an archive the chain cannot finish in before anything is staged:
+    # an import whose sessions are committed is not rerun.
+    for contract in (PARTS_CONTRACT, SPANS_CONTRACT, WINDOW_MATCH_CONTRACT):
+        reader.citation(contract)
     files, ignored = read_directory(args.directory)
     if not files:
         raise CaptureError(f"{args.directory} holds no file to import"
@@ -585,7 +618,8 @@ def main(argv: list[str] | None = None, grammars: Sequence[Any] = grammars_modul
     command.add_argument("--expect", help="a manifest of the files the directory must hold, with their digests "
                                           "and sizes, as `capture send` writes it")
     command.add_argument("--jobs", type=int, default=default_jobs(),
-                         help="derived media made at once (default: the processors less two, at least one)")
+                         help="derived media made at once, and processes matching windows (default: the "
+                              "processors less two, at least one)")
     command.add_argument("--defer-listening-copies", action="store_true",
                          help="make peaks only; listening copies are left for a later enrich/media.py run")
     args = parser.parse_args(argv)

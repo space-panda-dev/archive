@@ -49,7 +49,7 @@ wsh:Revision a sh:NodeShape ;
                 sh:pattern "#world:contract:[^:]+:[^:]+$" ;
                 rdfs:comment "Each contract the record cites: the bundle's node in the context graph, <{archive}#world:contract:{id}:{version}>. The same citations as arch:contracts, as links (revision 2)." ] ;
   # One direct triple per reference, by its role's predicate. These are the
-  # reference roles of specification 0.0.7's contracts. The roles `artifact`
+  # reference roles of specification 0.0.8's contracts. The roles `artifact`
   # and `source` are core terms naming arch:Artifact and arch:source (D-15);
   # a reference in either keeps its statement but gets no direct triple, so
   # neither predicate gains a second meaning here (revision 3). A `source`
@@ -72,6 +72,8 @@ wsh:Revision a sh:NodeShape ;
   sh:property [ sh:path arch:destroys ; sh:nodeKind sh:IRI ] ;
   sh:property [ sh:path arch:external_survivor ; sh:nodeKind sh:IRI ] ;
   sh:property [ sh:path arch:match_corpus ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:compared_suggestions ; sh:nodeKind sh:IRI ;
+                rdfs:comment "work_match 3: the span_suggestions claim whose window was compared (revision 4)." ] ;
   sh:property [ sh:path arch:measured_stream ; sh:nodeKind sh:IRI ;
                 rdfs:comment "span_suggestions 1: the audio_stream claim the spans were measured against (revision 3)." ] ;
   sh:property [ sh:path arch:migration_source ; sh:nodeKind sh:IRI ] ;

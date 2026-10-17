@@ -73,10 +73,15 @@ staged or proposed.
    one at a time, and all of them read one `archive export` that is brought
    up to date with `archive export --since` after each commit, instead of
    exporting every record for each run. Then waveform peaks for every
-   recording, and last the listening copies (the AAC encode is nearly all of
-   the chain's time), each `--jobs` at a time with `enrich/media.py`
-   (default: the processors less two). `--defer-listening-copies` leaves the
-   listening copies for a later `enrich/media.py` run. A file whose probe
+   recording and the listening copies, each `--jobs` at a time with
+   `enrich/media.py` (default: the processors less two).
+   `--defer-listening-copies` leaves the listening copies for a later
+   `enrich/media.py` run. Last, `enrich match-windows` on each detection,
+   with `--jobs` processes, proposes the Works and windows the recording's
+   runs match ([ADR 0072](../docs/decisions/0072-windowed-work-matches.md));
+   it is the slowest step. The archive must install `work_match` version 3
+   (specification 0.0.8): an older one is refused before anything is staged.
+   A file whose probe
    counts no audio stream is reported with `nothing_proposed`, and nothing
    else runs on it. A failure stops the chain once the step it happened in
    has finished; the import does not resume it later, because its contents

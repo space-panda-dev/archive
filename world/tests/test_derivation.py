@@ -1,4 +1,4 @@
-"""World projects specification 0.0.7's runs and what they make (ADRs 0064-0067).
+"""World projects specification 0.0.7's runs and what they make, and 0.0.8's window matches (ADRs 0064-0067, 0072).
 
 Every check reads the published fixture archive, which fixture/build.py
 admits through the real Door: derivation runs, an audio stream claim about a
@@ -216,9 +216,37 @@ class DerivationProjectionTests(unittest.TestCase):
                 corpus = self.ask(f"""SELECT ?c WHERE {{ GRAPH <{graph}> {{ <{graph}> <{ARCH}match_corpus> ?c }} }} ORDER BY ?c""")
                 self.assertEqual(sorted(row["c"]["value"] for row in corpus),
                                  sorted(self.iri(ref["pin"])["value"] for ref in plan["refs"] if ref["role"] == "corpus"))
-        # Scores compare as numbers, not text: "1.5" sorts after "0.25".
+        # Scores compare as numbers, not text: "1.5" sorts after "0.25", which
+        # sorts after "0.0612".
         ordered = self.ask(f"""SELECT ?g WHERE {{ GRAPH ?g {{ ?g <{ARCH}score> ?s }} }} ORDER BY DESC(?s)""")
-        self.assertEqual([row["g"] for row in ordered], [self.iri("work-match-selection"), self.iri("work-match-occurrence")])
+        self.assertEqual([row["g"] for row in ordered], [self.iri("work-match-selection"), self.iri("work-match-occurrence"),
+                                                         self.iri("work-match-window")])
+
+    def test_a_window_match_names_its_suggestions_window_and_run(self):
+        graph = self.iri("work-match-window")["value"]
+        plan = planned("work-match-window")
+        window = plan["payload"]["window"]
+        # Anchor: the window is a run of whole spans of the planned suggestions.
+        spans = planned("suggestions")["payload"]["spans"]
+        self.assertIn(window["start_sample"], [span["start_sample"] for span in spans])
+        self.assertIn(window["end_sample"], [span["end_sample"] for span in spans])
+        answer = self.ask(f"""PREFIX arch: <{ARCH}> PREFIX prov: <{PROV}>
+            SELECT ?suggestions ?work ?score ?run ?start ?end ?rate WHERE {{ GRAPH <{graph}> {{
+              <{graph}> arch:compared_suggestions ?suggestions ; arch:work ?work ; arch:score ?score ;
+                        prov:wasGeneratedBy ?run ; arch:window ?window .
+              ?window arch:start_sample ?start ; arch:end_sample ?end ; arch:sample_rate ?rate }} }}""")
+        self.assertEqual(answer, [{
+            "suggestions": self.iri("suggestions"), "work": self.iri("work-a"),
+            "score": lit(plan["payload"]["score"], XSD + "decimal"), "run": self.iri("run-match-window"),
+            "start": integer(window["start_sample"]), "end": integer(window["end_sample"]),
+            "rate": integer(plan["payload"]["sample_rate"])}])
+        corpus = self.ask(f"""SELECT ?c WHERE {{ GRAPH <{graph}> {{ <{graph}> <{ARCH}match_corpus> ?c }} }}""")
+        self.assertEqual(sorted(row["c"]["value"] for row in corpus),
+                         sorted(self.iri(ref["pin"])["value"] for ref in plan["refs"] if ref["role"] == "corpus"))
+        # The records graph links the match to its suggestions by the same term.
+        linked = self.ask(f"""SELECT ?s WHERE {{ GRAPH <{self.projection.records_graph.value}> {{
+              <{graph}> <{ARCH}compared_suggestions> ?s }} }}""")
+        self.assertEqual(linked, [{"s": self.iri("suggestions")}])
 
     def test_an_alignment_version_2_projects_as_version_1(self):
         graph = self.iri("alignment-v2")["value"]
@@ -457,6 +485,46 @@ class DerivationRefusalTests(unittest.TestCase):
     def test_a_match_whose_selection_is_not_version_2(self):
         self.pin_to(self.ref("work-match-selection", "selection"), "selection-v1")
         self.refused("audio_selection version 2")
+
+    def test_a_window_starting_inside_a_suggested_span(self):
+        # Anchor: the planned window starts at a span's start, and 1001 is not one.
+        spans = self.record("suggestions")["payload"]["spans"]
+        self.assertIn(self.record("work-match-window")["payload"]["window"]["start_sample"],
+                      [span["start_sample"] for span in spans])
+        self.assertNotIn(1001, [span["start_sample"] for span in spans])
+        self.record("work-match-window")["payload"]["window"]["start_sample"] = 1001
+        self.refused("window is not a run of its suggestions' spans")
+
+    def test_a_window_ending_before_its_first_span_ends(self):
+        self.record("work-match-window")["payload"]["window"]["end_sample"] = 1000
+        self.refused("window is not a run of its suggestions' spans")
+
+    def test_a_window_at_another_rate_than_its_suggestions(self):
+        self.record("work-match-window")["payload"]["sample_rate"] = 48000
+        self.refused("differs from its suggestions' sample rate")
+
+    def test_a_window_of_a_claim_that_is_not_span_suggestions(self):
+        self.pin_to(self.ref("work-match-window", "suggestions"), "stream")
+        self.refused("span_suggestions version 1")
+
+    def test_a_window_whose_suggestions_are_malformed_is_refused_for_the_suggestions(self):
+        # The suggestions' own reason, whichever record World reaches first.
+        self.record("suggestions")["payload"]["spans"][0]["class"] = "speech"
+        self.refused("span suggestions .* invalid span at 0")
+
+    def test_a_window_without_its_window(self):
+        del self.record("work-match-window")["payload"]["window"]
+        self.refused("invalid closed payload")
+
+    def test_a_window_match_whose_corpus_names_one_occurrence_twice(self):
+        refs = self.record("work-match-window")["refs"]
+        refs.append(dict(next(ref for ref in refs if ref["role"] == "corpus")))
+        self.refused("must name different objects")
+
+    def test_a_window_match_comparing_two_suggestions_claims(self):
+        refs = self.record("work-match-window")["refs"]
+        refs.append(dict(self.ref("work-match-window", "suggestions")))
+        self.refused("must compare one suggestions claim's window")
 
     def test_an_alignment_version_2_whose_run_is_not_a_derivation_run(self):
         self.pin_to(self.ref("alignment-v2", "run"), "title")

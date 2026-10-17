@@ -1,6 +1,6 @@
 # Archive Specification
 
-Version: 0.0.7
+Version: 0.0.8
 Status: draft
 
 This is the contract an archive is governed by. It is copied into every archive
@@ -274,7 +274,8 @@ record directly in `records/` and every content path directly in
 `content/sha256/`. Specification 0.0.6 changes only the layout: it installs
 the same contract bundles and the same core context as 0.0.5. Specification
 0.0.7 keeps layout `archive/2` and the 0.0.6 core context and adds contract
-bundles (D-15).
+bundles (D-15), and specification 0.0.8 keeps them again and adds one more
+(D-16).
 
 `archive.json` MUST contain only the layout version, archive identifier, and
 governing specification identifier. Its layout MUST be `archive/2`. The specification directory and contract
@@ -566,8 +567,8 @@ supply identity. The core context MUST define `person`, `organisation`,
 `musical_work` in its versioned context. A context for 0.0.1 or 0.0.2 MUST NOT
 accept that later kind. Specification 0.0.5 also defines `recording_session`,
 a local kind with no Library Reference Model equivalent; a context for an
-earlier version MUST NOT accept it. Specifications 0.0.6 and 0.0.7 keep the
-0.0.5 kinds and core context unchanged. This Archive-owned term does not establish an RDF
+earlier version MUST NOT accept it. Specifications 0.0.6, 0.0.7, and 0.0.8
+keep the 0.0.5 kinds and core context unchanged. This Archive-owned term does not establish an RDF
 equivalence between Archive and MusicBrainz Work types or settle the open LRM
 mapping question.
 
@@ -595,7 +596,7 @@ match. Missing, changed, unknown, or remotely dependent contracts MUST be
 refused on admission and reported as incomplete on read.
 
 Adding contracts outside a specification release, domain assessment
-contracts, enrichment contracts other than those of D-15, and current rules
+contracts, enrichment contracts other than those of D-15 and D-16, and current rules
 remain unsupported until separately defined.
 
 ### D-9. Transition proposals and dispatch (ADR 0028)
@@ -1074,9 +1075,10 @@ in role `selection`, pinning an audio selection version 2 Claim revision. Its
 `occurrence` and `corpus` references name different objects are unchanged.
 `archive.claim/capture_alignment` version 2 is version 1 whose optional `run`
 reference MUST pin a derivation run version 1 Claim revision. Version 1 of
-both remains installed with its exact bytes. A new match MUST cite version 2:
-Door checks a version 1 match only structurally, as before, and does not
-refuse one whose `run` pins any Claim. A match never establishes a Work.
+both remains installed with its exact bytes. A new match of an occurrence or
+a selection MUST cite version 2 (D-16 adds version 3, which compares a window
+of suggested spans): Door checks a version 1 match only structurally, as
+before, and does not refuse one whose `run` pins any Claim. A match never establishes a Work.
 
 **Specification upgrade.** An `archive.transition/specification_upgrade`
 version 1 Claim moves an archive from its current specification to a named
@@ -1124,6 +1126,53 @@ is supported. These rules are closed and root-only like the earlier profile
 rules: an unknown or malformed rule MUST be refused when the bundle loads, and
 a generic schema success MUST NOT bypass them. This section defines no
 `current` rule.
+
+### D-16. Work matches over a window of suggested spans (ADR 0072)
+
+Specification 0.0.8 installs version 3 of `archive.claim/work_match`. Every
+0.0.7 contract bundle remains installed with its exact bytes, including
+version 2 of `archive.claim/work_match`, and the layout, the entity kinds, and
+the core context are those of 0.0.7. The release is additive, so a 0.0.7
+archive adopts it by the specification upgrade of D-15.
+
+**Window matches.** A work match version 3 compares a window of one span
+suggestions Claim with the occurrences of one Work. It MUST pin exactly one
+`suggestions` reference to a span suggestions version 1 Claim revision,
+exactly one `work` reference to a `musical_work` Entity revision, one or more
+`corpus` references to song occurrence version 2 Claim revisions that name
+different objects, exactly one `run` reference to a derivation run version 1
+Claim revision, and at most one `parameters` Artifact revision. Its payload
+MUST contain exactly the version 2 fields `method`, `score`, `scale`, and
+`direction`, with their version 2 rules, and `sample_rate`, a positive
+integer equal to the pinned suggestions' `sample_rate`, and `window`, an
+object of exactly integer `start_sample` and `end_sample`. `start_sample`
+MUST equal the `start_sample` of one span of the pinned suggestions, and
+`end_sample` MUST equal the `end_sample` of that span or of a later one, so a
+window is a run of whole suggested spans within the stream they were measured
+against. A window is a suggestion like the spans it is cut from: it accepts no
+audio and names no excerpt, and a person accepts audio by proposing an audio
+selection. Version 2 remains the form for a match of a whole occurrence or
+selection; neither version supersedes the other. A match never establishes a
+Work, and implementations MUST NOT read a match as identity or as current.
+
+**Terms.** The fragment maps `suggestions` to `arch:compared_suggestions`,
+`window` to `arch:window`, and `sample_rate`, `start_sample`, and
+`end_sample` to the terms span suggestions version 1 uses; its other terms
+are those of version 2.
+
+**Profile rule.** `x-archive-span-window` names a `role` whose one reference
+pins a Claim, a `rate` field whose value in this payload MUST equal its value
+in the pinned Claim's payload, a `payload` object of this record with integer
+fields `start` and `end`, and a `spans` array of the pinned Claim whose
+elements have integer `start` and `end` fields. The `start` of this record's
+object MUST equal the `start` of some element of that array, and its `end`
+MUST equal the `end` of that element or of a later one. The role MUST have a
+reference target rule for exactly one Claim, and `start` and `end` MUST name
+different fields. The rule is closed and root-only like the earlier profile
+rules: an unknown or malformed rule MUST be refused when the bundle loads,
+and a generic schema success MUST NOT bypass it. The existing
+`x-archive-ordered-distinct-refs` rule keeps the `corpus` references
+distinct. This section defines no `current` rule.
 
 ## 7. Not yet defined
 

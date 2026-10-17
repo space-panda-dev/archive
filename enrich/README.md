@@ -13,17 +13,23 @@ here writes a record: Door decides every revision.
 | [`adapter.py`](adapter.py) | The adapter: reading the archive, staging parameters, and proposing a run with its outputs |
 | [`probe.py`](probe.py) | The audio stream probe, a standalone tool ([ADR 0065](../docs/decisions/0065-audio-stream-facts.md)) |
 | [`detector.py`](detector.py) | The span detector, a standalone tool ([ADR 0066](../docs/decisions/0066-span-suggestions.md)) |
-| [`match.py`](match.py) | The work matcher, a standalone tool ([ADR 0067](../docs/decisions/0067-matches-and-alignments-pin-runs.md)) |
+| [`match.py`](match.py) | The numpy work matcher, a standalone tool ([ADR 0067](../docs/decisions/0067-matches-and-alignments-pin-runs.md)); uncalibrated |
+| [`cover.py`](cover.py) | Essentia cover similarity and the growing-window search, a standalone tool ([ADR 0071](../docs/decisions/0071-essentia-cover-similarity.md), [ADR 0072](../docs/decisions/0072-windowed-work-matches.md)) |
 | [`enrich.py`](enrich.py) | The `enrich` command that runs a tool against an archive's records |
 | [`media.py`](media.py), [`derived.py`](derived.py) | Derived media, a standalone tool that never touches an archive, and its layout ([ADR 0069](../docs/decisions/0069-derived-media.md)) |
-| [`requirements.txt`](requirements.txt) | The libraries: numpy (detector, matcher, derived media) and scipy (matcher) |
+| [`requirements.txt`](requirements.txt) | The libraries: numpy (detector, matchers, derived media) and scipy (numpy matcher) |
+| [`requirements-match.txt`](requirements-match.txt) | The window matcher's interpreter: Essentia, numpy, and scipy for CPython 3.14, pinned by hash |
 | `support.py`, `test_*.py`, `tests/` | Synthetic audio, scratch archives built through Door, and the tests |
 
 The adapter and the probe use only Python's standard library; the detector
-needs numpy and the matcher numpy and scipy (`requirements.txt`, and the
-flake's Python). The probe and the matcher need `ffmpeg` and `ffprobe`, the
-detector `ffmpeg`. The tests also need World's test requirements, Door, and
-`archive` (`make test-python`).
+needs numpy and the numpy matcher numpy and scipy (`requirements.txt`). The
+window matcher needs Essentia 2.1b6.dev1438, which exists only for CPython 3.14
+on x86_64 Linux and macOS: `requirements-match.txt` pins it and everything
+else `enrich/` needs for that interpreter, and the flake's `enrich-python` is
+the same set. `enrich` and `capture` run on it. The probe and the matchers
+need `ffmpeg` and `ffprobe`, the detector `ffmpeg`. The tests also need
+World's test requirements, Door, and `archive` (`make test-python`, with
+`ENRICH_PYTHON` naming the 3.14 interpreter).
 
 ## `enrich probe`
 
@@ -306,17 +312,91 @@ half to even to six places; lower is closer, and a pair with no aligned path
 has no score. `match.py <query> <reference>...` scores whole files with no
 archive involved.
 
-The V2 system computed the same kind of measure with Essentia, whose Python
-bindings are not in nixpkgs and whose published wheels are pre-releases for
-some platforms only, so they cannot be obtained reproducibly for both the
-flake and a macOS virtual environment. This method is therefore its own
-implementation under its own identifier, and its scores are not on the V2
-system's scale: the V2 thresholds (0.08 and 0.18) do not apply.
+This method is its own implementation under its own identifier, and its
+scores are not on the V2 system's scale: the V2 thresholds do not apply.
+`enrich match-windows` uses the V2 system's own Essentia measure instead, with
+its thresholds ([ADR 0071](../docs/decisions/0071-essentia-cover-similarity.md)).
 **The operator must calibrate `--limit` on real recordings** (known same-song
 and different-song pairs from the archive) before trusting a proposal; no
 default limit exists. The tests show only that, on synthetic tunes, the same
 melody in another key scores lower than a different melody, and that scores
 are deterministic.
+
+## `enrich match-windows`
+
+```sh
+enrich/enrich.py match-windows --archive <dir> --suggestions <object id> [--jobs <n>]
+                 [--staging <annex>] [--dry-run]
+```
+
+Grows windows over one `archive.claim/span_suggestions` claim's spans,
+compares each with the occurrences linked to each Work by Essentia's cover
+similarity, and proposes an `archive.claim/work_match` version 3 claim for
+each Work whose closest occurrence is within the suggestion distance of a
+run's best window ([ADR 0071](../docs/decisions/0071-essentia-cover-similarity.md),
+[ADR 0072](../docs/decisions/0072-windowed-work-matches.md)). All claims are
+made by one derivation run in one Door batch. It prints one JSON object with
+every run's steps, best window, and closest occurrences, and exits as
+`enrich match` does: 0 when matches were committed, predicted, or already
+recorded; 3 when nothing was within the distance, the corpus is empty, or no
+corpus occurrence is long enough (`nothing_proposed`, with the reason); 1 on
+any failure; and 2 when the arguments are not understood. The capture import
+runs it last.
+
+- **The windows.** A run is a maximal sequence of `music` or `unknown`
+  spans; `talk` and `quiet` end it. A window starts at a run's first span and
+  grows by one span to at most eight. A window shorter than two seconds is
+  skipped without counting as a step. Growth stops after two steps without
+  improvement, or after one step worse than the best by more than 0.15. The
+  result is the best step, compared by the rounded distance.
+- **The corpus** is what `enrich match` uses, less every occurrence whose
+  selections take audio from the suggestions' source or from any part of
+  any source of its session, as head `session_parts` claims record them:
+  another microphone on the same rehearsal is not evidence about it. Each occurrence is measured once,
+  from its first selection's first track. An occurrence too short to align is
+  skipped with its reason; any other failure to read one refuses the run. For
+  each window, the half of the corpus closest by transposition-invariant mean
+  chroma is aligned.
+- **What is proposed.** At a run's best window, each Work's distance is that
+  of its closest compared occurrence. A Work at or below 0.08 gets one claim:
+  `suggestions` pins the suggestions, `work` the Work's head, `corpus` every
+  occurrence of that Work compared at that window, and `parameters` and `run`
+  as for every match. The payload adds `sample_rate` and `window`, whose
+  edges are the edges of whole suggested spans; Door checks that they are.
+- **The run** reads the suggestions, their source and stream, and everything
+  `enrich match` reads for the corpus. Its software is ffprobe, ffmpeg, the
+  libav libraries, Essentia, and numpy. A rerun with the same inputs, software,
+  and parameters answers `unchanged` before decoding anything.
+- **Cost.** Each alignment takes about two seconds on one core for
+  song-length audio (the V2 system's measurement). `--jobs` processes measure
+  the corpus and align each window; their results do not depend on how many
+  there are.
+
+### The method
+
+The method is `archive-enrich/essentia-serra09` version 1, made by
+`pkg:generic/archive-enrich-cover@0.1.0`, with scale
+`archive-enrich/essentia-serra09/smaller-asymmetric-distance`. It is the V2
+system's measure, setting for setting (`cover.py`):
+
+1. ffmpeg decodes to mono 16-bit PCM at 22,050 Hz, scaled by 1/32,768. That
+   is exactly what Essentia's loader read from the WAV file the V2 system had
+   ffmpeg write.
+2. Each 4,096-sample frame (hop 2,048) passes through a Blackman-Harris
+   62 dB window, the spectrum, spectral peaks (40 to 5,000 Hz), and HPCP.
+3. `ChromaCrossSimilarity` (optimal transposition index, binarisation
+   percentile 0.095, frame stack 9) and `CoverSongSimilarity` (serra09,
+   asymmetric) run in both directions, and the smaller distance is kept.
+4. The score is rounded half to even to four places; lower is closer.
+
+Only Essentia 2.1b6.dev1438 is accepted, because the thresholds were measured
+with it. The suggestion distance of 0.08 had one false positive in 2,779
+controlled pairs of the operator's own recordings. The V2 system judged
+commercial releases at about 0.11, but the archive does not yet record a
+corpus entry's origin, so everything is judged at 0.08
+([open question](../docs/open-questions.md)). `cover.py <query>
+<reference>...` prints the distances of whole files, with no archive
+involved.
 
 ## The adapter interface
 
