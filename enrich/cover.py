@@ -309,13 +309,25 @@ class Distance:
     value: Decimal  # rounded to the score's places
 
 
-def ranked(raw: dict[str, float]) -> list[Distance]:
-    """Closest first; ties by the raw float, then by identifier."""
-    return [Distance(key, value, rounded(value)) for key, value in sorted(raw.items(), key=lambda kv: (kv[1], kv[0]))]
+def unaligned(distance: float) -> bool:
+    """Whether Essentia found no alignment at all. Its serra09 distance
+    divides by the best alignment score, so a cross-similarity with no match
+    in either direction answers positive infinity. That is an answer, the
+    farthest there is, not a failure; anything else non-finite still is."""
+    return distance == math.inf
+
+
+def ranked(raw: dict[str, float]) -> tuple[list[Distance], list[str]]:
+    """The aligned entries closest first, ties by the raw float, then by
+    identifier; and the entries that did not align, sorted."""
+    aligned = {key: value for key, value in raw.items() if not unaligned(value)}
+    order = sorted(aligned.items(), key=lambda kv: (kv[1], kv[0]))
+    return ([Distance(key, value, rounded(value)) for key, value in order],
+            sorted(key for key in raw if key not in aligned))
 
 
 def margin(distances: list[Distance]) -> Decimal | None:
-    """How far the closest entry beat the next, over every compared entry;
+    """How far the closest entry beat the next, over every aligned entry;
     None without a second. Reported to rank by, never a gate."""
     return distances[1].value - distances[0].value if len(distances) > 1 else None
 
@@ -331,14 +343,15 @@ def search_run(run: list[int], spans: Sequence[Span], sample_rate: int, window_f
     `window_features(start, end)` measures the source's samples `[start,
     end)`; `distances(features, ids)` compares them with those corpus entries.
     Returns every evaluated step, and the best step's window with every
-    distance compared there, or `best: None` when no window was long enough
-    or the corpus was empty."""
+    aligned distance there and the entries that did not align, or `best:
+    None` when no window was long enough, the corpus was empty, or nothing
+    aligned."""
     limit = min(len(run), SEARCH["max_window_spans"])
     retention = Decimal(SEARCH["prefilter_retention"])
     degrade = Decimal(SEARCH["degrade_margin"])
     shortest = SEARCH["min_window_seconds"] * sample_rate
     means = {key: features.mean for key, features in corpus.items()}
-    best: tuple[int, dict[str, int], list[Distance]] | None = None
+    best: tuple[int, dict[str, int], list[Distance], list[str]] | None = None
     stalled = 0
     steps: list[dict[str, Any]] = []
     for step in range(limit):
@@ -348,24 +361,29 @@ def search_run(run: list[int], spans: Sequence[Span], sample_rate: int, window_f
             continue
         features = window_features(window["start_sample"], window["end_sample"])
         kept = prefilter(features.mean, means, retention)
-        compared = ranked(distances(features, kept))
-        steps.append({"spans": [run[0], run[step]], "window": window, "compared": len(compared),
+        compared, apart = ranked(distances(features, kept))
+        steps.append({"spans": [run[0], run[step]], "window": window, "compared": len(compared) + len(apart),
+                      "unaligned": len(apart),
                       "closest": ({"corpus": compared[0].corpus_id, "distance": str(compared[0].value)}
                                   if compared else None)})
         if not compared:
+            # Nothing compared, or nothing aligned. Nothing aligning is
+            # worse than any best by more than the margin.
+            if best is not None and apart:
+                break
             continue
         if best is None or compared[0].value < best[2][0].value:
-            best, stalled = (step, window, compared), 0
+            best, stalled = (step, window, compared, apart), 0
             continue
         stalled += 1
         if compared[0].value > best[2][0].value + degrade or stalled >= SEARCH["stall_steps"]:
             break
     result: dict[str, Any] = {"spans": [run[0], run[-1]], "steps": steps, "best": None}
     if best is not None:
-        step, window, compared = best
+        step, window, compared, apart = best
         result["best"] = {"step": step, "spans": [run[0], run[step]], "window": window,
                           "margin": None if margin(compared) is None else str(margin(compared)),
-                          "distances": compared}
+                          "distances": compared, "unaligned": apart}
     return result
 
 
@@ -464,8 +482,9 @@ def main(argv: list[str] | None = None) -> int:
             samples = numpy.frombuffer(completed.stdout, dtype="<i2").astype(numpy.float32) / numpy.float32(32768)
             return analyser.features(samples)
         query = whole(arguments[0])
-        scores = {path: str(rounded(analyser.distance(query.profiles, whole(path).profiles)))
-                  for path in arguments[1:]}
+        distances = {path: analyser.distance(query.profiles, whole(path).profiles) for path in arguments[1:]}
+        # null: no alignment at all.
+        scores = {path: None if unaligned(value) else str(rounded(value)) for path, value in distances.items()}
     except CoverError as exc:
         print(json.dumps({"status": "failed", "detail": str(exc)}), file=sys.stderr)
         return 1

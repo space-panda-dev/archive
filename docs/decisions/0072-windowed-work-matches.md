@@ -71,6 +71,10 @@ recorded in the parameters:
   as a step.
 - **Prefilter.** For each window, a transposition-invariant mean-chroma
   prefilter keeps half of the corpus for alignment.
+- **No alignment.** Entries that do not align (ADR 0071) are counted in the
+  step but not ranked. A step where nothing aligns has no closest entry.
+  Before any best step, the window keeps growing. After one, the step is
+  worse than the best by more than any margin, so growth stops.
 - **Corpus.** The corpus is every head song occurrence that a head
   `performance_work` version 3 link pins to a Work. Occurrences whose audio
   comes from the compared recording, or from another part of the same

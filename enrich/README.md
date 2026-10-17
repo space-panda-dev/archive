@@ -349,6 +349,10 @@ runs it last.
   skipped without counting as a step. Growth stops after two steps without
   improvement, or after one step worse than the best by more than 0.15. The
   result is the best step, compared by the rounded distance.
+- **No alignment.** Essentia answers infinity when two pieces align nowhere
+  (one second of music against silence does). That entry is counted in the
+  step's `unaligned` and never ranked or proposed. A step where nothing
+  aligns keeps growing before any best step and stops the run after one.
 - **The corpus** is what `enrich match` uses, less every occurrence whose
   selections take audio from the suggestions' source or from any part of
   any source of its session, as head `session_parts` claims record them:
@@ -360,7 +364,7 @@ runs it last.
 - **What is proposed.** At a run's best window, each Work's distance is that
   of its closest compared occurrence. A Work at or below 0.08 gets one claim:
   `suggestions` pins the suggestions, `work` the Work's head, `corpus` every
-  occurrence of that Work compared at that window, and `parameters` and `run`
+  occurrence of that Work aligned at that window, and `parameters` and `run`
   as for every match. The payload adds `sample_rate` and `window`, whose
   edges are the edges of whole suggested spans; Door checks that they are.
 - **The run** reads the suggestions, their source and stream, and everything
