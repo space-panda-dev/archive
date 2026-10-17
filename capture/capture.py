@@ -2,7 +2,8 @@
 """Import a directory of recorder files into an archive (ADR 0070).
 
     capture import --archive <dir> --staging <annex> --derived-media <root> <directory>
-                   [--session-name <name>] [--jobs <n>] [--defer-listening-copies] [--dry-run]
+                   [--session-name <name>] [--expect <manifest>] [--jobs <n>]
+                   [--defer-listening-copies] [--dry-run]
 
 The importer hashes every file, skips content that is already an Artifact's,
 groups the rest into sessions and sources with a recorder grammar, and
@@ -155,6 +156,27 @@ def read_directory(directory: Path) -> tuple[list[InputFile], list[str]]:
             files.append(InputFile(relative, path, size, digest))
     files.sort(key=lambda item: item.relative.encode("utf-8", "surrogateescape"))
     return files, sorted(ignored)
+
+
+def check_expected(files: list[InputFile], manifest: Path) -> None:
+    """The directory must hold exactly the files a manifest lists, with the
+    contents it states: a copy made elsewhere (`capture send` hashes the
+    card before copying it) is then known to be the card's bytes, and a
+    transfer that dropped, added, or changed a file is refused before
+    anything is staged."""
+    try:
+        listed = json.loads(manifest.read_text(encoding="utf-8"))
+        expected = {entry["path"]: (entry["digest"], entry["size"]) for entry in listed["files"]}
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise CaptureError(f"the manifest {manifest} could not be read: {exc}") from exc
+    found = {item.relative: (item.digest, item.size) for item in files}
+    missing = sorted(set(expected) - set(found))
+    extra = sorted(set(found) - set(expected))
+    changed = sorted(path for path in set(expected) & set(found) if expected[path] != found[path])
+    if missing or extra or changed:
+        raise CaptureError("the directory is not what the manifest lists: "
+                           + "; ".join(f"{what} {', '.join(paths)}" for what, paths in
+                                       (("missing", missing), ("not listed", extra), ("changed", changed)) if paths))
 
 
 # -- grouping ----------------------------------------------------------------
@@ -517,6 +539,8 @@ def import_directory(args: argparse.Namespace, grammars: Sequence[Any]) -> dict[
     if not files:
         raise CaptureError(f"{args.directory} holds no file to import"
                            + (f" (passed over: {', '.join(ignored)})" if ignored else ""))
+    if args.expect is not None:
+        check_expected(files, Path(args.expect))
     sessions = group(files, grammars, args.session_name)
     classify(sessions, reader)
     answer: dict[str, Any] = {"ignored": ignored, "sessions": [], "chain": [],
@@ -558,6 +582,8 @@ def main(argv: list[str] | None = None, grammars: Sequence[Any] = grammars_modul
     command.add_argument("--archive-command", default="archive")
     command.add_argument("--ffmpeg", default="ffmpeg")
     command.add_argument("--ffprobe", default="ffprobe")
+    command.add_argument("--expect", help="a manifest of the files the directory must hold, with their digests "
+                                          "and sizes, as `capture send` writes it")
     command.add_argument("--jobs", type=int, default=default_jobs(),
                          help="derived media made at once (default: the processors less two, at least one)")
     command.add_argument("--defer-listening-copies", action="store_true",
