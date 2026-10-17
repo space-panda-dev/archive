@@ -270,8 +270,14 @@ def _fsync(path: Path) -> None:
         os.close(descriptor)
 
 
-def derive(source: Path, digest: str, root: Path, ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe") -> dict:
-    """Make whatever derived media of ``source`` are missing under ``root``."""
+def derive(source: Path, digest: str, root: Path, ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe",
+           kinds: tuple[str, ...] = tuple(derived.KINDS)) -> dict:
+    """Make whatever derived media of ``source`` are missing under ``root``,
+    of the kinds asked for: peaks alone are quick, and an importer makes them
+    before the slow listening copy."""
+    unknown = [kind for kind in kinds if kind not in derived.KINDS]
+    if unknown or not kinds:
+        raise MediaError(f"the kinds of derived media are {sorted(derived.KINDS)}, not {list(kinds)}")
     if not derived.is_digest(digest):
         raise MediaError(f"not a canonical content digest: {digest!r}")
     try:
@@ -282,19 +288,19 @@ def derive(source: Path, digest: str, root: Path, ffmpeg: str = "ffmpeg", ffprob
     actual = content_digest(source)
     if actual != digest:
         raise MediaError(f"{source} has digest {actual}, not the {digest} asked for")
-    targets = {kind: derived.path(root, digest, kind) for kind in derived.KINDS}
+    targets = {kind: derived.path(root, digest, kind) for kind in derived.KINDS if kind in kinds}
     status = {kind: "present" if COMPLETE[kind](target) else "missing" for kind, target in targets.items()}
     if "missing" in status.values():
         stream = probe(source, ffprobe)
         derived.directory(root, digest).mkdir(parents=True, exist_ok=True)
-        if status["peaks"] == "missing":
+        if status.get("peaks") == "missing":
             _install(targets["peaks"], lambda _, handle: write_peaks(source, stream, handle, ffmpeg))
             status["peaks"] = "written"
-        if status["listen"] == "missing":
+        if status.get("listen") == "missing":
             _install(targets["listen"], lambda temporary, _: write_listening_copy(source, stream, temporary, ffmpeg))
             status["listen"] = "written"
     return {"digest": digest,
-            "outputs": {kind: {"path": str(targets[kind]), "status": status[kind]} for kind in derived.KINDS}}
+            "outputs": {kind: {"path": str(targets[kind]), "status": status[kind]} for kind in targets}}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -304,9 +310,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--digest", required=True, help="the file's content digest, sha256:<hex>")
     parser.add_argument("--ffmpeg", default="ffmpeg")
     parser.add_argument("--ffprobe", default="ffprobe")
+    parser.add_argument("--kind", action="append", choices=sorted(derived.KINDS),
+                        help="make only this kind (repeatable); every kind when omitted")
     args = parser.parse_args(argv)
     try:
-        result = derive(args.source, args.digest, args.root, ffmpeg=args.ffmpeg, ffprobe=args.ffprobe)
+        result = derive(args.source, args.digest, args.root, ffmpeg=args.ffmpeg, ffprobe=args.ffprobe,
+                        kinds=tuple(args.kind) if args.kind else tuple(derived.KINDS))
     except (MediaError, OSError) as exc:
         print(json.dumps({"status": "failed", "detail": f"{type(exc).__name__}: {exc}"}), file=sys.stderr)
         return 1
