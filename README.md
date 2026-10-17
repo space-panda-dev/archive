@@ -61,7 +61,8 @@ elsewhere and is governed by the specification kept here.
 > makes waveform peaks and listening copies that the relay serves by digest
 > ([ADR 0069](docs/decisions/0069-derived-media.md)). `capture import`
 > ([capture/](capture/README.md), [ADR 0070](docs/decisions/0070-capture-import.md))
-> admits a recorder card's new recordings as sessions and runs that chain.
+> admits a recorder card's new recordings as sessions and runs that chain;
+> `capture send` sends a card read on another machine to it.
 > Per-kind current rules remain open.
 > Except where a command is explicitly implemented, the material below
 > describes commitments rather than running software.

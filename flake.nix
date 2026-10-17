@@ -84,6 +84,7 @@
           wrap archive-fixture-serve fixture/serve.py
           wrap enrich enrich/enrich.py
           wrap capture capture/capture.py
+          wrap capture-send capture/send.py
         '';
     in
     {

@@ -655,6 +655,34 @@ class Steps(unittest.TestCase):
 
 
 class CommandLine(unittest.TestCase):
+    def test_a_directory_must_hold_exactly_what_its_manifest_lists(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="capture-manifest-"))
+        self.addCleanup(support.remove_tree, tmp)
+
+        def item(path: str, data: bytes) -> capture.InputFile:
+            return capture.InputFile(path, tmp / path, len(data), adapter.digest_of(data))
+
+        files = [item("a.WAV", b"aaaa"), item("b.WAV", b"bbbb")]
+        manifest = tmp / "manifest.json"
+
+        def listing(*entries: capture.InputFile) -> Path:
+            manifest.write_text(json.dumps({"files": [{"path": e.relative, "digest": e.digest, "size": e.size}
+                                                      for e in entries]}))
+            return manifest
+
+        capture.check_expected(files, listing(*files))  # anchor: an exact listing passes
+        with self.assertRaisesRegex(capture.CaptureError, "missing c.WAV"):
+            capture.check_expected(files, listing(*files, item("c.WAV", b"cccc")))
+        with self.assertRaisesRegex(capture.CaptureError, "not listed b.WAV"):
+            capture.check_expected(files, listing(files[0]))
+        with self.assertRaisesRegex(capture.CaptureError, "changed a.WAV"):
+            capture.check_expected(files, listing(item("a.WAV", b"aaab"), files[1]))
+        manifest.write_text("{}")
+        with self.assertRaisesRegex(capture.CaptureError, "could not be read"):
+            capture.check_expected(files, manifest)
+        with self.assertRaisesRegex(capture.CaptureError, "could not be read"):
+            capture.check_expected(files, tmp / "absent.json")
+
     def test_fewer_than_one_job_is_not_understood(self) -> None:
         err = io.StringIO()
         with redirect_stderr(err), self.assertRaises(SystemExit) as raised:

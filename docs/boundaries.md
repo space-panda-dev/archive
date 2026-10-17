@@ -129,7 +129,11 @@ groups the rest into sessions and sources with a recorder grammar (one named
 module per recorder model; the first is the Zoom H4essential), and proposes
 each session in one content-bearing `door admit` batch from a git-annex
 staging repository. It then runs `enrich probe`, `enrich detect` on the
-primary source, and `enrich/media.py` on what it admitted. It depends on
+primary source, and `enrich/media.py` on what it admitted. `capture send`
+runs where a card is read: it hashes and groups the card there, streams it
+over ssh into an inbox on the archive machine, and runs `capture import` with
+`--expect`, so the importer refuses anything that did not arrive as the
+bytes hashed. It depends on
 enrichment's adapter for reading the archive and staging content, and on
 nothing else in the repository; it only reads its input.
 
