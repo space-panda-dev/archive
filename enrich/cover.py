@@ -332,6 +332,19 @@ def margin(distances: list[Distance]) -> Decimal | None:
     return distances[1].value - distances[0].value if len(distances) > 1 else None
 
 
+def candidate_windows(run: list[int], spans: Sequence[Span], sample_rate: int) -> list[tuple[int, dict[str, int]]]:
+    """Every window the search may measure for a run, by step: from the
+    run's first span to each later span's end, up to the limit, less those
+    too short to measure (which are not steps)."""
+    shortest = SEARCH["min_window_seconds"] * sample_rate
+    windows = []
+    for step in range(min(len(run), SEARCH["max_window_spans"])):
+        window = {"start_sample": spans[run[0]].start_sample, "end_sample": spans[run[step]].end_sample}
+        if window["end_sample"] - window["start_sample"] >= shortest:
+            windows.append((step, window))
+    return windows
+
+
 WindowFeatures = Callable[[int, int], Features]
 Distances = Callable[[Features, list[str]], dict[str, float]]
 
@@ -346,19 +359,13 @@ def search_run(run: list[int], spans: Sequence[Span], sample_rate: int, window_f
     aligned distance there and the entries that did not align, or `best:
     None` when no window was long enough, the corpus was empty, or nothing
     aligned."""
-    limit = min(len(run), SEARCH["max_window_spans"])
     retention = Decimal(SEARCH["prefilter_retention"])
     degrade = Decimal(SEARCH["degrade_margin"])
-    shortest = SEARCH["min_window_seconds"] * sample_rate
     means = {key: features.mean for key, features in corpus.items()}
     best: tuple[int, dict[str, int], list[Distance], list[str]] | None = None
     stalled = 0
     steps: list[dict[str, Any]] = []
-    for step in range(limit):
-        window = {"start_sample": spans[run[0]].start_sample, "end_sample": spans[run[step]].end_sample}
-        if window["end_sample"] - window["start_sample"] < shortest:
-            # Too short to measure: keep growing; this is not a step.
-            continue
+    for step, window in candidate_windows(run, spans, sample_rate):
         features = window_features(window["start_sample"], window["end_sample"])
         kept = prefilter(features.mean, means, retention)
         compared, apart = ranked(distances(features, kept))
@@ -452,11 +459,29 @@ class Comparer:
                         measured[key] = futures[key].result()
                     except CoverError as exc:
                         measured[key] = exc
-        self.corpus = {key: value for key, value in measured.items() if isinstance(value, Features)}
+        self.use_corpus({key: value for key, value in measured.items() if isinstance(value, Features)})
+        return measured
+
+    def measure_windows(self, path: Path, sample_rate: int, windows: list[tuple[int, int]]
+                        ) -> dict[tuple[int, int], Features]:
+        """The features of each window `[start, end)` of one file."""
+        pieces = {window: (Piece(path, window[0], window[1], sample_rate),) for window in windows}
+        if self.jobs == 1:
+            return {window: self.features(piece) for window, piece in pieces.items()}
+        with ProcessPoolExecutor(max_workers=self.jobs) as pool:
+            futures = {window: pool.submit(_features_of, piece, self.ffmpeg, self.ffprobe)
+                       for window, piece in pieces.items()}
+            return {window: future.result() for window, future in futures.items()}
+
+    def use_corpus(self, corpus: dict[str, Features]) -> None:
+        """Compare against these features, measured here or elsewhere."""
+        if self.pool is not None:
+            self.pool.shutdown(cancel_futures=True)
+            self.pool = None
+        self.corpus = corpus
         if self.jobs > 1:
             self.pool = ProcessPoolExecutor(max_workers=self.jobs, initializer=_start_worker,
-                                            initargs=({key: f.profiles for key, f in self.corpus.items()},))
-        return measured
+                                            initargs=({key: f.profiles for key, f in corpus.items()},))
 
     def distances(self, features: Features, keys: list[str]) -> dict[str, float]:
         if self.pool is None:

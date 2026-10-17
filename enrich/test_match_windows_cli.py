@@ -322,6 +322,48 @@ class MatchWindowsCommand(unittest.TestCase):
         self.assertEqual(source["corpus"], 3)
         self.assertEqual(list(report["unmeasured"]), [self.pin("short-occurrence")["object_id"]])
 
+        # Split across machines: measured once here, each run searched from
+        # the workset alone, then judged. The report is the same.
+        def calibrate(*arguments: str) -> subprocess.CompletedProcess:
+            return subprocess.run([sys.executable, str(HERE / "calibrate_windows.py"), *arguments],
+                                  capture_output=True, text=True, env=self.env)
+
+        workset = self.tmp / "workset"
+        measured = calibrate("measure", "--archive", str(self.root), "--archive-command", support.ARCHIVE,
+                             "--ffmpeg", support.FFMPEG, "--ffprobe", support.FFPROBE, "--jobs", "2",
+                             "--source", self.pin("query")["object_id"], "--workset", str(workset))
+        self.assertEqual(measured.returncode, 0, measured.stderr)
+        plan = json.loads(measured.stdout)
+        self.assertEqual(len(plan["runs"]), 2)
+        self.assertEqual(support.head(self.root), head)
+        lines = []
+        for source_index, run_index in plan["runs"]:
+            searched = calibrate("search", "--workset", str(workset), "--digest", plan["digest"],
+                                 "--source-index", str(source_index), "--run-index", str(run_index))
+            self.assertEqual(searched.returncode, 0, searched.stderr)
+            lines.append(searched.stdout.strip())
+        results = self.tmp / "results.jsonl"
+        results.write_text("\n".join(reversed(lines)) + "\n")
+        split_out = self.tmp / "split.json"
+        judged = calibrate("judge", "--workset", str(workset), "--results", str(results), "--out", str(split_out))
+        self.assertEqual(judged.returncode, 0, judged.stderr)
+        self.assertEqual(json.loads(split_out.read_text()), report)
+        # A run without a result, or a workset that is not the one named, is refused.
+        results.write_text(lines[0] + "\n")
+        judged = calibrate("judge", "--workset", str(workset), "--results", str(results))
+        self.assertEqual(judged.returncode, 1)
+        self.assertIn("1 runs have no result", judged.stderr)
+        searched = calibrate("search", "--workset", str(workset), "--digest", "sha256:" + "0" * 64,
+                             "--source-index", "0", "--run-index", "0")
+        self.assertEqual(searched.returncode, 1)
+        self.assertIn("is not workset", searched.stderr)
+        with (workset / "corpus.npz").open("ab") as handle:
+            handle.write(b"x")
+        searched = calibrate("search", "--workset", str(workset), "--digest", plan["digest"],
+                             "--source-index", "0", "--run-index", "0")
+        self.assertEqual(searched.returncode, 1)
+        self.assertIn("is not the file its manifest names", searched.stderr)
+
         refused = subprocess.run(
             [sys.executable, str(HERE / "calibrate_windows.py"), "--archive", str(self.root), "--archive-command",
              support.ARCHIVE, "--source", self.pin("work-x")["object_id"]], capture_output=True, text=True,
