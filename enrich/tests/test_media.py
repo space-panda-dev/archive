@@ -429,6 +429,29 @@ class CommandChecks(Fixture):
         self.assertEqual({kind: item["status"] for kind, item in json.loads(out)["outputs"].items()},
                          {"peaks": "present", "listen": "present"})
 
+    def test_one_kind_is_made_alone_and_the_other_left_missing(self) -> None:
+        source = tones(self.tmp / "a.wav", 48000, 2)
+        digest = digest_of(source)
+        # Peaks alone never encode: an importer makes them before listening copies.
+        with patch.object(media, "write_listening_copy", bomb):
+            code, out, _ = self.run_main("--root", str(self.root), "--digest", digest, "--kind", "peaks", str(source))
+        self.assertEqual(code, 0)
+        self.assertEqual({kind: item["status"] for kind, item in json.loads(out)["outputs"].items()},
+                         {"peaks": "written"})
+        self.assertTrue(derived.path(self.root, digest, "peaks").is_file())
+        self.assertFalse(derived.path(self.root, digest, "listen").exists())
+        with patch.object(media, "write_peaks", bomb):
+            code, out, _ = self.run_main("--root", str(self.root), "--digest", digest, "--kind", "listen", str(source))
+        self.assertEqual({kind: item["status"] for kind, item in json.loads(out)["outputs"].items()},
+                         {"listen": "written"})
+
+    def test_an_unknown_or_empty_kind_is_refused(self) -> None:
+        source = tones(self.tmp / "a.wav", 48000, 2)
+        for kinds in ((), ("waveform",)):
+            with self.assertRaisesRegex(media.MediaError, "the kinds of derived media are"):
+                media.derive(source, digest_of(source), self.root, kinds=kinds)
+        self.assertEqual(list(self.root.iterdir()), [])
+
     def test_a_failure_is_reported_as_json_and_exit_1(self) -> None:
         source = tones(self.tmp / "a.wav", 48000, 2)
         code, out, err = self.run_main("--root", str(self.root), "--digest", "sha256:" + "0" * 64, str(source))

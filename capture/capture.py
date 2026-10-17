@@ -2,15 +2,16 @@
 """Import a directory of recorder files into an archive (ADR 0070).
 
     capture import --archive <dir> --staging <annex> --derived-media <root> <directory>
-                   [--session-name <name>] [--dry-run]
+                   [--session-name <name>] [--jobs <n>] [--defer-listening-copies] [--dry-run]
 
 The importer hashes every file, skips content that is already an Artifact's,
 groups the rest into sessions and sources with a recorder grammar, and
 proposes each session to `door admit` in one content-bearing batch: an
 Artifact per file, the `recording_session` Entity, and one
 `archive.claim/session_parts` claim per source. Then it runs the enrichment
-chain on each new Artifact: `enrich probe`, `enrich detect` on the session's
-primary source, and `enrich/media.py`. It reads the archive only through
+chain on the new Artifacts, quickest first: `enrich probe`, `enrich detect`
+on each session's primary source, waveform peaks, and last the listening
+copies, which take most of the time (see `chain`). It reads the archive only through
 `archive export`, proposes only through Door, and never changes its input.
 
 It prints one JSON object. Exit status: 0 when every new session was
@@ -31,6 +32,7 @@ import subprocess
 import sys
 import tempfile
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
@@ -345,13 +347,18 @@ def run(arguments: list[str], cwd: Path, what: str, env: dict[str, str]) -> str:
     return completed.stdout
 
 
-def enrich(command: str, artifact: str, args: argparse.Namespace, env: dict[str, str]) -> tuple[int, dict]:
-    """Run one `enrich` command; 0 and 3 are answers, anything else fails."""
+def enrich(command: str, artifact: str, args: argparse.Namespace, env: dict[str, str],
+           export: Path | None = None) -> tuple[int, dict]:
+    """Run one `enrich` command; 0 and 3 are answers, anything else fails.
+    With ``export``, the command reads that export of the archive's current
+    commit instead of exporting the archive again."""
     arguments = [sys.executable, str(ENRICH / "enrich.py"), command, "--archive", str(args.archive),
                  "--artifact", artifact, "--staging", str(args.staging), "--door", args.door,
                  "--archive-command", args.archive_command, "--ffmpeg", args.ffmpeg]
     if command == "probe":
         arguments += ["--ffprobe", args.ffprobe]
+    if export is not None:
+        arguments += ["--export", str(export)]
     try:
         completed = subprocess.run(arguments, env=env, capture_output=True, text=True)
     except OSError as exc:
@@ -372,31 +379,90 @@ def content_path(root: Path, digest: str) -> Path:
     return root / "content" / "sha256" / hexdigest[0:2] / hexdigest[2:4] / hexdigest
 
 
-def chain(session: Session, args: argparse.Namespace, env: dict[str, str], report: list[dict]) -> None:
-    """Probe every new Artifact, detect spans on each part of the primary
-    source, and make derived media; each run its own batch. A file with no
-    countable audio stream is probed and reported, and nothing else runs on
-    it. The first failure stops the chain."""
-    primary = {item.digest for item in session.primary.files}
-    for artifact in session.planned["artifacts"]:
-        entry: dict[str, Any] = {"file": artifact["file"], "object_id": artifact["object_id"]}
-        report.append(entry)
-        code, answer = enrich("probe", artifact["object_id"], args, env)
-        entry["probe"] = answer["status"]
-        if code == 3:
-            entry["detect"] = entry["media"] = "skipped: no countable audio stream"
-            continue
-        if artifact["digest"] in primary:
-            _, answer = enrich("detect", artifact["object_id"], args, env)
-            entry["detect"] = answer["status"]
+def chain(sessions: list[Session], args: argparse.Namespace, env: dict[str, str], report: list[dict]) -> None:
+    """Enrich every new Artifact of the committed sessions, quickest first,
+    so a session can be reviewed before its slowest output exists:
+
+    1. `enrich probe` on every Artifact, then `enrich detect` on each part of
+       each session's primary source. Each run is its own Door batch, one at
+       a time, against one export of the archive that is brought up to date
+       with `archive export --since` after each commit.
+    2. Waveform peaks for every Artifact with audio, `--jobs` at a time.
+    3. Listening copies, the slow part, `--jobs` at a time, unless deferred
+       to a later `enrich/media.py` run.
+
+    A file with no countable audio stream is probed and reported, and
+    nothing else runs on it. A failure stops the chain once the step it
+    happened in has finished: what that step already made is kept and
+    reported, and no later step runs."""
+    entries: list[tuple[Session, dict[str, Any], dict[str, Any]]] = []
+    for session in sessions:
+        for artifact in session.planned["artifacts"]:
+            entry: dict[str, Any] = {"file": artifact["file"], "object_id": artifact["object_id"]}
+            report.append(entry)
+            entries.append((session, artifact, entry))
+    if not entries:
+        return
+    reader = adapter.ArchiveReader(args.archive, args.archive_command, env)
+    with tempfile.TemporaryDirectory(prefix="capture-export-") as scratch:
+        export_file = Path(scratch) / "export.json"
+
+        def current_export() -> Path:
+            export_file.write_text(json.dumps(reader.export), encoding="utf-8")
+            return export_file
+
+        audio = []
+        for session, artifact, entry in entries:
+            code, answer = enrich("probe", artifact["object_id"], args, env, current_export())
+            entry["probe"] = answer["status"]
+            if code == 3:
+                entry["detect"] = entry["media"] = "skipped: no countable audio stream"
+                continue
+            reader.refresh(args.archive_command, env)
+            audio.append((session, artifact, entry))
+        for session, artifact, entry in audio:
+            if artifact["digest"] in {item.digest for item in session.primary.files}:
+                _, answer = enrich("detect", artifact["object_id"], args, env, current_export())
+                entry["detect"] = answer["status"]
+                reader.refresh(args.archive_command, env)
+
+    for _, _, entry in audio:
+        entry["media"] = {}
+    derive_all("peaks", audio, args, env)
+    if args.defer_listening_copies:
+        for _, _, entry in audio:
+            entry["media"]["listen"] = "deferred"
+    else:
+        derive_all("listen", audio, args, env)
+
+
+def derive_all(kind: str, audio: list[tuple[Session, dict[str, Any], dict[str, Any]]],
+               args: argparse.Namespace, env: dict[str, str]) -> None:
+    """Make one kind of derived media for every Artifact, `--jobs` at a time.
+    Each is its own `enrich/media.py` process, which writes only into the
+    derived-media root, so they cannot interfere. Every one is waited for and
+    reported; the first failure, in import order, is then raised."""
+    def derive(artifact: dict[str, Any]) -> dict[str, Any]:
         output = run([sys.executable, str(ENRICH / "media.py"), "--root", str(args.derived_media),
-                      "--digest", artifact["digest"], "--ffmpeg", args.ffmpeg, "--ffprobe", args.ffprobe,
-                      str(content_path(args.archive, artifact["digest"]))],
-                     args.archive, f"derived media for {artifact['file']}", env)
+                      "--digest", artifact["digest"], "--kind", kind, "--ffmpeg", args.ffmpeg,
+                      "--ffprobe", args.ffprobe, str(content_path(args.archive, artifact["digest"]))],
+                     args.archive, f"derived media ({kind}) for {artifact['file']}", env)
         try:
-            entry["media"] = {kind: made["status"] for kind, made in sorted(json.loads(output)["outputs"].items())}
+            return json.loads(output)["outputs"][kind]["status"]
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
-            raise CaptureError(f"derived media for {artifact['file']} answered {output[:300]!r}") from exc
+            raise CaptureError(f"derived media ({kind}) for {artifact['file']} answered {output[:300]!r}") from exc
+
+    with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+        futures = [pool.submit(derive, artifact) for _, artifact, _ in audio]
+    failure = None
+    for (_, _, entry), future in zip(audio, futures):
+        try:
+            entry["media"][kind] = future.result()
+        except CaptureError as exc:
+            entry["media"][kind] = "failed"
+            failure = failure or exc
+    if failure is not None:
+        raise failure
 
 
 # -- the command -------------------------------------------------------------
@@ -412,6 +478,12 @@ def environment() -> dict[str, str]:
                 raise CaptureError(f"{program} is not on PATH and {variable} is unset")
             env[variable] = os.path.realpath(found)
     return env
+
+
+def default_jobs() -> int:
+    """Each listening copy is one single-threaded encoder; leave two
+    processors for Door, the relay, and everything else."""
+    return max(1, (os.cpu_count() or 1) - 2)
 
 
 def check_places(args: argparse.Namespace) -> None:
@@ -456,8 +528,7 @@ def import_directory(args: argparse.Namespace, grammars: Sequence[Any]) -> dict[
         for session in new:
             admit(session, reader, staging, args.door, args.dry_run, env)
         if not args.dry_run:
-            for session in new:
-                chain(session, args, env, answer["chain"])
+            chain(new, args, env, answer["chain"])
     except (CaptureError, adapter.AdapterError) as exc:
         answer["sessions"] = [describe(session) for session in sessions]
         raise Failed(str(exc), answer) from exc
@@ -487,9 +558,15 @@ def main(argv: list[str] | None = None, grammars: Sequence[Any] = grammars_modul
     command.add_argument("--archive-command", default="archive")
     command.add_argument("--ffmpeg", default="ffmpeg")
     command.add_argument("--ffprobe", default="ffprobe")
+    command.add_argument("--jobs", type=int, default=default_jobs(),
+                         help="derived media made at once (default: the processors less two, at least one)")
+    command.add_argument("--defer-listening-copies", action="store_true",
+                         help="make peaks only; listening copies are left for a later enrich/media.py run")
     args = parser.parse_args(argv)
     if args.session_name is not None and not args.session_name.strip():
         parser.error("--session-name must not be empty")
+    if args.jobs < 1:
+        parser.error("--jobs must be at least 1")
     try:
         answer = import_directory(args, grammars)
     except Failed as exc:

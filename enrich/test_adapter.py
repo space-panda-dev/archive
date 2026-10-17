@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import subprocess
+import sys
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import adapter
 import support
 from support import needs_door
 from test_probe import fake_program
+
+HERE = Path(__file__).resolve().parent
 
 REPOSITORY = Path(__file__).resolve().parent.parent
 STREAM = ("archive.claim/audio_stream", "1")
@@ -218,6 +223,57 @@ class Proposals(unittest.TestCase):
         source.write_bytes(hashed)
         self.assertEqual(staging.stage_file(source, adapter.digest_of(hashed), len(hashed), "y.wav"),
                          staging.key_for(adapter.digest_of(hashed), len(hashed), "y.wav"))
+
+    def test_a_cloned_file_is_hashed_as_staged_and_refused_when_it_differs(self) -> None:
+        # A file system that clones: the clone's bytes are what the hash
+        # checks, so a clone that is not the hashed content is refused.
+        hashed = b"recorded bytes"
+        source = self.tmp / "input.wav"
+        source.write_bytes(hashed)
+        digest = adapter.digest_of(hashed)
+        staging = self.staging()
+        staging.stage(b"{}", "seed.json")
+        commit = support.head(staging.path)
+
+        def wrong_clone(_: Path, target: Path) -> bool:
+            target.write_bytes(b"other bytes!!!")
+            return True
+
+        with patch.object(adapter, "clone_file", wrong_clone):
+            with self.assertRaisesRegex(adapter.AdapterError, "no longer the content that was hashed"):
+                staging.stage_file(source, digest, len(hashed), "z.wav")
+        self.assertEqual(support.head(staging.path), commit)
+
+        def clone(source_path: Path, target: Path) -> bool:
+            target.write_bytes(source_path.read_bytes())
+            return True
+
+        # Anchor: with a faithful clone the copy loop is never needed.
+        real_open = open
+        def no_copy_open(path, mode="r", *args, **kwargs):
+            if "w" in mode and str(path).endswith(".partial"):
+                raise AssertionError("the bytes were copied although the file was cloned")
+            return real_open(path, mode, *args, **kwargs)
+
+        with patch.object(adapter, "clone_file", clone), patch("builtins.open", no_copy_open):
+            key = staging.stage_file(source, digest, len(hashed), "z.wav")
+        self.assertEqual(key, staging.key_for(digest, len(hashed), "z.wav"))
+
+    def test_clone_falls_back_only_when_the_file_system_cannot_clone(self) -> None:
+        import fcntl
+        source = self.tmp / "a.bin"
+        source.write_bytes(b"bytes")
+        target = self.tmp / "b.bin"
+        for code in (errno.EXDEV, errno.EOPNOTSUPP, errno.ENOTTY, errno.EINVAL):
+            with patch.object(fcntl, "ioctl", side_effect=OSError(code, os.strerror(code))):
+                self.assertFalse(adapter.clone_file(source, target))
+            self.assertEqual(target.read_bytes(), b"")
+        # Any other failure is not a reason to copy quietly.
+        with patch.object(fcntl, "ioctl", side_effect=OSError(errno.EIO, "I/O error")):
+            with self.assertRaises(OSError):
+                adapter.clone_file(source, target)
+        with patch.object(fcntl, "ioctl", return_value=0):
+            self.assertTrue(adapter.clone_file(source, target))
 
     def test_a_source_that_cannot_be_read_is_an_adapter_error(self) -> None:
         staging = self.staging()
@@ -448,6 +504,48 @@ class RecordedRuns(unittest.TestCase):
 class Reading(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = support.scratch(self, "reader-")
+
+    def test_a_refreshed_reader_equals_a_fresh_export(self) -> None:
+        wav = support.sine_wav(self.tmp / "a.wav", 8000, "0.5")
+        root, manifest = support.build_archive(self, {"wav": wav})
+        env = support.environment()
+        reader = adapter.ArchiveReader(root, support.ARCHIVE, env)
+        before = len(reader.records)
+        # The real writer commits a run and its claim after the reader read.
+        completed = subprocess.run(
+            [sys.executable, str(HERE / "enrich.py"), "probe", "--archive", str(root),
+             "--artifact", manifest["objects"]["wav"]["object_id"], "--door", support.DOOR,
+             "--archive-command", support.ARCHIVE, "--ffmpeg", support.FFMPEG, "--ffprobe", support.FFPROBE,
+             "--staging", str(self.tmp / "staging")], capture_output=True, text=True, env=env)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        reader.refresh(support.ARCHIVE, env)
+        fresh = adapter.ArchiveReader(root, support.ARCHIVE, env)
+        # Anchor: something was committed, so the two readers differ from before.
+        self.assertGreater(len(fresh.records), before)
+        self.assertEqual(reader.snapshot, fresh.snapshot)
+        self.assertEqual(sorted(reader.by_revision), sorted(fresh.by_revision))
+        self.assertEqual({k: v["revision_id"] for k, v in reader.heads.items()},
+                         {k: v["revision_id"] for k, v in fresh.heads.items()})
+        self.assertEqual(reader.installed, fresh.installed)
+
+    def test_a_refresh_that_fails_or_finds_another_archive_is_refused(self) -> None:
+        root, _ = support.build_archive(self, {"wav": support.sine_wav(self.tmp / "a.wav", 8000, "0.5")})
+        reader = adapter.ArchiveReader(root, support.ARCHIVE, support.environment())
+        failing = fake_program(self.tmp, "archive-fails", "echo refused >&2; exit 1\n")
+        with self.assertRaisesRegex(adapter.AdapterError, "export --since .* failed \\(exit 1\\): refused"):
+            reader.refresh(failing)
+        moved = self.tmp / "moved.json"
+        moved.write_text(json.dumps({"status": "ok", "snapshot": "0" * 40, "archive_id": reader.archive_id,
+                                     "spec": "archive/9.9.9", "records": [], "pinned_records": [], "contracts": []}))
+        upgraded = fake_program(self.tmp, "archive-upgraded", f"cat '{moved}'\n")
+        with self.assertRaisesRegex(adapter.AdapterError, "while it was being read"):
+            reader.refresh(upgraded)
+        with self.assertRaisesRegex(adapter.AdapterError, "could not run"):
+            reader.refresh(str(self.tmp / "absent-archive"))
+        snapshotless = adapter.ArchiveReader.from_export(root, {k: v for k, v in reader.export.items()
+                                                                if k != "snapshot"})
+        with self.assertRaisesRegex(adapter.AdapterError, "no snapshot to refresh from"):
+            snapshotless.refresh(support.ARCHIVE)
 
     def test_a_directory_that_is_not_an_archive_is_refused(self) -> None:
         with self.assertRaisesRegex(adapter.AdapterError, "is not complete"):

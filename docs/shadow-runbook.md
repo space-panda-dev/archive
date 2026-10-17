@@ -388,7 +388,9 @@ the real archive is not in scope before cutover.
 
    Check the answer's sessions (each source's files, in recording order) and
    chain, and look at the sessions in a review client through the scratch
-   relay.
+   relay. Peaks are made before any listening copy, so the waveform is there
+   first; `--defer-listening-copies` leaves the copies for a later
+   `enrich/media.py` run, and `--jobs` sets how many are made at once.
 3. **Ask for approval to import into the shadow.** The request names the card,
    the shadow's staging repository and derived-media root, and attaches the
    scratch run's answer. With approval, run the same command against the

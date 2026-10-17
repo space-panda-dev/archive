@@ -352,7 +352,13 @@ if reader.equivalent_run(result) is None:           # optional quiet-history che
   `equivalent_run(result)`, which finds a recorded run of the same agent,
   method, software, `used` revisions, and parameter bytes that kept an output.
   Compare before writing: a tool that checks this before its expensive step
-  keeps a rerun quiet and cheap.
+  keeps a rerun quiet and cheap. `refresh(archive, env)` adds what was
+  committed since the reader's snapshot from `archive export --since` (ADR
+  0055) instead of exporting every record again, and refuses an archive
+  whose identifier or specification changed meanwhile. Every command takes
+  `--export <file>`, an export a caller already holds: it must name the
+  archive's current commit, or the command refuses it, so a stale export is
+  never proposed against.
 - **`RunResult`** is what the tool hands over. `software` lists the programs
   and libraries the output depends on, in the order the tool reports them,
   detected when the run happens. Instants must be timezone-aware; they are
@@ -389,7 +395,10 @@ if reader.equivalent_run(result) is None:           # optional quiet-history che
 - **`Staging(path, git, annex, env, remote="enrich-staging")`** is also how
   the [capture importer](../capture/README.md) stages recordings:
   `stage_file(source, digest, size, filename)` copies a file in without
-  holding it in memory and only reads the source, and `key_for(digest, size,
+  holding it in memory and only reads the source; on a file system that can
+  share extents (a Btrfs reflink, Linux's `FICLONE`) it clones the file
+  instead and writes no data, and it copies only when the file system
+  answers that it cannot clone. `key_for(digest, size,
   filename)` predicts its key. The copy is hashed before git-annex adds it,
   and a copy that is not the stated digest and size is removed and refused,
   so a file that changed after it was hashed is never offered as the hashed
@@ -417,6 +426,10 @@ audio file ([ADR 0069](../docs/decisions/0069-derived-media.md)):
 ```sh
 enrich/media.py --root /path/to/derived-media --digest sha256:<hex> /path/to/recording.wav
 ```
+
+`--kind peaks` or `--kind listen` makes only that kind; peaks take a decode,
+the listening copy an encode that takes most of the time, so an importer
+makes every recording's peaks first.
 
 Both are regenerable, never admitted. They go under the derived-media root at
 `sha256/<ab>/<cd>/<hex>/<name>`, where `<hex>` is the content's SHA-256 and

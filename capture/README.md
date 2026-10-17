@@ -23,7 +23,7 @@ needs (`ffmpeg`, `ffprobe`, numpy).
 
 ```sh
 capture/capture.py import --archive <dir> --staging <annex> --derived-media <root> <directory>
-                          [--session-name <name>] [--dry-run]
+                          [--session-name <name>] [--jobs <n>] [--defer-listening-copies] [--dry-run]
 ```
 
 It prints one JSON object with `status` `committed`, `predicted` (a dry
@@ -65,14 +65,21 @@ staged or proposed.
    any remote already configured with that path). The input files are only
    read. Writing program and agent are both
    `pkg:generic/archive-capture@0.1.0`: the grouping is the grammar's.
-5. **Enrich.** After every new session is committed, for each new Artifact
-   in session order: `enrich probe`; then, for each part of the primary
-   source, `enrich detect` with the `jam` preset; then `enrich/media.py` into
-   the derived-media root. Each enrichment run is its own batch, staged in
-   the same staging repository. A file whose probe counts no audio stream is
-   reported with `nothing_proposed`, and nothing else runs on it. The first
-   failure stops the chain; the import does not resume it later, because
-   its contents are then Artifacts and a rerun skips them (see the
+5. **Enrich**, quickest first, so a session can be reviewed before its
+   slowest output exists. `enrich probe` on every new Artifact, then `enrich
+   detect` with the `jam` preset on each part of each session's primary
+   source: each run is its own batch, staged in the same staging repository,
+   one at a time, and all of them read one `archive export` that is brought
+   up to date with `archive export --since` after each commit, instead of
+   exporting every record for each run. Then waveform peaks for every
+   recording, and last the listening copies (the AAC encode is nearly all of
+   the chain's time), each `--jobs` at a time with `enrich/media.py`
+   (default: the processors less two). `--defer-listening-copies` leaves the
+   listening copies for a later `enrich/media.py` run. A file whose probe
+   counts no audio stream is reported with `nothing_proposed`, and nothing
+   else runs on it. A failure stops the chain once the step it happened in
+   has finished; the import does not resume it later, because its contents
+   are then Artifacts and a rerun skips them (see the
    [runbook](../docs/shadow-runbook.md#importing-new-recordings)).
 
 A dry run reads, hashes, groups, and asks Door to predict each batch; it
