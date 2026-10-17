@@ -115,6 +115,10 @@ def parameters() -> dict[str, Any]:
 def essentia_module() -> Any:
     """`essentia.standard`, refused unless it is the pinned build."""
     try:
+        import essentia
+        # Its info log would otherwise print a line on stderr at import (on
+        # Linux), ahead of the one JSON answer a command writes there.
+        essentia.log.infoActive = False
         import essentia.standard as standard
         installed = importlib.metadata.version("essentia")
     except (ImportError, importlib.metadata.PackageNotFoundError) as exc:

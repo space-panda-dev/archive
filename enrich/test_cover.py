@@ -185,6 +185,14 @@ class EssentiaBuild(unittest.TestCase):
                                                           "calibrated with 2.1b6.dev1438"):
                 cover.essentia_module()
 
+    @needs_essentia
+    def test_importing_essentia_prints_nothing(self) -> None:
+        import subprocess
+        import sys
+        completed = subprocess.run([sys.executable, "-c", "import cover; cover.essentia_module()"],
+                                   cwd=Path(cover.__file__).parent, capture_output=True, text=True)
+        self.assertEqual((completed.returncode, completed.stdout, completed.stderr), (0, "", ""))
+
     def test_a_missing_essentia_is_refused(self) -> None:
         with patch.dict("sys.modules", {"essentia": None, "essentia.standard": None}):
             with self.assertRaisesRegex(cover.CoverError, "Essentia is not importable here"):
