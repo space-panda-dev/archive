@@ -51,6 +51,13 @@ it. It could only be trusted after the same calibration was done again.
    is `archive-enrich/essentia-serra09/smaller-asymmetric-distance`, and lower
    is closer.
 
+**No alignment is an answer.** The serra09 distance divides by the best
+alignment score. When the cross-similarity has no match in either
+direction, Essentia answers positive infinity. One second of music against
+silence does this. Such an entry is counted as compared and unaligned. It is
+never ranked or proposed, and it has no score. Any other answer that is not
+a finite, non-negative number is still a failure of the run.
+
 **The build is pinned exactly.** It is Essentia 2.1b6.dev1438 under CPython
 3.14. That release ships wheels for no other interpreter. The flake builds
 the matcher's interpreter from wheels pinned by SHA-256 for x86_64 Linux and

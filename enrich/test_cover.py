@@ -8,6 +8,7 @@ exactly. The measure itself runs the pinned Essentia build on synthetic tunes.
 from __future__ import annotations
 
 import importlib.metadata
+import math
 import os
 import unittest
 from decimal import Decimal
@@ -134,6 +135,36 @@ class Search(unittest.TestCase):
         self.assertEqual(best["margin"], "0.0000")
         self.assertIsNone(Table({3000: {"a": 0.1}}).search([0], spans("music"))["best"]["margin"])
 
+    def test_an_entry_that_does_not_align_is_counted_but_never_ranked(self) -> None:
+        table = Table({3000: {"a": 0.07, "b": math.inf, "c": 0.12}})
+        result = table.search([0], spans("music"))
+        best = result["best"]
+        self.assertEqual([d.corpus_id for d in best["distances"]], ["a", "c"])
+        self.assertEqual(best["unaligned"], ["b"])
+        self.assertEqual(best["margin"], "0.0500")
+        self.assertEqual((result["steps"][0]["compared"], result["steps"][0]["unaligned"]), (3, 1))
+
+    def test_a_step_where_nothing_aligns_before_any_best_keeps_growing(self) -> None:
+        table = Table({3000: {"a": math.inf}, 6000: {"a": 0.05}})
+        result = table.search([0, 1], spans("music", "music"))
+        self.assertEqual([end for _, end in table.windows], [3000, 6000])
+        self.assertEqual(result["best"]["step"], 1)
+        # Nothing aligning anywhere is no best at all, not a failure.
+        self.assertIsNone(Table({3000: {"a": math.inf}}).search([0], spans("music"))["best"])
+
+    def test_a_step_where_nothing_aligns_after_a_best_stops_at_once(self) -> None:
+        table = Table({3000: {"a": 0.05}, 6000: {"a": math.inf}, 9000: {"a": 0.01}})
+        result = table.search([0, 1, 2], spans("music", "music", "music"))
+        # Anchor: the step after would have been better.
+        self.assertLess(table.distances[9000]["a"], table.distances[3000]["a"])
+        self.assertEqual([end for _, end in table.windows], [3000, 6000])
+        self.assertEqual(result["best"]["step"], 0)
+
+    def test_any_other_answer_that_is_not_a_distance_still_fails(self) -> None:
+        for bad in (float("nan"), -math.inf, -0.1):
+            with self.assertRaises(cover.CoverError):
+                Table({3000: {"a": bad}}).search([0], spans("music"))
+
 
 class Runs(unittest.TestCase):
     def test_talk_and_quiet_end_a_run_and_unknown_joins_one(self) -> None:
@@ -222,6 +253,18 @@ class Measure(unittest.TestCase):
         # the thresholds were measured on, so no threshold is asserted.
         self.assertNotEqual(near, far)
         self.assertLess(near, far)
+
+    def test_essentia_answers_infinity_when_nothing_aligns(self) -> None:
+        # The search's unaligned test must match what Essentia actually
+        # answers: one second of music against silence aligns nowhere.
+        analyser = cover.Analyser()
+        music = support.progression_samples(support.PROGRESSION, 22050).astype(numpy.float32)
+        short = analyser.features(music[:22050]).profiles
+        silence = analyser.features(numpy.zeros(4 * 22050, numpy.float32)).profiles
+        distance = analyser.distance(short, silence)
+        self.assertTrue(cover.unaligned(distance), distance)
+        # Anchor: longer music does align with the same silence.
+        self.assertFalse(cover.unaligned(analyser.distance(analyser.features(music).profiles, silence)))
 
     def test_the_distance_is_the_smaller_direction_and_deterministic(self) -> None:
         analyser = cover.Analyser()

@@ -139,7 +139,7 @@ def calibrate(args: argparse.Namespace) -> dict[str, Any]:
                 else:
                     judgment = "wrong"
                 judged.append({"window": best["window"], "distance": str(closest.value), "margin": best["margin"],
-                               "judgment": judgment, "suggested": closest.value <= limit,
+                               "judgment": judgment, "suggested": closest.value <= limit, "unaligned": len(best["unaligned"]),
                                "closest_works": closest_works, "steps": len(result["steps"]),
                                "accepted_works": sorted({w for a in overlapping for w in a["works"]})})
             reached = []

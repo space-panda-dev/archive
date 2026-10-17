@@ -515,6 +515,7 @@ def run_match_windows(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
                 if best is None:
                     continue
                 result["window"], result["margin"] = best["window"], best["margin"]
+                result["unaligned"] = len(best["unaligned"])
                 result["closest"] = [{"occurrence": d.corpus_id, "distance": str(d.value)}
                                      for d in best["distances"][:5]]
                 # Each Work's closest compared occurrence, and every one of
