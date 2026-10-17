@@ -34,20 +34,22 @@ importer.
    Recordings imported natively into the shadow beforehand would have to be
    imported again into a fresh migration, which ADR 0070 makes safe. *Open:
    needs the operator's decision.*
-2. **The real archive is at 0.0.7.** Derivation runs, stream facts, span
-   suggestions, and version 2 matches exist only from 0.0.7 on. A 0.0.6
-   archive adopts it by one `door transition`
+2. **The real archive is at 0.0.8.** Derivation runs, stream facts, span
+   suggestions, and version 2 matches exist from 0.0.7 on, and window
+   matches, which the capture import proposes, only from 0.0.8
+   ([ADR 0072](../decisions/0072-windowed-work-matches.md)). An archive adopts
+   each by one `door transition`
    ([ADR 0068](../decisions/0068-specification-upgrade.md)); a fresh
-   migration can be born at 0.0.7. *Ready in code:* Door applies the upgrade
+   migration can be born at 0.0.8. *Ready in code:* Door applies the upgrade
    in one commit and refuses every non-additive or forged one, and World's
    next refresh rebuilds in full and conforms
-   ([`test_upgrade.py`](../../world/tests/test_upgrade.py)). *Not done:* the
-   [runbook's upgrade](../shadow-runbook.md#specification-upgrade) has not
-   run on a scratch copy of the shadow or on the shadow.
-3. **The deployed build is this one.** The deployed relay and Door predate
-   ADRs 0064-0070 and cannot apply an upgrade. *Not done:* the
+   ([`test_upgrade.py`](../../world/tests/test_upgrade.py)). *Done on the
+   shadow:* the upgrade to 0.0.7, on 2026-10-16. *Not done:* its upgrade to
+   0.0.8.
+3. **The deployed build is this one.** The shadow's relay and Door carry
+   ADRs 0064-0070 and specification 0.0.7, but not 0.0.8. *Not done:* the
    [redeploy](../shadow-runbook.md#redeploying-door-world-and-the-relay)
-   needs approval, and it must precede the upgrade.
+   needs approval, and it must precede the 0.0.8 upgrade.
 4. **The importer is in place.** *Ready in code:* `capture import` hashes a
    card, skips known content, groups sessions and sources with the Zoom
    H4essential grammar (including rollover), and admits one content-bearing
@@ -147,7 +149,7 @@ Each step is separately approved and leaves the previous state recoverable.
    the post-bundle recordings into the shadow. Calibrate the detector presets
    and the matcher's limit on the shadow's real recordings.
 4. Exercise the review client's commits against a scratch relay.
-5. Decide which archive is the real one (condition 1), and bring it to 0.0.7.
+5. Decide which archive is the real one (condition 1), and bring it to 0.0.8.
 6. Put the real archive, its staging repository, and its derived-media root
    inside the backup scope.
 7. Stop the V2 import, start importing into the real archive, and switch its

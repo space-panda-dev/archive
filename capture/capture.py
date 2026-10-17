@@ -472,7 +472,8 @@ def chain(sessions: list[Session], args: argparse.Namespace, env: dict[str, str]
             _, answer = enrich("match-windows", suggestions, args, env, current_export())
             entry["match"] = {"status": answer["status"],
                               "proposed": sum(len(run["proposed"]) for run in answer.get("runs", []))}
-            reader.refresh(args.archive_command, env)
+            if answer["status"] == "committed":
+                reader.refresh(args.archive_command, env)
 
 
 def suggestions_made_by(reader: adapter.ArchiveReader, answer: dict[str, Any]) -> str:

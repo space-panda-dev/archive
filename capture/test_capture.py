@@ -219,11 +219,14 @@ class CaptureImport(unittest.TestCase):
         calls = Path(archive + ".log").read_text().splitlines()
         # One full export to classify the card, one for the whole chain; three
         # runs (two probes, one detect) each brought it up to date instead.
+        # The match committed nothing (the archive has no Works), so nothing
+        # was brought up to date after it.
         self.assertEqual(calls.count("export"), 2, calls)
         self.assertEqual(len([c for c in calls if c.startswith("export --since ")]), 3, calls)
-        # Anchor: the chain's three runs were committed.
-        self.assertEqual([(e["probe"], e.get("detect")) for e in json.loads(out.getvalue())["chain"]],
-                         [("committed", "committed"), ("committed", None)])
+        # Anchor: the chain's three runs were committed, and the match ran.
+        chain = json.loads(out.getvalue())["chain"]
+        self.assertEqual([(e["probe"], e.get("detect")) for e in chain], [("committed", "committed"), ("committed", None)])
+        self.assertEqual([e.get("match") for e in chain], [{"status": "nothing_proposed", "proposed": 0}, None])
 
     def overlapping_ffmpeg(self, wait: int) -> str:
         """An ffmpeg that logs each call, and whose encodes each wait up to
@@ -652,6 +655,32 @@ class Steps(unittest.TestCase):
         with patch.dict(os.environ, found, clear=True):
             env = capture.environment()
         self.assertEqual(env["ARCHIVE_GIT_EXECUTABLE"], "/bin/git-of-choice")
+
+
+class SuggestionsMadeBy(unittest.TestCase):
+    """The chain matches the suggestions the detector's run made, whether
+    that run was committed now or found unchanged."""
+
+    def reader(self, *runs: str) -> adapter.ArchiveReader:
+        def suggestions(index: int, run: str) -> dict:
+            return {"shape": "claim", "object_id": f"urn:uuid:{index:08d}-0000-4000-8000-000000000000",
+                    "revision_id": "sha256:" + str(index) * 64,
+                    "contracts": [{"id": "archive.claim/span_suggestions", "version": "1"}],
+                    "refs": [{"role": "run", "id": "urn:uuid:run", "revision_id": run}]}
+        return adapter.ArchiveReader.from_export(Path("/nonexistent"), {
+            "archive_id": "urn:uuid:00000000-0000-4000-8000-000000000000", "spec": "archive/0.0.8", "contracts": [],
+            "records": [suggestions(index + 1, run) for index, run in enumerate(runs)]})
+
+    def test_exactly_one_claim_of_the_run_is_found_or_refused(self) -> None:
+        reader = self.reader("sha256:" + "a" * 64, "sha256:" + "b" * 64)
+        self.assertEqual(capture.suggestions_made_by(reader, {"run": {"revision_id": "sha256:" + "b" * 64}}),
+                         "urn:uuid:00000002-0000-4000-8000-000000000000")
+        for answer in ({"run": {"revision_id": "sha256:" + "c" * 64}}, {"status": "failed"}):
+            with self.assertRaisesRegex(capture.CaptureError, "span suggestions claims, not one"):
+                capture.suggestions_made_by(reader, answer)
+        twice = self.reader("sha256:" + "a" * 64, "sha256:" + "a" * 64)
+        with self.assertRaisesRegex(capture.CaptureError, "made 2 span suggestions claims"):
+            capture.suggestions_made_by(twice, {"run": {"revision_id": "sha256:" + "a" * 64}})
 
 
 class CommandLine(unittest.TestCase):

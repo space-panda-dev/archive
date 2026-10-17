@@ -59,7 +59,8 @@ class MatchWindowsCommand(unittest.TestCase):
         talk = [0.05 * ((i * 7919) % 200 - 100) / 100 for i in range(4 * second)]
         recording = [*floor, *p_up, *talk, *q, *floor]
         query = support.write_wav(self.tmp / "query.wav", recording, RATE)
-        mic = support.write_wav(self.tmp / "mic.wav", recording, RATE)
+        # The other microphone hears the same performance, more quietly.
+        mic = support.write_wav(self.tmp / "mic.wav", [0.8 * v for v in recording], RATE)
         x1_samples = support.progression_samples(support.PROGRESSION, 48000, seed=3)
         x1 = support.write_wav(self.tmp / "x1.wav", x1_samples, 48000)
         x2_samples = support.progression_samples(support.PROGRESSION, RATE, transpose=-2, seed=4)
@@ -223,19 +224,30 @@ class MatchWindowsCommand(unittest.TestCase):
             SELECT ?p ?o WHERE {{ GRAPH ?g {{ <{match_uri}> ?p ?o . }} }}""").data["results"]["bindings"]
         values = {row["o"]["value"] for row in rows}
         self.assertIn(_record_uri(archive_id, self.suggestions["revision_id"]).value, values)
-        self.assertIn(str(x_run["window"]["start_sample"]), values)
-        self.assertIn(str(x_run["window"]["end_sample"]), values)
+        # The window is a node of its own: start, end, and rate.
+        rows = world_query(projection, f"""
+            SELECT ?o WHERE {{ GRAPH ?g {{ <{match_uri}:window> ?p ?o . }} }}""").data["results"]["bindings"]
+        self.assertEqual(sorted(int(row["o"]["value"]) for row in rows),
+                         sorted([x_run["window"]["start_sample"], x_run["window"]["end_sample"], RATE]))
 
     def test_a_rerun_on_unchanged_inputs_writes_and_decodes_nothing(self) -> None:
         code, first = self.enrich()
         self.assertEqual((code, first["status"]), (0, "committed"), first)
         head = support.head(self.root)
-        bomb = fake_program(self.tmp, "ffmpeg-bomb", 'echo "decoded" >> "$0.called"; exit 9\n')
+        marker = self.tmp / "decoded"
+        bomb = fake_program(self.tmp, "ffmpeg-bomb",
+                            f'if [ "$1" = "-version" ]; then exec "{support.FFMPEG}" -version; fi\n'
+                            f'touch "{marker}"; exit 99\n')
         code, again = self.enrich(ffmpeg=bomb)
         self.assertEqual((code, again["status"]), (0, "unchanged"), again)
         self.assertEqual(again["run"], first["run"])
         self.assertEqual(support.head(self.root), head)
-        self.assertFalse(Path(bomb + ".called").exists())
+        self.assertFalse(marker.exists())
+        # Anchor: other suggestions are other inputs, so the bomb goes off.
+        other = self.suggest(self.spans[:3] + [(self.spans[3][0], self.spans[-1][1], "talk")])
+        code, changed = self.enrich(suggestions=other["object_id"], ffmpeg=bomb)
+        self.assertEqual(code, 1, changed)
+        self.assertTrue(marker.exists())
 
     def test_parallel_workers_find_exactly_what_one_process_finds(self) -> None:
         head = support.head(self.root)
@@ -271,7 +283,9 @@ class MatchWindowsCommand(unittest.TestCase):
         self.assertIn("does not cite archive.claim/span_suggestions version 1", answer["detail"])
 
     def test_a_corpus_occurrence_that_cannot_be_read_refuses_the_run(self) -> None:
-        broken = fake_program(self.tmp, "ffmpeg-broken", 'echo "cannot decode" >&2; exit 1\n')
+        broken = fake_program(self.tmp, "ffmpeg-broken",
+                              f'if [ "$1" = "-version" ]; then exec "{support.FFMPEG}" -version; fi\n'
+                              'echo "cannot decode" >&2; exit 1\n')
         head = support.head(self.root)
         code, answer = self.enrich(ffmpeg=broken)
         self.assertEqual(code, 1, answer)
