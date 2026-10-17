@@ -161,8 +161,14 @@ selection), its Work, corpus, decimal score, method, parameters, and run; and
 a version 2 alignment as version 1 projects. An `artifact` or `source`
 reference keeps its reified statement in the records graph but no direct
 triple, because those roles are core terms naming `arch:Artifact` and
-`arch:source` (see the [open questions](../docs/open-questions.md)). World
-does not answer `current` yet.
+`arch:source` (see the [open questions](../docs/open-questions.md)).
+Specification 0.0.8's window matches (revision 4) name the span suggestions
+they cut a window from with `arch:compared_suggestions`, and the window as a
+node, `<{revision}:window>`, with `arch:start_sample`, `arch:end_sample`, and
+`arch:sample_rate`; the window is always a run of whole suggested spans, so a
+client can draw it over the spans it came from. Their Work, corpus, score,
+method, parameters, and run project as a version 2 match's do. World does not
+answer `current` yet.
 
 ## What World emits
 

@@ -262,6 +262,29 @@
       ]
     },
     {
+      "name": "match a window with a run",
+      "command": "admit",
+      "records": [
+        {"key": "run-match-window", "namespace": "archive.derivation/run", "name": "run-00000000-0000-4000-8000-0000000000a5", "shape": "claim",
+         "agent": "pkg:generic/archive-fixture-matcher@2",
+         "contracts": [{"id": "archive.claim/derivation_run", "version": "1"}],
+         "payload": {"method": {"id": "fixture-window-matcher", "version": "1"}, "software": [],
+                     "started_at": "2026-01-01T00:04:00Z", "ended_at": "2026-01-01T00:04:10Z"},
+         "refs": [{"role": "used", "pin": "recording"}, {"role": "used", "pin": "suggestions"},
+                  {"role": "used", "pin": "occurrence-v2"}, {"role": "used", "pin": "occurrence-migrated"},
+                  {"role": "parameters", "pin": "matcher-parameters"}]},
+        {"key": "work-match-window", "namespace": "archive.claim/work_match", "name": "fixture-work-match-window", "shape": "claim",
+         "agent": "pkg:generic/archive-fixture-matcher@2",
+         "contracts": [{"id": "archive.claim/work_match", "version": "3"}],
+         "payload": {"direction": "lower_is_closer", "method": {"id": "fixture-window-matcher", "version": "1"},
+                     "scale": "distance", "score": "0.0612", "sample_rate": 8000,
+                     "window": {"start_sample": 1000, "end_sample": 4000}},
+         "refs": [{"role": "suggestions", "pin": "suggestions"}, {"role": "work", "pin": "work-a"},
+                  {"role": "corpus", "pin": "occurrence-migrated"}, {"role": "corpus", "pin": "occurrence-v2"},
+                  {"role": "run", "pin": "run-match-window"}, {"role": "parameters", "pin": "matcher-parameters"}]}
+      ]
+    },
+    {
       "name": "publication",
       "command": "transition",
       "records": [
