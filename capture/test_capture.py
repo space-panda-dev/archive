@@ -196,6 +196,100 @@ class CaptureImport(unittest.TestCase):
         self.assertEqual(snapshot(self.media), media)
         self.assertEqual(snapshot(self.card), before)
 
+    # -- the chain's cost ----------------------------------------------------
+
+    def two_source_take(self) -> tuple[Path, Path]:
+        return (card_file(self.card, "010101_120000_TrLR.WAV", music(24)),
+                card_file(self.card, "010101_120000_TrMic.WAV", mic(24)))
+
+    def logging(self, name: str, real: str, before: str = "") -> str:
+        """A wrapper that logs each call's arguments, one line each, and then
+        runs the real program."""
+        return fake_program(self.tmp, name, f'echo "$*" >> "$0.log"\n{before}exec "{real}" "$@"\n')
+
+    def test_the_chain_exports_the_archive_in_full_once(self) -> None:
+        self.two_source_take()
+        archive = self.logging("archive-logged", support.ARCHIVE)
+        argv = ["import", str(self.card), "--archive", str(self.root), "--staging", str(self.staging),
+                "--derived-media", str(self.media), "--door", support.DOOR, "--archive-command", archive,
+                "--ffmpeg", support.FFMPEG, "--ffprobe", support.FFPROBE]
+        out = io.StringIO()
+        with patch.dict(os.environ, self.env), redirect_stdout(out):
+            self.assertEqual(capture.main(argv, (ZoomH4E(),)), 0, out.getvalue())
+        calls = Path(archive + ".log").read_text().splitlines()
+        # One full export to classify the card, one for the whole chain; three
+        # runs (two probes, one detect) each brought it up to date instead.
+        self.assertEqual(calls.count("export"), 2, calls)
+        self.assertEqual(len([c for c in calls if c.startswith("export --since ")]), 3, calls)
+        # Anchor: the chain's three runs were committed.
+        self.assertEqual([(e["probe"], e.get("detect")) for e in json.loads(out.getvalue())["chain"]],
+                         [("committed", "committed"), ("committed", None)])
+
+    def overlapping_ffmpeg(self, wait: int) -> str:
+        """An ffmpeg that logs each call, and whose encodes each wait up to
+        ``wait`` seconds for another encode to be running, logging whether one
+        was. An encode's mark is removed when it ends."""
+        marks = self.tmp / "encoding"
+        marks.mkdir()
+        body = (f'echo "$*" >> "$0.log"\n'
+                f'case "$*" in *" aac "*) ;; *) exec "{support.FFMPEG}" "$@";; esac\n'
+                f'touch "{marks}/$$"; i=0\n'
+                f'while [ "$(ls "{marks}" | wc -l)" -lt 2 ] && [ $i -lt {wait * 10} ]; do sleep 0.1; i=$((i+1)); done\n'
+                f'if [ "$(ls "{marks}" | wc -l)" -ge 2 ]; then echo overlap >> "$0.log"; fi\n'
+                f'"{support.FFMPEG}" "$@"; status=$?\n'
+                f'rm -f "{marks}/$$"; exit $status\n')
+        return fake_program(self.tmp, "ffmpeg-overlap", body)
+
+    def test_listening_copies_follow_every_analysis_and_run_side_by_side(self) -> None:
+        self.two_source_take()
+        ffmpeg = self.overlapping_ffmpeg(wait=20)
+        code, answer = self.run_import(None, "--jobs", "2", ffmpeg=ffmpeg)
+        self.assertEqual((code, answer["status"]), (0, "committed"), answer)
+        calls = Path(ffmpeg + ".log").read_text().splitlines()
+        encodes = [index for index, call in enumerate(calls) if " aac " in f" {call} "]
+        self.assertEqual(len(encodes), 2, calls)
+        others = [index for index, call in enumerate(calls) if call != "overlap" and index not in encodes]
+        # Probes, the detector, and peaks all decoded before the first encode.
+        self.assertGreater(min(encodes), max(others), calls)
+        self.assertIn("overlap", calls)
+        self.assertEqual([e["media"] for e in answer["chain"]],
+                         [{"peaks": "written", "listen": "written"}] * 2)
+
+    def test_one_job_encodes_one_at_a_time(self) -> None:
+        # Anchor for the test above: the wrapper reports overlap only when
+        # two encodes really ran at once.
+        self.two_source_take()
+        ffmpeg = self.overlapping_ffmpeg(wait=2)
+        code, answer = self.run_import(None, "--jobs", "1", ffmpeg=ffmpeg)
+        self.assertEqual(code, 0, answer)
+        self.assertNotIn("overlap", Path(ffmpeg + ".log").read_text().splitlines())
+
+    def test_deferred_listening_copies_are_not_encoded(self) -> None:
+        lr, mic_file = self.two_source_take()
+        ffmpeg = self.logging("ffmpeg", support.FFMPEG)
+        code, answer = self.run_import(None, "--defer-listening-copies", ffmpeg=ffmpeg)
+        self.assertEqual(code, 0, answer)
+        self.assertFalse([c for c in Path(ffmpeg + ".log").read_text().splitlines() if " aac " in f" {c} "])
+        for path in (lr, mic_file):
+            digest = adapter.digest_of(path.read_bytes())
+            self.assertTrue(derived.path(self.media, digest, "peaks").is_file())
+            self.assertFalse(derived.path(self.media, digest, "listen").exists())
+        self.assertEqual([e["media"] for e in answer["chain"]], [{"peaks": "written", "listen": "deferred"}] * 2)
+
+    def test_a_failed_peaks_file_is_reported_and_stops_before_listening_copies(self) -> None:
+        lr, mic_file = self.two_source_take()
+        # Peaks of the second file cannot be written: its directory is a file.
+        digest = adapter.digest_of(mic_file.read_bytes())
+        blocker = derived.directory(self.media, digest)
+        blocker.parent.mkdir(parents=True)
+        blocker.write_text("in the way")
+        ffmpeg = self.logging("ffmpeg", support.FFMPEG)
+        code, answer = self.run_import(None, "--jobs", "2", ffmpeg=ffmpeg)
+        self.assertEqual((code, answer["status"]), (1, "failed"), answer)
+        self.assertIn(f"derived media (peaks) for {mic_file.name}", answer["detail"])
+        self.assertEqual([e["media"] for e in answer["chain"]], [{"peaks": "written"}, {"peaks": "failed"}])
+        self.assertFalse([c for c in Path(ffmpeg + ".log").read_text().splitlines() if " aac " in f" {c} "])
+
     def test_takes_are_sessions_and_a_rollover_joins_two_takes(self) -> None:
         first_lr = card_file(self.card, "010101_120000_TrLR.WAV", music(24))
         first_mic = card_file(self.card, "010101_120000_TrMic.WAV", mic(24))
@@ -494,7 +588,7 @@ class CaptureImport(unittest.TestCase):
         with patch.object(capture, "ENRICH", tools):
             code, answer = self.run_import()
         self.assertEqual(code, 1, answer)
-        self.assertIn("derived media for 010101_120000_TrLR.WAV answered", answer["detail"])
+        self.assertIn("derived media (peaks) for 010101_120000_TrLR.WAV answered", answer["detail"])
         self.assertEqual(answer["chain"][0]["detect"], "committed")
 
     def test_an_archive_without_the_parts_contract_is_refused(self) -> None:
@@ -561,6 +655,19 @@ class Steps(unittest.TestCase):
 
 
 class CommandLine(unittest.TestCase):
+    def test_fewer_than_one_job_is_not_understood(self) -> None:
+        err = io.StringIO()
+        with redirect_stderr(err), self.assertRaises(SystemExit) as raised:
+            capture.main(["import", "/nonexistent", "--archive", "a", "--staging", "s", "--derived-media", "m",
+                          "--jobs", "0"])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("--jobs must be at least 1", err.getvalue())
+
+    def test_the_default_jobs_leave_two_processors_and_never_fall_below_one(self) -> None:
+        for count, jobs in ((8, 6), (2, 1), (1, 1), (None, 1)):
+            with patch.object(capture.os, "cpu_count", return_value=count):
+                self.assertEqual(capture.default_jobs(), jobs)
+
     def test_an_empty_session_name_is_not_understood(self) -> None:
         err = io.StringIO()
         with redirect_stderr(err), self.assertRaises(SystemExit) as raised:
