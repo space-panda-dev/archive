@@ -30,7 +30,7 @@ from world.world import PROJECTION_VERSION, build_projection, nquads, refresh_st
 from test_conformance import integration_binaries, remove_tree
 
 ROOT = Path(__file__).resolve().parents[2]
-PREVIOUS, CURRENT = "0.0.6", "0.0.7"
+PREVIOUS, CURRENT = "0.0.7", "0.0.8"
 UPGRADE = "archive.transition/specification_upgrade"
 BY = "pkg:generic/archive-world-upgrade-test@0"
 
@@ -184,7 +184,9 @@ class SpecificationUpgradeTests(unittest.TestCase):
                          "a new release needs this test's versions revisited")
         upgrade = [entry for entry in catalog(CURRENT) if entry["id"] == UPGRADE]
         self.assertEqual(len(upgrade), 1)
-        self.assertNotIn(upgrade[0]["digest"], {entry["digest"] for entry in catalog(PREVIOUS)})
+        # Anchor: the current release adds bundles to the previous one, so
+        # the upgrade installs something World has not seen at this archive.
+        self.assertLess({entry["digest"] for entry in catalog(PREVIOUS)}, {entry["digest"] for entry in catalog(CURRENT)})
 
         # Anchor: Door loads the rewritten archive as the previous release,
         # whose manifest is committed as an early Door committed it.

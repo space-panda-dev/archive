@@ -31,15 +31,17 @@ wsh:Asserted a sh:NodeShape ;
   sh:property [ sh:path arch:max_error_samples ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
   sh:property [ sh:path arch:anchors ; sh:nodeKind sh:IRI ] ;
   sh:property [ sh:path arch:selection ; sh:nodeKind sh:IRI ; rdfs:comment "song_occurrence: each selection revision; work_match 2: the compared selection." ] ;
-  sh:property [ sh:path arch:work ; sh:nodeKind sh:IRI ; rdfs:comment "performance_work: the Work linked to the performance; work_match 2: the matched Work revision." ] ;
+  sh:property [ sh:path arch:work ; sh:nodeKind sh:IRI ; rdfs:comment "performance_work: the Work linked to the performance; work_match 2 and 3: the matched Work revision." ] ;
   sh:property [ sh:path arch:performance ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; rdfs:comment "work_match 2: the compared song occurrence revision." ] ;
-  sh:property [ sh:path arch:match_corpus ; sh:nodeKind sh:IRI ; rdfs:comment "work_match 2: each occurrence revision in the compared corpus." ] ;
-  sh:property [ sh:path arch:score ; sh:maxCount 1 ; sh:datatype xsd:decimal ; rdfs:comment "work_match 2: the score, compared within its scale only." ] ;
+  sh:property [ sh:path arch:match_corpus ; sh:nodeKind sh:IRI ; rdfs:comment "work_match 2 and 3: each occurrence revision in the compared corpus." ] ;
+  sh:property [ sh:path arch:score ; sh:maxCount 1 ; sh:datatype xsd:decimal ; rdfs:comment "work_match 2 and 3: the score, compared within its scale only." ] ;
   sh:property [ sh:path arch:score_scale ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
   sh:property [ sh:path arch:score_direction ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:in ( "higher_is_closer" "lower_is_closer" ) ] ;
-  sh:property [ sh:path arch:method ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; rdfs:comment "work_match 2: the method the payload names." ] ;
-  sh:property [ sh:path prov:wasGeneratedBy ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; rdfs:comment "work_match 2: the derivation run that made the match." ] ;
-  sh:property [ sh:path arch:parameters ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; rdfs:comment "work_match 2: the Artifact revision holding the method's parameters." ] ;
+  sh:property [ sh:path arch:method ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; rdfs:comment "work_match 2 and 3: the method the payload names." ] ;
+  sh:property [ sh:path prov:wasGeneratedBy ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; rdfs:comment "work_match 2 and 3: the derivation run that made the match." ] ;
+  sh:property [ sh:path arch:parameters ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; rdfs:comment "work_match 2 and 3: the Artifact revision holding the method's parameters." ] ;
+  sh:property [ sh:path arch:compared_suggestions ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; rdfs:comment "work_match 3: the span_suggestions revision the window is cut from (revision 4)." ] ;
+  sh:property [ sh:path arch:window ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; rdfs:comment "work_match 3: the compared window, <{revision}:window> (revision 4)." ] ;
   sh:property [ sh:path arch:performance_kind ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
                 rdfs:comment "selection_kind: a concept in the performance-kinds scheme of the domain graph." ] ;
   sh:property [ sh:path dcterms:title ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
@@ -153,6 +155,14 @@ wsh:Suggestions a sh:NodeShape ;
                 rdfs:comment "The source Artifact revision." ] ;
   sh:property [ sh:path arch:measured_stream ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
   sh:property [ sh:path prov:wasGeneratedBy ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:sample_rate ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] .
+
+wsh:Window a sh:NodeShape ;
+  rdfs:comment "work_match 3: the compared window, a run of whole suggested spans of the claim's compared_suggestions, at their sample rate. A window is a suggestion, never a selection (revision 4)." ;
+  sh:targetObjectsOf arch:window ;
+  sh:closed true ;
+  sh:property [ sh:path arch:start_sample ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:end_sample ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
   sh:property [ sh:path arch:sample_rate ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] .
 
 wsh:SuggestedSpan a sh:NodeShape ;

@@ -41,10 +41,12 @@ import Archive.Door.Contracts
       )
   , ReferenceTargetRule (..)
   , SameSubjectRule (..)
+  , SpanWindowRule (..)
   , TargetMeasureRule (..)
   , contractReferenceTargets
   , distinctTrackContentRule
   , sameSubjectRule
+  , spanWindowRule
   , targetMeasureRule
   , validateContractBundle
   , validateContractInstance
@@ -944,6 +946,7 @@ validateProposalContracts snapshot proposal = pure $ do
         (proposalRecordDraft record) instanceValue) bundles
       mapM_ (validateTargetMeasure targets (proposalRecordDraft record)) bundles
       mapM_ (validateSameSubject targets (proposalRecordDraft record)) bundles
+      mapM_ (validateSpanWindow targets (proposalRecordDraft record)) bundles
       (revision, _) <- canonicalizeDraftStrict (proposalRecordValue record)
       pure (earlier <> [Target (objectIdText (envelopeObject (proposalRecordDraft record)))
         revision (proposalRecordDraft record)])
@@ -1125,6 +1128,51 @@ validateSameSubject records draft bundle = do
         then Right ()
         else Left (role <> " claim must be about the same " <> sameSubjectEquals same
           <> " revision as this record's " <> sameSubjectEquals same <> " reference")
+
+-- | A window is a run of whole spans of the Claim it was cut from: its rate
+-- equals the pinned Claim's, its start is some span's start, and its end is
+-- the end of that span or of a later one.
+validateSpanWindow :: [Target] -> DraftEnvelope -> ContractBundle -> Either Text ()
+validateSpanWindow records draft bundle = do
+  rule <- spanWindowRule (contractBundleSchema bundle)
+  case rule of
+    Nothing -> Right ()
+    Just window -> do
+      let role = spanWindowRole window
+      reference <- singleReference draft role
+      target <- targetClaimPayload records role reference
+      own <- case envelopeBody draft of
+        ClaimRecord (Object payload) -> Right payload
+        _ -> Left "span window rule applies only to a Claim payload"
+      targetRate <- integerField (spanWindowRate window) target
+      ownRate <- integerField (spanWindowRate window) own
+      if ownRate /= targetRate
+        then Left (spanWindowRate window <> " must equal the " <> role <> " claim's "
+          <> spanWindowRate window)
+        else Right ()
+      bounds <- case KeyMap.lookup (Key.fromText (spanWindowPayload window)) own of
+        Just (Object fields) -> Right fields
+        _ -> Left (spanWindowPayload window <> " must be an object")
+      start <- integerField (spanWindowStart window) bounds
+      end <- integerField (spanWindowEnd window) bounds
+      spans <- case KeyMap.lookup (Key.fromText (spanWindowSpans window)) target of
+        Just (Array values) -> mapM spanBounds (toList values)
+        _ -> Left (role <> " claim's " <> spanWindowSpans window <> " must be an array")
+      case dropWhile ((/= start) . fst) spans of
+        [] -> Left (spanWindowPayload window <> " " <> spanWindowStart window
+          <> " must be the " <> spanWindowStart window <> " of one of the " <> role <> " claim's "
+          <> spanWindowSpans window)
+        from | any ((== end) . snd) from -> Right ()
+        _ -> Left (spanWindowPayload window <> " " <> spanWindowEnd window
+          <> " must be the " <> spanWindowEnd window <> " of its first span or of a later one")
+      where
+        spanBounds (Object piece) = (,) <$> integerField (spanWindowStart window) piece
+          <*> integerField (spanWindowEnd window) piece
+        spanBounds _ = Left "span must be an object"
+  where
+    integerField name fields = case KeyMap.lookup (Key.fromText name) fields of
+      Just (Number value) | Right integer <- (floatingOrInteger value :: Either Double Integer) -> Right integer
+      _ -> Left (name <> " must be an integer")
 
 referencedEntry :: [Target] -> Text -> Reference -> Either Text Target
 referencedEntry records role reference = do

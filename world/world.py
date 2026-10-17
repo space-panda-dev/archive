@@ -53,7 +53,7 @@ PROJECTION_VERSION = 6
 # build writes, so each addition raises the version's revision. A generation
 # built at an earlier revision is rebuilt in full rather than extended, or its
 # older records would lack what the addition projects.
-PROJECTION_REVISIONS = {6: 3}
+PROJECTION_REVISIONS = {6: 4}
 XSD = "http://www.w3.org/2001/XMLSchema#"
 UTC_INSTANT = re.compile(r"([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.([0-9]+))?Z\Z")
 DECIMAL = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?\Z")
@@ -780,11 +780,52 @@ def _instant_order(value: Any) -> tuple[int, Any] | None:
     return (days * 86400 + hour * 3600 + minute * 60 + second, Decimal("0." + (match.group(7) or "0")))
 
 
+def _checked_suggestions(claim: dict[str, Any], records_by_revision: dict[str, dict[str, Any]]
+                         ) -> tuple[dict[str, dict[str, Any]], int, list[tuple[int, int, str]]]:
+    """A span suggestions claim's references by role, its rate, and its spans
+    as (start, end, class), after every rule D-15 states. A window match reads
+    its suggestions through this too, so a malformed suggestions claim is
+    refused with its own reason whichever record World reaches first."""
+    revision = claim["revision_id"]
+    payload = claim.get("payload")
+    by_role = _claim_refs_by_role(claim, {"source", "stream", "run"})
+    if not _valid_pinned_record(by_role["source"], records_by_revision, "artifact"):
+        raise ProjectionError(f"claim {revision} has an invalid 'source' pin")
+    stream_record = _pinned_claim_citing(by_role["stream"], records_by_revision, "archive.claim/audio_stream", "1", revision)
+    measured = [ref for ref in stream_record.get("refs", []) if isinstance(ref, dict) and ref.get("role") == "artifact"]
+    if len(measured) != 1 or (measured[0].get("id"), measured[0].get("revision_id")) != \
+            (by_role["source"]["id"], by_role["source"]["revision_id"]):
+        raise ProjectionError(f"span suggestions {revision} pin a stream of another Artifact revision")
+    if not isinstance(payload, dict) or set(payload) != {"sample_rate", "spans"}:
+        raise ProjectionError(f"span suggestions {revision} have an invalid closed payload")
+    rate = _int_field(payload, "sample_rate", 1)
+    if rate != _int_field(stream_record.get("payload"), "sample_rate", 1):
+        raise ProjectionError(f"span suggestions {revision} differ from their stream's sample rate")
+    count = _int_field(stream_record.get("payload"), "sample_count", 1)
+    spans = payload["spans"]
+    if not isinstance(spans, list) or not 1 <= len(spans) <= 10000:
+        raise ProjectionError(f"span suggestions {revision} need 1 to 10000 spans")
+    checked = []
+    previous_end = 0
+    for index, span in enumerate(spans):
+        if not isinstance(span, dict) or set(span) != {"start_sample", "end_sample", "class"} \
+                or span["class"] not in SPAN_CLASSES:
+            raise ProjectionError(f"span suggestions {revision} have an invalid span at {index}")
+        start = _int_field(span, "start_sample", previous_end)
+        end = _int_field(span, "end_sample", start + 1)
+        if end > count:
+            raise ProjectionError(f"span suggestions {revision} span {index} ends past the stream's sample count")
+        previous_end = end
+        checked.append((start, end, span["class"]))
+    return by_role, rate, checked
+
+
 def _project_derivation_claim(store: Store, archive_id: str, core_terms: dict[str, Any],
                               contract_contexts: dict[tuple[str, str], dict[str, Any]], claim: dict[str, Any],
                               cited: set[tuple[Any, Any]], records_by_revision: dict[str, dict[str, Any]]) -> None:
     """Project specification 0.0.7's derivation runs and the claims runs make
-    (ADRs 0064 to 0067) inside each claim's own graph.
+    (ADRs 0064 to 0067), and 0.0.8's window matches (ADR 0072), inside each
+    claim's own graph.
 
     A run is a prov:Activity; a stream's facts hang from the Artifact revision
     they describe; each suggested span is a node; a match names what it
@@ -893,42 +934,19 @@ def _project_derivation_claim(store: Store, archive_id: str, core_terms: dict[st
 
     if ("archive.claim/span_suggestions", "1") in cited:
         contract = ("archive.claim/span_suggestions", "1")
-        by_role = _claim_refs_by_role(claim, {"source", "stream", "run"})
+        by_role, rate, spans = _checked_suggestions(claim, records_by_revision)
         source = record(by_role["source"], "artifact")
-        stream_record = _pinned_claim_citing(by_role["stream"], records_by_revision, "archive.claim/audio_stream", "1", revision)
-        measured = [ref for ref in stream_record.get("refs", []) if isinstance(ref, dict) and ref.get("role") == "artifact"]
-        if len(measured) != 1 or (measured[0].get("id"), measured[0].get("revision_id")) != \
-                (by_role["source"]["id"], by_role["source"]["revision_id"]):
-            raise ProjectionError(f"span suggestions {revision} pin a stream of another Artifact revision")
-        if not isinstance(payload, dict) or set(payload) != {"sample_rate", "spans"}:
-            raise ProjectionError(f"span suggestions {revision} have an invalid closed payload")
-        rate = _int_field(payload, "sample_rate", 1)
-        if rate != _int_field(stream_record.get("payload"), "sample_rate", 1):
-            raise ProjectionError(f"span suggestions {revision} differ from their stream's sample rate")
-        count = _int_field(stream_record.get("payload"), "sample_count", 1)
-        spans = payload["spans"]
-        if not isinstance(spans, list) or not 1 <= len(spans) <= 10000:
-            raise ProjectionError(f"span suggestions {revision} need 1 to 10000 spans")
         _add(store, claim_ref, claim_ref, PROV + "wasDerivedFrom", source)
         _add(store, claim_ref, claim_ref, term(contract, "stream"), _record_uri(archive_id, by_role["stream"]["revision_id"]))
         _add(store, claim_ref, claim_ref, term(contract, "run"), run(by_role["run"]))
         _add(store, claim_ref, claim_ref, term(contract, "sample_rate"), Literal(rate))
-        previous_end = 0
-        for index, span in enumerate(spans):
-            if not isinstance(span, dict) or set(span) != {"start_sample", "end_sample", "class"} \
-                    or span["class"] not in SPAN_CLASSES:
-                raise ProjectionError(f"span suggestions {revision} have an invalid span at {index}")
-            start = _int_field(span, "start_sample", previous_end)
-            end = _int_field(span, "end_sample", start + 1)
-            if end > count:
-                raise ProjectionError(f"span suggestions {revision} span {index} ends past the stream's sample count")
-            previous_end = end
+        for index, (start, end, span_class) in enumerate(spans):
             node = nn(claim_ref.value + ":span=" + str(index))
             _add(store, claim_ref, claim_ref, term(contract, "spans"), node)
             _add(store, claim_ref, node, RDF + "value", Literal(index))
             _add(store, claim_ref, node, term(contract, "start_sample"), Literal(start))
             _add(store, claim_ref, node, term(contract, "end_sample"), Literal(end))
-            _add(store, claim_ref, node, term(contract, "class"), Literal(span["class"]))
+            _add(store, claim_ref, node, term(contract, "class"), Literal(span_class))
 
     if ("archive.claim/work_match", "2") in cited:
         contract = ("archive.claim/work_match", "2")
@@ -970,6 +988,63 @@ def _project_derivation_claim(store: Store, archive_id: str, core_terms: dict[st
         _add(store, claim_ref, claim_ref, term(contract, "score"), Literal(payload["score"], datatype=nn(XSD + "decimal")))
         _add(store, claim_ref, claim_ref, term(contract, "scale"), Literal(payload["scale"]))
         _add(store, claim_ref, claim_ref, term(contract, "direction"), Literal(payload["direction"]))
+
+    if ("archive.claim/work_match", "3") in cited:
+        # A window of whole suggested spans (D-16, revision 4). Door checks
+        # the window against the pinned suggestions; World checks again, so
+        # an export that did not come through Door is refused, not projected.
+        contract = ("archive.claim/work_match", "3")
+        roles = [ref.get("role") for ref in refs]
+        if roles.count("suggestions") != 1 or roles.count("work") != 1 or roles.count("run") != 1 \
+                or roles.count("parameters") > 1 or "corpus" not in roles \
+                or not set(roles) <= {"suggestions", "work", "corpus", "parameters", "run"}:
+            raise ProjectionError(f"work match {revision} must compare one suggestions claim's window with a Work, "
+                                  "corpus, and run")
+        if not isinstance(payload, dict) \
+                or set(payload) != {"method", "score", "scale", "direction", "sample_rate", "window"} \
+                or not isinstance(payload["score"], str) or not DECIMAL.fullmatch(payload["score"]) \
+                or not isinstance(payload["scale"], str) or not payload["scale"] \
+                or payload["direction"] not in {"higher_is_closer", "lower_is_closer"} \
+                or not isinstance(payload["window"], dict) or set(payload["window"]) != {"start_sample", "end_sample"}:
+            raise ProjectionError(f"work match {revision} has an invalid closed payload")
+        rate = _int_field(payload, "sample_rate", 1)
+        start = _int_field(payload["window"], "start_sample", 0)
+        end = _int_field(payload["window"], "end_sample", 1)
+        corpus_ids = [ref.get("id") for ref in refs if ref.get("role") == "corpus"]
+        if len(corpus_ids) != len(set(corpus_ids)):
+            raise ProjectionError(f"work match {revision} corpus references must name different objects")
+        [compared] = [ref for ref in refs if ref["role"] == "suggestions"]
+        suggestions = _pinned_claim_citing(compared, records_by_revision, "archive.claim/span_suggestions", "1",
+                                           revision)
+        _, suggested_rate, suggested_spans = _checked_suggestions(suggestions, records_by_revision)
+        if rate != suggested_rate:
+            raise ProjectionError(f"work match {revision} differs from its suggestions' sample rate")
+        bounds = [(span_start, span_end) for span_start, span_end, _ in suggested_spans]
+        first = next((index for index, (span_start, _) in enumerate(bounds) if span_start == start), None)
+        if first is None or end not in [span_end for _, span_end in bounds[first:]]:
+            raise ProjectionError(f"work match {revision} window is not a run of its suggestions' spans")
+        _add(store, claim_ref, claim_ref, term(contract, "suggestions"), _record_uri(archive_id, compared["revision_id"]))
+        for ref in refs:
+            if ref["role"] == "work":
+                if not _valid_pinned_entity(ref, records_by_revision, "musical_work"):
+                    raise ProjectionError(f"work match {revision} must pin a musical_work")
+                _add(store, claim_ref, claim_ref, term(contract, "work"), _record_uri(archive_id, ref["revision_id"]))
+            elif ref["role"] == "corpus":
+                _pinned_claim_citing(ref, records_by_revision, "archive.claim/song_occurrence", "2", revision)
+                _add(store, claim_ref, claim_ref, term(contract, "corpus"), _record_uri(archive_id, ref["revision_id"]))
+            elif ref["role"] == "parameters":
+                _add(store, claim_ref, claim_ref, term(contract, "parameters"), record(ref, "artifact"))
+            elif ref["role"] == "run":
+                _add(store, claim_ref, claim_ref, term(contract, "run"), run(ref))
+        method(contract)
+        _add(store, claim_ref, claim_ref, term(contract, "score"), Literal(payload["score"], datatype=nn(XSD + "decimal")))
+        _add(store, claim_ref, claim_ref, term(contract, "scale"), Literal(payload["scale"]))
+        _add(store, claim_ref, claim_ref, term(contract, "direction"), Literal(payload["direction"]))
+        window = nn(claim_ref.value + ":window")
+        _add(store, claim_ref, claim_ref, term(contract, "window"), window)
+        _add(store, claim_ref, window, term(contract, "start_sample"), Literal(start))
+        _add(store, claim_ref, window, term(contract, "end_sample"), Literal(end))
+        _add(store, claim_ref, window, term(contract, "sample_rate"), Literal(rate))
 
 
 def _valid_pinned_entity(ref: Any, records_by_revision: dict[str, dict[str, Any]], kind: str) -> bool:

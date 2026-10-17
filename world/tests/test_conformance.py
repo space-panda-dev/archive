@@ -31,7 +31,7 @@ ARCH = "urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#"
 UNREACHABLE = {("records", ARCH + "dependent_destroy"), ("records", ARCH + "dependent_source_gone"),
                ("records", ARCH + "external_survivor")}
 
-# Installed by specification 0.0.7 but not cited by the fixture: the fixture
+# Installed by specification 0.0.8 but not cited by the fixture: the fixture
 # archive is born at the current release, and Door refuses an upgrade to the
 # version an archive already has. test_upgrade.py projects an upgrade record
 # made by the real Door from an archive at the previous release.

@@ -55,6 +55,9 @@ elsewhere and is governed by the specification kept here.
 > Door admits and World projects, and the specification upgrade contract of
 > [ADR 0068](docs/decisions/0068-specification-upgrade.md), by which
 > `door transition` moves a 0.0.6 archive to 0.0.7 in one commit.
+> Specification 0.0.8 adds work matches over a window of suggested spans
+> ([ADR 0072](docs/decisions/0072-windowed-work-matches.md)), which Door
+> admits and World projects; a 0.0.7 archive adopts it by the same upgrade.
 > [`enrich/`](enrich/README.md) proposes machine claims through `door admit`:
 > `enrich probe` (audio stream facts), `enrich detect` (span suggestions), and
 > `enrich match` (work matches), each under a derivation run; `enrich/media.py`
@@ -211,8 +214,8 @@ repository.
 
 ## What is provisional
 
-- **The specification** is a small pre-1.0 contract at version 0.0.7
-  ([current spec](spec/archive-spec.md), [0.0.7 release copy](spec/0.0.7/archive-spec.md), [0.0.6 release copy](spec/0.0.6/archive-spec.md), [0.0.5 release copy](spec/0.0.5/archive-spec.md), [0.0.4 release copy](spec/0.0.4/archive-spec.md), [0.0.3 release copy](spec/0.0.3/archive-spec.md)); unresolved subjects remain explicitly outside
+- **The specification** is a small pre-1.0 contract at version 0.0.8
+  ([current spec](spec/archive-spec.md), [0.0.8 release copy](spec/0.0.8/archive-spec.md), [0.0.7 release copy](spec/0.0.7/archive-spec.md), [0.0.6 release copy](spec/0.0.6/archive-spec.md), [0.0.5 release copy](spec/0.0.5/archive-spec.md), [0.0.4 release copy](spec/0.0.4/archive-spec.md), [0.0.3 release copy](spec/0.0.3/archive-spec.md)); unresolved subjects remain explicitly outside
   its normative protocols.
 - The unresolved V2 audio migration gates are recorded in the
   [release readiness note](docs/proposals/v2-migration-release-readiness.md).
