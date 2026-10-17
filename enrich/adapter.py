@@ -12,6 +12,7 @@ Standard library only. The interface is documented in README.md.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -219,6 +220,8 @@ class ArchiveReader:
         return reader
 
     def load(self, export: dict[str, Any]) -> None:
+        self.export = export
+        self.snapshot: str | None = export.get("snapshot")
         self.archive_id: str = export["archive_id"]
         self.spec: str = export["spec"]
         self.records: list[dict[str, Any]] = export["records"]
@@ -232,6 +235,33 @@ class ArchiveReader:
         self.installed: dict[tuple[str, str], str] = {}
         for bundle in export["contracts"]:
             self.installed[(bundle["id"], bundle["version"])] = digest_of(canonical(bundle))
+
+    def refresh(self, archive: str = "archive", env: dict[str, str] | None = None) -> None:
+        """Add what was committed since this reader's snapshot, from `archive
+        export --since` (ADR 0055), instead of exporting every record again.
+        A specification or archive change between the two is refused: the
+        installed contracts this reader holds would no longer be the
+        archive's."""
+        if self.snapshot is None:
+            raise AdapterError("this reader has no snapshot to refresh from")
+        try:
+            completed = subprocess.run([archive, "export", "--since", self.snapshot], cwd=self.root, env=env,
+                                       capture_output=True, text=True)
+        except OSError as exc:
+            raise AdapterError(f"archive export --since could not run: {exc}") from exc
+        try:
+            since = json.loads(completed.stdout)
+        except ValueError:
+            since = None
+        if completed.returncode != 0 or not isinstance(since, dict) or since.get("status") != "ok":
+            raise AdapterError(f"archive export --since {self.snapshot} failed (exit {completed.returncode}): "
+                               f"{completed.stderr.strip() or completed.stdout.strip()[:300]}")
+        if (since.get("archive_id"), since.get("spec")) != (self.archive_id, self.spec):
+            raise AdapterError(f"the archive changed from {self.archive_id} at {self.spec} to "
+                               f"{since.get('archive_id')} at {since.get('spec')} while it was being read")
+        known = set(self.by_revision)
+        added = [record for record in since["records"] if record["revision_id"] not in known]
+        self.load({**self.export, "snapshot": since["snapshot"], "records": [*self.records, *added]})
 
     def citation(self, contract: tuple[str, str]) -> dict[str, str]:
         digest = self.installed.get(contract)
@@ -290,6 +320,33 @@ class ArchiveReader:
 
 
 # -- staging content ---------------------------------------------------------
+
+# Linux's FICLONE ioctl: the new file shares the source's extents (a Btrfs
+# reflink), so staging a large recording writes no data.
+FICLONE = 0x40049409
+# What a file system or kernel answers when it cannot share extents between
+# these two files; anything else is a real failure.
+_NO_CLONE = {errno.EXDEV, errno.EOPNOTSUPP, errno.ENOTTY, errno.EINVAL, errno.ENOSYS, errno.EPERM}
+
+
+def clone_file(source: Path, target: Path) -> bool:
+    """Make ``target`` a reflink of ``source`` when the file system can, and
+    answer whether it did. A file system that cannot clone answers False and
+    leaves ``target`` empty, so the caller copies instead."""
+    try:
+        import fcntl
+    except ImportError:
+        return False
+    with open(source, "rb") as reading, open(target, "wb") as writing:
+        try:
+            fcntl.ioctl(writing.fileno(), FICLONE, reading.fileno())
+        except OSError as exc:
+            if exc.errno in _NO_CLONE:
+                writing.truncate(0)
+                return False
+            raise
+    return True
+
 
 class Staging:
     """A git-annex repository that offers new content to the archive as a
@@ -374,11 +431,19 @@ class Staging:
             partial = self.path / f".{filename}.partial"
             try:
                 hasher, copied = hashlib.sha256(), 0
-                with open(source, "rb") as reading, open(partial, "wb") as writing:
-                    for block in iter(lambda: reading.read(1 << 20), b""):
-                        hasher.update(block)
-                        copied += len(block)
-                        writing.write(block)
+                if clone_file(source, partial):
+                    # The clone shares the source's extents; hashing it reads
+                    # the bytes the archive will get, as a copy would.
+                    with open(partial, "rb") as reading:
+                        for block in iter(lambda: reading.read(1 << 20), b""):
+                            hasher.update(block)
+                            copied += len(block)
+                else:
+                    with open(source, "rb") as reading, open(partial, "wb") as writing:
+                        for block in iter(lambda: reading.read(1 << 20), b""):
+                            hasher.update(block)
+                            copied += len(block)
+                            writing.write(block)
                 if ("sha256:" + hasher.hexdigest(), copied) != (digest, size):
                     raise AdapterError(f"{source} is no longer the content that was hashed ({digest}, "
                                        f"{size} bytes); nothing was staged")

@@ -109,6 +109,36 @@ class ProbeCommand(unittest.TestCase):
         self.assertFalse(marker.exists())
         self.assertEqual(support.head(self.root), before)
 
+    def test_a_given_export_of_the_current_commit_replaces_exporting(self) -> None:
+        export = self.tmp / "export.json"
+        export.write_text(json.dumps(support.export(self.root)))
+        # An archive command that explodes: the given export must be all it reads.
+        bomb = fake_program(self.tmp, "archive-bomb", "exit 99\n")
+        completed = subprocess.run(
+            [sys.executable, str(HERE / "enrich.py"), "probe", "--archive", str(self.root),
+             "--artifact", self.objects["wav"]["object_id"], "--door", support.DOOR, "--archive-command", bomb,
+             "--ffmpeg", support.FFMPEG, "--ffprobe", support.FFPROBE, "--staging", str(self.staging),
+             "--export", str(export)], capture_output=True, text=True, env=self.env)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout)["status"], "committed")
+
+    def test_a_given_export_that_is_stale_incomplete_or_unreadable_is_refused(self) -> None:
+        stale = self.tmp / "stale.json"
+        stale.write_text(json.dumps(support.export(self.root)))
+        code, first = self.enrich("wav", "--staging", str(self.staging))
+        self.assertEqual(code, 0, first)
+        head = support.head(self.root)
+        code, answer = self.enrich("flac", "--staging", str(self.staging), "--export", str(stale))
+        self.assertEqual(code, 1, answer)
+        self.assertIn(f"but the archive is at {head}", answer["detail"])
+        incomplete = self.tmp / "incomplete.json"
+        incomplete.write_text(json.dumps({**support.export(self.root), "status": "incomplete"}))
+        code, answer = self.enrich("flac", "--export", str(incomplete))
+        self.assertIn("is not a complete archive export", answer["detail"])
+        code, answer = self.enrich("flac", "--export", str(self.tmp / "absent.json"))
+        self.assertIn("could not be read", answer["detail"])
+        self.assertEqual(support.head(self.root), head)
+
     def test_a_dry_run_predicts_and_writes_nothing(self) -> None:
         before = support.head(self.root)
         code, answer = self.enrich("wav", "--staging", str(self.staging), "--dry-run")

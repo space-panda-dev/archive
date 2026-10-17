@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run an enrichment tool against an archive's records and propose its result.
 
-    enrich probe --archive <dir> --artifact <object id> [--staging <annex>] [--dry-run]
+    enrich probe --archive <dir> --artifact <object id> [--staging <annex>] [--export <file>] [--dry-run]
     enrich detect --archive <dir> --artifact <object id> [--stream <claim id>] [--preset jam|show]
                   [--staging <annex>] [--dry-run]
     enrich match --archive <dir> (--selection | --occurrence) <object id> --limit <decimal>
@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 from decimal import Decimal
 from pathlib import Path
@@ -61,6 +62,30 @@ def environment() -> dict[str, str]:
     return env
 
 
+def reader_of(args: argparse.Namespace, env: dict[str, str]) -> adapter.ArchiveReader:
+    """The archive as `archive export` reports it, or as a caller already
+    exported it (`--export`), so an importer running many commands need not
+    export every record for each. A given export must name the archive's
+    current commit: proposing against an older snapshot could repeat what
+    was committed since."""
+    if args.export is None:
+        return adapter.ArchiveReader(Path(args.archive), args.archive_command, env)
+    try:
+        export = json.loads(Path(args.export).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise CommandError(f"the export {args.export} could not be read: {exc}") from exc
+    if not isinstance(export, dict) or export.get("status") != "ok":
+        raise CommandError(f"the export {args.export} is not a complete archive export")
+    head = subprocess.run([env["ARCHIVE_GIT_EXECUTABLE"], "-C", str(args.archive), "rev-parse", "HEAD"],
+                          capture_output=True, text=True)
+    if head.returncode != 0:
+        raise CommandError(f"the archive's commit could not be read: {head.stderr.strip()}")
+    if export.get("snapshot") != head.stdout.strip():
+        raise CommandError(f"the export names commit {export.get('snapshot')}, but the archive is at "
+                           f"{head.stdout.strip()}")
+    return adapter.ArchiveReader.from_export(Path(args.archive), export)
+
+
 def content_path(root: Path, artifact: dict[str, Any]) -> Path:
     """The Artifact's bytes in the archive's content worktree (layout
     archive/2, D-1), checked against the digest and size the record states.
@@ -82,7 +107,7 @@ def content_path(root: Path, artifact: dict[str, Any]) -> Path:
 
 def run_probe(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     env = environment()
-    reader = adapter.ArchiveReader(Path(args.archive), args.archive_command, env)
+    reader = reader_of(args, env)
     # Refuse an archive that cannot hold the claims before decoding anything.
     reader.citation(adapter.RUN_CONTRACT)
     reader.citation(STREAM_CONTRACT)
@@ -159,7 +184,7 @@ def choose_stream(reader: adapter.ArchiveReader, artifact: dict[str, Any], wante
 def run_detect(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     import detector  # numpy is needed only here
     env = environment()
-    reader = adapter.ArchiveReader(Path(args.archive), args.archive_command, env)
+    reader = reader_of(args, env)
     # Refuse an archive that cannot hold the claims before decoding anything.
     reader.citation(adapter.RUN_CONTRACT)
     reader.citation(SPANS_CONTRACT)
@@ -282,7 +307,7 @@ def run_match(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     except match_tool.MatchError as exc:
         raise CommandError(str(exc)) from exc
     env = environment()
-    reader = adapter.ArchiveReader(Path(args.archive), args.archive_command, env)
+    reader = reader_of(args, env)
     # Refuse an archive that cannot hold the claims before reading any audio.
     reader.citation(adapter.RUN_CONTRACT)
     reader.citation(MATCH_CONTRACT)
@@ -389,6 +414,8 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument("--archive-command", default="archive")
         command.add_argument("--ffmpeg", default="ffmpeg")
         command.add_argument("--ffprobe", default="ffprobe")
+        command.add_argument("--export", help="an `archive export` of the archive's current commit, read "
+                                              "instead of exporting again")
 
     probe = commands.add_parser("probe", help="count an Artifact's audio streams and propose audio_stream claims")
     probe.add_argument("--artifact", required=True, help="the Artifact's object identifier")
