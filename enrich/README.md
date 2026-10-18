@@ -568,6 +568,7 @@ failed or was blocked. `bank.py` reads entries back
 |---|---|---|
 | `frames` | Python, Essentia 2.1b6.dev1438 | on one grid of 4,096-sample frames every 2,048 at 22,050 Hz: `hpcp` (the bits `cover.py` measures), `rms_db`, `centroid`, `rolloff`, `flatness`, `flux`, `onset_hfc`, `mfcc`, `melbands`; scalars `samples`, `seconds` |
 | `loudness-r128` | POSIX shell, ffmpeg | `integrated`: EBU R 128 integrated loudness in LUFS |
+| `rhythm` | Python, Essentia 2.1b6.dev1438 | from its own 44,100 Hz decode (both algorithms need that rate and hops finer than `frames`), in 300 s chunks overlapping by 30 s: events `beats` (RhythmExtractor2013 multifeature, kept only near an onset) and `onsets` (OnsetRate); on a 1 s grid of 10 s windows `tempo`, `onset_count`, `onset_deviation` (ms from the beat grid divided into 4), `offgrid`; per chunk `chunk_bpm`, `chunk_confidence`; scalars `bpm`, `confidence`, `onset_rate`, `seconds` |
 
 The format is [docs/feature-bank.md](../docs/feature-bank.md); adding an
 extractor is [docs/adding-an-extractor.md](../docs/adding-an-extractor.md).

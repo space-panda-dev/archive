@@ -1,0 +1,135 @@
+{
+ "contract": "archive-extractor/1",
+ "id": "rhythm",
+ "version": "1",
+ "description": "Beats, tempo, and onsets by Essentia's RhythmExtractor2013 (multifeature) and OnsetRate on 44,100 Hz audio in overlapping chunks, and how far onsets sit from the beat grid. Decodes for itself: both algorithms need 44,100 Hz and finer hops than frames has.",
+ "command": [
+  "${python}",
+  "rhythm.py"
+ ],
+ "accepts": [
+  "audio/*",
+  "video/*"
+ ],
+ "requires": [
+  "ffmpeg",
+  "essentia@2.1b6.dev1438",
+  "numpy"
+ ],
+ "needs": [],
+ "parameters": {
+  "decoder": "ffmpeg",
+  "decode_arguments": [
+   "-nostdin",
+   "-hide_banner",
+   "-nostats",
+   "-loglevel",
+   "error",
+   "-i",
+   "{input}",
+   "-map",
+   "0:a:0",
+   "-ac",
+   "1",
+   "-ar",
+   "44100",
+   "-c:a",
+   "pcm_f32le",
+   "-f",
+   "f32le",
+   "-"
+  ],
+  "essentia": "2.1b6.dev1438",
+  "analysis_rate": 44100,
+  "beats": "RhythmExtractor2013",
+  "method": "multifeature",
+  "min_tempo": 40,
+  "max_tempo": 208,
+  "onsets": "OnsetRate",
+  "chunk_seconds": 300,
+  "overlap_seconds": 30,
+  "beat_gate_seconds": 2,
+  "window_seconds": 10,
+  "subdivisions": 4
+ },
+ "outputs": {
+  "beats": {
+   "kind": "events",
+   "unit": "s",
+   "description": "beats with an onset within beat_gate_seconds"
+  },
+  "onsets": {
+   "kind": "events",
+   "unit": "s",
+   "description": "OnsetRate's onsets"
+  },
+  "tempo": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "seconds",
+   "unit": "BPM",
+   "description": "60 over the median beat interval in the window; 0 where none"
+  },
+  "onset_count": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "seconds",
+   "unit": "1",
+   "description": "onsets in the window between two beats"
+  },
+  "onset_deviation": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 2,
+   "grid": "seconds",
+   "unit": "ms",
+   "description": "mean absolute and mean signed distance of those onsets from the subdivided beat grid; positive is late"
+  },
+  "offgrid": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "seconds",
+   "unit": "1",
+   "description": "mean absolute distance as a fraction of a subdivision: 0 on the grid, 0.25 at random, 0.5 at most"
+  },
+  "chunk_bpm": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "chunks",
+   "unit": "BPM",
+   "description": "RhythmExtractor2013's tempo of each chunk"
+  },
+  "chunk_confidence": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "chunks",
+   "unit": "1",
+   "description": "BeatTrackerMultiFeature's confidence of each chunk, 0 to 5.32; 0 for a chunk with no onset"
+  },
+  "bpm": {
+   "kind": "scalar",
+   "unit": "BPM",
+   "description": "60 over the median of every beat interval; 0 with fewer than two beats"
+  },
+  "confidence": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "the chunks' confidences weighted by the seconds each keeps"
+  },
+  "onset_rate": {
+   "kind": "scalar",
+   "unit": "1/s",
+   "description": "onsets a second"
+  },
+  "seconds": {
+   "kind": "scalar",
+   "unit": "s",
+   "description": "decoded length"
+  }
+ }
+}
