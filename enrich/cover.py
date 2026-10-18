@@ -36,8 +36,11 @@ A score is a distance rounded half to even to four places. Lower is closer.
 Only Essentia 2.1b6.dev1438 is accepted: every threshold was fitted on
 profiles it measured, and another build is another method version.
 
-`cover.py <query> <reference>...` prints the exact distance of each whole
-file, under the `archive-enrich/essentia-serra09` method.
+`cover.py [--bank <dir>] <query> <reference>...` prints the exact distance of
+each whole file, under the `archive-enrich/essentia-serra09` method. With
+`--bank`, a file's profiles come from the feature bank's `frames/hpcp` when it
+holds them, and are measured otherwise; they are the same bits either way
+(ADR 0074).
 """
 
 from __future__ import annotations
@@ -617,6 +620,27 @@ def alignment(scores: numpy.ndarray) -> Alignment | None:
     return Alignment((i, j), (int(end[0]), int(end[1])), score)
 
 
+def features_of(profiles: numpy.ndarray, source: str) -> Features:
+    """Profiles measured here or read from the feature bank, refused when
+    too few for the alignment."""
+    stack = ANALYSIS["chroma_cross_similarity"]["frameStackSize"]
+    if len(profiles) <= stack:
+        raise TooShort(f"{source} make {len(profiles)} frames; the alignment needs more than {stack}")
+    return Features(profiles, tuple(float(value) for value in profiles.mean(axis=0)))
+
+
+def banked_profiles(root: Path, path: str) -> numpy.ndarray | None:
+    """A whole file's profiles from the feature bank's `frames/hpcp`, which
+    holds what `Analyser.features` makes of the whole file decoded as `main`
+    decodes it (ADR 0074), or None when the bank has no entry for it."""
+    import bank
+    try:
+        found = bank.Bank(root).feature(bank.file_digest(Path(path)), "frames/hpcp")
+        return None if found is None else found[0].series(found[1])
+    except (bank.BankError, OSError) as exc:
+        raise CoverError(f"the feature bank at {root} cannot answer for {path}: {exc}") from exc
+
+
 class Analyser:
     """Essentia's algorithms, configured once with the method's settings,
     and the cross-similarity's and the alignment's ports."""
@@ -637,11 +661,7 @@ class Analyser:
         frames = [self.profile(frame)
                   for frame in self.es.FrameGenerator(audio, frameSize=ANALYSIS["frame_size"],
                                                       hopSize=ANALYSIS["hop_size"])]
-        stack = ANALYSIS["chroma_cross_similarity"]["frameStackSize"]
-        if len(frames) <= stack:
-            raise TooShort(f"{len(audio)} samples make {len(frames)} frames; the alignment needs more than {stack}")
-        profiles = numpy.array(frames)
-        return Features(profiles, tuple(float(value) for value in profiles.mean(axis=0)))
+        return features_of(numpy.array(frames), f"{len(audio)} samples")
 
     def cross(self, a: numpy.ndarray, b: numpy.ndarray) -> numpy.ndarray:
         return cross_similarity(a, b)
@@ -1017,13 +1037,19 @@ class Comparer:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = sys.argv[1:] if argv is None else argv
+    root = None
+    if arguments[:1] == ["--bank"] and len(arguments) > 1:
+        root, arguments = Path(arguments[1]), arguments[2:]
     if len(arguments) < 2:
-        print("usage: cover.py <query> <reference>...", file=sys.stderr)
+        print("usage: cover.py [--bank <dir>] <query> <reference>...", file=sys.stderr)
         return 2
     try:
         analyser = Analyser()
 
         def whole(path: str) -> Features:
+            banked = None if root is None else banked_profiles(root, path)
+            if banked is not None:
+                return features_of(banked, path)
             completed = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-i", path, "-map", "0:a:0", "-ac", "1",
                                         "-ar", str(ANALYSIS["analysis_rate"]), "-c:a", "pcm_s16le", "-f", "s16le",
                                         "-"], capture_output=True)

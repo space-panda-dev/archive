@@ -270,6 +270,69 @@ unsupported rather than guess.
   management make each full-copy item and any projection authorized before
   transfer or publication?
 - Where does program configuration live, and in what format?
+- The feature bank and the extractor contract
+  ([proposed ADR 0073](decisions/0073-proposed-feature-bank.md),
+  [proposed ADR 0074](decisions/0074-proposed-extractor-contract.md)) leave
+  these open:
+  - Should waveform peaks and listening copies become extractors in the same
+    per-content directory, and how would the relay then name them
+    ([ADR 0069](decisions/0069-derived-media.md))? Or should a request be
+    able to name derived media as an input, so that an extractor on their
+    grid (the `colour` extractor follows the peaks pixel by pixel) reads them
+    instead of decoding the content again?
+  - A key holds no software versions, so a bank filled on another machine with
+    another `ffmpeg` or another build of a library may hold other bits under
+    the same key. Should a reader refuse entries whose recorded software
+    differs from its own, or should a key include a fingerprint of it? (A
+    claim made from features keeps the software either way: its run copies
+    each read entry's `software`.)
+  - Spool's results are JSON. How does a directory of binary outputs (series,
+    stems) return from a worker: Spool result attachments, a worker writing to
+    a shared bank, or something else? And how is the disclosure of content
+    to a worker recorded before the put (the Spool adapter question above)?
+    Either way a worker-side shim must turn Spool's payload on standard
+    input into a request file and attachments into the paths it names.
+  - A grid is a time base in integer samples, which covers video's
+    fractional frame rates. How are spatial grids and regions of an image
+    declared, since spans are one-dimensional?
+  - Should an entry record its stream's start offset in the container, so
+    that a reader relating a video's frames to its audio features need not
+    probe the file again?
+  - Destroying content (ADR 0004) must delete its directory in the bank and
+    in the derived-media root (ADR 0069), stems included. Is that a step of
+    the destroy transition, a pruning command run after it, or a check in
+    every reader against World's destroyed digests?
+  - Should decoded audio at another rate (44.1 kHz for a separator) be a
+    shared feature, so that extractors off the `frames` grid stop decoding
+    again, at about 1.3 GB per four mono hours at 22,050 Hz?
+  - When should a `frames` version keep each frame's spectral peaks, or a
+    summary of them (a deviation histogram, dissonance, a profile fine enough
+    to refer to any tuning), so that `tonal` stops repeating `frames`' peak
+    picking, twice? ADR 0074 says: when a second extractor needs them.
+  - An entry belongs to one content. How is a feature of several contents
+    (two recordings' cross-similarity) filed and keyed?
+  - A stem is measured as content of its own
+    ([proposed ADR 0075](decisions/0075-proposed-stems-as-content.md)), so
+    an extractor run on it cannot also need a feature of the recording it
+    came from (a vocal line's level against the mix's `frames`). Should
+    `needs` be able to name the source content's features, and how would the
+    key hold them?
+  - Stems are separated in 600-second chunks joined by crossfades. How far
+    does a long recording's chunked separation differ from a whole-file run
+    on real material, and does it matter to any measure?
+  - Whether a stem holds what its name says depends on who played: an empty
+    `bass` is right where there is no bassist. Should a lineup be a claim a
+    stem's measures can be read against, and where would it come from?
+  - What deletes stale entries, whose keys no installed extractor gives: a
+    command, a policy, or only the operator deleting the root?
+  - Which field of a derivation run's parameters records the features a
+    claim-producing tool read? ADR 0073 proposes each feature's name, its
+    extractor's id and version, and its entry key; the first such tool
+    settles the shape.
+  - May the window search read windows' pitch-class profiles from the
+    whole-recording `frames/hpcp` series? Their edge frames differ from a
+    window measured alone, so it is another method needing its own
+    calibration ([ADR 0071](decisions/0071-essentia-cover-similarity.md)).
 - Where does `enrich.mk`-style mechanism end and derivation policy begin, once
   the policy language exists?
 - When `capture import` stops part way through its enrichment chain, a rerun

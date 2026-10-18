@@ -64,6 +64,8 @@ door serve --socket <path>       the same commands for applications, on a privat
 relay/relay.py --config <file>   Door's service, World's query, and derived media over HTTP, for the tailnet
 enrich/media.py --root <dir> --digest <d> <file>
                                  waveform peaks and a listening copy: regenerable derived media
+enrich/extract.py list | run <extractor|all> --content <file> --bank <dir>
+                                 extract features into the regenerable feature bank (proposed)
 door verify                      full verification of HEAD and a fresh checkpoint
 archive init | status | doctor   setup, state, whole-archive check
 archive maintenance repack       coordinated packing of loose Git objects
@@ -127,6 +129,20 @@ derived-media root laid out by content digest
 never admitted. The relay serves it read-only, by digest, to the operator's
 login only, for content World knows as an Artifact's; it reads the layout
 from `enrich/derived.py` and never serves an original's bytes.
+
+`enrich/extract.py` is like it: it proposes nothing and never reads or
+writes an archive. It runs extractors, programs in any language that declare
+what they read and write in a manifest
+([proposed ADR 0074](decisions/0074-proposed-extractor-contract.md)), and
+files their features in the feature bank, regenerable state laid out beside
+derived media by content digest
+([proposed ADR 0073](decisions/0073-proposed-feature-bank.md),
+[format](feature-bank.md), [adding an extractor](adding-an-extractor.md)).
+It needs only the standard library; each extractor brings its own
+environment, named by configuration. Its graph is the few extractors one
+content needs, run in order on one machine; handing a run to another machine
+is Spool's job and is not wired. A claim made from features goes through the
+adapter and Door like any enrichment result.
 
 [`capture/`](../capture/README.md) holds the native importer of new recordings
 ([ADR 0070](decisions/0070-capture-import.md)). `capture import` hashes a
