@@ -180,6 +180,38 @@ unsupported rather than guess.
   A single start reached 57.5% of accepted performances in the V2 system
   ([ADR 0072](decisions/0072-windowed-work-matches.md)).
 
+- What is the first current rule for chord stacks and meter layers
+  ([ADR 0077](decisions/0077-chord-stacks-and-meter.md))? Candidates include
+  "a person's reading over a machine's for the same span", "the asserter's
+  first reading", and "agreement of two independent asserters", but each
+  ranks sources in a way INV-8 forbids as a universal rule, so a rule must be
+  per question and name why it chose. Until one is accepted, asking for a
+  current chord or meter is unsupported.
+- How are two asserters' beat grids matched? Two meter claims over the same
+  recording place the same beat a few milliseconds apart, and a chart's bar 17
+  may be a machine's bar 18. Comparing them needs a tolerance and a
+  correspondence between bars that no contract states; until then World shows
+  both and pairs nothing.
+- How are pitch names spelled? Stacks hold pitch classes, so a computed name
+  says Eb where a source wrote D#, and the G in Gm(maj13) has an F#, not a Gb.
+  The views use one fixed spelling; spelling from a key, or from the source's
+  own text, is undecided. A source's spelling survives only in its verbatim
+  text.
+- What contract holds a key or mode? JAMS `key_mode` has nothing to export
+  from until one exists, and the feature bank's key estimate is not a claim.
+- Are `exactly_one` and `maybe` enough to express uncertain tones, or does a
+  reading need ranked alternatives within a group, or uncertainty about the
+  bass?
+- Pitch classes assume twelve-tone equal temperament. How is a reading of a
+  recording far from it (a detuned instrument, a microtonal passage) kept?
+- How does a chart without bars locate a symbol (its line and word) when
+  `locator` holds only a bar and beat?
+- Does a stem's claim need a check that the stem shares the mix's timeline?
+  The `analysed` role asserts it; nothing measures it.
+- Which Door profile rules does the release of ADR 0077's two contracts add?
+  Its checks reach into nested arrays (tones within readings within spans,
+  beats within bars within layers), which the existing root-only rules do not.
+
 - How does a person's sensitivity claim select the content it covers ("the
   rehearsals I play in") rather than naming objects one by one
   ([ADR 0018](decisions/0018-people-in-the-archive.md))?

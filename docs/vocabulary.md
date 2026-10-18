@@ -181,6 +181,39 @@ formats that will stay readable.
 **Usage observation**: a periodic count of how content was used (plays, views),
 from an outside service.
 
+## Chords and meter
+
+([ADR 0077](decisions/0077-chord-stacks-and-meter.md))
+
+**Chord stack**: what sounds at once, as a bass pitch class, the pitch classes
+above it, and optionally a root, which need not sound. Not a chord name: a
+stack has as many names as it has candidate roots.
+**Reading**: one candidate an asserter gives for a span: a stack, "no chord",
+or a source's text left uninterpreted. A span's readings are in the
+asserter's order of preference and may carry weights on that claim's own
+scale. **Uncertain tone**: a pitch class the asserter is unsure of: exactly
+one of a group sounds, or one or none may. **Voicing**: a stack's actual
+notes, with their octaves. **Computed name**: a Harte string or lead-sheet
+symbol derived from a stack; a view, never the claim. The source's own symbol
+is the reading's **text**, kept verbatim.
+
+**Meter layer**: one counting of the music as a sequence of bars. Several
+layers over the same samples are polymeter or cross-rhythm, and none is
+primary. **Bar**: a span of samples with a numerator and denominator, and
+optionally its **beat grouping** (2+2+3) and the samples of its counted
+beats. **Metric modulation**: an explicit link between adjacent bars saying
+which note value before equals which after, with their ratio. **Tempo** is
+derived from bars and beats, never stored.
+
+**Document**: an outside source's admitted bytes (a transcription file, a
+saved chart) that a claim pins to say where its readings came from. A
+**locator** is a position in the document's own numbering (its bar, its
+beat). A claim's **document alignment** is how a document's positions were
+placed on a recording's samples, and by which method; it is not a capture
+alignment, which relates two recordings' clocks. **Mix**: the recording as heard, every
+part together; machine claims are made from it first, and a claim made from a
+separated part is a further claim beside it.
+
 ## Naming discipline
 
 When an established concept is meant, use its established word:

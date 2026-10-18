@@ -6,6 +6,20 @@ installed contract bundle, and raw record revisions. World does not read archive
 or write to the archive. Its store is regenerable; `CURRENT` selects an
 immutable generation built from one snapshot and projection version.
 
+## Chords and meter
+
+[`harmony.py`](harmony.py) holds the rules of the two contracts of
+[ADR 0077](../docs/decisions/0077-chord-stacks-and-meter.md),
+`archive.claim/chord_stacks` and `archive.claim/meter_layers`, the names
+computed from a chord stack (Harte strings and lead-sheet symbols), the
+tempo derived from bars, and lossy JAMS views. It needs only the standard
+library. No specification release installs the contracts yet, so World does
+not project them and Door admits neither. Its tests run alone:
+
+```sh
+python3 -m unittest world.tests.test_harmony
+```
+
 ## Install
 
 Use a virtual environment and the dependency pinned to the initial Oxigraph
