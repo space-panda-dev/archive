@@ -331,7 +331,6 @@ class Measure(unittest.TestCase):
         self.assertEqual(sorted(comparer.corpus), ["same"])
 
 
-
 @needs_essentia
 @needs_ffmpeg
 class Alignment(unittest.TestCase):
