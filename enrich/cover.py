@@ -1,10 +1,11 @@
-"""Cover similarity by Essentia, and the growing-window search (ADRs 0071, 0072).
+"""Cover similarity: Essentia's profiles, the quarter-rate distance, and the
+bit-exact port of Essentia's distance (ADR 0071, amendment of 2026-10-18).
 
-A tool, not an Archive client: it takes audio and suggested spans and returns
-plain numbers. `enrich match-windows` reads the archive and proposes what it
-finds.
+A tool, not an Archive client: it takes audio and returns plain numbers.
+`windows.py` searches a recording with these measures, and `enrich
+match-windows` reads the archive and proposes what it finds.
 
-The measure is the V2 system's, with its calibrated thresholds:
+The profiles are the V2 system's measure:
 
 1. ffmpeg decodes a span to mono 16-bit PCM at 22,050 Hz, which is divided by
    32,768. This is exactly what the V2 system's loader read from the WAV
@@ -12,58 +13,79 @@ The measure is the V2 system's, with its calibrated thresholds:
 2. Frames of 4,096 samples with a hop of 2,048, as Essentia's frame
    generator cuts them, each through a Blackman-Harris 62 dB window, the
    magnitude spectrum, spectral peaks, and a pitch-class profile (HPCP).
-3. `ChromaCrossSimilarity` with the optimal transposition index, then
-   `CoverSongSimilarity` with the serra09 alignment and the asymmetric
-   distance, in both directions. The distance is the smaller one. The
-   cross-similarity is Essentia's, reproduced bit for bit in NumPy; its dot
-   products are summed once and serve both directions. The alignment is
-   Essentia's recurrence ported to NumPy (`serra09`), which answers
-   Essentia's scores and distances to the bit at a fraction of the cost;
-   `alignment` says where in the matrix the best alignment lies.
-4. The score is that distance rounded half to even to four places. Lower is
-   closer.
+   `measure_whole` measures a whole recording that way in blocks, so memory
+   holds the profiles and one block, not the audio.
 
-The search grows a window over a recording's suggested spans. A run is a
-maximal sequence of `music` or `unknown` spans; `talk` and `quiet` end it.
-From each run's first span the window grows one span at a time, up to eight.
-At each step it is compared with the half of the corpus whose
-transposition-invariant mean chroma is closest to it. Growth stops after two
-steps without improvement, or after one step worse than the best by more than
-0.15, and the result is the best step, not the last. A window shorter than
-two seconds is skipped without counting as a step.
+Two distances compare profiles:
 
-Only Essentia 2.1b6.dev1438 is accepted: the thresholds were measured with
-that build, and another is another method version (ADR 0071).
+- **The exact distance** (`Analyser.distance`): `ChromaCrossSimilarity` with
+  the optimal transposition index, then `CoverSongSimilarity` with the
+  serra09 alignment and the asymmetric distance, in both directions, the
+  smaller kept. The cross-similarity is Essentia's, reproduced bit for bit in
+  NumPy; its dot products are summed once and serve both directions. The
+  alignment is Essentia's recurrence ported to NumPy (`serra09`), which
+  answers Essentia's scores and distances to the bit; `alignment` says where
+  in the matrix the best alignment lies.
+- **The quarter-rate distance** (`QuarterRate`): the profiles averaged over
+  groups of 4 frames, float32 stack distances from one matrix product, exact
+  order statistics, and the same serra09; about a hundred times cheaper. Its
+  low bits depend on the BLAS library numpy uses, which `software` names.
 
-`cover.py <query> <reference>...` prints the distance of each whole file.
+A score is a distance rounded half to even to four places. Lower is closer.
+
+Only Essentia 2.1b6.dev1438 is accepted: every threshold was fitted on
+profiles it measured, and another build is another method version.
+
+`cover.py <query> <reference>...` prints the exact distance of each whole
+file, under the `archive-enrich/essentia-serra09` method.
 """
 
 from __future__ import annotations
 
+import ctypes
 import importlib.metadata
 import json
 import math
+import os
+import platform
 import subprocess
 import sys
+import tempfile
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from decimal import ROUND_HALF_EVEN, Decimal
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Sequence
 
-import numpy
+# The quarter-rate distance's float32 matrix products run on one BLAS thread
+# in every process, as its cost and its answers were measured. A BLAS library
+# reads its thread count when it loads, so this must happen before numpy is
+# imported; the variables are inherited by every worker process. `software`
+# refuses to name a run whose BLAS was loaded before the pin.
+BLAS_THREAD_VARIABLES = ("OPENBLAS_NUM_THREADS", "VECLIB_MAXIMUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS")
+_BLAS_PINNED_AT_LOAD = "numpy" not in sys.modules or all(os.environ.get(v) == "1" for v in BLAS_THREAD_VARIABLES)
+for _variable in BLAS_THREAD_VARIABLES:
+    os.environ[_variable] = "1"
 
-AGENT = "pkg:generic/archive-enrich-cover@0.1.0"
-METHOD_ID = "archive-enrich/essentia-serra09"
+import numpy  # noqa: E402
+
+AGENT = "pkg:generic/archive-enrich-cover@0.2.0"
+# The window matcher's method (ADR 0072, amendment of 2026-10-18).
+METHOD_ID = "archive-enrich/whole-recording-serra09"
 METHOD_VERSION = "1"
-SCALE = "archive-enrich/essentia-serra09/smaller-asymmetric-distance"
+QUARTER_RATE_SCALE = "archive-enrich/whole-recording-serra09/quarter-rate-distance"
+# Essentia's distance: the scale of a confirmed near tie, and the method
+# `cover.py <query> <reference>...` prints under.
+EXACT_METHOD_ID = "archive-enrich/essentia-serra09"
+EXACT_METHOD_VERSION = "1"
+EXACT_SCALE = "archive-enrich/essentia-serra09/smaller-asymmetric-distance"
 DIRECTION = "lower_is_closer"
 ESSENTIA_BUILD = "2.1b6.dev1438"
 
 # Settings, as decimal text where a value is not an integer: canonical JSON
 # holds no floating-point numbers, and the text is what a run records.
-# Every value is the V2 system's; none may change without a new method
-# version and a new calibration.
+# The profiles' settings are the V2 system's; none may change without a new
+# method version and a new calibration.
 ANALYSIS: dict[str, Any] = {
     "analysis_rate": 22050,
     "frame_size": 4096,
@@ -77,16 +99,24 @@ ANALYSIS: dict[str, Any] = {
     "cover_song_similarity": {"distanceType": "asymmetric", "alignmentType": "serra09"},
     "score_places": 4,
 }
+# The whole-recording search (windows.py; ADR 0072, amendment of 2026-10-18).
+# The hit distance, the suggestion distance, and the near-tie margin were
+# chosen on the calibration workset's 98 accepted occurrences and are on the
+# quarter-rate scale (the operator set the margin to 0.02 on 2026-10-18); the exact suggestion distance is the V2 system's, one
+# false positive in 2,779 controlled pairs of the operator's own recordings.
 SEARCH: dict[str, Any] = {
-    "run_classes": ["music", "unknown"],
-    "max_window_spans": 8,
-    "min_window_seconds": 2,
-    "stall_steps": 2,
-    "degrade_margin": "0.15",
+    "span_classes": ["music", "unknown"],
+    "quarter_rate_frames": 4,
+    "chunk_length": "2",
+    "chunk_hop": "1",
+    "alignments_per_chunk": 2,
+    "hit_distance": "0.20",
+    "works_per_region": 5,
+    "works_per_window": 8,
+    "suggestion_distance": "0.118",
+    "near_tie_margin": "0.02",
+    "exact_suggestion_distance": "0.08",
     "prefilter_retention": "0.5",
-    # One false positive in 2,779 controlled pairs of the operator's own
-    # recordings, measured with this build and this search (ADR 0071).
-    "suggestion_distance": "0.08",
 }
 _FLOAT_OPTIONS = {"magnitudeThreshold", "binarizePercentile"}
 
@@ -112,7 +142,7 @@ def decode_arguments(path: str, start: int | str, end: int | str) -> list[str]:
 
 def parameters() -> dict[str, Any]:
     """The run's configuration (ADR 0006): the measure, the decoder
-    invocation, and the search."""
+    invocation, and the search. Every leaf is read by the code."""
     return {**ANALYSIS, "decoder": "ffmpeg", "decode_arguments": decode_arguments("{input}", "{start}", "{end}"),
             "sample_scale": 32768, "search": SEARCH}
 
@@ -135,10 +165,82 @@ def essentia_module() -> Any:
     return standard
 
 
-def software() -> tuple[tuple[str, str], ...]:
-    """The libraries the distances depend on, as installed now."""
+def profile_software() -> tuple[tuple[str, str], ...]:
+    """The libraries the profiles and the exact distance depend on, as
+    installed now."""
     essentia_module()
     return (("essentia", importlib.metadata.version("essentia")), ("numpy", numpy.__version__))
+
+
+def blas() -> tuple[str, str]:
+    """The BLAS library numpy was built with, which the quarter-rate
+    distance's float32 matrix products depend on, and its version. Accelerate
+    reports none, so the macOS release that ships it stands in."""
+    found = numpy.show_config(mode="dicts")["Build Dependencies"]["blas"]
+    name, version = str(found.get("name", "unknown")), str(found.get("version", "unknown"))
+    if name == "accelerate" and version == "unknown" and platform.mac_ver()[0]:
+        version = "macOS " + platform.mac_ver()[0]
+    return name, version
+
+
+def _openblas_runtime() -> tuple[str, int] | None:
+    """The kernel OpenBLAS chose for this CPU and its thread count, asked of
+    the library numpy loaded, or None when it cannot be found. OpenBLAS
+    built for several CPUs picks its kernels when it loads."""
+    libraries = Path(numpy.__file__).resolve().parent.parent / "numpy.libs"
+    for path in sorted(libraries.glob("lib*openblas*.so*")):
+        try:
+            library = ctypes.CDLL(str(path))
+        except OSError:
+            continue
+        for prefix, suffix in (("scipy_", "64_"), ("scipy_", ""), ("", "64_"), ("", "")):
+            corename = getattr(library, f"{prefix}openblas_get_corename{suffix}", None)
+            threads = getattr(library, f"{prefix}openblas_get_num_threads{suffix}", None)
+            if corename is not None and threads is not None:
+                corename.restype = ctypes.c_char_p
+                return corename().decode("ascii", "replace"), int(threads())
+    return None
+
+
+def _cpu_brand() -> str | None:
+    """The CPU's model, as macOS names it, or None."""
+    try:
+        completed = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True,
+                                   timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.strip() or None
+
+
+def blas_runtime() -> str:
+    """What else the BLAS library's float32 products depend on: the kernel it
+    runs (OpenBLAS's runtime choice, or the CPU model for Accelerate, which
+    picks its own), and the one thread every process uses. "unknown kernel"
+    is recorded where the kernel cannot be asked. Refused when numpy loaded
+    BLAS before this module pinned its threads."""
+    if not _BLAS_PINNED_AT_LOAD:
+        raise CoverError("numpy was imported before cover.py pinned BLAS to one thread; import cover first, or set "
+                         + ", ".join(f"{v}=1" for v in BLAS_THREAD_VARIABLES))
+    name = blas()[0]
+    kernel = None
+    if "openblas" in name:
+        found = _openblas_runtime()
+        if found is not None:
+            kernel, threads = found
+            if threads != 1:
+                raise CoverError(f"OpenBLAS runs {threads} threads; the matcher is measured with one")
+    elif name == "accelerate":
+        kernel = _cpu_brand()
+    kernel = kernel or f"unknown kernel on {platform.machine() or 'an unknown machine'}"
+    return f"{kernel}, 1 thread"[:100]
+
+
+def software() -> tuple[tuple[str, str], ...]:
+    """The libraries the window matcher's answers depend on, as installed
+    now: the profiles', the BLAS library's, and how BLAS runs."""
+    return (*profile_software(), blas(), ("blas-runtime", blas_runtime()))
 
 
 def rounded(distance: float) -> Decimal:
@@ -527,8 +629,12 @@ class Analyser:
         self.peaks = es.SpectralPeaks(**_options(ANALYSIS["spectral_peaks"]))
         self.hpcp = es.HPCP(**_options(ANALYSIS["hpcp"]))
 
+    def profile(self, frame: numpy.ndarray) -> numpy.ndarray:
+        """One frame's pitch-class profile."""
+        return self.hpcp(*self.peaks(self.spectrum(self.windowing(frame))))
+
     def features(self, audio: numpy.ndarray) -> Features:
-        frames = [self.hpcp(*self.peaks(self.spectrum(self.windowing(frame))))
+        frames = [self.profile(frame)
                   for frame in self.es.FrameGenerator(audio, frameSize=ANALYSIS["frame_size"],
                                                       hopSize=ANALYSIS["hop_size"])]
         stack = ANALYSIS["chroma_cross_similarity"]["frameStackSize"]
@@ -583,29 +689,13 @@ def prefilter(query: Sequence[float], corpus: dict[str, Sequence[float]], retent
     return [key for key in ids if key in kept]
 
 
-# -- the search --------------------------------------------------------------
+# -- the search's inputs ------------------------------------------------------
 
 @dataclass(frozen=True)
 class Span:
     start_sample: int
     end_sample: int
     kind: str  # the suggested class
-
-
-def runs_of(spans: Sequence[Span], classes: Sequence[str]) -> list[list[int]]:
-    """Maximal sequences of consecutive spans whose class is one of
-    `classes`, as span indices. Any other span ends a run."""
-    runs: list[list[int]] = []
-    current: list[int] = []
-    for index, span in enumerate(spans):
-        if span.kind in classes:
-            current.append(index)
-        elif current:
-            runs.append(current)
-            current = []
-    if current:
-        runs.append(current)
-    return runs
 
 
 @dataclass(frozen=True)
@@ -616,10 +706,10 @@ class Distance:
 
 
 def unaligned(distance: float) -> bool:
-    """Whether Essentia found no alignment at all. Its serra09 distance
-    divides by the best alignment score, so a cross-similarity with no match
-    in either direction answers positive infinity. That is an answer, the
-    farthest there is, not a failure; anything else non-finite still is."""
+    """Whether nothing aligned at all. A serra09 distance divides by the best
+    alignment score, so a cross-similarity with no match answers positive
+    infinity. That is an answer, the farthest there is, not a failure;
+    anything else non-finite still is."""
     return distance == math.inf
 
 
@@ -632,72 +722,201 @@ def ranked(raw: dict[str, float]) -> tuple[list[Distance], list[str]]:
             sorted(key for key in raw if key not in aligned))
 
 
-def margin(distances: list[Distance]) -> Decimal | None:
-    """How far the closest entry beat the next, over every aligned entry;
-    None without a second. Reported to rank by, never a gate."""
-    return distances[1].value - distances[0].value if len(distances) > 1 else None
+# -- the quarter-rate distance ------------------------------------------------
+#
+# ADR 0071's amendment states it step by step. The candidate pass in
+# windows.py uses the same pieces with Essentia's transposition index, n - 9
+# stacks, and no - 1 on the order statistic's index.
+
+_KAPPA = float(ANALYSIS["chroma_cross_similarity"]["binarizePercentile"])
 
 
-def candidate_windows(run: list[int], spans: Sequence[Span], sample_rate: int) -> list[tuple[int, dict[str, int]]]:
-    """Every window the search may measure for a run, by step: from the
-    run's first span to each later span's end, up to the limit, less those
-    too short to measure (which are not steps)."""
-    shortest = SEARCH["min_window_seconds"] * sample_rate
-    windows = []
-    for step in range(min(len(run), SEARCH["max_window_spans"])):
-        window = {"start_sample": spans[run[0]].start_sample, "end_sample": spans[run[step]].end_sample}
-        if window["end_sample"] - window["start_sample"] >= shortest:
-            windows.append((step, window))
-    return windows
+def checked_profiles(profiles: numpy.ndarray, what: str) -> numpy.ndarray:
+    """Profiles as contiguous float32 frames of 12 bins, refused unless every
+    value is finite and non-negative, as HPCP values are. A NaN would sort
+    among the distances by its bits and could count as the closest."""
+    array = numpy.ascontiguousarray(profiles, dtype=numpy.float32)
+    if array.ndim != 2 or array.shape[1] != _BINS:
+        raise CoverError(f"{what} profiles of shape {array.shape} are not ({_BINS} bins) frames")
+    if not numpy.isfinite(array).all() or (array < 0).any():
+        raise CoverError(f"{what} profiles must be finite and non-negative")
+    return array
 
 
-WindowFeatures = Callable[[int, int], Features]
-Distances = Callable[[Features, list[str]], dict[str, float]]
+def quarter_rate(profiles: numpy.ndarray, frames: int | None = None) -> numpy.ndarray:
+    """The mean of every `frames` frames (the search's
+    `quarter_rate_frames`), each divided by its largest bin, as HPCP frames
+    are; a frame of zeros stays zero, and a trailing group of fewer frames is
+    dropped. float32."""
+    group = SEARCH["quarter_rate_frames"] if frames is None else frames
+    x = numpy.asarray(profiles, numpy.float32)
+    count = len(x) // group * group
+    y = x[:count].reshape(-1, group, _BINS).mean(1)
+    return numpy.ascontiguousarray((y / numpy.maximum(y.max(1, keepdims=True), 1e-9)).astype(numpy.float32))
 
 
-def search_run(run: list[int], spans: Sequence[Span], sample_rate: int, window_features: WindowFeatures,
-               corpus: dict[str, Features], distances: Distances) -> dict[str, Any]:
-    """Grow a window from the run's first span and keep its best step.
+def order_keys(d: numpy.ndarray) -> numpy.ndarray:
+    """int32 keys that sort exactly as the float32 values do, with -0 made +0
+    first so equal floats get equal keys. Sorting them is faster than
+    numpy.partition on float32, and gives the same order statistics. `d` is
+    changed in place (-0 becomes +0)."""
+    d += numpy.float32(0)
+    i = d.view(numpy.int32)
+    return i ^ ((i >> 31) & numpy.int32(0x7FFFFFFF))
 
-    `window_features(start, end)` measures the source's samples `[start,
-    end)`; `distances(features, ids)` compares them with those corpus entries.
-    Returns every evaluated step, and the best step's window with every
-    aligned distance there and the entries that did not align, or `best:
-    None` when no window was long enough, the corpus was empty, or nothing
-    aligned."""
-    retention = Decimal(SEARCH["prefilter_retention"])
-    degrade = Decimal(SEARCH["degrade_margin"])
-    means = {key: features.mean for key, features in corpus.items()}
-    best: tuple[int, dict[str, int], list[Distance], list[str]] | None = None
-    stalled = 0
-    steps: list[dict[str, Any]] = []
-    for step, window in candidate_windows(run, spans, sample_rate):
-        features = window_features(window["start_sample"], window["end_sample"])
-        kept = prefilter(features.mean, means, retention)
-        compared, apart = ranked(distances(features, kept))
-        steps.append({"spans": [run[0], run[step]], "window": window, "compared": len(compared) + len(apart),
-                      "unaligned": len(apart),
-                      "closest": ({"corpus": compared[0].corpus_id, "distance": str(compared[0].value)}
-                                  if compared else None)})
-        if not compared:
-            # Nothing compared, or nothing aligned. Nothing aligning is
-            # worse than any best by more than the margin.
-            if best is not None and apart:
-                break
-            continue
-        if best is None or compared[0].value < best[2][0].value:
-            best, stalled = (step, window, compared, apart), 0
-            continue
-        stalled += 1
-        if compared[0].value > best[2][0].value + degrade or stalled >= SEARCH["stall_steps"]:
-            break
-    result: dict[str, Any] = {"spans": [run[0], run[-1]], "steps": steps, "best": None}
-    if best is not None:
-        step, window, compared, apart = best
-        result["best"] = {"step": step, "spans": [run[0], run[step]], "window": window,
-                          "margin": None if margin(compared) is None else str(margin(compared)),
-                          "distances": compared, "unaligned": apart}
-    return result
+
+def binary_within(a: numpy.ndarray, an: numpy.ndarray, b: numpy.ndarray, bn: numpy.ndarray, shift: int
+                  ) -> numpy.ndarray:
+    """1 where a squared stack distance |a|^2 + |b|^2 - 2 a.b, in float32,
+    is at most both its row's and its column's order statistic: for a row or
+    column of m values, the value at index int(0.095 m) - shift, never below
+    0, among them sorted, with no interpolation."""
+    d = an[:, None] + bn[None, :]
+    d -= numpy.float32(2) * (a @ b.T)
+    kr = max(0, int(_KAPPA * d.shape[1]) - shift)
+    kc = max(0, int(_KAPPA * d.shape[0]) - shift)
+    key = order_keys(d)
+    rows = numpy.sort(key, axis=1)[:, kr]
+    cols = numpy.sort(numpy.ascontiguousarray(key.T), axis=1)[:, kc]
+    return ((key <= rows[:, None]) & (key <= cols[None, :])).astype(numpy.float32)
+
+
+def _window_stacks(x: numpy.ndarray) -> tuple[numpy.ndarray, numpy.ndarray]:
+    """The quarter-rate distance's stacks, n - 8 of them, and their squared
+    norms."""
+    count = len(x) - _STACK + 1
+    s = numpy.ascontiguousarray(numpy.concatenate([x[o:o + count] for o in range(_STACK)], axis=1))
+    return s, (s * s).sum(1)
+
+
+def key_shift(query: numpy.ndarray, reference: numpy.ndarray) -> int:
+    """The bins to rotate the reference by: the first of twelve rotations of
+    its mean frame with the largest dot product with the query's."""
+    ma, mb = query.mean(0), reference.mean(0)
+    return int(numpy.argmax([numpy.dot(ma, numpy.roll(mb, s)) for s in range(_BINS)]))
+
+
+class QuarterRate:
+    """The quarter-rate distance against a corpus of full-rate profiles,
+    each reduced once by `frames` (the search's `quarter_rate_frames`) as the
+    query must be, with its stacks cached per key shift. `cells` and
+    `comparisons` count the work done."""
+
+    def __init__(self, corpus: dict[str, numpy.ndarray], frames: int | None = None):
+        self.corpus = {key: checked_profiles(profiles, key) for key, profiles in corpus.items()}
+        self.group = SEARCH["quarter_rate_frames"] if frames is None else frames
+        self.reduced: dict[str, numpy.ndarray] = {}
+        self.turned: dict[tuple[str, int], tuple[numpy.ndarray, numpy.ndarray]] = {}
+        self.cells = 0
+        self.comparisons = 0
+
+    def reference(self, key: str) -> numpy.ndarray:
+        if key not in self.reduced:
+            self.reduced[key] = quarter_rate(self.corpus[key], self.group)
+        return self.reduced[key]
+
+    def distances(self, query: numpy.ndarray, keys: Sequence[str]) -> dict[str, float]:
+        """The distance of the quarter-rate `query` to each corpus entry in
+        `keys`: positive infinity where nothing matches. Raises TooShort when
+        the query is too short, and leaves out an entry that is."""
+        if len(query) <= _STACK + 1:
+            raise TooShort(f"{len(query)} quarter-rate frames are too short; the distance needs more than "
+                           f"{_STACK + 1}")
+        a, an = _window_stacks(query)
+        answers = {}
+        for key in keys:
+            reference = self.reference(key)
+            if len(reference) <= _STACK + 1:
+                continue
+            index = key_shift(query, reference)
+            if (key, index) not in self.turned:
+                self.turned[(key, index)] = _window_stacks(numpy.roll(reference, index, axis=1))
+            b, bn = self.turned[(key, index)]
+            matrix = binary_within(a, an, b, bn, shift=1)
+            scores, _ = serra09(matrix)
+            self.cells += matrix.size
+            self.comparisons += 1
+            best = float(scores.max())
+            # The other direction's matrix is this one transposed, and its
+            # scores transpose with it: the smaller distance divides the
+            # smaller dimension's root.
+            answers[key] = float(numpy.float32(math.sqrt(min(matrix.shape)) / best)) if best > 0 else math.inf
+        return answers
+
+    def too_short(self, keys: Sequence[str]) -> list[str]:
+        """The entries too short to compare."""
+        return sorted(key for key in keys if len(self.reference(key)) <= _STACK + 1)
+
+
+# -- measuring a whole recording ----------------------------------------------
+
+def measure_whole(path: Path, sample_rate: int, sample_count: int, ffmpeg: str = "ffmpeg",
+                  ffprobe: str = "ffprobe", block_samples: int = 1 << 20,
+                  analyser: "Analyser | None" = None) -> numpy.ndarray:
+    """The profiles of the file's first audio stream from sample 0 to
+    `sample_count` (at `sample_rate`), bit for bit what
+    `Analyser().features(load([Piece(path, 0, sample_count, sample_rate)]))`
+    gives, decoded in blocks of `block_samples` analysis samples so that
+    memory holds the profiles and one block, not the audio.
+
+    Frames are cut as Essentia's frame generator cuts them: frame k covers
+    analysis samples [k * hop - frame / 2, k * hop + frame / 2), zero-padded
+    outside the audio, and n samples make ceil(n / hop) + 1 frames."""
+    if sample_count <= 0:
+        raise CoverError(f"span 0..{sample_count} of {path} is empty")
+    rate = stream_rate(path, ffprobe)
+    if rate != sample_rate:
+        raise CoverError(f"{path} is sampled at {rate} Hz, but its span is in samples at {sample_rate} Hz")
+    analyser = Analyser() if analyser is None else analyser
+    frame, hop = ANALYSIS["frame_size"], ANALYSIS["hop_size"]
+    half = frame // 2
+    profiles: list[numpy.ndarray] = []
+    # The samples from analysis index `first` on; the zero padding before
+    # sample 0 is part of it.
+    held = numpy.zeros(half, numpy.float32)
+    first = -half
+    total = 0
+    spare = b""
+    with tempfile.TemporaryFile() as errors:
+        try:
+            process = subprocess.Popen([ffmpeg, *decode_arguments(str(path), 0, sample_count)],
+                                       stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=errors)
+        except OSError as exc:
+            raise CoverError(f"ffmpeg could not run: {exc}") from exc
+        assert process.stdout is not None
+        with process:
+            while True:
+                data = process.stdout.read(2 * block_samples)
+                if not data:
+                    break
+                data = spare + data
+                usable = len(data) // 2 * 2
+                spare = data[usable:]
+                samples = numpy.frombuffer(data[:usable], dtype="<i2").astype(numpy.float32) / numpy.float32(32768)
+                total += len(samples)
+                held = numpy.concatenate([held, samples])
+                # Every frame whose samples are all here.
+                k = len(profiles)
+                while k * hop + half <= first + len(held):
+                    at = k * hop - half - first
+                    profiles.append(analyser.profile(held[at:at + frame]))
+                    k += 1
+                drop = k * hop - half - first
+                held, first = held[drop:], first + drop
+        errors.seek(0)
+        detail = errors.read().decode("utf-8", "replace").strip()[:300]
+    if process.returncode != 0:
+        raise CoverError(f"ffmpeg could not decode {path}: {detail}")
+    wanted = sample_count * ANALYSIS["analysis_rate"] / sample_rate
+    if abs(total - wanted) > 1:
+        raise CoverError(f"span 0..{sample_count} of {path} runs past its audio "
+                         f"({total} of about {round(wanted)} samples decoded)")
+    count = -(-total // hop) + 1
+    held = numpy.concatenate([held, numpy.zeros(count * hop + half - first - len(held), numpy.float32)])
+    for k in range(len(profiles), count):
+        at = k * hop - half - first
+        profiles.append(analyser.profile(held[at:at + frame]))
+    return numpy.array(profiles)
 
 
 # -- comparing in parallel ---------------------------------------------------
@@ -819,7 +1038,7 @@ def main(argv: list[str] | None = None) -> int:
     except CoverError as exc:
         print(json.dumps({"status": "failed", "detail": str(exc)}), file=sys.stderr)
         return 1
-    print(json.dumps({"method": {"id": METHOD_ID, "version": METHOD_VERSION}, "scale": SCALE,
+    print(json.dumps({"method": {"id": EXACT_METHOD_ID, "version": EXACT_METHOD_VERSION}, "scale": EXACT_SCALE,
                       "direction": DIRECTION, "scores": scores}, indent=2))
     return 0
 

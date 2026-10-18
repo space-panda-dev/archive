@@ -77,9 +77,12 @@ staged or proposed.
    `enrich/media.py` (default: the processors less two).
    `--defer-listening-copies` leaves the listening copies for a later
    `enrich/media.py` run. Last, `enrich match-windows` on each detection,
-   with `--jobs` processes, proposes the Works and windows the recording's
-   runs match ([ADR 0072](../docs/decisions/0072-windowed-work-matches.md));
-   it is the slowest step. The archive must install `work_match` version 3
+   with `--jobs` processes, searches the whole recording and proposes the
+   Works it finds, each in a window of whole suggested spans
+   ([ADR 0072](../docs/decisions/0072-windowed-work-matches.md));
+   it is the slowest step. The report counts the window claims proposed and
+   keeps each kept window with every Work within the limit, of which only
+   the closest is claimed. The archive must install `work_match` version 3
    (specification 0.0.8): an older one is refused before anything is staged.
    A file whose probe
    counts no audio stream is reported with `nothing_proposed`, and nothing

@@ -470,10 +470,23 @@ def chain(sessions: list[Session], args: argparse.Namespace, env: dict[str, str]
 
         for entry, suggestions in detected:
             _, answer = enrich("match-windows", suggestions, args, env, current_export())
-            entry["match"] = {"status": answer["status"],
-                              "proposed": sum(len(run["proposed"]) for run in answer.get("runs", []))}
+            entry["match"] = match_report(answer)
             if answer["status"] == "committed":
                 reader.refresh(args.archive_command, env)
+
+
+def match_report(answer: dict[str, Any]) -> dict[str, Any]:
+    """What the import reports of one `enrich match-windows` answer: its
+    status, how many window claims it proposed, and every kept window with
+    each Work within the limit. Only a window's closest Work is claimed; the
+    others are kept here, in the run's answer, and never claimed (ADR 0072,
+    amendment of 2026-10-18)."""
+    windows = answer.get("windows", [])
+    report: dict[str, Any] = {"status": answer["status"],
+                              "proposed": sum(1 for window in windows if window.get("proposed"))}
+    if windows:
+        report["windows"] = windows
+    return report
 
 
 def suggestions_made_by(reader: adapter.ArchiveReader, answer: dict[str, Any]) -> str:

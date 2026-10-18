@@ -1,9 +1,7 @@
-"""Essentia cover similarity and the growing-window search (ADRs 0071, 0072).
-
-The search is tested with the measure replaced by tables, so every decision
-(growth, stall, degrade, rollback, short windows, the prefilter) is checked
-exactly. The measure itself runs the pinned Essentia build on synthetic tunes.
-"""
+"""The measure: Essentia's profiles, the bit-exact port of its distance, and
+the quarter-rate distance (ADR 0071, amendment of 2026-10-18). The measure runs
+the pinned Essentia build on synthetic tunes; the search has its own tests
+(test_windows.py)."""
 
 from __future__ import annotations
 
@@ -16,9 +14,8 @@ from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
+import cover  # first: it pins BLAS to one thread before numpy loads it
 import numpy
-
-import cover
 import support
 from support import needs_ffmpeg
 
@@ -38,147 +35,22 @@ def essentia_cross(a: numpy.ndarray, b: numpy.ndarray) -> numpy.ndarray:
 
 
 ANALYSIS_COVER = {"distanceType": "asymmetric", "alignmentType": "serra09"}
-RATE = 1000  # samples per second in the search tests: two seconds is 2,000 samples
+class Ranked(unittest.TestCase):
+    def test_every_distance_closest_first_ties_by_raw_then_identifier(self) -> None:
+        compared, apart = cover.ranked({"b": 0.07, "a": 0.07, "c": 0.12, "d": 0.07004})
+        self.assertEqual([(d.corpus_id, str(d.value)) for d in compared],
+                         [("a", "0.0700"), ("b", "0.0700"), ("d", "0.0700"), ("c", "0.1200")])
+        self.assertEqual(apart, [])
 
-
-def spans(*kinds: str, length: int = 3000) -> list[cover.Span]:
-    """Consecutive spans of `length` samples with these classes."""
-    return [cover.Span(index * length, (index + 1) * length, kind) for index, kind in enumerate(kinds)]
-
-
-class Table:
-    """A stand-in for the measure: each window, by its end sample, has a
-    distance to each corpus entry. Records every window measured and every
-    comparison made."""
-
-    def __init__(self, distances: dict[int, dict[str, float]], means: dict[str, tuple[float, ...]] | None = None):
-        self.distances = distances
-        self.windows: list[tuple[int, int]] = []
-        self.compared: list[tuple[int, list[str]]] = []
-        keys = sorted({key for row in distances.values() for key in row})
-        self.corpus = {key: cover.Features(numpy.zeros((0, 12)), (means or {}).get(key, (1.0,) + (0.0,) * 11))
-                       for key in keys}
-
-    def window_features(self, start: int, end: int) -> cover.Features:
-        self.windows.append((start, end))
-        return cover.Features(numpy.array([end]), (1.0,) + (0.0,) * 11)
-
-    def measure(self, features: cover.Features, keys: list[str]) -> dict[str, float]:
-        end = int(features.profiles[0])
-        self.compared.append((end, list(keys)))
-        return {key: self.distances[end][key] for key in keys}
-
-    def search(self, run: list[int], suggested: list[cover.Span]) -> dict:
-        return cover.search_run(run, suggested, RATE, self.window_features, self.corpus, self.measure)
-
-
-class Search(unittest.TestCase):
-    def setUp(self) -> None:
-        # Compare the whole corpus: the prefilter has its own tests.
-        patcher = patch.dict(cover.SEARCH, {"prefilter_retention": "1"})
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
-    def test_growth_stops_after_two_steps_without_improvement_and_keeps_the_best(self) -> None:
-        suggested = spans(*["music"] * 6)
-        table = Table({3000: {"a": 0.30}, 6000: {"a": 0.10}, 9000: {"a": 0.12}, 12000: {"a": 0.11},
-                       15000: {"a": 0.01}, 18000: {"a": 0.01}})
-        result = table.search(list(range(6)), suggested)
-        # Anchor: a later step would have been better; the stall stopped first.
-        self.assertLess(table.distances[15000]["a"], table.distances[6000]["a"])
-        self.assertEqual([end for _, end in table.windows], [3000, 6000, 9000, 12000])
-        self.assertEqual(result["best"]["step"], 1)
-        self.assertEqual(result["best"]["window"], {"start_sample": 0, "end_sample": 6000})
-        self.assertEqual(result["best"]["distances"][0].value, Decimal("0.1000"))
-
-    def test_one_step_worse_than_the_best_by_more_than_the_margin_stops_at_once(self) -> None:
-        suggested = spans(*["music"] * 4)
-        table = Table({3000: {"a": 0.05}, 6000: {"a": 0.2001}, 9000: {"a": 0.01}, 12000: {"a": 0.01}})
-        result = table.search(list(range(4)), suggested)
-        self.assertEqual([end for _, end in table.windows], [3000, 6000])
-        self.assertEqual(result["best"]["step"], 0)
-        # Exactly the margin is not more than it: growth continues.
-        table = Table({3000: {"a": 0.05}, 6000: {"a": 0.20}, 9000: {"a": 0.21}, 12000: {"a": 0.01}})
-        table.search(list(range(4)), suggested)
-        self.assertEqual([end for _, end in table.windows], [3000, 6000, 9000])
-
-    def test_distances_are_compared_rounded_to_four_places(self) -> None:
-        # 0.10004 rounds to 0.1000, which is no improvement on 0.1000.
-        suggested = spans(*["music"] * 4)
-        table = Table({3000: {"a": 0.1}, 6000: {"a": 0.10004}, 9000: {"a": 0.09996}, 12000: {"a": 0.05}})
-        result = table.search(list(range(4)), suggested)
-        self.assertEqual(result["best"]["step"], 0)
-        self.assertEqual([end for _, end in table.windows], [3000, 6000, 9000])
-
-    def test_a_window_too_short_to_measure_is_skipped_and_is_not_a_step(self) -> None:
-        suggested = [cover.Span(0, 500, "music"), cover.Span(500, 1500, "music"), cover.Span(1500, 4000, "music"),
-                     cover.Span(4000, 7000, "music")]
-        table = Table({4000: {"a": 0.2}, 7000: {"a": 0.1}})
-        result = table.search(list(range(4)), suggested)
-        self.assertEqual(table.windows, [(0, 4000), (0, 7000)])
-        self.assertEqual([step["spans"] for step in result["steps"]], [[0, 2], [0, 3]])
-        self.assertEqual(result["best"]["spans"], [0, 3])
-
-    def test_a_window_grows_to_at_most_eight_spans(self) -> None:
-        suggested = spans(*["music"] * 10)
-        table = Table({end: {"a": 1.0 - end / 100000} for end in range(3000, 33000, 3000)})
-        result = table.search(list(range(10)), suggested)
-        self.assertEqual(len(table.windows), 8)
-        self.assertEqual(result["best"]["window"], {"start_sample": 0, "end_sample": 24000})
-
-    def test_an_empty_corpus_or_no_long_window_has_no_best(self) -> None:
-        table = Table({})
-        result = table.search([0, 1], spans("music", "music"))
-        self.assertIsNone(result["best"])
-        self.assertEqual([step["compared"] for step in result["steps"]], [0, 0])
-        short = Table({100: {"a": 0.0}})
-        self.assertIsNone(short.search([0], [cover.Span(0, 100, "music")])["best"])
-        self.assertEqual(short.windows, [])
-
-    def test_the_best_step_lists_every_distance_closest_first_with_its_margin(self) -> None:
-        table = Table({3000: {"b": 0.07, "a": 0.07, "c": 0.12}})
-        best = table.search([0], spans("music"))["best"]
-        self.assertEqual([(d.corpus_id, str(d.value)) for d in best["distances"]],
-                         [("a", "0.0700"), ("b", "0.0700"), ("c", "0.1200")])
-        self.assertEqual(best["margin"], "0.0000")
-        self.assertIsNone(Table({3000: {"a": 0.1}}).search([0], spans("music"))["best"]["margin"])
-
-    def test_an_entry_that_does_not_align_is_counted_but_never_ranked(self) -> None:
-        table = Table({3000: {"a": 0.07, "b": math.inf, "c": 0.12}})
-        result = table.search([0], spans("music"))
-        best = result["best"]
-        self.assertEqual([d.corpus_id for d in best["distances"]], ["a", "c"])
-        self.assertEqual(best["unaligned"], ["b"])
-        self.assertEqual(best["margin"], "0.0500")
-        self.assertEqual((result["steps"][0]["compared"], result["steps"][0]["unaligned"]), (3, 1))
-
-    def test_a_step_where_nothing_aligns_before_any_best_keeps_growing(self) -> None:
-        table = Table({3000: {"a": math.inf}, 6000: {"a": 0.05}})
-        result = table.search([0, 1], spans("music", "music"))
-        self.assertEqual([end for _, end in table.windows], [3000, 6000])
-        self.assertEqual(result["best"]["step"], 1)
-        # Nothing aligning anywhere is no best at all, not a failure.
-        self.assertIsNone(Table({3000: {"a": math.inf}}).search([0], spans("music"))["best"])
-
-    def test_a_step_where_nothing_aligns_after_a_best_stops_at_once(self) -> None:
-        table = Table({3000: {"a": 0.05}, 6000: {"a": math.inf}, 9000: {"a": 0.01}})
-        result = table.search([0, 1, 2], spans("music", "music", "music"))
-        # Anchor: the step after would have been better.
-        self.assertLess(table.distances[9000]["a"], table.distances[3000]["a"])
-        self.assertEqual([end for _, end in table.windows], [3000, 6000])
-        self.assertEqual(result["best"]["step"], 0)
+    def test_an_entry_that_does_not_align_is_listed_but_never_ranked(self) -> None:
+        compared, apart = cover.ranked({"a": 0.07, "b": math.inf, "c": 0.12})
+        self.assertEqual([d.corpus_id for d in compared], ["a", "c"])
+        self.assertEqual(apart, ["b"])
 
     def test_any_other_answer_that_is_not_a_distance_still_fails(self) -> None:
         for bad in (float("nan"), -math.inf, -0.1):
             with self.assertRaises(cover.CoverError):
-                Table({3000: {"a": bad}}).search([0], spans("music"))
-
-
-class Runs(unittest.TestCase):
-    def test_talk_and_quiet_end_a_run_and_unknown_joins_one(self) -> None:
-        suggested = spans("talk", "music", "unknown", "music", "quiet", "music", "talk", "talk", "unknown")
-        self.assertEqual(cover.runs_of(suggested, cover.SEARCH["run_classes"]), [[1, 2, 3], [5], [8]])
-        self.assertEqual(cover.runs_of(spans("talk", "quiet"), cover.SEARCH["run_classes"]), [])
+                cover.ranked({"a": bad})
 
 
 class Prefilter(unittest.TestCase):
@@ -194,16 +66,6 @@ class Prefilter(unittest.TestCase):
         self.assertEqual(cover.prefilter(query, {"far": corpus["far"]}, Decimal("0.01")), ["far"])
         self.assertEqual(cover.prefilter(query, corpus, Decimal("1")), sorted(corpus))
         self.assertEqual(cover.prefilter(query, {}, Decimal("0.5")), [])
-
-    def test_the_search_compares_only_what_the_prefilter_keeps(self) -> None:
-        near = (1.0,) + (0.0,) * 11
-        far = (0.0,) * 6 + (1.0,) * 6
-        table = Table({3000: {"near": 0.2, "far": 0.01}}, means={"near": near, "far": far})
-        best = table.search([0], spans("music"))["best"]
-        # Anchor: the excluded entry would have been the closest.
-        self.assertLess(table.distances[3000]["far"], table.distances[3000]["near"])
-        self.assertEqual(table.compared, [(3000, ["near"])])
-        self.assertEqual([d.corpus_id for d in best["distances"]], ["near"])
 
 
 class Rounding(unittest.TestCase):
@@ -429,15 +291,26 @@ class CrossSimilarity(unittest.TestCase):
 
     def test_a_distance_that_is_not_a_number_is_left_to_essentia(self) -> None:
         # A nearly identical stack can make x.x - 2 x.y + y.y negative.
+        # Which nudge does it depends on the profiles' low bits, which differ
+        # between platforms, so the first of several that does is used.
         same = self.profiles["same"]
-        nudged = same.copy()
-        nudged[::3, 4] = numpy.nextafter(nudged[::3, 4], numpy.float32(2))
-        a, b = cover._profiles(same), cover._profiles(nudged)
-        stacks_a, stacks_b = cover._stacks(a), cover._stacks(numpy.roll(b, cover.transposition_index(a, b), axis=1))
-        distances = cover._matrix(cover._ordered_dot(stacks_a, stacks_a),
-                                  cover._ordered_dot(stacks_a[:, None], stacks_b[None, :]),
-                                  cover._ordered_dot(stacks_b, stacks_b))
-        self.assertTrue(numpy.isnan(distances).any())
+
+        def has_nan(nudged: numpy.ndarray) -> bool:
+            a, b = cover._profiles(same), cover._profiles(nudged)
+            stacks_a = cover._stacks(a)
+            stacks_b = cover._stacks(numpy.roll(b, cover.transposition_index(a, b), axis=1))
+            distances = cover._matrix(cover._ordered_dot(stacks_a, stacks_a),
+                                      cover._ordered_dot(stacks_a[:, None], stacks_b[None, :]),
+                                      cover._ordered_dot(stacks_b, stacks_b))
+            return bool(numpy.isnan(distances).any())
+        candidates = []
+        for step in (3, 2, 1):
+            for bin_ in (4, *range(12)):
+                nudged = same.copy()
+                nudged[::step, bin_] = numpy.nextafter(nudged[::step, bin_], numpy.float32(2))
+                candidates.append(nudged)
+        nudged = next((n for n in candidates if has_nan(n)), None)
+        self.assertIsNotNone(nudged, "no nudge made a distance that is not a number")
         with patch.object(cover, "_binarise", _bomb):
             self.assert_essentias(same, nudged)
 
@@ -689,6 +562,233 @@ class Alignment(unittest.TestCase):
             self.assertEqual(float(cover.serra09(alone)[0].max()), found.score)
             # Anchor: a real alignment, longer than one match.
             self.assertGreater(found.score, 1)
+
+
+def calibration_cheap(a: numpy.ndarray, b: numpy.ndarray) -> float:
+    """The quarter-rate distance as the calibration prototype first computed
+    it, copied here as written there: partitioned order statistics, both
+    directions' serra09, the smaller distance. Its inputs are already at the
+    quarter rate."""
+    k, kappa = 9, 0.095
+
+    def stack(x):
+        return numpy.ascontiguousarray(numpy.concatenate([x[i:len(x) - k + 1 + i] for i in range(k)], axis=1))
+
+    def oti(x, y):
+        mx, my = x.mean(0), y.mean(0)
+        return int(numpy.argmax([numpy.dot(mx, numpy.roll(my, s)) for s in range(12)]))
+
+    def binary(d):
+        kr = max(0, int(kappa * d.shape[1]) - 1)
+        kc = max(0, int(kappa * d.shape[0]) - 1)
+        rows = numpy.partition(d, kr, axis=1)[:, kr]
+        cols = numpy.partition(d, kc, axis=0)[kc]
+        return ((d <= rows[:, None]) & (d <= cols[None, :])).astype(numpy.float32)
+
+    if len(a) <= k + 1 or len(b) <= k + 1:
+        return math.inf
+    b = numpy.roll(b, oti(a, b), axis=1)
+    sa, sb = stack(a), stack(b)
+    d = (sa * sa).sum(1)[:, None] + (sb * sb).sum(1)[None, :] - 2 * (sa @ sb.T)
+    m = binary(d)
+    _, ab = cover.serra09(m)
+    _, ba = cover.serra09(numpy.ascontiguousarray(m.T))
+    return min(float(ab), float(ba))
+
+
+class QuarterRate(unittest.TestCase):
+    def test_frames_are_averaged_in_fours_renormalised_and_a_trailing_group_dropped(self) -> None:
+        profiles = numpy.zeros((10, 12), numpy.float32)
+        profiles[0:4, 0] = [1.0, 0.5, 0.5, 0.0]
+        profiles[0:4, 3] = 0.25
+        profiles[8:10] = 1.0  # a trailing group of two
+        reduced = cover.quarter_rate(profiles)
+        self.assertEqual(reduced.shape, (2, 12))
+        self.assertEqual(reduced.dtype, numpy.float32)
+        self.assertEqual(float(reduced[0, 0]), 1.0)
+        self.assertEqual(float(reduced[0, 3]), 0.5)
+        # A group of zero frames stays zero.
+        self.assertTrue(numpy.array_equal(reduced[1], numpy.zeros(12, numpy.float32)))
+
+    def test_order_statistics_by_sorted_keys_are_numpys_partition_with_ties_and_negative_zero(self) -> None:
+        rng = numpy.random.default_rng(1)
+        for case in range(60):
+            rows, columns = int(rng.integers(12, 300)), int(rng.integers(12, 200))
+            a = rng.random((rows, 108), dtype=numpy.float32)
+            b = rng.random((columns, 108), dtype=numpy.float32)
+            if case % 3 == 0:
+                b[:5] = a[:5]  # exact ties, and distances that round to -0 or below
+            an, bn = (a * a).sum(1), (b * b).sum(1)
+            for shift in (0, 1):
+                d = an[:, None] + bn[None, :]
+                d -= numpy.float32(2) * (a @ b.T)
+                kr = max(0, int(0.095 * columns) - shift)
+                kc = max(0, int(0.095 * rows) - shift)
+                wanted = ((d <= numpy.partition(d, kr, axis=1)[:, kr][:, None])
+                          & (d <= numpy.partition(d, kc, axis=0)[kc][None, :])).astype(numpy.float32)
+                self.assertTrue(numpy.array_equal(cover.binary_within(a, an, b, bn, shift), wanted))
+        keys = cover.order_keys(numpy.array([-0.0, 0.0, -1.5, 2.0, -3.0], numpy.float32))
+        self.assertEqual(keys[0], keys[1])
+        self.assertEqual(list(numpy.argsort(keys, kind="stable")), [4, 2, 0, 1, 3])
+
+    @needs_essentia
+    def test_the_distance_is_the_calibrated_one_bit_for_bit(self) -> None:
+        analyser = cover.Analyser()
+        corpus = {}
+        for name, chords, transpose, seed in (("same", support.PROGRESSION, -2, 4),
+                                              ("other", support.OTHER_PROGRESSION, 0, 5)):
+            samples = support.progression_samples(chords, 22050, transpose=transpose, seed=seed)
+            corpus[name] = analyser.features(samples.astype(numpy.float32)).profiles
+        query = analyser.features(support.progression_samples(support.PROGRESSION, 22050, seed=1)
+                                  .astype(numpy.float32)).profiles
+        rng = numpy.random.default_rng(3)
+        corpus["random"] = rng.random((400, 12), dtype=numpy.float32)
+        quarter = cover.QuarterRate(corpus)
+        got = quarter.distances(cover.quarter_rate(query), sorted(corpus))
+        for key in corpus:
+            self.assertEqual(got[key], calibration_cheap(cover.quarter_rate(query), cover.quarter_rate(corpus[key])),
+                             key)
+        # Anchor: the same progression in another key is closer than another one.
+        self.assertLess(got["same"], got["other"])
+        self.assertEqual(quarter.comparisons, 3)
+
+    def test_too_short_is_not_unaligned(self) -> None:
+        rng = numpy.random.default_rng(4)
+        quarter = cover.QuarterRate({"long": rng.random((200, 12), dtype=numpy.float32),
+                                     "short": rng.random((43, 12), dtype=numpy.float32)})
+        with self.assertRaises(cover.TooShort):
+            quarter.distances(cover.quarter_rate(rng.random((40, 12), dtype=numpy.float32)), ["long"])
+        query = cover.quarter_rate(rng.random((200, 12), dtype=numpy.float32))
+        # A reference of ten quarter-rate frames is left out and named, never infinite.
+        self.assertEqual(sorted(quarter.distances(query, ["long", "short"])), ["long"])
+        self.assertEqual(quarter.too_short(["long", "short"]), ["short"])
+        self.assertTrue(math.isfinite(quarter.distances(query, ["long"])["long"]))
+
+    def test_nothing_matching_is_infinity(self) -> None:
+        rng = numpy.random.default_rng(5)
+        quarter = cover.QuarterRate({"a": rng.random((200, 12), dtype=numpy.float32)})
+        query = cover.quarter_rate(rng.random((200, 12), dtype=numpy.float32))
+        # Anchor: these align.
+        self.assertTrue(math.isfinite(quarter.distances(query, ["a"])["a"]))
+        with patch.object(cover, "binary_within", lambda a, an, b, bn, shift: numpy.zeros((len(a), len(b)),
+                                                                                          numpy.float32)):
+            self.assertTrue(cover.unaligned(quarter.distances(query, ["a"])["a"]))
+
+
+@needs_essentia
+@needs_ffmpeg
+class MeasureWhole(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = support.scratch(self, "whole-")
+        samples = support.progression_samples(support.PROGRESSION, 44100, seed=1, repeats=1)
+        self.path = support.write_wav(self.tmp / "song.wav", samples, 44100)
+        self.length = len(samples)
+
+    def test_the_whole_recording_in_blocks_is_its_features_bit_for_bit(self) -> None:
+        analyser = cover.Analyser()
+        # Lengths whose analysis-rate sample counts fall on, just before, and
+        # just after the hop, and blocks that end mid-frame.
+        hop_in_source = 2048 * 2
+        for count in (self.length, 44100 * 5, 44100 * 5 + 1, 44100 * 5 - 1, hop_in_source * 40,
+                      hop_in_source * 40 + 3):
+            wanted = analyser.features(cover.load([cover.Piece(self.path, 0, count, 44100)])).profiles
+            for block in (1000, 2048, 3001, 1 << 20):
+                got = cover.measure_whole(self.path, 44100, count, block_samples=block, analyser=analyser)
+                self.assertEqual(got.shape, wanted.shape, (count, block))
+                self.assertTrue(numpy.array_equal(got, wanted), (count, block))
+        # Less than a hop: 500 samples at the analysis rate make two frames.
+        tiny = cover.measure_whole(self.path, 44100, 1000, analyser=analyser)
+        self.assertEqual(tiny.shape, (2, 12))
+
+    def test_the_audio_is_never_loaded_whole(self) -> None:
+        with patch.object(cover, "load", _bomb), patch.object(cover, "decode", _bomb):
+            profiles = cover.measure_whole(self.path, 44100, self.length, block_samples=4096)
+        self.assertEqual(len(profiles), math.ceil(self.length * 22050 / 44100 / 2048) + 1)
+
+    def test_a_short_decode_a_wrong_rate_and_a_failing_decoder_are_refused(self) -> None:
+        with self.assertRaisesRegex(cover.CoverError, "runs past its audio"):
+            cover.measure_whole(self.path, 44100, self.length + 44100)
+        with self.assertRaisesRegex(cover.CoverError, "is sampled at 44100 Hz"):
+            cover.measure_whole(self.path, 48000, 1000)
+        with self.assertRaisesRegex(cover.CoverError, "is empty"):
+            cover.measure_whole(self.path, 44100, 0)
+        with self.assertRaisesRegex(cover.CoverError, "ffmpeg could not run"):
+            cover.measure_whole(self.path, 44100, 1000, ffmpeg=str(self.tmp / "absent"))
+        from test_probe import fake_program
+        broken = fake_program(self.tmp, "ffmpeg-broken", 'echo "cannot decode" >&2; exit 1\n')
+        with self.assertRaisesRegex(cover.CoverError, "could not decode .*cannot decode"):
+            cover.measure_whole(self.path, 44100, 1000, ffmpeg=broken)
+
+
+class Software(unittest.TestCase):
+    def test_the_blas_library_is_named_with_a_version(self) -> None:
+        name, version = cover.blas()
+        self.assertNotEqual(name, "unknown")
+        self.assertNotEqual(version, "unknown")
+        with patch.object(numpy, "show_config", return_value={"Build Dependencies": {"blas": {
+                "name": "openblas", "version": "0.3.29"}}}):
+            self.assertEqual(cover.blas(), ("openblas", "0.3.29"))
+        with patch.object(numpy, "show_config", return_value={"Build Dependencies": {"blas": {
+                "name": "accelerate", "version": "unknown"}}}), \
+                patch.object(cover.platform, "mac_ver", return_value=("15.5", ("", "", ""), "arm64")):
+            self.assertEqual(cover.blas(), ("accelerate", "macOS 15.5"))
+
+    @needs_essentia
+    def test_the_software_is_the_profiles_the_blas_library_and_how_it_runs(self) -> None:
+        self.assertEqual(cover.software(), (*cover.profile_software(), cover.blas(),
+                                            ("blas-runtime", cover.blas_runtime())))
+
+    def test_blas_runs_one_thread_in_this_process_and_its_workers(self) -> None:
+        self.assertTrue(cover.blas_runtime().endswith(", 1 thread"))
+        self.assertNotIn("unknown", cover.blas_runtime())
+        for variable in cover.BLAS_THREAD_VARIABLES:
+            self.assertEqual(os.environ[variable], "1", variable)
+
+    def test_numpy_loaded_before_the_pin_is_refused(self) -> None:
+        # In a fresh interpreter: numpy first, with no thread variables set.
+        script = ("import numpy, cover\ntry:\n    cover.blas_runtime()\nexcept cover.CoverError as exc:\n"
+                  "    print('refused:', exc)\n")
+        env = {k: v for k, v in os.environ.items() if k not in cover.BLAS_THREAD_VARIABLES}
+        import subprocess
+        import sys
+        completed = subprocess.run([sys.executable, "-c", script], cwd=Path(cover.__file__).parent, env=env,
+                                   capture_output=True, text=True, check=True)
+        self.assertIn("refused: numpy was imported before cover.py pinned BLAS", completed.stdout)
+        # Anchor: cover first is accepted in the same interpreter.
+        completed = subprocess.run([sys.executable, "-c", script.replace("import numpy, cover", "import cover, numpy")
+                                    + "else:\n    print('pinned')\n"], cwd=Path(cover.__file__).parent, env=env,
+                                   capture_output=True, text=True, check=True)
+        self.assertEqual(completed.stdout.strip(), "pinned")
+
+    def test_a_kernel_that_cannot_be_asked_is_recorded_as_unknown(self) -> None:
+        openblas = {"Build Dependencies": {"blas": {"name": "scipy-openblas", "version": "0.3.29"}}}
+        accelerate = {"Build Dependencies": {"blas": {"name": "accelerate", "version": "unknown"}}}
+        with patch.object(numpy, "show_config", return_value=openblas), \
+                patch.object(cover, "_openblas_runtime", return_value=None):
+            self.assertTrue(cover.blas_runtime().startswith("unknown kernel on "))
+        with patch.object(numpy, "show_config", return_value=openblas), \
+                patch.object(cover, "_openblas_runtime", return_value=("Haswell", 1)):
+            self.assertEqual(cover.blas_runtime(), "Haswell, 1 thread")
+        with patch.object(numpy, "show_config", return_value=openblas), \
+                patch.object(cover, "_openblas_runtime", return_value=("Haswell", 8)), \
+                self.assertRaisesRegex(cover.CoverError, "OpenBLAS runs 8 threads"):
+            cover.blas_runtime()
+        with patch.object(numpy, "show_config", return_value=accelerate), \
+                patch.object(cover.subprocess, "run", side_effect=OSError("no sysctl")):
+            self.assertTrue(cover.blas_runtime().startswith("unknown kernel on "))
+        with patch.object(cover, "_BLAS_PINNED_AT_LOAD", False), \
+                self.assertRaisesRegex(cover.CoverError, "imported before cover.py pinned BLAS"):
+            cover.blas_runtime()
+
+    def test_openblas_is_asked_through_the_library_numpy_loaded(self) -> None:
+        # No OpenBLAS beside this numpy (Accelerate here) answers None; the
+        # lookup itself runs where numpy bundles OpenBLAS.
+        if "openblas" in cover.blas()[0]:
+            kernel, threads = cover._openblas_runtime()
+            self.assertEqual(threads, 1)
+            self.assertTrue(kernel)
+        else:
+            self.assertIsNone(cover._openblas_runtime())
 
 
 if __name__ == "__main__":

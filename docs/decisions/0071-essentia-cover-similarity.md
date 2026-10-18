@@ -1,6 +1,7 @@
 # 0071. Cover similarity is measured with Essentia, as the V2 system calibrated it
 
-Status: accepted
+Status: accepted; amended 2026-10-18, accepted the same day (window matches
+are decided by the quarter-rate distance, with near ties confirmed exactly)
 
 The work matcher in `enrich/` (ADR 0067) implements the cover-song measure of
 Serrà, Serra, and Andrzejak (2009) in numpy and scipy, under its own method
@@ -101,3 +102,182 @@ AGPL-3.0-or-later.
   maintain.
 - **Move every Python part to 3.14.** nixpkgs does not cache its 3.14 package
   set, so CI would compile scipy and the RDF stack from source.
+
+## Amendment, 2026-10-18: window matches are decided by the quarter-rate distance
+
+Status: accepted by the operator on 2026-10-18, who set its goal the same day:
+a window matcher about a hundred times faster than Essentia. The operator
+accepted this text with a near-tie margin of 0.02, one claim per suggested
+window naming only its closest Work, the method
+`archive-enrich/whole-recording-serra09`, and the quarter-rate scale beside
+Essentia's. Where it differs from the decision above, it replaces it.
+
+Deciding every window match by Essentia's exact distance costs too much.
+Today's growing-window search takes about 55 worker-hours on Essentia for the
+19.8 recording-hours of the calibration workset. On the bit-exact NumPy port it
+still takes about 7 CPU-hours. The operator asked for a matcher about a hundred
+times faster than Essentia, not eight.
+
+The whole-recording search in the amendment to
+[ADR 0072](0072-windowed-work-matches.md) searches in about 0.6 CPU-hours,
+or about 0.7 with measuring the recordings whole, which every row of the
+comparison below needs in some form. It decides with a cheaper distance and keeps the exact distance for the near ties
+the cheap one cannot settle.
+
+**The method of `enrich match-windows` is
+`archive-enrich/whole-recording-serra09` version 1.** It gets a new identifier
+because most of its scores are on a new scale. Steps 1 to 3 above are
+unchanged: the decoding, the frames, and the HPCP profiles. So is the pinned
+Essentia build, which still measures every profile. Claims already made under
+`archive-enrich/essentia-serra09` keep their method and scale, and nothing
+reinterprets them.
+
+**The quarter-rate distance** compares two profile sequences, a window's and a
+corpus occurrence's:
+
+1. Average each sequence over consecutive groups of 4 frames, then divide each
+   averaged frame by its largest bin (a frame of zeros stays zero). Drop a
+   trailing group of fewer than 4 frames. A sequence of 10 or fewer
+   quarter-rate frames is too short to compare. It is counted as such, never
+   as unaligned.
+2. Pick the key shift: of the 12 rotations of the occurrence's mean frame, the
+   first with the largest dot product with the window's mean frame. Rotate the
+   occurrence's bins by it.
+3. Stack every 9 consecutive frames into one vector. A sequence of n frames
+   gives n − 8 stacks.
+4. Compute the squared Euclidean distance of every pair of stacks in float32,
+   as |a|² + |b|² − 2 a·b, with the cross term taken from one matrix product.
+5. Set a cell to 1 when its distance is at most both its row's and its
+   column's order statistic. For a row or column of length m, that is the value
+   at zero-based index int(0.095 × m) − 1, never below 0, among its values
+   sorted from the smallest, with no interpolation.
+6. Score the matrix with serra09, the port of Essentia's recurrence with its
+   penalties. The other direction's matrix is the transpose of this one, so
+   the distance is the square root of the matrix's smaller dimension divided by
+   the best score, rounded to float32. That is the smaller of the two
+   directions' distances. When nothing matches, the distance is positive
+   infinity, and **No alignment is an answer** applies as above.
+7. Round the score half to even to four places, as above. Its scale is
+   `archive-enrich/whole-recording-serra09/quarter-rate-distance`, and lower is
+   closer.
+
+**A window is suggested** when its closest Work's quarter-rate score, the
+distance rounded to four places, is at or below 0.118. Its closest Work is the
+Work of its closest corpus occurrence, compared against every occurrence in
+the corpus.
+
+**Near ties are confirmed exactly.** Take a suggested window whose closest Work
+beats the next Work by less than 0.02, comparing the unrounded float
+distances (each Work's closest occurrence's).
+
+- That window is decided again by the exact distance: Essentia's distance, by
+  the bit-exact port, measured on the window's audio decoded afresh, not on a
+  slice of the whole recording's profiles.
+- It is compared with the occurrences of its candidate Works, and with the
+  half of the corpus the mean-chroma prefilter keeps.
+- It is suggested only when its exact score is at or below 0.08, for the
+  exact distance's closest Work.
+- Its claim then carries the exact score and the exact scale,
+  `archive-enrich/essentia-serra09/smaller-asymmetric-distance`. The scale is
+  how a reader tells the two kinds of claims apart.
+
+Every other window is decided by the quarter-rate distance alone, and the
+exact distance never runs for it.
+
+**The margin is 0.02, set by the operator on 2026-10-18.** The prototype
+fitted 0.01 on a scale where 0.118 maps to 0.08, which is 0.01475 in
+quarter-rate units, and the matcher was first built with that. Leave one
+recording out never chose 0.01475: choosing the limit and the margin together,
+the folds chose 0.03 sixteen times and 0.025 once. At 0.02 one more window is
+confirmed exactly than at 0.01475, 11 rather than 10, and its wrong suggestion
+is refused (quarter-rate 0.1130, exact 0.0828). At 0.03, 26 windows would be,
+for 3 fewer unaccepted suggestions and no fewer wrong ones.
+
+The prototype that fitted these rules applied them to the rescaled distance,
+written to six places: suggested at or below 0.08, a near tie below a margin of
+0.01. The rules above agree with it except within about 10⁻⁶ of a boundary,
+and in one band: a distance in (0.1180007, 0.11805] is suggested here and was
+not there. On the calibration workset no kept window lies within 0.0006 of
+0.118. The nearest margins to the cut of 0.02 are 0.0163 below it and 0.0211,
+0.0011 above it; a rule chosen on 98 occurrences is chosen in-sample, which
+the caveats in ADR 0072's amendment say.
+
+**Why exact equivalence is no longer the decision.** The exact distance was
+worth its cost because it carried the V2 system's measured false-positive rate.
+That rate was measured with the V2 system's growing-window search, which this
+amendment's companion retires.
+
+On the archive's own calibration workset, the new design compares as follows.
+The search with confirmed near ties made fewer wrong suggestions than the exact
+distance in today's search: 2 against 4 under the lenient rule, and 0 against 2
+under the strict rule. It also suggested 20 more accepted occurrences: 65
+against 45, and 56 against 38 under the strict rule. The quarter-rate distance
+alone made 6 wrong suggestions. The confirmation of near ties is what brings
+that down to 2. The measurements and their caveats are in
+[ADR 0072](0072-windowed-work-matches.md)'s amendment.
+
+**What stays exact:**
+
+- the profiles, from the pinned Essentia build;
+- the serra09 recurrence, the port used by every comparison;
+- the decision of every near tie: the full exact distance, on freshly decoded
+  audio;
+- the exact cross-similarity port, which is the near-tie path. It is also what
+  `cover.py <query> <reference>...` prints, under the
+  `archive-enrich/essentia-serra09` method as before.
+
+**Quarter-rate distances are not bit-identical across machines.** Their float32
+matrix products depend on the BLAS library numpy uses, on the kernel it runs
+on the CPU, and possibly on its thread count. So:
+
+- every process runs BLAS on one thread: `cover.py` pins it before numpy loads
+  the library, and the workers inherit the pin. A run whose numpy loaded BLAS
+  first is refused. The cost figures were measured this way;
+- a run records the library by its name and version (Accelerate reports no
+  version, so the macOS release that ships it stands in), and how it runs: the
+  kernel OpenBLAS chose for the CPU, or the CPU model for Accelerate, and the
+  one thread. Where the kernel cannot be asked, the run says so;
+- a run with other software, by that record, is another run.
+
+The tests check that one and two processes give the same bits on one machine,
+with these pins. On real recordings, the calibration workset was searched on
+an Apple M2 with Accelerate and on a Haswell ThinkPad with OpenBLAS, at the
+margin of 0.01475: the kept windows, hits, decisions, and judged counts were
+identical. 22,176 of the 22,177 quarter-rate distances were bit-equal; the
+other differed by 2.4 × 10⁻⁴, at rank 5, and changed no decision. All 552
+exact distances were bit-equal. That is two machines and one workset, not
+every library and kernel. On one Apple silicon machine, Accelerate gave the
+same bits on one thread and on its default.
+
+**The V2 thresholds describe only the exact scale.** The false-positive rate of
+one in 2,779 pairs, and the release threshold of about 0.11, apply to exact
+scores. Neither 0.118 nor 0.02 has a measured false-positive rate outside
+the calibration workset that chose them. That is an
+[open question](../open-questions.md).
+
+### Consequences of the amendment
+
+- A window match's score is on one of two scales, named in the claim. Scores on
+  different scales are never compared with each other.
+- Essentia remains a dependency. It measures the profiles, and the exact path
+  is checked against it bit for bit.
+- The thresholds are a recalibration, not a carry-over. They were fitted on 98
+  accepted occurrences, so the calibration harness checks them on any archive
+  before its suggestions are trusted.
+
+### Alternatives considered in the amendment
+
+- **Keep the exact distance for every decision, on the port.** It takes about
+  7 CPU-hours, about 11 times more. It suggested 45 accepted occurrences rather than
+  65, because reach comes from the search, not from the distance.
+- **Use the quarter-rate distance alone.** It takes 0.40 CPU-hours rather than
+  about 0.63, but makes 6 wrong suggestions against 2, all at near ties.
+- **Rescale quarter-rate scores so that 0.118 reads as 0.08.** The prototype
+  did this so it could reuse the old judge. A claim would then show a number on
+  Essentia's scale that Essentia never measured.
+- **Confirm near ties on slices of the whole-recording profiles.** It is free,
+  but a slice differs from a fresh measurement by 0.0034 at the median, and by
+  up to 0.108. That error is as large as the margins being decided. A fresh
+  decode costs about 2 CPU-seconds per window, and about 11 windows in 20
+  recording-hours need one. Each confirmation's exact comparisons cost about
+  77 CPU-seconds either way.

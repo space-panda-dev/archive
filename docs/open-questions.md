@@ -173,11 +173,36 @@ unsupported rather than guess.
   names no rule).
 - How does the archive record whether corpus audio is the operator's own
   recording or a commercial release? The V2 system suggested release matches
-  at a looser distance (about 0.11); until an origin is recorded, every corpus
-  entry is judged at 0.08
+  at a looser distance (about 0.11, on the exact scale); until an origin is
+  recorded, every corpus entry is judged alike, at 0.118 on the quarter-rate
+  scale and 0.08 on the exact one
   ([ADR 0071](decisions/0071-essentia-cover-similarity.md)).
-- Should the window search start from more than the first span of each run?
-  A single start reached 57.5% of accepted performances in the V2 system
+- Do the window matcher's thresholds hold outside the recordings that chose
+  them? The hit limit (0.20), the quarter-rate suggestion distance (0.118),
+  and the near-tie margin (0.02) were chosen on one calibration workset of
+  98 accepted occurrences, and leave-one-recording-out did not predict the
+  wrong suggestions that followed. They need a held-out set of recordings, and
+  a listening pass over the unaccepted suggestions, before their precision is a
+  claim ([ADR 0072](decisions/0072-windowed-work-matches.md), amendment of
+  2026-10-18).
+- Do quarter-rate distances agree across BLAS libraries closely enough that a
+  run on another machine suggests the same windows? Runs record the library,
+  its kernel, and its one thread. On the calibration workset, Accelerate on an
+  Apple M2 and OpenBLAS on a Haswell CPU made the same decisions, with all but
+  one of 22,177 quarter-rate distances bit-equal; other libraries and kernels
+  are unmeasured
+  ([ADR 0071](decisions/0071-essentia-cover-similarity.md)).
+- Should a window match name more than its closest Work? Each suggested window
+  claims one Work; the other Works within the distance are kept in the run's
+  regenerable answer, not claimed, and none of them has been judged
+  ([ADR 0072](decisions/0072-windowed-work-matches.md)).
+- Should the whole-recording search record more than its claims: hits,
+  alignment paths, or each corpus occurrence's presence along the recording?
+  Hits are computed and discarded; paths and presence are not computed
+  ([ADR 0072](decisions/0072-windowed-work-matches.md)).
+- How does the window matcher stay cheap as the corpus grows? Every corpus
+  occurrence passes along every recording, and an accepted occurrence makes the
+  next run search each recording again
   ([ADR 0072](decisions/0072-windowed-work-matches.md)).
 
 - How does a person's sensitivity claim select the content it covers ("the
