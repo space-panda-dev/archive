@@ -281,9 +281,9 @@ unsupported rather than guess.
     shared feature, so that extractors off the `frames` grid stop decoding
     again, at about 1.3 GB per four mono hours at 22,050 Hz?
   - When should a `frames` version keep each frame's spectral peaks, or a
-    summary of them (a deviation histogram, dissonance), so that `tonal`
-    stops repeating `frames`' peak picking? ADR 0074 says: when a second
-    extractor needs them.
+    summary of them (a deviation histogram, dissonance, a profile fine enough
+    to refer to any tuning), so that `tonal` stops repeating `frames`' peak
+    picking, twice? ADR 0074 says: when a second extractor needs them.
   - An entry belongs to one content. How is a feature of several contents
     (two recordings' cross-similarity) filed and keyed?
   - A stem is measured as content of its own

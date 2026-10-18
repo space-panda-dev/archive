@@ -1,8 +1,8 @@
 {
  "contract": "archive-extractor/1",
  "id": "tonal",
- "version": "2",
- "description": "Reference tuning and its drift (TuningFrequency on spectral peaks), key and scale (Key) and chords (ChordsDetection) from frames/hpcp, and sensory dissonance, by Essentia. Decodes again and repeats frames' spectral peak picking, which the bank does not hold: about twice the spectral cost (ADR 0074).",
+ "version": "3",
+ "description": "Reference tuning and its drift (a histogram of spectral peaks' distance from the tempered grid), pitch-class profiles of the treble and the bass referenced to that tuning, the key as a note collection with its tonic and mode, and sensory dissonance, by Essentia and NumPy. Decodes again and repeats frames' spectral peak picking, which the bank does not hold: about twice the spectral cost (ADR 0074). Version 3 replaces TuningFrequency, adds the profiles, mode, and key regions, and moves chords to the chords extractor.",
  "command": [
   "${python}",
   "tonal.py"
@@ -17,7 +17,6 @@
   "numpy"
  ],
  "needs": [
-  "frames/hpcp",
   "frames/rms_db"
  ],
  "parameters": {
@@ -61,30 +60,58 @@
   "gate": {
    "rms_db_min": -60
   },
+  "histogram": {
+   "relative_db": 40,
+   "max_frequency": 2000
+  },
   "pitched": {
    "block_frames": 54,
    "concentration_cents": 15,
    "min_sounding": "0.5",
-   "min_concentration": "0.4"
+   "min_concentration": "0.4",
+   "votes": "one-per-sounding-frame"
   },
   "tuning": {
-   "resolution": 1,
+   "estimator": "histogram-peak",
    "window_frames": 216,
    "hop_frames": 108,
-   "min_pitched": "0.5"
-  },
-  "key": {
-   "profileType": "temperley",
-   "pcpSize": 12,
-   "window_frames": 324,
-   "hop_frames": 162,
    "min_pitched": "0.5",
+   "min_confidence": "0.4",
+   "recording": "confidence-weighted-median",
    "max_detune_cents": 40
   },
-  "chords": {
-   "windowSize": "2",
-   "hopSize": 2048,
-   "sampleRate": 22050
+  "chroma": {
+   "treble_hz": [
+    100,
+    5000
+   ],
+   "bass_hz": [
+    40,
+    250
+   ],
+   "relative_db": 60,
+   "weighting": "cosine-squared",
+   "width_semitones": 1,
+   "reference": "local-tuning"
+  },
+  "key": {
+   "weights": {
+    "tonic": "5",
+    "fifth": "4.5",
+    "third": "4.25",
+    "scale": "3.75",
+    "outside": "2"
+   },
+   "bass_weight": "0.5",
+   "collections": [
+    "diatonic",
+    "harmonic minor",
+    "melodic minor"
+   ],
+   "collection_penalty": "0.02",
+   "window_frames": 324,
+   "hop_frames": 162,
+   "min_pitched": "0.5"
   },
   "dissonance": {
    "maxPeaks": 100,
@@ -98,12 +125,12 @@
    "columns": 1,
    "grid": "frames",
    "unit": "1",
-   "description": "1 where the frame sounds and its five-second block's spectral peaks agree on a tuning; 0 for silence, talk, and noise"
+   "description": "1 where the frame sounds and its five-second block's loud peaks below 2 kHz agree on a tuning; 0 for silence, talk, and noise"
   },
   "tuning_frequency": {
    "kind": "scalar",
    "unit": "Hz",
-   "description": "the frequency of A4 the pitched frames are tuned to; 440.0 with confidence 0 when no frame is pitched"
+   "description": "the frequency of A4 the recording is tuned to: the confidence-weighted median of the confident windows; 440.0 with confidence 0 when no window is confident"
   },
   "tuning_cents": {
    "kind": "scalar",
@@ -113,7 +140,7 @@
   "tuning_confidence": {
    "kind": "scalar",
    "unit": "1",
-   "description": "share of the sounding frames' peak magnitude within 15 cents of the tuning; 0 when no frame is pitched, about 0.31 for noise"
+   "description": "share of the sounding frames' loud peak magnitude below 2 kHz within 15 cents of the tuning; 0 when no window is confident, about 0.31 for noise"
   },
   "tuning_windows": {
    "kind": "series",
@@ -121,7 +148,7 @@
    "columns": 3,
    "grid": "tuning",
    "unit": "cents, 1, 1",
-   "description": "every window of about 20 s every 10 s, centred midway between its first and last frame's centres (the last may be shorter): its tuning in cents near tuning_cents (0 when it has no pitched frame), the confidence of that tuning over its sounding frames, and its share of pitched frames"
+   "description": "every window of about 20 s every 10 s, centred midway between its first and last frame's centres (the last may be shorter): its tuning in cents near tuning_cents (0 when it has no pitched frame), the concentration of its sounding frames' peaks about that tuning (its confidence), and its share of pitched frames; a window at least half pitched and at least 0.4 confident counts towards tuning_cents"
   },
   "tuning_drift": {
    "kind": "spans",
@@ -136,42 +163,68 @@
   "detuned": {
    "kind": "scalar",
    "unit": "1",
-   "description": "true when tuning_cents is more than 40 cents from 440 Hz, where the 440 Hz profiles split each pitch class; key, scale, key_strength, keys, chords, and their rates are then empty or 0"
+   "description": "true when tuning_cents is more than 40 cents from 440 Hz, where a profile referenced to 440 Hz (frames/hpcp) splits each pitch class over two bins; chroma, bass_chroma, and the key are referenced to the measured tuning and are not affected"
+  },
+  "detuned_spans": {
+   "kind": "spans",
+   "unit": "s",
+   "description": "the tuning_drift windows more than 40 cents from 440 Hz; value: the window's tuning in cents"
   },
   "key": {
    "kind": "scalar",
    "unit": "1",
-   "description": "tonic of the pitched frames' mean profile, as Essentia names notes (A, Bb, B, C, C#, D, Eb, E, F, F#, G, Ab); empty when no frame is pitched or detuned"
+   "description": "tonic of the pitched frames' profile, as Essentia names notes (A, Bb, B, C, C#, D, Eb, E, F, F#, G, Ab); empty when no frame is pitched"
   },
   "scale": {
    "kind": "scalar",
    "unit": "1",
-   "description": "major or minor; empty when no frame is pitched or detuned"
+   "description": "major for an ionian, lydian, or mixolydian mode, minor for any other; empty when no frame is pitched"
+  },
+  "mode": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "ionian, dorian, phrygian, lydian, mixolydian, aeolian, locrian, harmonic minor, or melodic minor; empty when no frame is pitched"
+  },
+  "scale_notes": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "the mode's seven notes from the tonic up, separated by spaces (F dorian: F G Ab Bb C D Eb); empty when no frame is pitched"
   },
   "key_strength": {
    "kind": "scalar",
    "unit": "1",
-   "description": "Key's strength; 0 when no frame is pitched or detuned"
+   "description": "correlation of the profile with the winning mode's template, -1 to 1; 0 when no frame is pitched"
+  },
+  "key_margin": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "how far key_strength leads the runner-up's (often a mode sharing its notes); 0 when no frame is pitched"
   },
   "keys": {
    "kind": "spans",
    "unit": "s",
-   "description": "windows of about 30 s every 15 s that are at least half pitched; label: key and scale; value: strength; none when detuned"
+   "description": "windows of about 30 s every 15 s that are at least half pitched; label: tonic and mode (F dorian); value: strength"
   },
-  "chords": {
+  "key_regions": {
    "kind": "spans",
    "unit": "s",
-   "description": "runs of one chord over pitched frames; label: Essentia's chord name; value: mean strength; none when detuned"
+   "description": "the keys windows laid end to end, each keeping the stretch nearer its centre than its neighbours', neighbours with one label merged; label: tonic and mode; value: duration-weighted strength"
   },
-  "chords_changes_rate": {
-   "kind": "scalar",
-   "unit": "1",
-   "description": "ChordsDescriptors' changes rate over the pitched frames; 0 when none or detuned"
+  "chroma": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 12,
+   "grid": "frames",
+   "unit": "energy",
+   "description": "pitch-class profile of the peaks from 100 to 5,000 Hz, bin 0 is A, referenced to the frame's tuning (the confident windows' tunings interpolated); not normalised; 0 below the level gate"
   },
-  "chords_number_rate": {
-   "kind": "scalar",
-   "unit": "1",
-   "description": "ChordsDescriptors' number rate over the pitched frames; 0 when none or detuned"
+  "bass_chroma": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 12,
+   "grid": "frames",
+   "unit": "energy",
+   "description": "the same from the peaks from 40 to 250 Hz"
   },
   "dissonance": {
    "kind": "series",
