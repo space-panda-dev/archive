@@ -215,8 +215,14 @@ is applied by whoever reads both the melody and the tuning.
   9; about 43 seconds in all, or roughly 14 minutes a recording-hour, of
   which `quality` and `melody` are three quarters
   ([`enrich/test_extractors.py`](../../enrich/test_extractors.py) measures
-  it). `stems` there ran a stand-in for the model, so its time says
-  nothing about Demucs. Real recordings have not been timed together.
+  it). That `rhythm` was version 1. Version 3, which adds tempo levels,
+  meter, and downbeats from spectral rows of its own, was timed later on
+  the same recording against version 1, alternately and twice each, on the
+  same Mac at a load average near 9: 37 to 38 times real time against 42
+  to 44, about an eighth slower, the cost of the rows' Fourier transforms
+  and two per-second support tables (the analysis after the rows took 5.6
+  CPU-seconds a recording-hour on a 70-minute album). `stems` there ran a
+  stand-in for the model, so its time says nothing about Demucs. Real recordings have not been timed together.
 - A stem separator runs in its own environment, named by configuration, and
   its stems are `file` outputs that later extractors need like any feature.
 - The plugin and dependency-injection frameworks

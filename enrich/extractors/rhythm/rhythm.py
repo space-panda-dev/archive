@@ -101,14 +101,17 @@ a recording-hour) and the gated beats:
   3:4, 1:1, 4:3, 3:2 and 2:1 of the tracker's tempo with the most onset
   support (the mean accent on the level's pulses at their best phase)
   times a log-normal preference for tempi near `prior_bpm` (`prior_octaves`
-  wide, which settles octaves the support cannot tell apart), through a
-  path that charges `level_switch_cost` per octave of change;
+  wide) and one centred on the tracker's own tempo (`tracker_octaves`
+  wide), through a path that charges `level_switch_cost` per octave of
+  change and starts afresh after a break without beats between takes;
   `tempo_support` (seconds grid, 7 columns): the support of 1:2, 2:3, 3:4,
   1:1, 4:3, 3:2 and 2:1 of that primary, the alternatives a reader may
   prefer;
 - `pulse` (events): the primary level's beats, each with its place in its
-  bar (1 the downbeat); `downbeats` (events): the bar lines, each with the
-  bar's length in beats and its meter;
+  bar (1 the downbeat), or 0 where the bar's place is a guess;
+  `downbeats` (events): the bar lines, each with the bar's length in beats
+  and its meter, only where they are clearly placed; `downbeat_margin`
+  (seconds grid): how clearly;
 - `tempo_spans` (spans): stretches of one tempo level (within 8%) and one
   meter (`4/4`, `3/4`, `5/4`, `7/4`, or with a ternary division of the beat
   `12/8`, `9/8`, `15/8`, `21/8`); `tempo_changes` (events): where one span
@@ -118,16 +121,44 @@ a recording-hour) and the gated beats:
 - scalars `primary_bpm` and `meter`, the level and the meter covering the
   most time.
 
+Octaves are a preference, not a measurement. Halving a level never loses
+onset support (every other pulse of a supported level is as supported), and
+doubling it loses only what the off-beats lack, so the support says which
+cross-rhythm is played but hardly which octave: on the album, the doubled
+level kept 57 to 93% of the counted level's support, and the counted level
+75 to 92% of its half's, ranges that overlap. The preference near `prior_bpm`
+decides, and the tracker's own octave counts as evidence beside it (a level
+an octave from the tracker needs about 13% more), which keeps a ballad at
+66 BPM with eighths at 66 where the preference alone made it 132. On the
+synthetic band this holds down to about 64 BPM; slower ballads with eighths
+are still read doubled, so a collection of slow material wants a lower
+`prior_bpm`. A change of level costs `level_switch_cost` per octave, but
+only within a take: after RESET_SECONDS without a tracker tempo (a break of
+at least `window_seconds` plus that), the path starts afresh, so a take's
+level does not depend on the take before it.
+
 The meter is how far apart the beat-by-beat pattern (where the harmony
 moves, the accents and the low accents) repeats; the downbeats are where a
 low accent and a move of the harmony fall, through a bar-position model in
 which a bar may end early (a bar of 2/4 in 4/4). On the album, beats per
-bar agreed with Spotify's time signature on 15 of 17 tracks and with a
-transcription's bars on 96 to 100% of three 4/4 songs' bars, but only 60%
-of one with a 5/4 section. On the one transcription aligned closely enough
-to check bar lines, the downbeats fell on one beat of its bar 89% of the
-time, but on its third beat, half a bar from its first: which of beats 1
-and 3 starts the bar is the weakest of these estimates.
+bar agreed with Spotify's time signature on 15 of 17 tracks, where always
+answering 4 agrees on 14, and with a transcription's bars on 96 to 100% of
+three 4/4 songs' bars (always 4: the same) but only 60% of one with a 5/4
+section (always 4: 57%; 10 of its 24 bars of 5/4 found). Same-tempo
+changes between 4/4 and 12/8 on three tracks are unverified.
+
+Downbeats are the weakest estimate. On that album they fell within a
+quarter-beat of a transcription's bar line on 0, 12, 21 and 25% of four
+tracks' bars, where chance is about 13%: dense playing puts low accents and
+harmonic moves on every beat. So each bar also gets a
+margin: over the four bars either side, the mean downbeat evidence on the
+bars' first beats less the largest on any other beat (robust z units). On
+the synthetic band, whose bar lines carry a kick and a chord change, it is
+2 to 4; over four-on-the-floor and a held chord it stays below 2, and on
+the album below 2 for 92% of bars. Only bars with a margin of at least
+`downbeat_margin` are published as downbeats or give their pulses a place;
+at the default the album keeps 145 of 1,842, still not reliably on bar
+lines, which a reader should treat as a hint.
 
 Invoked by the runner as `rhythm.py <request.json>`. The settings in
 `TUNABLE` may be configured; any other differing setting is refused.
@@ -156,7 +187,8 @@ SECOND = RATE
 ALIGN_MINIMUM = 8
 TUNABLE = {"min_tempo": (40, 180), "max_tempo": (60, 250), "subdivisions": (1, 12), "window_seconds": (2, 120),
            "chunk_seconds": (60, 3600), "overlap_seconds": (10, 600), "beat_gate_seconds": (1, 30),
-           "prior_bpm": (60, 180), "level_switch_cost": (0, 100)}
+           "prior_bpm": (60, 180), "tracker_octaves": (1, 10), "level_switch_cost": (0, 100),
+           "downbeat_margin": (0, 10)}
 
 
 class RhythmError(Exception):
@@ -177,7 +209,8 @@ def parameters() -> dict[str, Any]:
             "max_tempo": 208, "onsets": "OnsetRate", "chunk_seconds": 300, "overlap_seconds": 30,
             "beat_gate_seconds": 2, "beat_align_ms": 50, "edge_onset_ms": 25,
             "window_seconds": 10, "subdivisions": 4, "accents": "spectral flux", "accent_frame": meter.FRAME,
-            "accent_hop": meter.HOP, "prior_bpm": 120, "prior_octaves": 1, "level_switch_cost": 20,
+            "accent_hop": meter.HOP, "prior_bpm": 120, "prior_octaves": 1, "tracker_octaves": 2,
+            "level_switch_cost": 20, "downbeat_margin": 2,
             "meters": list(meter.METERS)}
 
 
@@ -490,6 +523,19 @@ def events(times: list[float]) -> list[dict[str, float]]:
     return [{"time": round(t, 6)} for t in times]
 
 
+def per_second(times: numpy.ndarray, values: numpy.ndarray, rows: int, longest: float) -> numpy.ndarray:
+    """For each second k, the value of the last of the sorted `times` at or
+    before k, if it is no more than `longest` seconds before; 0 otherwise."""
+    found = numpy.zeros(rows)
+    if not len(times):
+        return found
+    seconds = numpy.arange(rows, dtype=numpy.float64)
+    index = numpy.searchsorted(times, seconds, side="right") - 1
+    near = (index >= 0) & (seconds - times[numpy.maximum(index, 0)] <= longest)
+    found[near] = numpy.asarray(values, numpy.float64)[index[near]]
+    return found
+
+
 def metrical(found: Measured, beats: list[float], tempo: numpy.ndarray,
              config: dict[str, Any]) -> tuple[dict[str, numpy.ndarray], dict[str, list[dict[str, Any]]],
                                               dict[str, Any]]:
@@ -498,16 +544,21 @@ def metrical(found: Measured, beats: list[float], tempo: numpy.ndarray,
     found_levels = meter.analyse(beats, tempo, meter.Rows.join(found.rows), config)
     starts = numpy.flatnonzero(found_levels.position == 0)
     lengths = meter.bar_lengths(found_levels.position)
+    # A bar's place is published only where its downbeat is clearly placed: elsewhere another phase of the bar
+    # fits the evidence about as well, and a bar line one or two beats off misleads more than none.
+    placed = found_levels.margin >= config["downbeat_margin"]
     items = {
-        "pulse": [{"time": round(float(t), 6), "value": int(p) + 1}
-                  for t, p in zip(found_levels.pulse, found_levels.position)],
+        "pulse": [{"time": round(float(t), 6), "value": int(p) + 1 if sure else 0}
+                  for t, p, sure in zip(found_levels.pulse, found_levels.position, placed)],
         "downbeats": [{"time": round(float(found_levels.pulse[i]), 6), "value": int(n),
-                       "label": found_levels.labels[i]} for i, n in zip(starts, lengths)],
+                       "label": found_levels.labels[i]} for i, n in zip(starts, lengths) if placed[i]],
         "tempo_spans": [{"start": round(span.start, 6), "end": round(span.end, 6), "value": round(span.bpm, 3),
                          "label": span.label} for span in found_levels.spans],
         "tempo_changes": found_levels.changes}
     rows_out = {"primary_tempo": found_levels.primary.astype("<f4").reshape(-1, 1),
-                "tempo_support": found_levels.alternatives.astype("<f4")}
+                "tempo_support": found_levels.alternatives.astype("<f4"),
+                "downbeat_margin": per_second(found_levels.pulse, found_levels.margin, len(tempo),
+                                              60.0 / config["min_tempo"]).astype("<f4").reshape(-1, 1)}
     return rows_out, items, {"primary_bpm": found_levels.primary_bpm, "meter": found_levels.meter}
 
 

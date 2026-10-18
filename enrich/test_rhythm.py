@@ -75,11 +75,14 @@ def burst(seconds: float, decay: float, amplitude: float, seed: int, tone: float
 CHORDS = ((220.0, 277.18, 329.63), (246.94, 293.66, 369.99), (196.0, 246.94, 293.66), (174.61, 220.0, 261.63))
 
 
-def band(sections: list[tuple[float, float, int, int]], seed: int = 0) -> tuple[numpy.ndarray, numpy.ndarray]:
+def band(sections: list[tuple[float, float, int, int]], seed: int = 0,
+         marked: bool = True) -> tuple[numpy.ndarray, numpy.ndarray]:
     """A drum kit and a chord a bar, section by section: (seconds, beat
     length in seconds, beats per bar, hats per beat). A kick on each bar's
     first beat, a snare on its even beats (2 and 4 in 4/4), a hat on every
-    division of every beat. Returns the samples and the bar lines."""
+    division of every beat. Unless `marked`, nothing marks the bar line: a
+    kick on every beat and one chord throughout, as in four-on-the-floor
+    over a held harmony. Returns the samples and the bar lines."""
     total = sum(section[0] for section in sections) + 1
     samples = numpy.random.default_rng(seed).normal(0, 0.002, int(total * RATE))
     kick = burst(0.25, 200, 0.3, seed + 3, tone=55.0)
@@ -90,25 +93,31 @@ def band(sections: list[tuple[float, float, int, int]], seed: int = 0) -> tuple[
         end = min(len(samples), first + len(sound))
         samples[first:end] += sound[:end - first]
 
+    def chord(at: float, seconds: float, notes: tuple[float, ...]) -> None:
+        length = int(seconds * RATE)
+        t = numpy.arange(length) / RATE
+        fade = numpy.minimum(1, (length - numpy.arange(length)) / 2000)
+        first = int(round(at * RATE))
+        samples[first:first + length] += 0.06 * fade * sum(
+            numpy.sin(2 * numpy.pi * f * t) for f in notes)[:len(samples) - first]
+
     bars, start = [], 0.5
     for seconds, beat, per_bar, division in sections:
         at = start
         while at + beat * per_bar <= start + seconds:
             bars.append(at)
             for b in range(per_bar):
-                if b == 0:
-                    place(kick, at)
-                elif b % 2 == 1:
+                if b == 0 or not marked:
+                    place(kick, at + b * beat)
+                if b % 2 == 1:
                     place(snare, at + b * beat)
                 for d in range(division):
                     place(hat, at + (b + d / division) * beat)
-            length = int(beat * per_bar * RATE)
-            t = numpy.arange(length) / RATE
-            fade = numpy.minimum(1, (length - numpy.arange(length)) / 2000)
-            first = int(round(at * RATE))
-            samples[first:first + length] += 0.06 * fade * sum(
-                numpy.sin(2 * numpy.pi * f * t) for f in CHORDS[len(bars) % len(CHORDS)])[:len(samples) - first]
+            if marked:
+                chord(at, beat * per_bar, CHORDS[len(bars) % len(CHORDS)])
             at += beat * per_bar
+        if not marked:
+            chord(start, at - start, CHORDS[0])
         start = at
     return samples, numpy.asarray(bars)
 
@@ -417,6 +426,50 @@ class Levels(unittest.TestCase):
         self.assertGreater(numpy.count_nonzero(numpy.diff(flicker)), 20)  # anchor: the evidence alternates
         self.assertEqual(numpy.count_nonzero(numpy.diff(steady)), 0)
 
+    def test_a_take_s_level_does_not_depend_on_the_take_before(self) -> None:
+        # Take A at 140 BPM, then take B at 72 whose 1:1 is best supported, its 3:2 (108) next, its 1:2 last.
+        one, cross, half = (meter.RELATION_NAMES.index(name) for name in ("1:1", "3:2", "1:2"))
+
+        def take(bpm: float, seconds: int, supports: dict[int, float]) -> tuple[numpy.ndarray, numpy.ndarray]:
+            table = numpy.full((seconds, len(meter.RELATIONS)), 0.05)
+            for column, value in supports.items():
+                table[:, column] = value
+            return numpy.full(seconds, bpm), table
+
+        a_tempo, a_table = take(140.0, 60, {one: 0.9})
+        b_tempo, b_table = take(72.0, 60, {one: 0.9, cross: 0.6, half: 0.5})
+        alone, _ = meter.primary_levels(b_table, b_tempo, self.config)
+        self.assertTrue(numpy.allclose(alone, 72))
+        for gap in (meter.RESET_SECONDS, 30, 600):
+            with self.subTest(gap=gap):
+                tempo = numpy.concatenate((a_tempo, numpy.zeros(gap), b_tempo))
+                table = numpy.vstack((a_table, numpy.zeros((gap, len(meter.RELATIONS))), b_table))
+                primary, _ = meter.primary_levels(table, tempo, self.config)
+                self.assertTrue(numpy.allclose(primary[:60], 140))
+                self.assertTrue(numpy.allclose(primary[-60:], 72), primary[-60:])
+        # Anchor: within a take (a break shorter than RESET_SECONDS) the cost of a change still holds the level.
+        short = meter.RESET_SECONDS - 1
+        tempo = numpy.concatenate((a_tempo, numpy.zeros(short), b_tempo))
+        table = numpy.vstack((a_table, numpy.zeros((short, len(meter.RELATIONS))), b_table))
+        held, _ = meter.primary_levels(table, tempo, self.config)
+        self.assertTrue(numpy.allclose(held[-60:], 108), held[-60:])
+
+    def test_the_tracker_s_octave_counts_where_the_support_hardly_differs(self) -> None:
+        # A ballad at 66 BPM with eighths: the doubled level's pulses are half the beats and half the weaker
+        # eighths, so its support is about 0.72 of the beat's (measured on the band below); halving it never
+        # loses support.
+        seconds = 30
+        table = numpy.full((seconds, len(meter.RELATIONS)), 0.2)
+        table[:, meter.RELATION_NAMES.index("1:1")] = 0.8
+        table[:, meter.RELATION_NAMES.index("2:1")] = 0.72 * 0.8
+        table[:, meter.RELATION_NAMES.index("1:2")] = 0.85
+        tempo = numpy.full(seconds, 66.0)
+        counted, _ = meter.primary_levels(table, tempo, self.config)
+        doubled, _ = meter.primary_levels(table, tempo, {**self.config, "tracker_octaves": 10})
+        # Anchor: the preference near prior_bpm alone doubles it.
+        self.assertTrue(numpy.allclose(doubled, 132))
+        self.assertTrue(numpy.allclose(counted, 66))
+
     def test_seconds_without_beats_have_no_primary_and_no_alternatives(self) -> None:
         seconds = 40
         beats = numpy.arange(20.5, 39, 0.5)
@@ -475,6 +528,31 @@ class Meter(unittest.TestCase):
         steady = meter.bar_positions(numpy.zeros(12), numpy.full(12, 3))
         self.assertTrue(numpy.all(numpy.diff(numpy.flatnonzero(steady == 0)) == 3))
         self.assertEqual(len(meter.bar_positions(numpy.zeros(0), numpy.zeros(0, int))), 0)
+
+    def test_a_bar_s_margin_is_how_much_better_its_downbeat_fits_than_another_phase(self) -> None:
+        count = 40
+        per_bar = numpy.full(count, 4)
+        position = numpy.arange(count) % 4
+        clear = numpy.zeros(count)
+        clear[position == 0] = 3.0
+        self.assertTrue(numpy.allclose(meter.bar_margins(clear, position, per_bar), 3.0))
+        # The evidence on the third beat as on the first: half a bar off fits as well, so the margin is 0.
+        halves = clear.copy()
+        halves[position == 2] = 3.0
+        self.assertTrue(numpy.allclose(meter.bar_margins(halves, position, per_bar), 0.0))
+        # Evidence on another beat than the downbeat: below 0.
+        self.assertTrue(numpy.all(meter.bar_margins(numpy.roll(clear, 1), position, per_bar) < 0))
+        # Pulses before the first downbeat, and too few bars to compare: 0, not a margin.
+        late = (numpy.arange(count) - 2) % 4
+        self.assertTrue(numpy.all(meter.bar_margins(clear, late, per_bar)[:2] == 0))
+        self.assertTrue(numpy.all(meter.bar_margins(clear[:6], position[:6], per_bar[:6]) == 0))
+        self.assertEqual(len(meter.bar_margins(numpy.zeros(0), numpy.zeros(0, int), numpy.zeros(0, int))), 0)
+
+    def test_a_value_each_second_is_the_last_event_s_while_it_is_near(self) -> None:
+        times = numpy.asarray([0.5, 1.5, 6.0])
+        found = rhythm.per_second(times, numpy.asarray([1.0, 2.0, 3.0]), 9, 1.5)
+        self.assertEqual(list(found), [0.0, 1.0, 2.0, 2.0, 0.0, 0.0, 3.0, 3.0, 0.0])
+        self.assertEqual(list(rhythm.per_second(numpy.zeros(0), numpy.zeros(0), 3, 1.5)), [0.0] * 3)
 
     def test_downbeat_evidence_is_where_the_low_accent_and_the_harmony_change(self) -> None:
         seconds = 30
@@ -605,7 +683,7 @@ class Rhythm(unittest.TestCase):
                                                    "first_centre": 30 * RATE})
         self.assertTrue(numpy.all(entry.series("onset_count")[5:70] >= 18))
         for name in ("tempo", "onset_count", "onset_deviation", "offgrid", "chunk_bpm", "chunk_confidence",
-                     "primary_tempo", "tempo_support"):
+                     "primary_tempo", "tempo_support", "downbeat_margin"):
             self.assertTrue(numpy.isfinite(entry.series(name)).all(), name)
         # One level across the seam: the pulse is the beats, every one supported.
         self.assertTrue(numpy.allclose(entry.series("primary_tempo")[5:70], 120, atol=1.5))
@@ -652,6 +730,9 @@ class Rhythm(unittest.TestCase):
                 first = counts.index(1)
                 self.assertEqual(counts[first:first + 2 * per_bar], list(range(1, per_bar + 1)) * 2)
                 self.assertTrue(set(down) <= {p["time"] for p in pulse})
+                # A kick and a chord change on every bar line: the bars are clearly placed.
+                margin = entry.series("downbeat_margin")[10:35, 0]
+                self.assertGreater(numpy.median(margin), rhythm.parameters()["downbeat_margin"])
 
     def test_twelve_eight_into_four_four_on_one_grid_is_a_change_of_meter(self) -> None:
         # Triplet eighths at a dotted quarter of 80 BPM, then sixteenths at a quarter of 60: 240 a minute throughout.
@@ -671,6 +752,60 @@ class Rhythm(unittest.TestCase):
         changes = entry.items("tempo_changes")
         self.assertEqual([c["label"] for c in changes], ["meter"])
         self.assertAlmostEqual(changes[0]["time"], spans[1]["start"])
+
+    def test_bar_lines_nothing_marks_are_not_published(self) -> None:
+        # Four on the floor over one held chord: every beat alike, so no phase of the bar is better than another.
+        directory = scratch(self)
+        samples, bars = band([(45, 0.6, 4, 2)], marked=False)
+        audio = support.write_wav(directory / "four-on-the-floor.wav", samples, RATE)
+        code, answer = run(directory, audio)
+        self.assertEqual(code, 0, answer)
+        entry = entry_of(directory, audio)
+        pulse = entry.items("pulse")
+        self.assertGreater(len(pulse), 0.8 * 4 * len(bars))  # anchor: the beat is found
+        self.assertAlmostEqual(entry.scalar("primary_bpm"), 100, delta=2)
+        self.assertLess(entry.series("downbeat_margin").max(), rhythm.parameters()["downbeat_margin"])
+        self.assertEqual(entry.items("downbeats"), [])
+        self.assertEqual({p["value"] for p in pulse}, {0})
+
+    def test_a_slow_ballad_is_counted_where_the_tracker_counts_it(self) -> None:
+        # 66 BPM with eighths on the hats: the preference near 120 BPM alone would make it 132.
+        directory = scratch(self)
+        samples, _ = band([(45, 60 / 66, 4, 2)])
+        audio = support.write_wav(directory / "ballad.wav", samples, RATE)
+        code, answer = run(directory, audio)
+        self.assertEqual(code, 0, answer)
+        entry = entry_of(directory, audio)
+        self.assertAlmostEqual(entry.scalar("bpm"), 66, delta=1.5)  # anchor: the tracker counts 66
+        self.assertAlmostEqual(entry.scalar("primary_bpm"), 66, delta=1.5)
+        self.assertEqual(entry.scalar("meter"), "4/4")
+
+    def test_takes_between_room_noise_are_each_measured_on_their_own(self) -> None:
+        # A rehearsal: takes at 100 in 4/4, 140 in 3/4 and 72 in 12/8, 30 s of room noise between, a floor
+        # of pink noise 50 dB down throughout. The 12/8 take used to inherit the 3/4 take's level.
+        directory = scratch(self)
+        takes = [band([(40, 0.6, 4, 2)], seed=1)[0], band([(40, 60 / 140, 3, 2)], seed=2)[0],
+                 band([(45, 60 / 72, 4, 3)], seed=3)[0]]
+        gap = numpy.zeros(30 * RATE)
+        samples = numpy.concatenate((takes[0], gap, takes[1], gap, takes[2]))
+        white = numpy.fft.rfft(numpy.random.default_rng(9).normal(0, 1, len(samples)))
+        white[1:] /= numpy.sqrt(numpy.arange(1, len(white)))
+        pink = numpy.fft.irfft(white, len(samples))
+        samples = samples + pink / numpy.sqrt(numpy.mean(pink ** 2)) * 10 ** (-50 / 20)
+        audio = support.write_wav(directory / "rehearsal.wav", samples, RATE)
+        code, answer = run(directory, audio)
+        self.assertEqual(code, 0, answer)
+        entry = entry_of(directory, audio)
+        spans = entry.items("tempo_spans")
+        self.assertEqual([s["label"] for s in spans], ["4/4", "3/4", "12/8"], spans)
+        for span, bpm in zip(spans, (100, 140, 72)):
+            self.assertAlmostEqual(span["value"], bpm, delta=2)
+        # Nothing is counted in the room noise between takes.
+        starts = numpy.cumsum([0.0] + [len(t) / RATE + 30 for t in takes])
+        for end_of_take, next_take in zip(starts[:-1] + [len(t) / RATE for t in takes], starts[1:]):
+            pulse = times(entry, "pulse")
+            self.assertEqual(list(pulse[(pulse > end_of_take + 1) & (pulse < next_take)]), [])
+        self.assertEqual(entry.items("tempo_changes"), [])  # takes 30 s apart are not compared
 
     def test_loose_playing_is_further_off_the_grid_than_tight(self) -> None:
         directory = scratch(self)
@@ -761,6 +896,8 @@ class Rhythm(unittest.TestCase):
         self.assertEqual(entry.series("tempo_support").shape, (20, 7))
         self.assertTrue(numpy.all(entry.series("primary_tempo") == 0))
         self.assertTrue(numpy.all(entry.series("tempo_support") == 0))
+        self.assertEqual(entry.series("downbeat_margin").shape, (20, 1))
+        self.assertTrue(numpy.all(entry.series("downbeat_margin") == 0))
 
     def test_beats_are_not_invented_in_the_silence_before_playing(self) -> None:
         directory = scratch(self)

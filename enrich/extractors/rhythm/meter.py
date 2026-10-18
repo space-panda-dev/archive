@@ -14,9 +14,11 @@ the tracker's beats into:
   support is the mean accent found on its pulses. Support alone cannot tell
   octaves apart (every other beat of a well-supported level is as well
   supported), so a broad preference for tempi near `prior_bpm` (a
-  log-normal, `prior_octaves` wide) weighs it, and a cost for changing level
+  log-normal, `prior_octaves` wide) and one for the tracker's own octave
+  (`tracker_octaves` wide) weigh it, and a cost for changing level
   (`level_switch_cost` per octave of change) keeps the choice from flickering
-  between levels the tracker switches between;
+  between levels the tracker switches between, within a take: after a break
+  without beats the path starts afresh;
 - `pulse`: the beats of the primary level, derived from the tracker's beats
   by the chosen relation;
 - the beat's *division*, binary or ternary, from whether the accents
@@ -25,7 +27,10 @@ the tracker's beats into:
   moves, the accents, the low accents) repeats: a bar of m beats makes beats
   m and 2m apart alike;
 - *downbeats*, by a bar-position model over the pulses whose evidence is a
-  low-frequency accent and a change of chroma at the bar line;
+  low-frequency accent and a change of chroma at the bar line, and each
+  bar's *margin*: how much better its downbeat fits that evidence than any
+  other phase of the bar, so a reader (and `rhythm.py`) can tell a placed
+  bar line from a guess;
 - *spans* of steady tempo and meter, and the *changes* between them: a
   change across which the beat or one of its subdivisions persists is a
   change of meter, not of tempo.
@@ -61,6 +66,11 @@ DIVISION_SECONDS = 0.012  # how far from a half, quarter or third its accent is 
 SPAN_TOLERANCE = 0.08  # tempi within 8% are one level; 4:3 is 33% apart
 MINIMUM_SPAN_SECONDS = 8.0
 CHANGE_GAP_SECONDS = 4.0  # spans further apart are not compared
+MARGIN_BARS = 4  # how many bars either side a downbeat's margin is measured over
+# Seconds with no tracker tempo after which the level path starts afresh (no cost to change). The tempo is
+# measured over a window (window_seconds), so this many seconds at 0 is a break of at least the window plus
+# this long with no beat: between takes, not inside one.
+RESET_SECONDS = int(CHANGE_GAP_SECONDS)
 
 
 # -- spectral rows ------------------------------------------------------------
@@ -250,9 +260,19 @@ def primary_levels(table: numpy.ndarray, tempo: numpy.ndarray, config: dict[str,
                                                                                                 numpy.ndarray]:
     """The primary level each second, by Viterbi over the RELATIONS of the
     tracker's tempo that lie in [min_tempo, max_tempo]: each second scores
-    log(support x preference), and a change of level from one second to the
-    next costs `level_switch_cost` per octave changed. Returns the primary
-    tempo (0 where the tracker has none) and the index of its relation."""
+    log(support x preference x tracker preference), and a change of level
+    from one second to the next costs `level_switch_cost` per octave changed,
+    except across a break of RESET_SECONDS without beats, after which the
+    path starts afresh. The preference (near `prior_bpm`) settles what the
+    support cannot: a level's support never falls when it is halved (every
+    other pulse of a supported level is as supported), so support alone
+    would always choose the slowest. The tracker preference (a log-normal
+    centred on the tracker's own tempo, `tracker_octaves` wide) counts the
+    tracker's choice as evidence too, so a level an octave from it needs
+    about 13% more support x preference at the default width: without it, a
+    ballad at 66 BPM with eighths, which the tracker counts right, was
+    doubled by the preference alone. Returns the primary tempo (0 where the
+    tracker has none) and the index of its relation."""
     rows = len(tempo)
     ratios = numpy.asarray([float(r) for r in RELATIONS])
     if not rows:
@@ -261,21 +281,28 @@ def primary_levels(table: numpy.ndarray, tempo: numpy.ndarray, config: dict[str,
     candidates = tempo[:, None] * ratios[None, :]
     allowed = (tempo[:, None] > 0) & (candidates >= config["min_tempo"]) & (candidates <= config["max_tempo"])
     safe = numpy.where(allowed, candidates, 1.0)
-    score = numpy.where(allowed, numpy.log(table * preference(safe, config["prior_bpm"], config["prior_octaves"])
-                                           + 1e-3), -1e9)
+    weight = preference(safe, config["prior_bpm"], config["prior_octaves"]) * preference(
+        ratios, 1.0, config["tracker_octaves"])[None, :]
+    score = numpy.where(allowed, numpy.log(table * weight + 1e-3), -1e9)
     score[tempo <= 0] = 0.0
     cost = config["level_switch_cost"]
     total = score[0].copy()
     back = numpy.zeros((rows, len(RELATIONS)), int)
     back[0] = numpy.arange(len(RELATIONS))
     previous = safe[0] if tempo[0] > 0 else None
+    beatless = 0
     for k in range(1, rows):
         if tempo[k] <= 0:
             back[k] = numpy.arange(len(RELATIONS))
+            beatless += 1
             continue
-        if previous is None:  # the first second with beats: nothing to change from
-            previous = safe[k]
-        change = -cost * numpy.abs(numpy.log2(safe[k][None, :] / previous[:, None]))
+        if previous is None or beatless >= RESET_SECONDS:
+            # The first second with beats, or the first after a break as long as one between takes: nothing to
+            # change from, so a take's level does not depend on the take before it.
+            change = numpy.zeros((len(RELATIONS), len(RELATIONS)))
+        else:
+            change = -cost * numpy.abs(numpy.log2(safe[k][None, :] / previous[:, None]))
+        beatless = 0
         options = total[:, None] + change
         back[k] = numpy.argmax(options, axis=0)
         total = options[back[k], numpy.arange(len(RELATIONS))] + score[k]
@@ -513,6 +540,31 @@ def bar_positions(evidence: numpy.ndarray, per_bar: numpy.ndarray, reset_cost: f
     return position
 
 
+def bar_margins(evidence: numpy.ndarray, position: numpy.ndarray, per_bar: numpy.ndarray,
+                bars: int = MARGIN_BARS) -> numpy.ndarray:
+    """For each pulse, how clearly its bar's downbeat is where the evidence
+    puts bar lines: over the `bars` bars either side of the bar's downbeat,
+    the mean evidence at the bars' first beats less the largest mean at any
+    other beat of the bar (the bar shifted by 1 to m - 1 beats), in the
+    evidence's units (robust z). Near 0 or below, another phase of the bar
+    fits as well, and the downbeat is a guess; 0 for pulses before the first
+    downbeat or with fewer than two bars around them."""
+    count = len(evidence)
+    margins = numpy.zeros(count)
+    starts = numpy.flatnonzero(position == 0)
+    for j, first in enumerate(starts):
+        m = int(per_bar[first])
+        low, high = starts[max(0, j - bars)], starts[min(len(starts) - 1, j + bars)]
+        around = numpy.arange(low, high)
+        if m < 2 or len(around) < 2 * m:
+            continue
+        place = (around - first) % m
+        means = numpy.asarray([evidence[around[place == s]].mean() for s in range(m)])
+        end = starts[j + 1] if j + 1 < len(starts) else count
+        margins[first:end] = means[0] - means[1:].max()
+    return margins
+
+
 # -- spans and changes -------------------------------------------------------
 
 def meter_label(per_bar: int, division: int) -> str:
@@ -638,6 +690,7 @@ class Analysis:
     pulse: numpy.ndarray
     position: numpy.ndarray  # each pulse's place in its bar, 0 the downbeat
     per_bar: numpy.ndarray  # each pulse's bar length in beats
+    margin: numpy.ndarray  # each pulse's bar_margins: how clearly its bar's downbeat is placed
     labels: list[str]
     spans: list[Span]
     changes: list[dict[str, Any]]
@@ -663,17 +716,20 @@ def analyse(beats: Sequence[float], tempo: numpy.ndarray, rows: Rows, config: di
     pulse = primary_pulse(beats, peak, tempo, path, longest)
     if len(pulse) < 2:
         empty = numpy.zeros(0, int)
-        return Analysis(primary, alternatives, pulse, empty, empty, [], [], [], 0.0, "")
+        return Analysis(primary, alternatives, pulse, empty, empty, numpy.zeros(len(pulse)), [], [], [], 0.0, "")
     division = divisions(pulse, accent)
     per_beat = meters(meter_scores(repetition(beat_patterns(pulse, peak, low, rows.chroma))))
     # Each pulse takes the meter and division of the beat it starts; the last, its predecessor's.
     per_bar = numpy.concatenate((per_beat, per_beat[-1:]))
     division_each = numpy.concatenate((division, division[-1:]))
-    position = bar_positions(downbeat_evidence(pulse, low, rows.chroma), per_bar)
+    evidence = downbeat_evidence(pulse, low, rows.chroma)
+    position = bar_positions(evidence, per_bar)
+    margin = bar_margins(evidence, position, per_bar)
     labels = [meter_label(int(m), int(d)) for m, d in zip(per_bar, division_each)]
     found = spans(pulse, labels[:-1], division)
     bpm, meter = most_time(found)
-    return Analysis(primary, alternatives, pulse, position, per_bar, labels, found, changes(found), bpm, meter)
+    return Analysis(primary, alternatives, pulse, position, per_bar, margin, labels, found, changes(found), bpm,
+                    meter)
 
 
 def bar_lengths(position: numpy.ndarray) -> numpy.ndarray:
