@@ -125,9 +125,10 @@ SHIPPED = {
                "outside": {}},
     # structure imports the span detector for its novelty curve, and the detector imports probe.
     # Version 2: the threshold is measured from a noise floor only when the recording has one
-    # (steady, onset-free quiet), so a master is all playing; a `floor` scalar says which.
+    # (steady, onset-free quiet, or unpitched quiet), so a master is all playing; a `floor`
+    # scalar says which.
     "structure": {"version": "2",
-                  "code": "sha256:40748cb1a5b5c7ff2fa2051e9437b586b20e1c5ec006c25655040b0a7f82cb5a",
+                  "code": "sha256:9fc498fabca00b759a976939890ac94782c8b18110a331ef124bad6da31cfaa1",
                   "outside": {"detector.py": "sha256:892a47fc87e7ffdd71b2c0fa38c553284ba4b4fd5ed607c0956a1a814075d9e4",
                               "probe.py": "sha256:6be7514d1671f50e43a07646fe6aa2a54cf4d35a44e608d6a27f58d8d9732384"}},
     # Version 2: the detectors' frames scale with the sample rate, and
