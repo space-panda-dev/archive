@@ -1,7 +1,7 @@
 {
  "contract": "archive-extractor/1",
  "id": "structure",
- "version": "1",
+ "version": "2",
  "description": "Where the playing is and its shape: playing, tuning up, count-ins, false starts, endings, sections, and loops, from the frames series and rhythm's onsets and beats. Decodes nothing.",
  "command": [
   "${python}",
@@ -36,7 +36,10 @@
   "silence_db": -80,
   "range_db": 35,
   "floor_margin_db": 10,
-  "contrast_db": 12,
+  "floor_depth_db": 22,
+  "floor_range_db": 4,
+  "floor_band_db": 6,
+  "floor_min_ms": 2000,
   "sustain_ms": 1500,
   "sustain_percent": 85,
   "merge_gap_ms": 2500,
@@ -135,7 +138,12 @@
   "floor_db": {
    "kind": "scalar",
    "unit": "dBFS",
-   "description": "the 5th percentile frame level"
+   "description": "the noise floor when the recording has one (floor true): the median level of the lowest floor_band_db band holding floor_min_ms of steady, onset-free frames at least floor_depth_db below the reference; otherwise the 5th percentile frame level"
+  },
+  "floor": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "whether the recording has a noise floor to measure from: false for a mastered recording, which is then measured from the reference alone and has no tuning, count-ins, or false starts"
   },
   "reference_db": {
    "kind": "scalar",
