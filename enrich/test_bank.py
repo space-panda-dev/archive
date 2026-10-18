@@ -128,8 +128,9 @@ SHIPPED = {
     "loudness-r128": {"version": "1",
                       "code": "sha256:37384ca259e5a38d61a4f09891b496bfeba339e5a10791aea2dc6b401aed0898",
                       "outside": {}},
-    "rhythm": {"version": "1",
-               "code": "sha256:df5fd6e9521df87351d7e1e8d844c0e73ba8847573362ce40f1baa1afd8e53c5",
+    # Version 2: the primary tempo level, its alternatives, meter, downbeats, spans and changes (meter.py).
+    "rhythm": {"version": "3",
+               "code": "sha256:5f66bb145f6264da8b2973d847de7d679b6a697296641a50bbcfb23dc67ccf6b",
                "outside": {}},
     # structure imports the span detector for its novelty curve, and the detector imports probe.
     "structure": {"version": "1",
