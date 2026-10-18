@@ -1,6 +1,6 @@
-# 0075. Proposed: stems are separated outside the archive's environment, and a stem is content to every extractor
+# 0075. Stems are separated outside the archive's environment, and a stem is content to every extractor
 
-Status: proposed
+Status: accepted (proposed and accepted by the operator on 2026-10-18)
 
 The operator wants a recording's vocals, drums, bass, and everything else as
 separate signals, and every audio measure to work on each of them as it works
@@ -26,8 +26,8 @@ findings bound what a stem is good for:
   on one band's clean-sounding vocal stem failed outright while the mix
   transcribed. Each measure on a stem needs its own evidence.
 
-The feature bank ([ADR 0073](0073-proposed-feature-bank.md)) and the
-extractor contract ([ADR 0074](0074-proposed-extractor-contract.md)) already
+The feature bank ([ADR 0073](0073-feature-bank.md)) and the
+extractor contract ([ADR 0074](0074-extractor-contract.md)) already
 say that a separator runs in its own environment, named by configuration,
 and that its stems are `file` features. Two things were left: how a separator
 is pinned and run so that its stems are worth keying, and how an extractor

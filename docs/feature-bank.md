@@ -1,9 +1,9 @@
 # The feature bank format
 
 This is the on-disk format of the feature bank
-([ADR 0073](decisions/0073-proposed-feature-bank.md)) and the files an
+([ADR 0073](decisions/0073-feature-bank.md)) and the files an
 extractor exchanges with the runner
-([ADR 0074](decisions/0074-proposed-extractor-contract.md)), precisely enough
+([ADR 0074](decisions/0074-extractor-contract.md)), precisely enough
 for a program in any language to read the bank, write an extractor, or
 replace the runner. [`enrich/bank.py`](../enrich/bank.py) is the reference
 reader and checker, and [`enrich/extract.py`](../enrich/extract.py) the
@@ -96,7 +96,7 @@ entry and runs nothing (operational; it may be deleted when no writer
 runs). `tmp/` holds work in progress and may be emptied when no writer runs.
 
 **An entry made from a file feature is filed with the content that feature
-was made from** ([ADR 0075](decisions/0075-proposed-stems-as-content.md)).
+was made from** ([ADR 0075](decisions/0075-stems-as-content.md)).
 When an extractor measures a stem of a recording, the stem's digest (the
 `sha256` its entry records) is the new entry's `content` and decides its
 key, but the entry lives under the recording's directory:
@@ -139,7 +139,7 @@ Every field is present. `key` must equal the key computed from `extractor`,
 not. `software` is what the extractor reported, at most 32 pairs. Times are
 UTC. A derivation run that reads an entry copies its `software` into the
 run's own, with the feature, the extractor's id and version, and the key
-([ADR 0073](decisions/0073-proposed-feature-bank.md)), because the entry may
+([ADR 0073](decisions/0073-feature-bank.md)), because the entry may
 be deleted and the run may not lose what it held.
 
 Each member of `outputs` repeats the manifest's declaration of that output
