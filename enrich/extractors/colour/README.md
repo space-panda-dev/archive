@@ -35,6 +35,37 @@ about 90 ms before the onset. That is the window, not an offset; the test
 `test_the_colour_changes_where_the_frames_say_and_leads_the_onset` pins where
 the change falls to within 0.15 of a pixel.
 
+## The hue range
+
+A centroid hue is the spectral centroid's log frequency between `hue.low_hz`
+(`low_hue`, red) and `hue.high_hz` (`high_hue`, blue), held at the limits.
+Version 2's limits, 100 Hz to 8 kHz, were wider than music reaches: on an
+18-track studio album the frames' centroids ran from about 630 Hz to 3.6
+kHz (5th to 95th percentile, frames above -60 dBFS), so every pixel was
+green or cyan and nothing told one part of a song from another. Version 3's
+default is 500 Hz to 4 kHz, three octaves around where mastered music sits.
+
+A set of recordings is better coloured by its own range.
+[`enrich/hue_range.py`](../../hue_range.py) reads the `frames` entries of the recordings
+named, pools every frame's centroid at or above -60 dBFS (silence has no
+meaningful centroid), and prints a `--config` that sets the limits to the
+5th and 95th percentiles (`--low-percentile`, `--high-percentile`,
+`--floor-db` to choose others):
+
+```sh
+python enrich/hue_range.py --bank <root> <recording>... > colour.json
+python enrich/extract.py run colour --config colour.json --content <recording> --bank <root>
+```
+
+The limits are parameters, so they are in each entry's key: recordings
+coloured with one set's limits can be compared by colour, and adding to the
+set changes nothing until the limits are taken again. A rehearsal room's
+recordings, with their room tone and close microphones, have other centroids
+than a master, which is a reason to take the range from them rather than to
+change the default. When a range spans fewer than four of the fixed legend
+frequencies (125 Hz to 8 kHz in octaves), the palette's hue stops are its
+two limits and three frequencies evenly between them in log frequency.
+
 ## The palette, `archive-colour-palette/2`
 
 One JSON object with exactly these fields. `check_palette` in

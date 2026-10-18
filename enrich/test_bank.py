@@ -140,8 +140,9 @@ SHIPPED = {
     # colour reads the peaks' format and decode from waveform.py, not the
     # derived-media tool media.py, so an edit to that tool's routes or
     # command line leaves colour's pin alone.
-    "colour": {"version": "2",
-               "code": "sha256:ebee70e03d192d968e2ca2406fa369da5aa5ada9f67750b94c0c48ba11c7be6e",
+    # Version 3: the centroid hue's default limits are 500 Hz to 4 kHz.
+    "colour": {"version": "3",
+               "code": "sha256:ca94e81f984071eee4029b27a2727df0d218ff975e97b77c776cf881923e3c8b",
                "outside": {"waveform.py": "sha256:353aceedf74c7a1c2bbaa330fe03847440f1e74213146bcf6bc0b863db39a424",
                            "derived.py": "sha256:d1da556693ea266247cbac481f17672578d5cc90043b3f28730e899cd3c28132"}},
     "stems": {"version": "1", "code": "sha256:235a4c30a38d1f897958ef1354441011e435709c34732cfe4aad503ab1481c3e", "outside": {}},

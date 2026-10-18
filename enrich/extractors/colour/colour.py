@@ -20,7 +20,8 @@ the bank holds no copy of them (ADR 0073).
 - `preview`: a PNG of the whole recording, transparent behind the waveform.
 
 Colour comes from the bank's `frames` series, read rather than measured
-again: hue from the spectral centroid (log frequency between two limits) or
+again: hue from the spectral centroid (log frequency between two limits,
+which `enrich/hue_range.py` sets from a set of recordings; see the README) or
 from the pitch-class profile (its circular mean, on the circle of fifths or
 the chromatic circle), saturation fixed or scaled by how concentrated the
 profile is, and lightness from the frame RMS level in dBFS. The frames grid
@@ -68,6 +69,9 @@ PALETTE_CONTRACT = "archive-colour-palette/2"
 DECIMAL = re.compile(r"-?[0-9]+(\.[0-9]+)?")
 # The frames grid's analysis rate: a centroid above its Nyquist frequency cannot occur.
 FRAMES_NYQUIST = 11025
+# The centroid's hue limits by default, for mastered music (version 3; see the
+# README): about the 5th to 95th percentiles of a studio album's frames.
+DEFAULT_HUE_HZ = (500, 4000)
 # The preview is held whole in memory as RGBA: at most 32 MiB.
 MAX_PREVIEW_WIDTH, MAX_PREVIEW_HEIGHT = 8192, 1024
 
@@ -79,7 +83,8 @@ class ColourError(Exception):
 def parameters() -> dict[str, Any]:
     """The default settings, which the manifest must declare exactly."""
     return {"peaks": f"{PEAKS_KIND.name}-{PEAKS_KIND.version}",
-            "hue": {"source": "centroid", "low_hz": 100, "high_hz": 8000, "low_hue": 0, "high_hue": 240},
+            "hue": {"source": "centroid", "low_hz": DEFAULT_HUE_HZ[0], "high_hz": DEFAULT_HUE_HZ[1],
+                    "low_hue": 0, "high_hue": 240},
             "saturation": "0.85",
             "lightness": {"source": "rms_db", "reference": "full-scale", "floor_db": -60, "ceiling_db": 0,
                           "darkest": "0.15", "lightest": "0.6"},
@@ -303,6 +308,10 @@ def palette(chosen: Settings, parameters_used: Mapping[str, Any], floor_db: floa
     middle = (chosen.darkest + chosen.lightest) / 2
     if chosen.hue["source"] == "centroid":
         candidates = [chosen.hue["low_hz"], 125, 250, 500, 1000, 2000, 4000, 8000, chosen.hue["high_hz"]]
+        if len(set(candidates) & set(range(chosen.hue["low_hz"], chosen.hue["high_hz"] + 1))) < 4:
+            # A narrow range: stops at its limits and three between, evenly in log frequency.
+            candidates += [round(chosen.hue["low_hz"] * (chosen.hue["high_hz"] / chosen.hue["low_hz"]) ** (k / 4))
+                           for k in (1, 2, 3)]
         values = sorted({v for v in candidates if chosen.hue["low_hz"] <= v <= chosen.hue["high_hz"]})
         hues = centroid_hue(numpy.array(values, dtype=numpy.float64), chosen.hue)
         rgb = hsl_to_rgb(hues, chosen.saturation, numpy.full(len(values), middle))
