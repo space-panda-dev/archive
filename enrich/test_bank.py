@@ -115,6 +115,9 @@ SHIPPED = {
     "loudness-r128": {"version": "1",
                       "code": "sha256:37384ca259e5a38d61a4f09891b496bfeba339e5a10791aea2dc6b401aed0898",
                       "outside": {}},
+    "rhythm": {"version": "1",
+               "code": "sha256:df5fd6e9521df87351d7e1e8d844c0e73ba8847573362ce40f1baa1afd8e53c5",
+               "outside": {}},
 }
 
 
