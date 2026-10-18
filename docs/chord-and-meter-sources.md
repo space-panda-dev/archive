@@ -52,12 +52,18 @@ tuning, notes, and optional chord names and diagrams per beat.
   given only where the alignment places them, never filled in from the tempo
   map, which describes the file's playback, not the recording. A tempo or
   time-signature change is a new bar's values; a written metric modulation
-  becomes a `modulations` link with its note values and ratio. Repeats and
-  endings are unrolled into the performed order.
+  becomes a `modulations` link of kind `equation` with its two note values,
+  and a written "eighth = eighth" at a change of pulse (4/4 to 12/8) a link
+  of kind `regrouping`. Triplets written inside 4/4 stay notes in 4/4: a
+  `felt` layer is asserted only where the document or a person states a feel.
+  Repeats and endings are unrolled into the performed order.
 - **Chords the transcriber named.** One `chord_stacks` claim whose readings
   keep the chord name as `text` and, where a chord diagram is given, a
   `voicing` computed from the frets and the track's tuning; its lowest note
-  is the bass.
+  is the bass. A name has a start and no end, so each span's `end` is `held`
+  and the claim's `hold_rule` states the importer's rule, such as "until the
+  next name, at most to the end of the following bar, and not into a bar
+  where the part is silent".
 - **Chords the notes imply.** One `chord_stacks` claim per pitched track,
   with that track as `part`: at each change of the sounding note set, a stack
   of those notes with their `voicing`, and no root (the notes do not name
@@ -81,11 +87,24 @@ chart) with a stated meter.
   reading. A symbol the grammar cannot read is a text-only reading.
 - **Meter.** Only a chart with a bar grid asserts a `meter_layers` claim,
   with its bar numbers as locators. A chart without bars asserts no meter,
-  and its chords carry no locator.
-- **Alignment.** A chart has no times of its own, so every span's samples
-  come from the alignment: a person placing each change (`manual`), or a run
-  that aligns the chart's sequence to the mix's machine chord claims and
-  records how.
+  and its chords carry no locator. A chart's feel marking ("swing 16ths",
+  "12/8 feel") over a stated meter is a `felt` layer beside the `written`
+  one, over the samples the marking covers.
+- **Held ends.** A chart's symbols are changes, not spans; each span's `end`
+  is `held` until the next symbol, under the claim's `hold_rule`.
+- **First, a sequence.** A chart has no times of its own, so its importer
+  first asserts a `chord_sequence` claim about the chart's `document` (and
+  the Work, when known): every symbol in written order, each located by its
+  line and the column or word it sits over, with the chart's section labels
+  and its "x2" marks as `repeats`. Lyric lines are located, never copied. A
+  person's own document of lyrics with chords above is imported the same
+  way, as is a cue sheet with no lyrics at all.
+- **Then an alignment per recording.** Every span's samples come from an
+  alignment: a person placing each change (`manual`), or a run that aligns
+  the sequence's played order to the mix's machine chord claims and records
+  how. Each alignment is its own `chord_stacks` claim pinning the sequence,
+  with each span's `entry`; a chart that will not align stays a sequence,
+  which is still a claim.
 
 ## What the importers do not decide
 

@@ -204,11 +204,9 @@ unsupported rather than guess.
   bass?
 - Pitch classes assume twelve-tone equal temperament. How is a reading of a
   recording far from it (a detuned instrument, a microtonal passage) kept?
-- How does a chart without bars locate a symbol (its line and word) when
-  `locator` holds only a bar and beat?
 - Does a stem's claim need a check that the stem shares the mix's timeline?
   The `analysed` role asserts it; nothing measures it.
-- Which Door profile rules does the release of ADR 0077's two contracts add?
+- Which Door profile rules does the release of ADR 0077's three contracts add?
   Its checks reach into nested arrays (tones within readings within spans,
   beats within bars within layers), which the existing root-only rules do not.
 

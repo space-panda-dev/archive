@@ -1,9 +1,10 @@
-"""Chord stacks and meter layers (ADR 0077): payload rules, computed names, and
-lossy exchange views.
+"""Chord stacks, chord sequences, and meter layers (ADR 0077): payload rules,
+computed names, and lossy exchange views.
 
-The two contracts, `archive.claim/chord_stacks` version 1 and
-`archive.claim/meter_layers` version 1, are decided by ADR 0077 and are not
-yet in a specification release, so Door cannot admit either. This module holds
+The three contracts, `archive.claim/chord_stacks`,
+`archive.claim/chord_sequence`, and `archive.claim/meter_layers`, each
+version 1, are decided by ADR 0077 and are not yet in a specification
+release, so Door cannot admit any of them. This module holds
 their rules as World will re-check them when it projects such a claim, the
 names a chord stack can be given, and the JAMS view of both. It uses only the
 standard library, so a future importer or extractor can check a proposal with
@@ -21,10 +22,11 @@ import json
 import re
 from dataclasses import dataclass
 from fractions import Fraction
-from itertools import product
+from itertools import combinations, product
 from typing import Any
 
 CHORD_STACKS = ("archive.claim/chord_stacks", "1")
+CHORD_SEQUENCE = ("archive.claim/chord_sequence", "1")
 METER_LAYERS = ("archive.claim/meter_layers", "1")
 
 PITCH_NAMES = ("C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B")
@@ -35,12 +37,20 @@ REVISION_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
 DENOMINATORS = (1, 2, 4, 8, 16, 32, 64)
 MAX_SPANS = 10000
 MAX_BARS = 10000
+MAX_BEATS = 100000
 MAX_LAYERS = 8
 MAX_READINGS = 16
 MAX_UNCERTAIN = 4
 MAX_VOICING = 32
 MAX_TEXT = 200
 MAX_URL = 2000
+MAX_RULE = 500
+MAX_ENTRIES = 10000
+MAX_REPEATS = 1000
+MAX_LABEL = 100
+SPAN_ENDS = ("asserted", "held")
+LAYER_ROLES = ("written", "felt")
+MODULATION_KINDS = ("equation", "regrouping")
 
 
 class HarmonyError(ValueError):
@@ -125,18 +135,23 @@ def _check_stream(by_role: dict[str, list[dict[str, Any]]], stream_claim: Any, w
     return rate, count
 
 
-def _check_source_fields(payload: dict[str, Any], by_role: dict[str, list[dict[str, Any]]], where: str) -> bool:
-    """The outside-source fields: present exactly when a `document` is pinned."""
+def _check_source_fields(payload: dict[str, Any], by_role: dict[str, list[dict[str, Any]]], where: str,
+                         timed: bool = True) -> bool:
+    """The outside-source fields. A timed claim states an `alignment` exactly
+    when it pins a `document` or a `sequence` it placed on the recording; an
+    untimed sequence has no samples, so it never states one."""
     has_document = bool(by_role["document"])
-    if has_document != ("alignment" in payload):
-        raise HarmonyError(f"{where} states an alignment exactly when it pins a document")
+    aligned = timed and (has_document or bool(by_role.get("sequence")))
+    if aligned != ("alignment" in payload):
+        raise HarmonyError(f"{where} states an alignment exactly when it places a document or a sequence"
+                           if timed else f"{where} is untimed and states no alignment")
     if "document_url" in payload:
         if not has_document:
             raise HarmonyError(f"{where} names a document_url without pinning the document")
         url = _text(payload["document_url"], f"{where} document_url", MAX_URL)
         if not URL.fullmatch(url):
             raise HarmonyError(f"{where} document_url must be an http or https URL")
-    if has_document:
+    if aligned:
         alignment = _closed(payload["alignment"], {"method"}, {"max_error_samples"}, f"{where} alignment")
         _text(alignment["method"], f"{where} alignment method", MAX_TEXT)
         if "max_error_samples" in alignment:
@@ -173,20 +188,38 @@ SOURCE_ROLES = {
 }
 
 
+CHORD_ROLES = {
+    **SOURCE_ROLES,
+    "sequence": (0, 1),   # the chord_sequence v1 claim an alignment placed on this recording
+    "corrects": (0, 8),   # chord claims this one corrects; they stay, untouched
+}
+
+SEQUENCE_ROLES = {
+    "work": (0, 1),       # the Work (an Entity of kind musical_work) the sequence describes
+    "document": (0, 1),   # the document the sequence was read from
+    "run": (0, 1),        # derivation_run v1, when a tool read the document
+    "corrects": (0, 8),   # chord_sequence claims this one corrects
+}
+
+
 # ---------------------------------------------------------------------------
 # Chord stacks
 
 
-def check_chord_stacks(claim: dict[str, Any], stream_claim: dict[str, Any]) -> list[dict[str, Any]]:
+def check_chord_stacks(claim: dict[str, Any], stream_claim: dict[str, Any],
+                       sequence_claim: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Check an `archive.claim/chord_stacks` version 1 claim's payload and
     references against every rule of ADR 0077, with the `audio_stream` claim
-    its `stream` reference pins. Returns the spans; raises HarmonyError."""
+    its `stream` reference pins and, when it pins a `sequence`, optionally
+    that chord sequence claim, to check each span's `entry` against it.
+    Returns the spans; raises HarmonyError. No rule asks the spans to cover
+    the recording: a claim of three spans in a long improvisation is whole."""
     where = "chord stacks"
     record = _closed(claim, {"payload", "refs"}, {"revision_id", "agent"}, where)
-    by_role = _refs_by_role(record["refs"], SOURCE_ROLES, where)
+    by_role = _refs_by_role(record["refs"], CHORD_ROLES, where)
     rate, count = _check_stream(by_role, stream_claim, where)
     payload = _closed(record["payload"], {"sample_rate", "spans"},
-                      {"part", "weight_scale", "document_url", "alignment"}, f"{where} payload")
+                      {"part", "weight_scale", "document_url", "alignment", "hold_rule"}, f"{where} payload")
     if _int(payload["sample_rate"], f"{where} sample_rate", 1) != rate:
         raise HarmonyError(f"{where} sample_rate differs from the stream's")
     if "part" in payload:
@@ -195,12 +228,25 @@ def check_chord_stacks(claim: dict[str, Any], stream_claim: dict[str, Any]) -> l
     if weighted:
         _text(payload["weight_scale"], f"{where} weight_scale", MAX_TEXT)
     has_document = _check_source_fields(payload, by_role, where)
+    entries = None
+    if by_role["sequence"] and sequence_claim is not None:
+        if sequence_claim.get("revision_id", by_role["sequence"][0]["revision_id"]) \
+                != by_role["sequence"][0]["revision_id"]:
+            raise HarmonyError(f"{where} was given a sequence claim other than the one it pins")
+        entries = check_chord_sequence(sequence_claim)
     spans = _list(payload["spans"], f"{where} spans", 1, MAX_SPANS)
-    previous_end = 0
+    previous_end, held = 0, False
     for index, span in enumerate(spans):
         at = f"{where} span {index}"
-        _closed(span, {"start_sample", "end_sample", "readings"}, {"locator"}, at)
+        _closed(span, {"start_sample", "end_sample", "readings"}, {"locator", "end", "entry"}, at)
+        if "entry" in span:
+            if not by_role["sequence"]:
+                raise HarmonyError(f"{at} names a sequence entry but the claim pins no sequence")
+            _int(span["entry"], f"{at} entry", 0, None if entries is None else len(entries) - 1)
         _, previous_end = _check_span_bounds(span["start_sample"], span["end_sample"], previous_end, count, at)
+        if span.get("end", "asserted") not in SPAN_ENDS:
+            raise HarmonyError(f"{at} end must be one of {SPAN_ENDS}")
+        held = held or span.get("end") == "held"
         if "locator" in span:
             _check_locator(span["locator"], has_document, {"bar", "beat"}, at)
         readings = _list(span["readings"], f"{at} readings", 1, MAX_READINGS)
@@ -208,7 +254,19 @@ def check_chord_stacks(claim: dict[str, Any], stream_claim: dict[str, Any]) -> l
             check_reading(reading, weighted, f"{at} reading {number}")
         if len({_canonical(reading) for reading in readings}) != len(readings):
             raise HarmonyError(f"{at} repeats a reading")
+    # A held end is the importer's, so the claim says by what rule it held.
+    if held != ("hold_rule" in payload):
+        raise HarmonyError(f"{where} states a hold_rule exactly when a span's end is held")
+    if held:
+        _text(payload["hold_rule"], f"{where} hold_rule", MAX_RULE)
     return spans
+
+
+def span_end_held(span: dict[str, Any]) -> bool:
+    """Whether a span's end was held by an importer's rule (the claim's
+    `hold_rule`) rather than asserted: weaker evidence of where the chord
+    stopped than an asserted end, and to be weighed as such by any view."""
+    return span.get("end", "asserted") == "held"
 
 
 def _canonical(value: Any) -> str:
@@ -270,6 +328,95 @@ def check_reading(reading: Any, weighted: bool, where: str = "reading") -> str:
 
 
 # ---------------------------------------------------------------------------
+# Chord sequences
+
+
+def check_chord_sequence(claim: dict[str, Any]) -> list[dict[str, Any]]:
+    """Check an `archive.claim/chord_sequence` version 1 claim: chords in the
+    order a document or a person gives them, with no times. Its subject is a
+    Work, a document, or both, never a recording's samples. Returns the
+    entries; raises HarmonyError.
+
+    An entry's locator points into the document (a line, and optionally a
+    word, syllable, or column of it), so a chord can sit over a lyric without
+    the claim holding a word of the lyric."""
+    where = "chord sequence"
+    record = _closed(claim, {"payload", "refs"}, {"revision_id", "agent"}, where)
+    by_role = _refs_by_role(record["refs"], SEQUENCE_ROLES, where)
+    if not by_role["work"] and not by_role["document"]:
+        raise HarmonyError(f"{where} needs a work or a document as its subject")
+    payload = _closed(record["payload"], {"entries"},
+                      {"part", "weight_scale", "document_url", "repeats"}, f"{where} payload")
+    if "part" in payload:
+        _text(payload["part"], f"{where} part", 100)
+    weighted = "weight_scale" in payload
+    if weighted:
+        _text(payload["weight_scale"], f"{where} weight_scale", MAX_TEXT)
+    has_document = _check_source_fields(payload, by_role, where, timed=False)
+    entries = _list(payload["entries"], f"{where} entries", 1, MAX_ENTRIES)
+    previous = None
+    for index, entry in enumerate(entries):
+        at = f"{where} entry {index}"
+        _closed(entry, {"readings"}, {"locator", "section"}, at)
+        if "section" in entry:
+            _text(entry["section"], f"{at} section", MAX_LABEL)
+        if "locator" in entry:
+            if not has_document:
+                raise HarmonyError(f"{at} has a locator but the claim pins no document")
+            locator = _closed(entry["locator"], {"line"}, {"word", "syllable", "column"}, f"{at} locator")
+            for key in locator:
+                _int(locator[key], f"{at} locator {key}", 1)
+            if len(locator) > 2:
+                raise HarmonyError(f"{at} locator gives at most one of word, syllable, or column")
+            position = (locator["line"], locator.get("word", locator.get("syllable", locator.get("column", 0))))
+            if previous is not None and position < previous:
+                raise HarmonyError(f"{at} is located before the entry before it")
+            previous = position
+        readings = _list(entry["readings"], f"{at} readings", 1, MAX_READINGS)
+        for number, reading in enumerate(readings):
+            check_reading(reading, weighted, f"{at} reading {number}")
+        if len({_canonical(reading) for reading in readings}) != len(readings):
+            raise HarmonyError(f"{at} repeats a reading")
+    ranges = []
+    for index, repeat in enumerate(_list(payload.get("repeats", []), f"{where} repeats", 0, MAX_REPEATS)):
+        at = f"{where} repeat {index}"
+        _closed(repeat, {"first", "last", "times"}, set(), at)
+        first = _int(repeat["first"], f"{at} first", 0, len(entries) - 1)
+        last = _int(repeat["last"], f"{at} last", first, len(entries) - 1)
+        _int(repeat["times"], f"{at} times", 2, 999)
+        ranges.append((first, -last))
+    if ranges != sorted(set(ranges)):
+        raise HarmonyError(f"{where} repeats must be distinct and in order of first entry, outer before inner")
+    for (a, b), (c, d) in combinations(ranges, 2):
+        if c <= -b < -d:  # the second starts inside the first and ends after it
+            raise HarmonyError(f"{where} repeats must nest or be apart, never cross")
+    return entries
+
+
+def sequence_order(payload: dict[str, Any]) -> list[int]:
+    """The entries' indices in the order played, with every repeat unrolled:
+    "x4" over entries 0 and 1 gives 0, 1, 0, 1, 0, 1, 0, 1. A view of a
+    checked payload, the order an alignment places on a recording."""
+    repeats = sorted(payload.get("repeats", []), key=lambda r: (r["first"], -r["last"]))
+
+    def play(first: int, last: int, inner: list[dict[str, Any]]) -> list[int]:
+        order, at = [], first
+        while at <= last:
+            outer = next((r for r in inner if r["first"] == at), None)
+            if outer is None:
+                order.append(at)
+                at += 1
+                continue
+            nested = [r for r in inner if r is not outer and outer["first"] <= r["first"] and r["last"] <= outer["last"]]
+            order += play(outer["first"], outer["last"], nested) * outer["times"]
+            inner = [r for r in inner if r is not outer and r not in nested]
+            at = outer["last"] + 1
+        return order
+
+    return play(0, len(payload["entries"]) - 1, repeats)
+
+
+# ---------------------------------------------------------------------------
 # Computed names
 
 # Harte (2005) shorthands, the strict set JAMS `chord_harte` accepts.
@@ -283,12 +430,13 @@ HARTE_SHORTHANDS: dict[str, frozenset[int]] = {
 }
 
 # Lead-sheet qualities, matched exactly. A missing quality means no symbol,
-# never a guess; the Harte name always exists.
+# never a guess; the Harte name always exists. No suffix holds a slash, so a
+# symbol's only slash introduces its bass: 6(9), never 6/9.
 SYMBOL_QUALITIES: dict[frozenset[int], str] = {
     frozenset(intervals): suffix for suffix, intervals in (
         ("", {0, 4, 7}), ("m", {0, 3, 7}), ("dim", {0, 3, 6}), ("+", {0, 4, 8}), ("5", {0, 7}),
         ("sus2", {0, 2, 7}), ("sus4", {0, 5, 7}), ("6", {0, 4, 7, 9}), ("m6", {0, 3, 7, 9}),
-        ("6/9", {0, 2, 4, 7, 9}), ("m6/9", {0, 2, 3, 7, 9}), ("add9", {0, 2, 4, 7}), ("m(add9)", {0, 2, 3, 7}),
+        ("6(9)", {0, 2, 4, 7, 9}), ("m6(9)", {0, 2, 3, 7, 9}), ("add9", {0, 2, 4, 7}), ("m(add9)", {0, 2, 3, 7}),
         ("maj7", {0, 4, 7, 11}), ("7", {0, 4, 7, 10}), ("m7", {0, 3, 7, 10}), ("m(maj7)", {0, 3, 7, 11}),
         ("m7b5", {0, 3, 6, 10}), ("dim7", {0, 3, 6, 9}), ("7sus4", {0, 5, 7, 10}), ("+7", {0, 4, 8, 10}),
         ("maj7#5", {0, 4, 8, 11}), ("maj7#11", {0, 4, 6, 7, 11}), ("9", {0, 2, 4, 7, 10}),
@@ -302,16 +450,21 @@ SYMBOL_QUALITIES: dict[frozenset[int], str] = {
 SIMPLE_DEGREES = ("1", "b2", "2", "b3", "3", "4", "b5", "5", "b6", "6", "b7", "7")
 
 
-def _added_degree(interval: int, chord: frozenset[int]) -> str:
+def _added_degree(interval: int, chord: frozenset[int], sounding: frozenset[int]) -> str:
     """The Harte degree for an interval added to a shorthand, written as an
-    extension where the chord has the tone it extends."""
-    sevenths = bool(chord & {10, 11})
+    extension where the chord, or what sounds, has the tone it extends. A
+    raised fifth beside a major third and no sounding fifth is the fifth
+    itself, #5: C E G# B is C:aug(7), never C:maj7(*5,b13), whatever the
+    shorthand it is added to."""
+    has = chord | sounding
+    sevenths = bool(has & {10, 11})
+    raised_fifth = 4 in sounding and 7 not in sounding
     return {
         1: "b9", 2: "9",
-        3: "#9" if 4 in chord else "b3",
+        3: "#9" if 4 in has else "b3",
         5: "11" if sevenths else "4",
-        6: "#11" if 7 in chord else "b5",
-        8: "b13" if 7 in chord else ("#5" if 4 in chord else "b6"),
+        6: "#11" if 7 in has else "b5",
+        8: "#5" if raised_fifth else ("b13" if 7 in has else "b6"),
         9: "13" if sevenths else "6",
     }.get(interval, SIMPLE_DEGREES[interval])
 
@@ -330,7 +483,9 @@ def _harte(root: int, sounding: frozenset[int], bass: int) -> tuple[str, int]:
         # Adding a third or a seventh changes the chord's kind; adding an
         # extension (a ninth, eleventh, or thirteenth) only extends it.
         cost = len(omitted) + sum(2 if i in {3, 4, 10, 11} else 1 for i in added)
-        key = (cost, -len(chord), name)
+        # At equal cost, fewer marks: an augmented seventh is C:aug(b7), not
+        # C:7(*5,#5).
+        key = (cost, len(omitted) + len(added), -len(chord), name)
         if best is None or key < best:
             best = key
     explicit_cost = len(sounding - {0}) + (0 if 0 in sounding else 1)
@@ -342,15 +497,20 @@ def _harte(root: int, sounding: frozenset[int], bass: int) -> tuple[str, int]:
             degrees.insert(0, "*1")
         degrees = degrees or ["1"]  # a lone note: Harte has no empty list
         return f"{root_name}:({','.join(degrees)}){bass_part}", explicit_cost
-    cost, _, name = best
+    cost, _, _, name = best
     chord = HARTE_SHORTHANDS[name]
     marks = ["*" + SIMPLE_DEGREES[i] for i in sorted(chord - sounding)]
-    marks += [_added_degree(i, chord) for i in sorted(sounding - chord)]
+    marks += [_added_degree(i, chord, sounding) for i in sorted(sounding - chord)]
     extra = f"({','.join(marks)})" if marks else ""
     return f"{root_name}:{name}{extra}{bass_part}", cost
 
 
 def _symbol(root: int, sounding: frozenset[int], bass: int) -> str | None:
+    if sounding == {0}:
+        # One pitch class, perhaps doubled: no chord quality, so the symbol
+        # follows Harte's lone-note list, C:(1), rather than claiming a
+        # fifth it then omits.
+        return PITCH_NAMES[root] + "(1)"
     suffix = SYMBOL_QUALITIES.get(sounding | {0})
     if suffix is None and 7 not in sounding:
         found = SYMBOL_QUALITIES.get(sounding | {0, 7})
@@ -437,32 +597,85 @@ def check_meter_layers(claim: dict[str, Any], stream_claim: dict[str, Any]) -> l
     layers = _list(payload["layers"], f"{where} layers", 1, MAX_LAYERS)
     for number, layer in enumerate(layers):
         at = f"{where} layer {number}"
-        _closed(layer, {"bars"}, {"label"}, at)
+        if not isinstance(layer, dict) or ("bars" in layer) == ("beats" in layer):
+            raise HarmonyError(f"{at} must hold exactly one of bars or beats")
         if "label" in layer:
             _text(layer["label"], f"{at} label", 100)
+        if "role" in layer and layer["role"] not in LAYER_ROLES:
+            raise HarmonyError(f"{at} role must be one of {LAYER_ROLES}")
+        if "beats" in layer:
+            _check_beat_layer(layer, count, at)
+            continue
+        _closed(layer, {"bars"}, {"label", "role"}, at)
         previous_end = 0
         for index, bar in enumerate(_list(layer["bars"], f"{at} bars", 1, MAX_BARS)):
             previous_end = _check_bar(bar, previous_end, count, has_document, f"{at} bar {index}")
+    roles = {layer.get("role") for layer in layers}
+    if "felt" in roles and "written" not in roles:
+        raise HarmonyError(f"{where} has a felt layer but no written layer for it to be felt against")
     seen = []
     for index, link in enumerate(_list(payload.get("modulations", []), f"{where} modulations", 0, MAX_BARS)):
-        at = f"{where} modulation {index}"
-        _closed(link, {"layer", "bar", "before", "after", "ratio"}, set(), at)
-        layer = _int(link["layer"], f"{at} layer", 0, len(layers) - 1)
-        bars = layers[layer]["bars"]
-        bar = _int(link["bar"], f"{at} bar", 1, len(bars) - 1)
-        if bars[bar - 1]["end_sample"] != bars[bar]["start_sample"]:
-            raise HarmonyError(f"{at} joins bars that are not adjacent")
-        ratio = _list(link["ratio"], f"{at} ratio", 2, 2)
-        p, q = (_int(r, f"{at} ratio", 1) for r in ratio)
-        stated = Fraction(p, q)
-        if (stated.numerator, stated.denominator) != (p, q):
-            raise HarmonyError(f"{at} ratio must be in lowest terms")
-        if note_value(link["before"], f"{at} before") / note_value(link["after"], f"{at} after") != stated:
-            raise HarmonyError(f"{at} ratio is not the ratio of its note values")
-        seen.append((layer, bar))
+        seen.append(_check_modulation(link, layers, f"{where} modulation {index}"))
     if seen != sorted(set(seen)):
         raise HarmonyError(f"{where} modulations must be distinct and in order of layer and bar")
     return layers
+
+
+def _check_beat_layer(layer: dict[str, Any], count: int, where: str) -> None:
+    """A beat-only layer: beat samples with no bars, so no numerator or
+    denominator, and a beat note value only when the asserter states one."""
+    _closed(layer, {"beats"}, {"label", "role", "downbeats", "beat_unit"}, where)
+    beats = _list(layer["beats"], f"{where} beats", 1, MAX_BEATS)
+    for index, beat in enumerate(beats):
+        _int(beat, f"{where} beats[{index}]", 0, count - 1)
+    if any(a >= b for a, b in zip(beats, beats[1:])):
+        raise HarmonyError(f"{where} beats must be distinct samples in ascending order")
+    if "downbeats" in layer:
+        downbeats = _list(layer["downbeats"], f"{where} downbeats", 1, len(beats))
+        for index, beat in enumerate(downbeats):
+            _int(beat, f"{where} downbeats[{index}]", 0)
+        if any(a >= b for a, b in zip(downbeats, downbeats[1:])):
+            raise HarmonyError(f"{where} downbeats must be distinct samples in ascending order")
+        if not set(downbeats) <= set(beats):
+            raise HarmonyError(f"{where} downbeats must be among its beats")
+    if "beat_unit" in layer:
+        note_value(layer["beat_unit"], f"{where} beat_unit")
+
+
+def _check_modulation(link: Any, layers: list[dict[str, Any]], where: str) -> tuple[int, int]:
+    """A link between adjacent bars of a bars layer. An `equation` says a note
+    value before lasts as long as one after, so the tempo changes by their
+    ratio; a `regrouping` keeps every note value's length and moves the felt
+    pulse from one note value to another."""
+    if not isinstance(link, dict) or link.get("kind") not in MODULATION_KINDS:
+        raise HarmonyError(f"{where} kind must be one of {MODULATION_KINDS}")
+    if link["kind"] == "equation":
+        _closed(link, {"layer", "bar", "kind", "before", "after"}, set(), where)
+        note_value(link["before"], f"{where} before")
+        note_value(link["after"], f"{where} after")
+    else:
+        _closed(link, {"layer", "bar", "kind", "pulse_before", "pulse_after"}, set(), where)
+        if note_value(link["pulse_before"], f"{where} pulse_before") == \
+                note_value(link["pulse_after"], f"{where} pulse_after"):
+            raise HarmonyError(f"{where} is a regrouping whose pulse does not move")
+    layer = _int(link["layer"], f"{where} layer", 0, len(layers) - 1)
+    if "bars" not in layers[layer]:
+        raise HarmonyError(f"{where} joins bars of a layer that has only beats")
+    bars = layers[layer]["bars"]
+    bar = _int(link["bar"], f"{where} bar", 1, len(bars) - 1)
+    if bars[bar - 1]["end_sample"] != bars[bar]["start_sample"]:
+        raise HarmonyError(f"{where} joins bars that are not adjacent")
+    return layer, bar
+
+
+def tempo_ratio(link: dict[str, Any]) -> Fraction:
+    """A checked modulation's tempo before over its tempo after, in any one
+    note value per minute: the length of `before` over the length of `after`
+    for an equation (dotted quarter = quarter is 3/2), and 1 for a
+    regrouping. Derived, never stored."""
+    if link["kind"] == "regrouping":
+        return Fraction(1)
+    return note_value(link["before"], "before") / note_value(link["after"], "after")
 
 
 def _check_bar(bar: Any, previous_end: int, count: int, has_document: bool, where: str) -> int:
@@ -500,6 +713,15 @@ def bar_tempi(layer: dict[str, Any], sample_rate: int) -> list[Fraction]:
     return tempi
 
 
+def beat_tempi(layer: dict[str, Any], sample_rate: int) -> list[Fraction]:
+    """The tempo of each interval between a beat-only layer's beats: quarter
+    notes per minute when the layer states its `beat_unit`, otherwise beats
+    per minute, since the beat's note value is unknown."""
+    unit = note_value(layer["beat_unit"], "beat_unit") * 4 if "beat_unit" in layer else Fraction(1)
+    beats = layer["beats"]
+    return [unit * 60 * sample_rate / (b - a) for a, b in zip(beats, beats[1:])]
+
+
 def beat_positions(bar: dict[str, Any]) -> list[int]:
     """Each counted beat's 1-based position in units of the denominator:
     2+2+3 gives 1, 3, 5."""
@@ -516,7 +738,7 @@ def beat_positions(bar: dict[str, Any]) -> list[int]:
 
 
 def _annotation(namespace: str, data: list[dict[str, Any]], provenance: dict[str, str] | None,
-                lossy: list[str]) -> dict[str, Any]:
+                lossy: list[str], rules: str = "", sandbox: dict[str, Any] | None = None) -> dict[str, Any]:
     provenance = provenance or {}
     return {
         "namespace": namespace,
@@ -524,12 +746,12 @@ def _annotation(namespace: str, data: list[dict[str, Any]], provenance: dict[str
             "curator": {"name": "", "email": ""},
             "annotator": {"agent": provenance.get("agent", "")},
             "version": "", "corpus": "", "annotation_tools": "",
-            "annotation_rules": "ADR 0077 export view",
+            "annotation_rules": "ADR 0077 export view" + (f"; {rules}" if rules else ""),
             "validation": "",
             "data_source": provenance.get("revision_id", ""),
         },
         "data": data,
-        "sandbox": {"archive_lossy": sorted(set(lossy))},
+        "sandbox": {"archive_lossy": sorted(set(lossy)), **(sandbox or {})},
         "time": 0,
         "duration": None,
     }
@@ -542,17 +764,23 @@ def jams_chords(payload: dict[str, Any], *, rank: int = 0, namespace: str = "cho
 
     Lost on the way, and listed in the annotation's sandbox: the other
     readings, uncertain tones, voicings, the source's own text, locators, and
-    weights when the claim's scale is not a probability."""
+    weights when the claim's scale is not a probability. A JAMS observation
+    has no field for a held end, so the claim's `hold_rule` goes in the
+    annotation's free-text `annotation_rules` and the held observations'
+    indices in sandbox `archive_held_ends`; a reader that ignores both sees
+    every end as asserted."""
     if namespace not in ("chord_harte", "chord"):
         raise HarmonyError("JAMS chord namespace must be chord_harte or chord")
     rate = payload["sample_rate"]
-    data, lossy = [], []
+    data, lossy, held = [], [], []
     probability = payload.get("weight_scale") == "probability"
     if "weight_scale" in payload and not probability:
         lossy.append(f"weights on the scale {payload['weight_scale']!r}")
     for span in payload["spans"]:
         if "locator" in span:
             lossy.append("source locators")
+        if "entry" in span:
+            lossy.append("the sequence entry each span was placed from")
         readings = span["readings"]
         if len(readings) > 1:
             lossy.append("alternative readings")
@@ -574,31 +802,44 @@ def jams_chords(payload: dict[str, Any], *, rank: int = 0, namespace: str = "cho
             if "voicing" in reading:
                 lossy.append("voicings")
             value = stack_names(reading["bass"], reading["tones"], reading.get("root"))[0].harte
+        if span_end_held(span):
+            held.append(len(data))
+            lossy.append("held span ends (kept only in annotation_rules and sandbox archive_held_ends)")
         data.append({
             "time": span["start_sample"] / rate,
             "duration": (span["end_sample"] - span["start_sample"]) / rate,
             "value": value,
             "confidence": float(reading["weight"]) if probability else None,
         })
-    return _annotation(namespace, data, provenance, lossy)
+    rules = f"held ends: {payload['hold_rule']}" if held else ""
+    return _annotation(namespace, data, provenance, lossy, rules, {"archive_held_ends": held} if held else None)
 
 
 def jams_meter(payload: dict[str, Any], *, layer: int = 0,
                provenance: dict[str, str] | None = None) -> list[dict[str, Any]]:
-    """Two JAMS annotations of one layer of a checked meter layers payload:
-    `beat_position` and `tempo` (quarter notes per minute, per bar).
+    """Two JAMS annotations of one layer of a checked meter layers payload.
 
-    JAMS has no namespace for a time signature's grouping, a metric
-    modulation, or simultaneous layers. Grouping survives only as the
-    positions of the counted beats; a bar without beat times exports its
-    downbeat alone."""
+    A bars layer gives `beat_position` and `tempo` (quarter notes per minute,
+    per bar). JAMS has no namespace for a time signature's grouping, a metric
+    modulation or regrouping, a layer's role, or simultaneous layers.
+    Grouping survives only as the positions of the counted beats; a bar
+    without beat times exports its downbeat alone.
+
+    A beat-only layer gives `beat`, whose value is 1 at a downbeat the layer
+    marks and null elsewhere (an unknown position, never a guessed count),
+    and `tempo` per beat interval: quarter notes per minute when the layer
+    states its beat unit, otherwise beats per minute."""
     rate = payload["sample_rate"]
     chosen = payload["layers"][layer]
     lossy = []
     if len(payload["layers"]) > 1:
         lossy.append("other simultaneous layers")
-    if payload.get("modulations"):
-        lossy.append("metric modulations")
+    if "role" in chosen:
+        lossy.append(f"the layer's role ({chosen['role']})")
+    if any(link["layer"] == layer for link in payload.get("modulations", [])):
+        lossy.append("metric modulations and regroupings")
+    if "beats" in chosen:
+        return _jams_beat_layer(chosen, rate, provenance, lossy)
     beats, tempi = [], []
     for index, (bar, tempo) in enumerate(zip(chosen["bars"], bar_tempi(chosen, rate))):
         if "grouping" in bar:
@@ -617,6 +858,19 @@ def jams_meter(payload: dict[str, Any], *, layer: int = 0,
                       "value": float(tempo), "confidence": None})
     return [_annotation("beat_position", beats, provenance, lossy),
             _annotation("tempo", tempi, provenance, lossy + ["tempo is derived from bar lengths"])]
+
+
+def _jams_beat_layer(chosen: dict[str, Any], rate: int, provenance: dict[str, str] | None,
+                     lossy: list[str]) -> list[dict[str, Any]]:
+    downbeats = set(chosen.get("downbeats", []))
+    beats = [{"time": b / rate, "duration": 0.0, "confidence": None, "value": 1 if b in downbeats else None}
+             for b in chosen["beats"]]
+    unit = "quarter notes" if "beat_unit" in chosen else "beats (the beat's note value is unstated)"
+    tempi = [{"time": a / rate, "duration": (b - a) / rate, "value": float(tempo), "confidence": None}
+             for a, b, tempo in zip(chosen["beats"], chosen["beats"][1:], beat_tempi(chosen, rate))]
+    return [_annotation("beat", beats, provenance, lossy),
+            _annotation("tempo", tempi, provenance,
+                        lossy + [f"tempo is derived from beat intervals, in {unit} per minute"])]
 
 
 def jams_document(duration_seconds: float, annotations: list[dict[str, Any]]) -> dict[str, Any]:
