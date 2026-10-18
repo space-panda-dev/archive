@@ -39,6 +39,10 @@ The byte-level format is in [the feature bank format](feature-bank.md).
    with process launch replaced by a call that raises
    ([`enrich/test_bank.py`](../enrich/test_bank.py) does this for the example
    below).
+   [`enrich/test_extractors.py`](../enrich/test_extractors.py) then runs
+   every installed extractor together on one three-minute recording, so a
+   shipped one is included without naming it: its place in the order, a
+   cached second run, and every file it writes are checked there.
 5. **Change its version whenever its outputs can change.** A new version is
    a new key, so the old entries are never read again; nothing needs
    deleting. The key holds the version, not the code, so an edit without a
@@ -49,6 +53,10 @@ The byte-level format is in [the feature bank format](feature-bank.md).
    test fails, bump the version or, if no output can change, record the new
    digest. A version is letters, digits, and dots, at most 40 characters,
    so that it is also a Spool capability's version.
+
+6. **Say what it writes** in one row of the extractor table in
+   [`enrich/README.md`](../enrich/README.md#extractpy-the-feature-bank),
+   the one place that lists every extractor's outputs.
 
 Feature names are `<extractor>/<output>`. Keep outputs on an existing grid
 where you can: a series on the `frames` grid lines up row for row with every

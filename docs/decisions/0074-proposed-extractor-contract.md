@@ -124,9 +124,18 @@ spectral centroid, roll-off, flatness, and flux, an onset function, MFCCs,
 and mel bands. `loudness-r128` is a 31-line shell script around `ffmpeg`
 that writes one scalar, the worked example of
 [adding an extractor](../adding-an-extractor.md), and the proof that the
-runner does not care what an extractor is written in. `melody` (Python with
-Essentia) measures the mix's predominant melody: its pitch contour,
-voicing, and intonation, with MELODIA.
+runner does not care what an extractor is written in. Seven more measure
+from Essentia's standard algorithms or from what is already in the bank:
+`rhythm` (beats, tempo, onsets, and how far onsets sit off the beat),
+`tonal` (tuning and its drift, key, chords, dissonance), `melody` (the
+mix's predominant melody with MELODIA), `structure` (playing, tuning,
+count-ins, false starts, endings, sections, and loops, from `frames` and
+`rhythm` without decoding), `quality` (how well the recording was captured),
+`colour` (a colour-coded waveform's data), and `stems` (Demucs, in an
+environment of its own; [ADR 0075](0075-proposed-stems-as-content.md)).
+What each writes is listed in one place, the table in
+[`enrich/README.md`](../../enrich/README.md#extractpy-the-feature-bank);
+the manifests are authoritative.
 
 **A need is fixed; there is no optional one.** An extractor reads exactly
 the features its manifest needs, whatever else is installed. A need that
@@ -192,6 +201,21 @@ is applied by whoever reads both the melody and the tuning.
   one (load average near 13), where `frames` ran at about 150: 15 to 30
   core-minutes for a four-hour recording, the detectors' frame loop and
   not the decode being the cost, so it grows with the sample rate.
+- What each shipped extractor decodes: `frames` the first audio stream
+  at 22,050 Hz mono, once; `structure` nothing; `tonal` the same again
+  (above); `rhythm` and `melody` 44,100 Hz mono, which their algorithms
+  are tuned for; `quality` the stream's own rate and channels (above);
+  `colour` enough to learn the peaks' grid (ADR 0073); `loudness-r128`
+  and `stems` through `ffmpeg` at the rate they need. Run together by
+  `run all` on a synthesised three-minute 48 kHz stereo FLAC, on a shared
+  development Mac (load average 13 to 15), one at a time, each took, in
+  times real time: `structure` about 600, `loudness-r128` 450, `colour`
+  140, `frames` 83, `tonal` 78, `rhythm` 36, `melody` 16, and `quality`
+  9; about 43 seconds in all, or roughly 14 minutes a recording-hour, of
+  which `quality` and `melody` are three quarters
+  ([`enrich/test_extractors.py`](../../enrich/test_extractors.py) measures
+  it). `stems` there ran a stand-in for the model, so its time says
+  nothing about Demucs. Real recordings have not been timed together.
 - A stem separator runs in its own environment, named by configuration, and
   its stems are `file` outputs that later extractors need like any feature.
 - The plugin and dependency-injection frameworks

@@ -128,8 +128,10 @@ SHIPPED = {
                   "code": "sha256:717ad0dbb0cf663a154e1f59edf74e454d26ed8a3169c63d6cb4e1b2e4300393",
                   "outside": {"detector.py": "sha256:892a47fc87e7ffdd71b2c0fa38c553284ba4b4fd5ed607c0956a1a814075d9e4",
                               "probe.py": "sha256:6be7514d1671f50e43a07646fe6aa2a54cf4d35a44e608d6a27f58d8d9732384"}},
-    "quality": {"version": "1",
-                "code": "sha256:c0e72d32098e4726ac1dffdb6d81be36d2cceff05d2b69fab3cd12005927002d",
+    # Version 2: the detectors' frames scale with the sample rate, and
+    # quantisation-level bursts are dropped.
+    "quality": {"version": "2",
+                "code": "sha256:0bac148ad9c53b2861fed840fe7d0d67f69c87a2a02e7a1c79e2b95b06579307",
                 "outside": {}},
     "melody": {"version": "1",
                "code": "sha256:b678b71cc9ab9e80fee833c32722bfea343bf44c418a6d5ec17556169235212d",
@@ -681,19 +683,50 @@ class Manifests(unittest.TestCase):
                 self.assertEqual(found, pinned, "the code changed: bump the version, or record the digests")
 
     def test_each_shipped_pin_names_every_module_its_extractor_imports_from_outside(self) -> None:
+        """Every module of enrich/ an extractor's code reaches, directly or
+        through another (structure reaches probe through the detector, tonal
+        cover through frames), is pinned: an edit to any of them can change
+        the extractor's outputs."""
         import ast
         enrich = Path(bank.__file__).resolve().parent
-        local = {path.stem for path in enrich.glob("*.py")}
-        for extractor in bank.Catalog.load().extractors.values():
+        # A module name an extractor can import from outside its directory:
+        # enrich/<name>.py, or another extractor's <name>.py that it puts on its path.
+        modules = {path.stem: path for path in enrich.glob("*.py")}
+
+        def imports(path: Path) -> set[str]:
+            """What a module imports when it is loaded: not inside a function,
+            which runs only if called (cover imports bank only to read the bank)."""
+            names = set()
+            nodes = [ast.parse(path.read_text(encoding="utf-8"))]
+            while nodes:
+                node = nodes.pop()
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                    continue
+                nodes.extend(ast.iter_child_nodes(node))
+                if isinstance(node, ast.Import):
+                    names |= {alias.name.split(".")[0] for alias in node.names}
+                elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                    names.add(node.module.split(".")[0])
+            return names
+
+        catalog = bank.Catalog.load()
+        for extractor in catalog.extractors.values():
             with self.subTest(extractor=extractor.id):
-                imported = set()
-                for program in extractor.directory.glob("*.py"):
-                    for node in ast.walk(ast.parse(program.read_text(encoding="utf-8"))):
-                        if isinstance(node, ast.Import):
-                            imported |= {alias.name.split(".")[0] for alias in node.names}
-                        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
-                            imported.add(node.module.split(".")[0])
-                self.assertEqual({f"{name}.py" for name in imported & local}, set(SHIPPED[extractor.id]["outside"]))
+                outside = dict(modules)
+                for other in catalog.extractors.values():
+                    if other.directory != extractor.directory:
+                        outside.update({p.stem: p for p in other.directory.glob("*.py")})
+                own = {p.stem for p in extractor.directory.glob("*.py")}
+                reached: set[Path] = set()
+                todo = [name for program in extractor.directory.glob("*.py") for name in imports(program)]
+                while todo:
+                    name = todo.pop()
+                    if name in own or name not in outside or outside[name] in reached:
+                        continue
+                    reached.add(outside[name])
+                    todo.extend(imports(outside[name]))
+                self.assertEqual({p.relative_to(enrich).as_posix() for p in reached},
+                                 set(SHIPPED[extractor.id]["outside"]))
 
     def test_a_code_digest_sees_every_file_but_byte_code(self) -> None:
         f = Fixture(self)

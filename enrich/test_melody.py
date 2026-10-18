@@ -362,20 +362,22 @@ class Melody(unittest.TestCase):
 
     def test_what_else_is_installed_changes_nothing(self) -> None:
         """A stem separator in the catalog that cannot run here (its program
-        is not configured) neither blocks the melody nor changes its key."""
+        is not configured) neither blocks the melody nor changes its key.
+        The shipped `stems` is one; this adds another, so the test does not
+        rest on what ships."""
         directory = scratch(self)
         source = support.write_wav(directory / "tone.wav", tone(1.0, 440.0), RATE)
         self.assertEqual(run_melody(directory, source)[0], 0)
         plain = entry_of(directory, source)
-        more = directory / "more" / "stems"
+        more = directory / "more" / "separator"
         more.mkdir(parents=True)
         (more / "stems.py").write_text("raise SystemExit(1)\n")
         (more / "extractor.json").write_text(json.dumps(
-            {"contract": "archive-extractor/1", "id": "stems", "version": "1",
-             "command": ["${demucs-python}", "stems.py"], "accepts": ["audio/*", "video/*"],
+            {"contract": "archive-extractor/1", "id": "separator", "version": "1",
+             "command": ["${separator-python}", "stems.py"], "accepts": ["audio/*", "video/*"],
              "outputs": {"vocals": {"kind": "file", "media_type": "audio/flac", "suffix": ".flac"}}}))
         catalog = bank.Catalog.load([bank.EXTRACTORS, directory / "more"])
-        self.assertIn("stems", catalog.extractors)  # anchor: it is installed
+        self.assertIn("separator", catalog.extractors)  # anchor: it is installed
         config = directory / "config.json"
         config.write_text(json.dumps({"extractors": [str(bank.EXTRACTORS), str(directory / "more")]}))
         code, answer = run_melody(directory, source, "--config", str(config))

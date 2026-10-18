@@ -1,7 +1,7 @@
 {
  "contract": "archive-extractor/1",
  "id": "quality",
- "version": "1",
+ "version": "2",
  "description": "How well a recording was captured, from one more decode at the stream's own rate with every channel: EBU R 128 loudness, loudness range, and true peak; clipping, clicks, discontinuities, dropouts, noise bursts, and hum with their times; DC offset, stereo correlation, noise floor, and effective bandwidth.",
  "command": [
   "${python}",
