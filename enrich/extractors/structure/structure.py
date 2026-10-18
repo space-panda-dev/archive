@@ -39,11 +39,18 @@ and beats, to about 12 ms), and finds:
   the last click, and with the music's beat (from `rhythm/beats`) matching
   the interval, its half, or its double. Label: `clicks=<n> interval=<s>`.
 - `false_starts`: a playing stretch no longer than `false_start_max_ms`
-  followed by another within `restart_max_ms`. Confidence is half for that
-  and half the similarity of the two openings' pitch-class profiles (the
-  first `opening_ms` of each, at the best offset within
-  `opening_shift_ms`): the same song started again. Label:
-  `restart=<similarity>`.
+  followed by another within `restart_max_ms`. Confidence is a quarter for
+  that (a short stretch may as well be talk, a riff, or a sound check) and three
+  quarters how much more alike the two openings are than chance: the mean
+  cosine similarity of their pitch-class profiles, frame by frame (the
+  first `opening_ms` of each, at the best offset within `opening_shift_ms`),
+  measured from the similarity of the first opening to the second stretch
+  as a whole (0 at that baseline or below, 1 when identical). Profiles are
+  never negative, so their raw similarity has a high floor: talk or noise
+  before a song scored about 0.6 raw against its opening, a different
+  song about 0.25; against the baseline both score below 0.2 and the same
+  song started again about 0.97. Label:
+  `restart=<that relative similarity>`.
 - `endings`: one for each playing stretch, from where its level last stood
   within `decline_db` of the stretch's median to where it fell below the
   threshold. `abrupt` when that takes no more than `abrupt_ms` (an edit or
@@ -67,8 +74,13 @@ and beats, to about 12 ms), and finds:
   first earlier one whose mean features have a cosine similarity of at
   least `section_same_percent`. Value: the novelty at its start (1 for a
   stretch's first section).
-- `novelty`: that curve, a row a block, 0 outside playing and where the
-  kernel does not fit (the `blocks` grid).
+- `novelty`: that curve, clipped to [0, 1] (standardised MFCCs can point apart,
+  a negative cosine similarity, so the raw value can pass 1), a row a block, 0
+  outside playing and where the kernel does not fit. On the `blocks` grid,
+  row `k` stands at the start of block `k` (frame `k * block_frames`, whose
+  centre is sample `k * block_frames * 2048`), the boundary it measures, and
+  its `frame` is the `2 * kernel_blocks` blocks the kernel covers. A
+  boundary between two sections is a row's time exactly.
 - `loops`: stretches whose pitch-class profiles repeat with one period at
   least `loop_min_repeats` times in a row. For every frame and every lag from
   `loop_min_period_ms` to `loop_max_period_ms`, in frames, the mean cosine
@@ -87,8 +99,9 @@ and beats, to about 12 ms), and finds:
 
 Every time is in seconds from the first decoded sample, on the `frames`
 grid (a frame is 186 ms wide and every 93 ms), so an edge is good to about
-a frame; count-in clicks are `rhythm/onsets`, which are 4 to 15 ms early
-(see the rhythm extractor). Nothing here is a claim: a span suggestion is
+a frame, and none is later than the decoded audio's end (the `frames`
+`seconds` scalar: the grid's last rows reach past it); count-in clicks are
+`rhythm/onsets`, which are 4 to 15 ms early (see the rhythm extractor). Nothing here is a claim: a span suggestion is
 the span detector's (ADR 0066), and a reader that proposes anything from
 these features does so through a derivation run.
 
@@ -117,7 +130,7 @@ RATE = 22050
 HOP = 2048
 SECONDS = HOP / RATE  # one frame step
 LOOP_CHUNK = 4096  # frames of loop similarities held at once: 4096 x 324 lags of float32, 5 MB
-NEEDS = ("frames/hpcp", "frames/rms_db", "frames/mfcc", "rhythm/onsets", "rhythm/beats")
+NEEDS = ("frames/hpcp", "frames/rms_db", "frames/mfcc", "frames/seconds", "rhythm/onsets", "rhythm/beats")
 CLASSES = ("A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#")  # frames/hpcp's bins, from A
 TUNABLE = {
     "silence_db": (-120, -20), "range_db": (10, 80), "floor_margin_db": (3, 40), "contrast_db": (3, 60),
@@ -192,6 +205,7 @@ class Features:
     mfcc: numpy.ndarray  # [frames, 13]
     onsets: numpy.ndarray  # seconds
     beats: numpy.ndarray  # seconds
+    seconds: float  # the decoded audio's length
 
     @property
     def frames(self) -> int:
@@ -220,12 +234,16 @@ def read_needs(needs: dict[str, Any], grid: dict[str, int]) -> Features:
     rows = {len(values) for values in series.values()}
     if len(rows) != 1:
         raise StructureError(f"the frames series disagree on their length: {sorted(rows)}")
+    seconds = needs["frames/seconds"].get("value")
+    if needs["frames/seconds"].get("kind") != "scalar" or not isinstance(seconds, (int, float)) \
+            or isinstance(seconds, bool) or not math.isfinite(seconds) or seconds < 0:
+        raise StructureError(f"frames/seconds is not a length in seconds: {seconds!r}")
     events = {}
     for name in ("rhythm/onsets", "rhythm/beats"):
         items = json.loads(Path(needs[name]["path"]).read_text(encoding="utf-8"))
         events[name] = numpy.asarray([item["time"] for item in items], dtype=numpy.float64)
     return Features(series["frames/rms_db"][:, 0], series["frames/hpcp"], series["frames/mfcc"],
-                    events["rhythm/onsets"], events["rhythm/beats"])
+                    events["rhythm/onsets"], events["rhythm/beats"], float(seconds))
 
 
 # -- small pieces ------------------------------------------------------------
@@ -440,8 +458,11 @@ def count_ins(f: Features, playing: list[Stretch], tuning: list[Stretch], p: dic
 
 
 def opening_similarity(hpcp: numpy.ndarray, first: Stretch, second: Stretch, p: dict[str, Any]) -> float:
-    """The mean cosine similarity of the two stretches' opening pitch-class
-    profiles, frame by frame, at the best offset within `opening_shift_ms`."""
+    """How much more alike the two stretches' openings are than chance: the
+    mean cosine similarity of their pitch-class profiles, frame by frame, at
+    the best offset within `opening_shift_ms`, as a fraction of the way from
+    the baseline (the first opening's mean similarity to every frame of the
+    second stretch) to 1; 0 at or below the baseline."""
     length = min(frames_of(p["opening_ms"]), first.end - first.start, second.end - second.start)
     a = unit_rows(hpcp[first.start:first.start + length])
     best = 0.0
@@ -452,7 +473,10 @@ def opening_similarity(hpcp: numpy.ndarray, first: Stretch, second: Stretch, p: 
             continue
         b = unit_rows(hpcp[begin:begin + length])
         best = max(best, float(numpy.mean(numpy.sum(a * b, axis=1))))
-    return best
+    baseline = float(numpy.dot(a.mean(axis=0), unit_rows(hpcp[second.start:second.end]).mean(axis=0)))
+    if baseline >= 1 - 1e-9:
+        return 0.0
+    return max(0.0, (best - baseline) / (1 - baseline))
 
 
 def false_starts(f: Features, playing: list[Stretch], p: dict[str, Any]) -> list[dict[str, Any]]:
@@ -463,7 +487,7 @@ def false_starts(f: Features, playing: list[Stretch], p: dict[str, Any]) -> list
         if (second.start - first.end) * SECONDS > p["restart_max_ms"] / 1000:
             continue
         similarity = opening_similarity(f.hpcp, first, second, p)
-        found.append({"start": t(first.start), "end": t(first.end), "value": round(0.5 + 0.5 * similarity, 3),
+        found.append({"start": t(first.start), "end": t(first.end), "value": round(0.25 + 0.75 * similarity, 3),
                       "label": f"restart={similarity:.3f}"})
     return found
 
@@ -472,8 +496,7 @@ def endings(f: Features, lv: Levels, playing: list[Stretch], p: dict[str, Any]) 
     found = []
     for stretch in playing:
         if stretch.end >= f.frames - 1:
-            end = f.frames * SECONDS
-            found.append({"start": t(stretch.end - 1), "end": round(end, 6), "value": 1.0, "label": "abrupt"})
+            found.append({"start": t(stretch.end - 1), "end": round(f.seconds, 6), "value": 1.0, "label": "abrupt"})
             continue
         level = f.level[stretch.start:stretch.end]
         body = float(numpy.median(level))
@@ -538,7 +561,7 @@ def sections(features: numpy.ndarray, playing: list[Stretch], frames: int,
             blocks = blocks_of(features, first * size, last * size, size)
             curve = detector.novelty_curve(blocks, half) / weight
             curve[:half] = curve[last - first - half:] = 0
-            novelty[first:last] = numpy.clip(curve, 0, None)
+            novelty[first:last] = numpy.clip(curve, 0, 1)
             for index in range(half, last - first - half):
                 lo, hi = max(half, index - spacing), min(last - first - half, index + spacing + 1)
                 if curve[index] * 100 >= p["section_min_novelty_percent"] and curve[index] == curve[lo:hi].max():
@@ -655,6 +678,14 @@ def loops(features: numpy.ndarray, f: Features, playing: list[Stretch], p: dict[
 
 # -- the program -------------------------------------------------------------
 
+def within(items: list[dict[str, Any]], seconds: float) -> list[dict[str, Any]]:
+    """Spans no later than the audio's end: the `frames` grid makes
+    `ceil(n / 2048) + 1` rows, so a frame index can stand up to two hops
+    past the last decoded sample."""
+    end = round(seconds, 6)
+    return [{**item, "start": min(item["start"], end), "end": min(item["end"], end)} for item in items]
+
+
 def analyse(f: Features, p: dict[str, Any]) -> dict[str, Any]:
     if f.frames == 0:
         raise StructureError("the frames series are empty")
@@ -664,7 +695,7 @@ def analyse(f: Features, p: dict[str, Any]) -> dict[str, Any]:
     playing, tuning = playing_and_tuning(f, lv, p)
     features = described(f, playing)
     section_spans, novelty = sections(features, playing, f.frames, p)
-    return {
+    spans = {
         "playing": [{"start": t(s.start), "end": t(s.end)} for s in playing],
         "tuning": [{"start": t(s.start), "end": t(s.end), "value": s.confidence, "label": s.label} for s in tuning],
         "count_ins": count_ins(f, playing, tuning, p),
@@ -672,6 +703,9 @@ def analyse(f: Features, p: dict[str, Any]) -> dict[str, Any]:
         "endings": endings(f, lv, playing, p),
         "sections": section_spans,
         "loops": loops(unit_rows(f.hpcp), f, playing, p),
+    }
+    return {
+        **{name: within(items, f.seconds) for name, items in spans.items()},
         "novelty": novelty,
         "floor_db": round(lv.floor_db, 3), "reference_db": round(lv.reference_db, 3),
         "threshold_db": round(lv.threshold_db, 3),
@@ -698,8 +732,10 @@ def main(argv: list[str]) -> int:
             else:
                 outputs[name] = {"value": value}
         size = config["block_frames"]
-        grids = {"blocks": {"sample_rate": RATE, "hop": size * HOP, "frame": size * HOP,
-                            "first_centre": (size * HOP) // 2 - HOP // 2}}
+        # Row k measures the boundary at the start of block k (detector.novelty_curve compares
+        # blocks k-half..k-1 with k..k+half-1), and depends on all 2 * half of them.
+        grids = {"blocks": {"sample_rate": RATE, "hop": size * HOP,
+                            "frame": 2 * config["kernel_blocks"] * size * HOP, "first_centre": 0}}
         software = [{"name": "numpy", "version": numpy.__version__},
                     {"name": "python", "version": platform.python_version()}]
         result = {"contract": "archive-extractor-result/1", "software": software, "grids": grids,

@@ -204,7 +204,8 @@ def needs_of(directory: Path, audio: Path) -> dict:
         source, output = need.split("/")
         entry = entry_of(directory, audio, extractor=source)
         described = dict(entry.output(output))
-        described["path"] = str(entry.path / described["file"])
+        if "file" in described:
+            described["path"] = str(entry.path / described["file"])
         if described.get("grid"):
             described["grid"] = {"name": described["grid"], **entry.manifest["grids"][described["grid"]]}
         found[need] = described
@@ -279,7 +280,7 @@ class Pieces(unittest.TestCase):
         whole = structure.loop_choices(structure.lag_similarity(unit, lags), p)
         self.assertGreater((whole[0] >= 0).sum(), 100)  # anchor: some frames are in a loop
         f = structure.Features(numpy.zeros(len(frames)), numpy.ones((len(frames), 12)), numpy.zeros((len(frames), 13)),
-                               numpy.zeros(0), numpy.zeros(0))
+                               numpy.zeros(0), numpy.zeros(0), len(frames) * structure.SECONDS)
         stretch = [structure.Stretch(0, len(frames))]
         at_once = structure.loops(frames, f, stretch, p)
         with patch.object(structure, "LOOP_CHUNK", 50):
@@ -287,13 +288,28 @@ class Pieces(unittest.TestCase):
         self.assertEqual(chunked, at_once)
         self.assertEqual([item["label"].split()[0] for item in at_once], ["period=3.437", "period=4.737"])
 
+    def test_openings_alike_only_as_everything_is_are_no_restart(self) -> None:
+        p = structure.parameters()
+        rng = numpy.random.default_rng(5)
+        varied = rng.uniform(0, 1, (400, 12))
+        first, second = structure.Stretch(0, 100), structure.Stretch(150, 400)
+        varied[150:250] = varied[0:100]  # the same opening, then other music
+        self.assertGreater(structure.opening_similarity(varied, first, second, p), 0.5)  # anchor
+        # Every frame the same profile: the baseline is 1, and nothing is more alike than chance.
+        self.assertEqual(structure.opening_similarity(numpy.ones((400, 12)), first, second, p), 0.0)
+
+    def test_spans_end_with_the_audio(self) -> None:
+        items = [{"start": 1.0, "end": 2.5, "value": 1.0}, {"start": 3.1, "end": 3.2}]
+        self.assertEqual(structure.within(items, 3.0),
+                         [{"start": 1.0, "end": 2.5, "value": 1.0}, {"start": 3.0, "end": 3.0}])
+
     def test_values_that_are_not_finite_are_refused(self) -> None:
         f = structure.Features(numpy.array([-20.0, numpy.nan]), numpy.ones((2, 12)), numpy.zeros((2, 13)),
-                               numpy.zeros(0), numpy.zeros(0))
+                               numpy.zeros(0), numpy.zeros(0), 0.1)
         with self.assertRaisesRegex(structure.StructureError, "not finite"):
             structure.analyse(f, structure.parameters())
         empty = structure.Features(numpy.zeros(0), numpy.zeros((0, 12)), numpy.zeros((0, 13)), numpy.zeros(0),
-                                   numpy.zeros(0))
+                                   numpy.zeros(0), 0.0)
         with self.assertRaisesRegex(structure.StructureError, "empty"):
             structure.analyse(empty, structure.parameters())
 
@@ -399,6 +415,15 @@ class Rehearsal(unittest.TestCase):
         self.assertLess(faded["start"], self.marks["gap4"] - 6)
         self.near(unfinished["end"], self.marks["end"], 0.2)
         self.assertEqual(unfinished["value"], 1.0)
+        # It ends with the audio, not with the frames grid, whose last rows reach past it.
+        frames = entry_of(self.directory, self.audio, extractor="frames")
+        seconds = frames.scalar("seconds")
+        self.assertGreater(len(frames.series("rms_db")) * 2048 / 22050, seconds + 0.05)  # anchor
+        self.assertEqual(unfinished["end"], round(seconds, 6))
+        self.assertEqual(self.entry.items("playing")[-1]["end"], round(seconds, 6))
+        for name in ("playing", "tuning", "count_ins", "false_starts", "endings", "sections", "loops"):
+            for item in self.entry.items(name):
+                self.assertLessEqual(item["end"], round(seconds, 6), (name, item))
         for item in found:
             self.assertGreaterEqual(item["value"], 0.5)
 
@@ -406,13 +431,21 @@ class Rehearsal(unittest.TestCase):
         song_a = [item for item in self.entry.items("sections")
                   if self.marks["song_a"] - 1 < item["start"] < self.marks["ring"] + 3]
         self.assertEqual([item["label"] for item in song_a], ["A", "B", "A"], song_a)
-        self.near(song_a[1]["start"], self.marks["song_a"] + 32, 2.5)
-        self.near(song_a[2]["start"], self.marks["song_a"] + 48, 2.5)
+        # A boundary is on a block's edge: within a block (1.02 s) of the change.
+        self.near(song_a[1]["start"], self.marks["song_a"] + 32, 1.03)
+        self.near(song_a[2]["start"], self.marks["song_a"] + 48, 1.03)
         self.assertGreater(min(item["value"] for item in song_a), 0.15)
-        novelty = self.entry.series("novelty")
+        novelty = self.entry.series("novelty").reshape(-1)
         grid = self.entry.grid("novelty")
-        self.assertEqual(grid, {"sample_rate": 22050, "hop": 11 * 2048, "frame": 11 * 2048, "first_centre": 10240})
+        self.assertEqual(grid, {"sample_rate": 22050, "hop": 11 * 2048, "frame": 2 * 8 * 11 * 2048, "first_centre": 0})
         seconds = (grid["first_centre"] + numpy.arange(len(novelty)) * grid["hop"]) / grid["sample_rate"]
+        # A boundary's row stands at the section's start, holds its value, and is the curve's peak there.
+        for section in song_a[1:]:
+            row = int(numpy.argmin(numpy.abs(seconds - section["start"])))
+            self.assertAlmostEqual(float(seconds[row]), section["start"], places=5)
+            self.assertAlmostEqual(float(novelty[row]), section["value"], places=3)
+            self.assertEqual(float(novelty[row]), float(novelty[row - 3:row + 4].max()))
+        self.assertLessEqual(float(novelty.max()), 1.0)
         # The curve peaks at the chorus, and is 0 in the quiet between songs.
         around = (seconds > self.marks["song_a"] + 28) & (seconds < self.marks["song_a"] + 36)
         self.assertGreater(float(novelty[around].max()), 0.15)
@@ -509,6 +542,20 @@ class Rehearsal(unittest.TestCase):
         with self.assertRaisesRegex(structure.StructureError, "disagree on their length"):
             structure.read_needs(unequal, grid)
 
+    def test_the_audio_s_length_is_checked(self) -> None:
+        needs = needs_of(self.directory, self.audio)
+        grid = structure.parameters()["frames_grid"]
+        self.assertGreater(structure.read_needs(needs, grid).seconds, 60)  # anchor: the real scalar reads
+        for value in (None, "60", True, -1.0, float("nan")):
+            bad = json.loads(json.dumps({k: v for k, v in needs.items() if k != "frames/seconds"}))
+            bad["frames/seconds"] = {**needs["frames/seconds"], "value": value}
+            with self.subTest(value=value), self.assertRaisesRegex(structure.StructureError, "not a length"):
+                structure.read_needs(bad, grid)
+        series = json.loads(json.dumps(needs))
+        series["frames/seconds"] = needs["frames/hpcp"]
+        with self.assertRaisesRegex(structure.StructureError, "not a length"):
+            structure.read_needs(series, grid)
+
     def test_a_bad_request_fails_with_a_message(self) -> None:
         directory = scratch(self)
         request = directory / "request.json"
@@ -577,6 +624,22 @@ class Cases(unittest.TestCase):
         self.assertEqual(len(same.items("false_starts")), 1)
         self.assertEqual(len(other.items("false_starts")), 1)
         self.assertGreater(same.items("false_starts")[0]["value"], other.items("false_starts")[0]["value"] + 0.1)
+
+    def test_talk_before_a_song_is_an_unlikely_false_start(self) -> None:
+        directory = scratch(self)
+        # Talk's stand-in: noise at about a voice's level, its loudness moving at syllable rate.
+        rng = numpy.random.default_rng(7)
+        t = numpy.arange(12 * RATE) / RATE
+        talk = 0.05 * (0.6 + 0.4 * numpy.sin(2 * numpy.pi * 4 * t)) * rng.normal(0, 1, len(t))
+        talked = measured(directory, numpy.concatenate([room(2, 1), talk, room(5, 3), song(30, SONG_B, 140, 4),
+                                                        room(3, 5)]), "talk")
+        restarted = measured(directory, numpy.concatenate([room(2, 1), song(9, SONG_B, 140, 2), room(5, 3),
+                                                           song(30, SONG_B, 140, 4), room(3, 5)]), "restart")
+        # Anchor: both are short playing followed by more, so both are candidates.
+        self.assertEqual(len(talked.items("false_starts")), 1, talked.items("playing"))
+        self.assertEqual(len(restarted.items("false_starts")), 1)
+        self.assertLess(talked.items("false_starts")[0]["value"], 0.45)
+        self.assertGreater(restarted.items("false_starts")[0]["value"], 0.85)
 
     def test_silence_has_no_structure(self) -> None:
         directory = scratch(self)

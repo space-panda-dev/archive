@@ -18,6 +18,7 @@
   "frames/hpcp",
   "frames/rms_db",
   "frames/mfcc",
+  "frames/seconds",
   "rhythm/onsets",
   "rhythm/beats"
  ],
@@ -106,7 +107,7 @@
   "false_starts": {
    "kind": "spans",
    "unit": "s",
-   "description": "playing no longer than false_start_max_ms followed by more within restart_max_ms; label restart=<opening similarity>; value the confidence"
+   "description": "playing no longer than false_start_max_ms followed by more within restart_max_ms; label restart=<how much more alike the openings are than chance, 0 to 1>; value the confidence"
   },
   "endings": {
    "kind": "spans",
@@ -129,7 +130,7 @@
    "columns": 1,
    "grid": "blocks",
    "unit": "1",
-   "description": "section novelty a block of block_frames frames; 0 outside playing and where the kernel does not fit"
+   "description": "section novelty, clipped to [0, 1]; row k is the boundary at the start of block k (block_frames frames); 0 outside playing and where the kernel does not fit"
   },
   "floor_db": {
    "kind": "scalar",
