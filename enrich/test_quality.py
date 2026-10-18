@@ -486,6 +486,61 @@ class Measures(unittest.TestCase):
         hummed = self.hum_of(room + playing + tone(seconds, 50, 0.003, rate), rate)
         self.assertEqual([(span["start"], span["end"]) for span in hummed.spans(seconds * rate)], [(0.0, 60.0)])
 
+    def bass_line(self, seconds: float, rate: int) -> numpy.ndarray:
+        """A bass line through F1, G1, A1, F2, G2, and A2, a note a second,
+        each with its second and third harmonics: G1 is 2% below 50 Hz and
+        A2 10% above 100."""
+        t = numpy.arange(round(seconds * rate)) / rate
+        notes = numpy.array([43.65, 49.0, 55.0, 87.3, 98.0, 110.0])[(t // 1.0).astype(int) % 6]
+        phase = 2 * numpy.pi * numpy.cumsum(notes) / rate
+        return sum(0.3 / k * numpy.sin(k * phase) for k in (1, 2, 3))
+
+    def test_hum_either_side_of_a_bass_line_is_found(self) -> None:
+        # Hum at -50 dBFS (50, 100, and 150 Hz) under everything, room noise,
+        # and a song with a bass line from 14 to 46 s.
+        rate, seconds = 8000, 60
+        t = numpy.arange(seconds * rate) / rate
+        mains = 10 ** (-50 / 20) * (numpy.sin(2 * numpy.pi * 50 * t) + 0.7 * numpy.sin(2 * numpy.pi * 100 * t)
+                                    + 0.4 * numpy.sin(2 * numpy.pi * 150 * t))
+        song = numpy.zeros(len(t))
+        song[14 * rate:46 * rate] = self.bass_line(32, rate) + noise(32, 0.02, 22, rate=rate)
+        room = noise(seconds, 10 ** (-58 / 20), 23, rate=rate)
+        hum = self.hum_of(room + song + mains, rate)
+        spans = hum.spans(seconds * rate)
+        for harmonic in (50, 100, 150):
+            with self.subTest(harmonic=harmonic):
+                found = [(span["start"], span["end"]) for span in spans if abs(span["value"] - harmonic) < 0.1]
+                self.assertEqual(found[0][0], 0.0, spans)  # before the song: 14 s, under the minimum
+                self.assertEqual(found[-1][1], 60.0, spans)  # and after it
+        # The anchor: beside the hum a note is far stronger, which is all
+        # quality 3's first rule needed to lose it, and the hum is not
+        # longer than the minimum in either quiet stretch.
+        window = 8 * rate
+        energy = numpy.abs(numpy.fft.rfft((room + song + mains)[40 * rate:40 * rate + window]
+                                          * numpy.hanning(window))) ** 2
+        self.assertGreater(energy[int(0.85 * 50 * 8):int(1.15 * 50 * 8)].max(), 100 * energy[50 * 8])
+        self.assertLess(14, quality.PARAMETERS["hum_minimum_seconds"])
+        # And with no hum, the bass line alone is none.
+        self.assertEqual(self.hum_of(room + song, rate).spans(seconds * rate), [])
+
+    def test_hum_in_a_short_quiet_stretch_is_found(self) -> None:
+        # 14 s of room noise and hum before a song that buries it: shorter
+        # than the minimum, but the hum is there in the quiet.
+        rate, seconds = 8000, 50
+        signal = noise(seconds, 10 ** (-58 / 20), 24, rate=rate) + tone(seconds, 60, 10 ** (-50 / 20), rate)
+        signal[14 * rate:] += noise(seconds - 14, 0.2, 25, rate=rate)
+        hum = self.hum_of(signal, rate)
+        spans = hum.spans(seconds * rate)
+        self.assertEqual(len(spans), 1, spans)
+        self.assertEqual(spans[0]["start"], 0.0)
+        self.assertLess(spans[0]["end"] - spans[0]["start"], quality.PARAMETERS["hum_minimum_seconds"])  # anchor
+        self.assertLess(abs(spans[0]["value"] - 60), 0.05)
+        # One quiet window is not enough: a note held in a pause is not hum.
+        short = noise(seconds, 10 ** (-58 / 20), 24, rate=rate)
+        short[:9 * rate] += tone(9, 60, 10 ** (-50 / 20), rate)
+        short[9 * rate:] += noise(seconds - 9, 0.2, 25, rate=rate)
+        self.assertEqual(self.hum_of(short, rate).spans(seconds * rate), [])
+
     def test_with_no_quiet_passage_a_steady_mains_tone_is_hum(self) -> None:
         rate, seconds = 8000, 40
         hum = self.hum_of(noise(seconds, 0.2, 10, rate=rate) + tone(seconds, 60, 0.01, rate), rate)
@@ -680,6 +735,24 @@ class Clipping(unittest.TestCase):
                     flats.feed(samples[start:start + pieces])
                 self.assertEqual(flats.finish(), [(10, 13), (30, 40), (50, 55), (97, 100)])
 
+    def test_below_full_scale_only_long_runs_at_the_peak_are_clipping(self) -> None:
+        samples = numpy.zeros(200, dtype=numpy.float32)
+        samples[10:30] = 0.5  # 20 samples at the peak: clipped, then turned down
+        samples[40:50] = -0.5  # 10 at the peak: a limiter's brief flat top
+        samples[60:90] = 0.3  # 30 below the peak: a held level, not clipping
+        samples[100:120] = 0.5 - 1 / 32768  # within a step of the peak
+        samples[150:166] = 0.5  # exactly the minimum
+        for pieces in (1, 13, 200):
+            with self.subTest(pieces=pieces):
+                flats = quality.Flats()
+                for start in range(0, 200, pieces):
+                    flats.feed(samples[start:start + pieces])
+                self.assertEqual(flats.finish(), [(10, 30), (100, 120), (150, 166)])
+        # At twice the rate a run must be twice as long.
+        flats = quality.Flats(scale=2)
+        flats.feed(samples)
+        self.assertEqual(flats.finish(), [])
+
     def test_a_run_ends_where_its_value_changes(self) -> None:
         flats = quality.Flats()
         flats.feed(numpy.array([0.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, 0.0], dtype=numpy.float32))
@@ -688,9 +761,11 @@ class Clipping(unittest.TestCase):
     @needs_ffmpeg
     @needs_essentia
     def test_a_limiter_ceiling_below_full_scale_is_not_clipping(self) -> None:
+        # Brief flat tops, 3 or 4 samples, at a ceiling of -0.3 dBFS: what a
+        # limiter leaves (a mastered album's longest run at its peak was 8).
         directory = scratch(self)
         ceiling = 10 ** (-0.3 / 20)
-        signal = numpy.clip(tone(4, 100, 1.5), -ceiling, ceiling)
+        signal = numpy.clip(tone(4, 1000, 1.03 * ceiling), -ceiling, ceiling)
         audio = encode(directory / "limited.wav", numpy.stack([signal, signal], axis=1))
         samples, _ = decoded(audio)
         # The anchor: the flat tops are there, and Essentia's SaturationDetector
@@ -705,6 +780,43 @@ class Clipping(unittest.TestCase):
         self.assertEqual(entry.items("clipping"), [])
         self.assertEqual((entry.scalar("clipped_seconds"), entry.scalar("full_scale_samples")), (0, 0))
         self.assertAlmostEqual(entry.scalar("sample_peak"), -0.3, delta=0.01)
+
+    def clipped(self, directory: Path) -> Path:
+        """Eight seconds of a chord, driven into full scale from 3 to 5 s, in
+        a 16-bit file."""
+        t = numpy.arange(8 * RATE) / RATE
+        chord = sum(0.15 * numpy.sin(2 * numpy.pi * f * t) for f in (110, 165, 220, 277))
+        chord[3 * RATE:5 * RATE] *= 6
+        signal = numpy.clip(chord + noise(8, 0.001, 26), -1.0, 1.0)
+        return encode(directory / "clipped.wav", numpy.stack([signal, signal], axis=1))
+
+    def test_clipping_turned_down_afterwards_is_still_clipping(self) -> None:
+        directory = scratch(self)
+        clipped = self.clipped(directory)
+        quieter = directory / "normalised.wav"
+        support.ffmpeg("-i", str(clipped), "-af", "volume=-1dB", "-c:a", "pcm_s16le", str(quieter))
+        for audio, peak in ((clipped, 0.0), (quieter, -1.0)):
+            with self.subTest(audio.name):
+                entry = measured(self, directory, audio)
+                self.assertAlmostEqual(entry.scalar("sample_peak"), peak, delta=0.02)
+                clipping = entry.items("clipping")
+                self.assertGreater(entry.scalar("clipped_seconds"), 0.5)  # both channels, about a third of 2 s
+                self.assertTrue(clipping)
+                self.assertTrue(all(3.0 <= span["start"] and span["end"] <= 5.0 for span in clipping), clipping)
+        # The anchor: nothing in the turned-down file reaches full scale.
+        self.assertEqual(measured(self, directory, quieter).scalar("full_scale_samples"), 0)
+
+    def test_clipping_encoded_lossily_is_overs(self) -> None:
+        # AAC rings where the flat tops were: no flat run is left, but the
+        # decoded signal goes past full scale there.
+        directory = scratch(self)
+        lossy = directory / "clipped.m4a"
+        support.ffmpeg("-i", str(self.clipped(directory)), "-c:a", "aac", "-b:a", "128k", str(lossy))
+        entry = measured(self, directory, lossy)
+        self.assertEqual(entry.items("clipping"), [])
+        overs = entry.items("overs")
+        self.assertEqual(sorted({span["label"] for span in overs}), ["1", "2"])
+        self.assertTrue(all(2.9 <= span["start"] and span["end"] <= 5.1 for span in overs), overs)
 
 
 @needs_ffmpeg
@@ -766,14 +878,28 @@ class Surroundings(unittest.TestCase):
         # Nothing around a block is no context: 0.
         self.assertEqual(quality.context(numpy.ones((1, 2)), 0, 1, 2, 90).tolist(), [[0.0, 0.0]])
 
+    def test_what_is_left_nearby_is_the_largest_of_three_blocks(self) -> None:
+        maxima = numpy.array([[5.0], [1.0], [0.0], [2.0], [0.0], [0.0], [7.0]])
+        found = quality.nearby(maxima, 0, 7)[:, 0].tolist()
+        self.assertEqual(found, [5.0, 5.0, 2.0, 2.0, 2.0, 7.0, 7.0])
+        # A part computed alone is the same as the whole, at either end.
+        for first, last in ((0, 2), (2, 5), (5, 7)):
+            self.assertEqual(quality.nearby(maxima, first, last)[:, 0].tolist(), found[first:last])
+
     def hits(self, seconds: float, every: float, rate: int = RATE) -> numpy.ndarray:
-        """A quiet tone with a single-sample spike every `every` seconds: a
-        sampled percussion sound, as sharp as a click."""
+        """A quiet tone with a percussive hit every `every` seconds: a
+        one-sample spike, as sharp as a click, and a burst of noise behind
+        it that decays in 1 ms, with many steps a third as large."""
         signal = tone(seconds, 220, 0.1, rate)
-        signal[(numpy.arange(0.1, seconds - 0.1, every) * rate).astype(int)] += 0.5
+        rng = numpy.random.default_rng(16)
+        length = round(0.02 * rate)
+        decay = 0.1 * numpy.exp(-numpy.arange(length) / (0.001 * rate))
+        for at in (numpy.arange(0.1, seconds - 0.1, every) * rate).astype(int):
+            signal[at] += 0.5
+            signal[at + 1:at + 1 + length] += decay * rng.standard_normal(length)
         return sixteen_bit(signal)
 
-    def test_a_recurring_hit_is_music_and_a_lone_one_is_a_click(self) -> None:
+    def test_a_recurring_hit_is_music_and_a_lone_click_is_a_click(self) -> None:
         measure, values = measure_samples(self.hits(6, 0.2), screen=False)
         self.assertGreater(len(measure.detectors[0].clicks), 20)  # anchor: ClickDetector finds every hit
         self.assertEqual(values["_events"]["clicks"], [])
@@ -784,6 +910,49 @@ class Surroundings(unittest.TestCase):
         _, values = measure_samples(lone)
         self.assertEqual([round(event["time"], 3) for event in values["_events"]["clicks"]], [3.0])
         self.assertTrue(values["_events"]["noise_bursts"])
+
+    def crackle(self, every: float) -> tuple[numpy.ndarray, list[float]]:
+        """20 s of -58 dBFS room noise with a one-sample click of 0.3 every
+        `every` seconds from 2 to 18 s: a buffer underrun or a sync error."""
+        signal = noise(20, 10 ** (-58 / 20), 17)
+        times = numpy.arange(2, 18, every)
+        signal[(times * RATE).astype(int)] += 0.3
+        return sixteen_bit(signal), [round(float(t), 3) for t in times]
+
+    def test_crackle_in_the_quiet_is_every_click(self) -> None:
+        for every in (0.15, 0.5, 1.0):
+            with self.subTest(every=every):
+                signal, times = self.crackle(every)
+                measure, values = measure_samples(signal)
+                found = [round(event["time"], 3) for event in values["_events"]["clicks"]]
+                self.assertEqual(found, times)
+        # The anchor: weighed against the surroundings alone, as quality 3
+        # first was, crackle that recurs is its own context and none of it
+        # is kept.
+        signal, times = self.crackle(0.15)
+        with patch.dict(quality.PARAMETERS, {"click_alone_ratio": math.inf, "discontinuity_alone_ratio": math.inf}):
+            _, values = measure_samples(signal)
+        self.assertEqual(values["_events"]["clicks"], [])
+
+    def test_a_click_among_cymbals_is_found_between_their_hits(self) -> None:
+        # A held five-note chord and hats at -30 dBFS RMS every quarter
+        # second, in room noise; a click of 0.3 half way between two hats.
+        rate, seconds = RATE, 20
+        t = numpy.arange(seconds * rate) / rate
+        chord = sum(0.05 * numpy.sin(2 * numpy.pi * f * t) for f in (196, 247, 294, 392, 494))
+        rng = numpy.random.default_rng(18)
+        hats = 10 ** (-30 / 20) * rng.standard_normal(len(t)) * numpy.exp(-(t % 0.25) / 0.03)
+        signal = noise(seconds, 10 ** (-58 / 20), 19) + chord * (0.3 + 0.7 * numpy.exp(-(t % 2) / 0.7)) + hats
+        clean = sixteen_bit(signal)
+        signal[round(10.125 * rate)] += 0.3
+        measure, values = measure_samples(sixteen_bit(signal))
+        self.assertEqual([round(event["time"], 3) for event in values["_events"]["clicks"]], [10.125])
+        block = round(10.125 * rate) // measure.block
+        # The anchor: among the hats the surroundings' context asks for a
+        # step no click of 0.3 has.
+        self.assertGreater(quality.PARAMETERS["click_ratio"] * float(measure.step_context.rows[block, 0]), 0.6)
+        _, values = measure_samples(clean)
+        self.assertEqual(values["_events"]["clicks"], [])  # the hats alone are not clicks
 
     def test_screening_changes_nothing_but_the_cost(self) -> None:
         rate, seconds = RATE, 12
@@ -805,6 +974,26 @@ class Surroundings(unittest.TestCase):
         self.assertLess(screened.examined["steps"], frames / 20)
         self.assertLess(screened.examined["bursts"], frames / 20)
         self.assertLess(screened.examined["gaps"], every.examined["gaps"] / 5)
+
+    def test_each_chunk_is_reduced_into_its_block_once(self) -> None:
+        # The blocks' maxima are kept as the chunks arrive: reducing every
+        # chunk seen so far on every feed made the cost grow with the square
+        # of the recording's length (13 minutes for four hours).
+        reduced = []
+        original = quality.Measure.reduce
+
+        def counted(measure: quality.Measure, chunks: numpy.ndarray) -> numpy.ndarray:
+            reduced.append(len(chunks))
+            return original(measure, chunks)
+
+        signal = sixteen_bit(numpy.stack([noise(30, 0.01, 20), noise(30, 0.01, 21)], axis=1))
+        with patch.object(quality.Measure, "reduce", counted):
+            measure, _ = measure_samples(signal)
+        blocks = len(measure.block_rows["steps"])
+        self.assertEqual(blocks, len(measure.step_context))
+        self.assertGreater(len(reduced), 4 * 20)  # anchor: many feeds, each reducing
+        # Four series, each chunk once, the last block padded to whole.
+        self.assertEqual(sum(reduced), 4 * blocks * measure.block_chunks)
 
     def test_a_steady_recording_starts_no_detector(self) -> None:
         fade = numpy.minimum(1, numpy.minimum(numpy.arange(8 * RATE), numpy.arange(8 * RATE)[::-1]) / (0.01 * RATE))
@@ -862,13 +1051,14 @@ class Mastered(unittest.TestCase):
             self.assertEqual(entry.items(name), [], name)
         self.assertTrue(entry.scalar("hum_examined"))
         self.assertEqual(entry.scalar("full_scale_samples"), 0)
-        # Hard limiting puts peaks between the samples above the ceiling;
-        # overs says where they reach 0 dBTP, as the true peak does.
+        # Hard limiting puts peaks between the samples above the ceiling, at
+        # the hits (all on a quarter-second grid); overs says where they
+        # reach 0 dBTP, as the true peak does.
+        self.assertGreater(entry.scalar("true_peak"), 1.0)  # anchor: ffmpeg's meter sees them
         overs = entry.items("overs")
-        if overs:
-            self.assertAlmostEqual(max(span["value"] for span in overs), entry.scalar("true_peak"), delta=0.2)
-        else:
-            self.assertLess(entry.scalar("true_peak"), 0.1)
+        self.assertEqual(sorted({span["label"] for span in overs}), ["1", "2"])
+        self.assertAlmostEqual(max(span["value"] for span in overs), entry.scalar("true_peak"), delta=0.2)
+        self.assertTrue(all(span["start"] % 0.25 < 0.03 for span in overs), overs)
 
 
 if __name__ == "__main__":

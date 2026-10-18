@@ -57,7 +57,10 @@
   "clipping": {
    "level_db": "-0.01",
    "minimum_samples": 3,
-   "flat_step": "0.000030517578125"
+   "flat_step": "0.000030517578125",
+   "candidate_db": -20,
+   "ceiling_db": "0.05",
+   "ceiling_minimum_samples": 16
   },
   "clipping_merge_seconds": "0.05",
   "overs": {
@@ -70,7 +73,8 @@
   "context": {
    "block_seconds": "0.05",
    "seconds": 1,
-   "percentile": 90
+   "percentile": 90,
+   "isolation_samples": 4
   },
   "clicks": {
    "order": 12,
@@ -79,6 +83,7 @@
    "silenceThreshold": -50
   },
   "click_ratio": 16,
+  "click_alone_ratio": 6,
   "discontinuities": {
    "order": 3,
    "kernelSize": 7,
@@ -89,6 +94,7 @@
   },
   "discontinuity_floor": "0.05",
   "discontinuity_ratio": 20,
+  "discontinuity_alone_ratio": 6,
   "noise_bursts": {
    "threshold": 8,
    "alpha": "0.9",
@@ -122,7 +128,10 @@
    "tolerance": "0.002",
    "neighbourhood": "0.15",
    "prominence_db": 15,
-   "quiet_db": 20
+   "comb_db": 6,
+   "comb_below_db": 20,
+   "quiet_db": 20,
+   "quiet_windows": 2
   },
   "hum_minimum_seconds": 20,
   "stereo": {
@@ -247,7 +256,7 @@
   "clipping": {
    "kind": "spans",
    "unit": "s",
-   "description": "flat tops at full scale: runs of at least 3 samples of one channel at or above -0.01 dBFS whose neighbours differ by at most one 16-bit step, closer than 50 ms joined, per channel; value: seconds clipped inside; label: the channel, from 1. A limiter's ceiling below full scale is not clipping"
+   "description": "flat tops, per channel: runs of samples whose neighbours differ by at most one 16-bit step, either at least 3 samples at or above -0.01 dBFS (full scale), or at least 16 samples (at 48 kHz and below; 32 at 88.2 and 96 kHz, 64 at 176.4 and 192 kHz) within 0.05 dB of the channel's own peak (clipped audio whose gain was changed afterwards); closer than 50 ms joined; value: seconds clipped inside; label: the channel, from 1. A limiter's brief flat tops below full scale are not clipping, nor are clipped runs shorter than 16 samples below it; lossy encoding leaves no flat run, and clipping encoded lossily shows only as overs"
   },
   "overs": {
    "kind": "spans",
@@ -257,12 +266,12 @@
   "clicks": {
    "kind": "events",
    "unit": "s",
-   "description": "impulsive noise (Essentia ClickDetector) per channel whose sample-to-sample step exceeds 16 times its context: the 90th percentile of the largest steps of the 50 ms blocks within 1 s either side, its own block and their neighbours left out; value: that step, in full scale; label: the channel"
+   "description": "impulsive noise (Essentia ClickDetector) per channel whose sample-to-sample step exceeds either 16 times its context (the 90th percentile of the largest steps of the 50 ms blocks within 1 s either side, its own block and their neighbours left out) or 6 times what is left of its own block and the two beside it (each chunk of one detector hop, 256 samples at 48 kHz and below, without its largest step and the 4 samples either side, as many more at higher rates as the hop); value: that step, in full scale; label: the channel"
   },
   "discontinuities": {
    "kind": "events",
    "unit": "s",
-   "description": "jumps in the waveform (Essentia DiscontinuityDetector) with prediction error at least 0.05 whose second difference exceeds 20 times its context: the 90th percentile of the largest second differences of the 50 ms blocks within 1 s either side, its own block and their neighbours left out; value: the prediction error, in full scale; label: the channel"
+   "description": "jumps in the waveform (Essentia DiscontinuityDetector) with prediction error at least 0.05 whose second difference exceeds either 20 times its context (the 90th percentile of the largest second differences of the 50 ms blocks within 1 s either side, its own block and their neighbours left out) or 6 times what is left of its own block and the two beside it (as for clicks); value: the prediction error, in full scale; label: the channel"
   },
   "gaps": {
    "kind": "spans",
@@ -277,7 +286,7 @@
   "hum": {
    "kind": "spans",
    "unit": "s",
-   "description": "mains hum: a narrow peak within 0.2% of 50 or 60 Hz or a harmonic of either up to 400 Hz, 15 dB above its neighbourhood, in 8 s windows of the channels' mean every 4 s, with its series' first or second harmonic, for at least 20 s and through a quiet passage when the recording has one; value: the peak's median frequency in Hz; times are the windows' bounds"
+   "description": "mains hum: a narrow peak within 0.2% of 50 or 60 Hz or a harmonic of either up to 400 Hz, 15 dB above the median of its neighbourhood (15% either side) and not one line of an evenly spaced comb (a loop: local peaks 6 dB above that median and within 20 dB of the peak, d and 2d either side of it), in 8 s windows of the channels' mean every 4 s, with its series' first or second harmonic; kept when it is present in at least two quiet windows (20 dB below the 95th-percentile window level), or lasts at least 20 s and is present in a quiet window, which a recording with no quiet window (a master) is not asked for; value: the peak's median frequency in Hz; times are the windows' bounds"
   }
  }
 }

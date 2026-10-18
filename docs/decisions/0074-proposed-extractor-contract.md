@@ -204,7 +204,13 @@ is applied by whoever reads both the melody and the tuning.
   `GapsDetector` only near silence): on a mastered 44.1 kHz stereo album
   of 69 minutes it took 80 s where version 2 took 289 (52 against 14 times
   real time), and on the three-minute recording below 42 times with load
-  average near 6. It still grows with the sample rate and the channels.
+  average near 6. It still grows with the sample rate and the channels,
+  and with the recording's length only in proportion: its surroundings
+  are kept block by block as the audio arrives. Its first draft reduced
+  them all again on every block, which grew with the square of the
+  length: on an hour of 48 kHz stereo noise it took 149 s against 108
+  (four times its 26 s for a quarter of an hour), and a review estimated
+  13 minutes more at four hours.
 - What each shipped extractor decodes: `frames` the first audio stream
   at 22,050 Hz mono, once; `structure` nothing; `tonal` the same again
   (above); `rhythm` and `melody` 44,100 Hz mono, which their algorithms

@@ -46,30 +46,45 @@ bursts and about 1,000 clicks and discontinuities, and bass notes were 400
 spans of hum. So:
 
 - clipping is flat tops at full scale, found with numpy (`Flats`), not
-  `SaturationDetector`'s anything flat above -1 dBFS;
+  `SaturationDetector`'s anything flat above -1 dBFS, or long flat tops
+  at the recording's own peak (clipped audio turned down afterwards);
 - `overs` is its own finding: where the signal between samples, 4x
   oversampled, or a sample of a floating-point file reaches 0 dBTP (what a
-  converter or a lossy encoder clips), with its times, beside the
-  whole-recording `true_peak`;
+  converter or a lossy encoder clips, and what is left of clipping that
+  was encoded lossily), with its times, beside the whole-recording
+  `true_peak`;
 - a click, a discontinuity, or a noise burst is kept only if it stands out
-  from the transients around it (`Measure` says how), by ratios set on
-  that album and a 56-minute live room recording: 16 for clicks, 20 for
-  discontinuities, 30 for noise bursts. They leave, of 44,000 events on
-  the album, one click and three bursts on one track, where a sampled
-  glitch sound stands up to 60 times above its surroundings; a click
-  cannot be told from such a sound by its waveform. The cost is
-  sensitivity: a defect quieter than its ratio times the largest steps
-  around it is not reported, among loud music or in a noisy room (a click
-  at -30 dBFS in -60 dBFS room noise is missed). The ratios should be
-  revisited on rehearsal recordings with known defects;
+  from the transients around it, and a click or a discontinuity also if
+  it stands alone in its own neighbourhood (`Measure` says how both are
+  measured). The first is by ratios set on that album and a 56-minute
+  live room recording: 16 for clicks, 20 for discontinuities, 30 for
+  noise bursts. They leave, of 44,000 events on the album, one click and
+  three bursts on one track, where a sampled glitch sound stands up to 60
+  times above its surroundings; a click cannot be told from such a sound
+  by its waveform. On its own it misses what recurs: crackle at two or
+  more a second (a buffer underrun, a sync error) is its own
+  surroundings, and among cymbals the surroundings ask for a step no
+  click has. The second rule finds those: a click's step against what is
+  left of the 150 ms around it once each chunk's largest event is taken
+  out, by a ratio of 6, which the album's drums, hats, and glitch sounds
+  reach 4.5 at most, but for a sampled tick that recurs through 8 seconds
+  of one track (8.5, three discontinuities). What neither finds is a
+  click whose step is under 6 times the steps of the 150 ms around it (a
+  click of 0.3 of full scale on a hat at -30 dBFS RMS), and ClickDetector
+  itself skips frames below its -50 dBFS silence threshold, so it finds
+  no single-sample click below about -22 dBFS in -60 dBFS room noise.
+  The ratios should be revisited on rehearsal recordings with known
+  defects;
 - hum is mains hum: narrow, steady peaks at 50 or 60 Hz and their
-  harmonics, which persist through the quiet (`Hum`), not any steady low
-  tone.
+  harmonics, which persist through the quiet or sound in it (`Hum`), not
+  any steady low tone.
 
 The weighing also makes quality faster (3.6 times on that album): the detectors
 run only on the frames that could hold an event that would be kept, and
 `GapsDetector` only near hops that hold silence; quality 2 spent nearly
-all its time running them on every frame.
+all its time running them on every frame. The surroundings are kept
+block by block as the audio arrives, so the cost grows with the
+recording's length and not with its square.
 
 Invoked by the runner as `quality.py <request.json>`; the settings are fixed,
 and a request with other parameters is refused.
@@ -107,16 +122,19 @@ PARAMETERS: dict[str, Any] = {
     "detector_frame": 512,
     "detector_hop": 256,
     "detector_reference_rate": 48000,
-    "clipping": {"level_db": "-0.01", "minimum_samples": 3, "flat_step": "0.000030517578125"},
+    "clipping": {"level_db": "-0.01", "minimum_samples": 3, "flat_step": "0.000030517578125",
+                 "candidate_db": -20, "ceiling_db": "0.05", "ceiling_minimum_samples": 16},
     "clipping_merge_seconds": "0.05",
     "overs": {"oversampling": 4, "half_taps": 16, "kaiser_beta": "8", "level_db": 0, "merge_seconds": "0.05"},
-    "context": {"block_seconds": "0.05", "seconds": 1, "percentile": 90},
+    "context": {"block_seconds": "0.05", "seconds": 1, "percentile": 90, "isolation_samples": 4},
     "clicks": {"order": 12, "detectionThreshold": "30", "powerEstimationThreshold": 10, "silenceThreshold": -50},
     "click_ratio": 16,
+    "click_alone_ratio": 6,
     "discontinuities": {"order": 3, "kernelSize": 7, "detectionThreshold": "8", "energyThreshold": "-60",
                         "subFrameSize": 32, "silenceThreshold": -50},
     "discontinuity_floor": "0.05",
     "discontinuity_ratio": 20,
+    "discontinuity_alone_ratio": 6,
     "noise_bursts": {"threshold": 8, "alpha": "0.9", "silenceThreshold": -50},
     "noise_burst_merge_seconds": "0.01",
     "noise_burst_floor": "0.001",
@@ -126,7 +144,8 @@ PARAMETERS: dict[str, Any] = {
              "kernelSize": 11, "attackTime": "0.05", "releaseTime": "0.05"},
     "gap_margin_seconds": "0.25",
     "hum": {"mains": [50, 60], "maximum_frequency": 400, "window_seconds": 8, "hop_seconds": 4,
-            "tolerance": "0.002", "neighbourhood": "0.15", "prominence_db": 15, "quiet_db": 20},
+            "tolerance": "0.002", "neighbourhood": "0.15", "prominence_db": 15, "comb_db": 6, "comb_below_db": 20,
+            "quiet_db": 20, "quiet_windows": 2},
     "hum_minimum_seconds": 20,
     "stereo": {"silenceThreshold": -70, "correlationThreshold": "0.9995"},
     "noise_floor_percentile": 10,
@@ -357,33 +376,51 @@ KERNEL_GAIN = float(numpy.abs(KERNEL).sum(axis=0).max())
 
 
 class Flats:
-    """Clipping in one channel: runs of at least `minimum_samples` samples at
-    or above `level_db` whose neighbours differ by at most `flat_step`,
-    fed the channel's samples in order.
+    """Clipping in one channel, fed the channel's samples in order: runs
+    whose neighbours differ by at most `flat_step`, either at least
+    `minimum_samples` long at or above `level_db` (full scale), or at
+    least `ceiling_minimum_samples` long at the channel's own peak, within
+    `ceiling_db` (clipped audio whose gain was changed afterwards).
 
     A converter or a fixed-point file clips at full scale, where every
-    clipped sample holds one value. A limiter's ceiling is below it
-    (-0.1 dBFS is common), and its output there is not clipping, however
-    flat: SaturationDetector's -1 dB threshold called every mastered track
-    clipped. A sine whose peak just reaches full scale stays within one
-    16-bit step of its peak for one or two samples at 44.1 kHz above about
-    40 Hz, so three samples is a flat top, not a peak."""
+    clipped sample holds one value. A sine whose peak just reaches full
+    scale stays within one 16-bit step of its peak for one or two samples
+    at 44.1 kHz above about 40 Hz, so three samples is a flat top, not a
+    peak. A limiter's ceiling is below full scale (-0.1 dBFS is common),
+    and its output there is not clipping: SaturationDetector's -1 dB
+    threshold called every mastered track clipped. But clipped audio
+    normalised or turned down afterwards keeps its flat tops, at the
+    recording's new peak. On a mastered album of 18 tracks the longest run
+    at a track's peak was 8 samples (most tracks' runs there were 3 to 6,
+    and few); a recording hard-clipped for 10 seconds and then normalised
+    to -1 dBFS had 264 runs of 20 samples or more at its peak. So below full
+    scale only runs of `ceiling_minimum_samples` (at 48 kHz, scaled by the
+    detectors' power of two at higher rates) count: brief clipping in
+    normalised audio is missed. Lossy encoding (AAC, MP3) turns flat tops
+    into ringing that has no flat runs at all; what is left of it is
+    `overs`, where the decoded signal goes past 0 dBTP."""
 
-    def __init__(self) -> None:
+    def __init__(self, scale: int = 1) -> None:
         p = PARAMETERS["clipping"]
         self.level = 10 ** (float(p["level_db"]) / 20)
+        self.candidate = 10 ** (p["candidate_db"] / 20)
         self.step = float(p["flat_step"])
         self.minimum = p["minimum_samples"]
+        self.long = p["ceiling_minimum_samples"] * scale
         self.previous = 0.0  # the last sample fed
         self.open: int | None = None  # where a run still going at the last sample started
+        self.open_level = 0.0  # that run's first magnitude
         self.position = 0  # samples fed
-        self.runs: list[tuple[int, int]] = []  # [start, end) in samples
+        self.peak = 0.0  # the largest magnitude fed
+        self.runs: list[tuple[int, int, float]] = []  # [start, end) in samples, and its first sample's magnitude
 
     def feed(self, samples: numpy.ndarray) -> None:
         n = len(samples)
         if n == 0:
             return
-        at = numpy.abs(samples) >= self.level
+        magnitude = numpy.abs(samples)
+        self.peak = max(self.peak, float(magnitude.max()))
+        at = magnitude >= self.candidate
         before = numpy.empty(n, dtype=numpy.float64)
         before[0], before[1:] = self.previous, samples[:-1]
         at_before = numpy.empty(n, dtype=bool)
@@ -391,30 +428,43 @@ class Flats:
         joined = at & at_before & (numpy.abs(samples - before) <= self.step)
         follows = numpy.zeros(n, dtype=bool)
         follows[:-1] = joined[1:]
-        starts = [self.position + int(i) for i in numpy.flatnonzero(at & ~joined)]
+        starts = numpy.flatnonzero(at & ~joined)
         ends = numpy.flatnonzero(at & ~follows) + 1
-        if joined[0]:
-            starts.insert(0, self.open)  # the run open at the last block goes on
-        elif self.open is not None:
-            self.close(self.open, self.position)
-        self.open = None
-        for start, end in zip(starts, ends.tolist()):
-            if end == n:
-                self.open = start  # it may go on into the next block
+        if joined[0]:  # the run open at the last block goes on, and ends at the first end
+            if ends[0] == n:
+                starts, ends = starts[:0], ends[:0]  # through the whole block
             else:
-                self.close(start, self.position + end)
+                self.close(self.open, self.position + int(ends[0]), self.open_level)
+                self.open = None
+                ends = ends[1:]
+        elif self.open is not None:
+            self.close(self.open, self.position, self.open_level)
+            self.open = None
+        if len(ends) and ends[-1] == n:  # the last run may go on into the next block
+            self.open, self.open_level = self.position + int(starts[-1]), float(magnitude[starts[-1]])
+            starts, ends = starts[:-1], ends[:-1]
+        # Most samples of loud music are above the candidate level and start
+        # a run of one: only the runs long enough to keep reach Python.
+        lengths, levels = ends - starts, magnitude[starts]
+        keep = (lengths >= self.long) | ((lengths >= self.minimum) & (levels + self.step >= self.level))
+        for start, end, level in zip(starts[keep].tolist(), ends[keep].tolist(), levels[keep].tolist()):
+            self.close(self.position + start, self.position + end, level)
         self.previous = float(samples[-1])
         self.position += n
 
-    def close(self, start: int, end: int) -> None:
-        if end - start >= self.minimum:
-            self.runs.append((start, end))
+    def close(self, start: int, end: int, level: float) -> None:
+        length = end - start
+        if length >= self.long or (length >= self.minimum and level + self.step >= self.level):
+            self.runs.append((start, end, level))
 
     def finish(self) -> list[tuple[int, int]]:
         if self.open is not None:
-            self.close(self.open, self.position)
+            self.close(self.open, self.position, self.open_level)
             self.open = None
-        return self.runs
+        ceiling = self.peak * 10 ** (-float(PARAMETERS["clipping"]["ceiling_db"]) / 20) - self.step
+        return [(start, end) for start, end, level in self.runs
+                if (end - start >= self.minimum and level + self.step >= self.level)
+                or (end - start >= self.long and level >= ceiling)]
 
 
 class Channel:
@@ -433,7 +483,7 @@ class Channel:
         gaps = _settings(p["gaps"])
         self.gaps = es.GapsDetector(sampleRate=rate, **gaps)
         self.gap_frame, self.gap_hop = gaps["frameSize"], gaps["hopSize"]
-        self.flats = Flats()
+        self.flats = Flats(frame // p["detector_frame"])
         # (sample, value, size): the event, what the detector measured, and
         # what the caller weighs: the largest sample-to-sample step at a
         # click, the largest second difference at a discontinuity.
@@ -495,24 +545,36 @@ class Hum:
     Each `window_seconds` window, every `hop_seconds`, is a Hann-windowed
     spectrum with bins 1/8 Hz apart. A harmonic f is present in a window
     when the spectrum's largest bin within `tolerance` of f is a local
-    peak, its interpolated frequency is within `tolerance` of f, and it
+    peak, its interpolated frequency is within `tolerance` of f, it
     stands `prominence_db` above the median of the bins within
-    `neighbourhood` of f (the peak's own bins left out) and above every one
-    of them; and a harmonic
-    above the second counts only in a window where its series' first or
-    second is present, as mains hum always has one of them. Hum is a run of
-    windows where one harmonic is present, gaps of one window bridged, at
-    least `hum_minimum_seconds` long, which persists through a quiet
-    passage (a window `quiet_db` below the recording's 95th-percentile
-    window level) when the recording has one.
+    `neighbourhood` of f (the peak's own bins left out), and it is not one
+    line of a comb (`comb`); and a harmonic above the second counts only
+    in a window where its series' first or second is present, as mains
+    hum always has one of them. Hum is a run of windows where one harmonic
+    is present, gaps of one window bridged, that is either present in at
+    least `quiet_windows` quiet windows (`quiet_db` below the recording's
+    95th-percentile window level: room noise between songs, a lead-in), or
+    at least `hum_minimum_seconds` long and present in a quiet window when
+    the recording has one. A recording with no quiet window (a master, or
+    a recording that never stops) has no such guard: its hum rests on
+    frequency, narrowness, and length alone.
 
     Mains frequency holds within about 0.1% of nominal, and a recorder's
     clock adds less; equal-tempered notes at A = 440 Hz sit at least 1.1%
     from every harmonic up to 400 Hz but F4, 0.2% below 350 Hz. So a note
     is hum only when it is held or repeated within 0.2% of a mains harmonic
-    for 20 seconds, through the quiet. Essentia's HumDetector, which quality
-    2 used, reports any steady tone from 22.5 to 400 Hz, about 1% low, and
-    called the bass notes of every track of a mastered album hum."""
+    for 20 seconds through the quiet, or sounds in the quiet itself for
+    two windows (12 seconds); with no quiet window an F4 held a few cents
+    sharp, beside hum's 50 Hz, can pass as its seventh harmonic. A held
+    bass note beside a harmonic does not hide it: the median ignores a few
+    loud bins, and quality 3's first rule, that the peak be above every
+    bin within `neighbourhood`, lost hum beside any bass line passing G1
+    or A1. A bass line that moves every second spreads its notes over the
+    harmonic, and buries hum at -50 dBFS while it plays; the hum is then
+    found in the quiet either side. Essentia's HumDetector, which
+    quality 2 used, reports any steady tone from 22.5 to 400 Hz, about 1%
+    low, and called the bass notes of every track of a mastered album
+    hum."""
 
     def __init__(self, rate: int):
         p = PARAMETERS["hum"]
@@ -570,11 +632,39 @@ class Hum:
         around = numpy.concatenate((energy[outer[0]:inner[0]], energy[inner[1] + 1:outer[1] + 1]))
         background = float(numpy.median(around))
         prominent = background <= 0 or 10 * math.log10(energy[k] / background) >= self.prominence
-        # A loop repeating every P seconds is a comb of lines 1/P apart, and
-        # at 120 beats a minute one of them is 50 Hz exactly: hum stands
-        # alone, so nothing near it may be as strong.
-        prominent = prominent and energy[k] > float(around.max(initial=0.0))
-        return bool(prominent and abs(frequency - f) <= self.tolerance * f), float(frequency)
+        present = bool(prominent and abs(frequency - f) <= self.tolerance * f)
+        return present and not self.comb(energy, k, outer, inner, background), float(frequency)
+
+    def comb(self, energy: numpy.ndarray, k: int, outer: tuple[int, int], inner: tuple[int, int],
+             background: float) -> bool:
+        """Whether the peak at bin k is one line of a comb. A loop or a
+        figure repeating every P seconds is lines 1/P apart, and at 120
+        beats a minute one of them is 50 Hz exactly. A line is a local peak
+        in the neighbourhood standing `comb_db` above its median and no more
+        than `comb_below_db` below k (a drum loop's lines fall away from
+        its strongest by more than the `prominence_db` k needs, and noise
+        has local peaks `comb_db` up everywhere); k is one of them when, for
+        the distance d
+        to any line, there are lines d either side of k and 2d either side
+        (each within a bin). Notes are not spaced so evenly around a mains
+        harmonic, so a bass note beside the hum, however loud, does not
+        hide it. A comb whose lines fall within the peak's own bins (0.6%
+        of f: at 50 Hz, a loop longer than about 2 seconds) cannot be told
+        from hum here."""
+        p = PARAMETERS["hum"]
+        line = max(background * 10 ** (p["comb_db"] / 10), energy[k] * 10 ** (-p["comb_below_db"] / 10))
+        lines = numpy.zeros(len(energy), dtype=bool)
+        middle = energy[outer[0]:outer[1] + 1]
+        lines[outer[0] + 1:outer[1]] = (middle[1:-1] >= middle[:-2]) & (middle[1:-1] >= middle[2:]) & \
+            (middle[1:-1] >= line)
+        lines[inner[0]:inner[1] + 1] = False
+
+        def near(centre: int) -> bool:
+            return bool(lines[max(centre - 1, 0):centre + 2].any())
+        for d in sorted({abs(int(i) - k) for i in numpy.flatnonzero(lines)}):
+            if near(k - d) and near(k + d) and near(k - 2 * d) and near(k + 2 * d):
+                return True
+        return False
 
     def examined(self, total: int) -> bool:
         """Whether hum was looked for: a recording shorter than
@@ -599,9 +689,12 @@ class Hum:
             for f in self.frequencies:
                 if f % mains:
                     continue
-                for first, last in runs(present[:, index[f]] & series):
+                held_here = present[:, index[f]] & series
+                for first, last in runs(held_here):
                     start, end = self.starts[first], min(self.starts[last] + self.window, total)
-                    if end - start < self.minimum or (quiet.any() and not quiet[first:last + 1].any()):
+                    in_quiet = int(numpy.count_nonzero(quiet[first:last + 1] & held_here[first:last + 1]))
+                    long_enough = end - start >= self.minimum and (in_quiet > 0 or not quiet.any())
+                    if not (long_enough or in_quiet >= PARAMETERS["hum"]["quiet_windows"]):
                         continue
                     held = present[first:last + 1, index[f]]
                     frequency = float(numpy.median(found[first:last + 1, index[f]][held]))
@@ -668,6 +761,15 @@ def context(maxima: numpy.ndarray, first: int, last: int, reach: int, percentile
     return out
 
 
+def nearby(maxima: numpy.ndarray, first: int, last: int) -> numpy.ndarray:
+    """For blocks `first` to `last` - 1, the largest of the block's maxima
+    and its two neighbours' (maxima are never negative)."""
+    low, high = max(first - 1, 0), min(last + 1, len(maxima))
+    padded = numpy.zeros((last - first + 2, maxima.shape[1]), dtype=numpy.float64)
+    padded[low - (first - 1):high - (first - 1)] = maxima[low:high]
+    return numpy.maximum(numpy.maximum(padded[:-2], padded[1:-1]), padded[2:])
+
+
 class Measure:
     """Every measure, fed the decoded blocks in order.
 
@@ -677,15 +779,26 @@ class Measure:
     difference; a block of chunks about `context.block_seconds` long keeps
     their maxima, and a block's context is the `context.percentile`th
     percentile of the blocks' maxima within `context.seconds` either side.
-    An event is kept only if its step (its second difference, for a burst)
+    An event is kept if its step (its second difference, for a burst)
     exceeds its ratio times its block's context. A drum hit, a pick, or a
     slap recurs, so the blocks around it hold steps as large; a click, a
     dropout's edge, or a burst of noise stands out from them.
 
+    A click or a discontinuity is also kept if it stands alone. Each chunk
+    also keeps its largest step and second difference more than
+    `context.isolation_samples` (at 48 kHz) from its largest one: what is
+    left of it once one event is taken out. A click or a discontinuity is
+    kept if its step exceeds `click_alone_ratio` (its second difference
+    `discontinuity_alone_ratio`) times the largest of these in its block
+    and the two beside it. A drum hit, a hat, or a pick has many steps
+    nearly as large as its largest within a few milliseconds, and a
+    single-sample click has none, however often it recurs: crackle is
+    found in the quiet and between the hits of a band.
+
     The detectors then run only on frames that could hold such an event: a
-    frame whose largest step does not exceed the smallest ratio times the
-    smaller context of the blocks it touches holds no event that would be
-    kept. Frames are therefore examined `context.seconds` after they are
+    frame whose largest step and second difference exceed no ratio times
+    the smaller context of the blocks it touches holds no event that would
+    be kept. Frames are therefore examined `context.seconds` after they are
     decoded, once the context to their right is known."""
 
     def __init__(self, es: Any, rate: int, channels: int, rows: int, screen: bool = True):
@@ -717,13 +830,22 @@ class Measure:
         # The surroundings: each chunk's largest step and second difference.
         c = p["context"]
         self.chunk_steps, self.chunk_curves = Rows(channels), Rows(channels)
+        # The same chunks' largest step and second difference away from their
+        # largest: what is left of a chunk once one event is taken out.
+        self.chunk_steps_alone, self.chunk_curves_alone = Rows(channels), Rows(channels)
+        self.isolation = int(c["isolation_samples"]) * self.hop // p["detector_hop"]
         self.block_chunks = max(1, round(float(c["block_seconds"]) * rate / self.hop))
         self.block = self.block_chunks * self.hop  # samples
         self.reach = max(2, round(c["seconds"] * rate / self.block))
         self.percentile = c["percentile"]
+        # Each complete block's maxima of the four, kept as the chunks arrive.
+        self.block_rows = {name: Rows(channels) for name in ("steps", "curves", "steps_alone", "curves_alone")}
         self.step_context, self.curve_context = Rows(channels), Rows(channels)
+        self.step_alone, self.curve_alone = Rows(channels), Rows(channels)
         self.ratios = {"clicks": float(p["click_ratio"]), "discontinuities": float(p["discontinuity_ratio"]),
                        "noise_bursts": float(p["noise_burst_ratio"])}
+        self.alone_ratios = {"clicks": float(p["click_alone_ratio"]),
+                             "discontinuities": float(p["discontinuity_alone_ratio"])}
         self.examined = {"steps": 0, "bursts": 0, "gaps": 0}  # frames the detectors ran on, per channel
         gaps = PARAMETERS["gaps"]
         self.gap_silence = 10 ** (float(gaps["silenceThreshold"]) / 20)
@@ -798,8 +920,9 @@ class Measure:
             self.base = keep
 
     def surroundings(self, final: bool) -> None:
-        """Each new chunk's largest step and second difference, and the
-        context of each block whose surroundings are now known."""
+        """Each new chunk's largest step and second difference, with and
+        without its largest event, and the contexts of each block whose
+        surroundings are now known."""
         done = len(self.chunk_steps)
         start = done * self.hop
         # A chunk's second differences need the sample after it.
@@ -813,23 +936,55 @@ class Measure:
                 beyond = start + numpy.arange(count * self.hop)
                 steps[beyond >= self.total] = 0
                 curves[beyond + 1 >= self.total] = 0
-            self.chunk_steps.append(steps.reshape(count, self.hop, self.channels).max(axis=1))
-            self.chunk_curves.append(curves.reshape(count, self.hop, self.channels).max(axis=1))
-        chunks = len(self.chunk_steps)
-        blocks = -(-chunks // self.block_chunks) if final else chunks // self.block_chunks
+            for values, largest, alone in ((steps, self.chunk_steps, self.chunk_steps_alone),
+                                           (curves, self.chunk_curves, self.chunk_curves_alone)):
+                chunks = values.reshape(count, self.hop, self.channels)
+                largest.append(chunks.max(axis=1))
+                alone.append(self.without_largest(chunks))  # last: it overwrites the chunks
+        self.blocks(final)
+        blocks = len(self.block_rows["steps"])
         ready = blocks if final else blocks - self.reach
         first = len(self.step_context)
         if ready <= first:
             return
-        for source, target in ((self.chunk_steps, self.step_context), (self.chunk_curves, self.curve_context)):
-            maxima = self.block_maxima(source.rows, blocks)
-            target.append(context(maxima, first, ready, self.reach, self.percentile))
+        rows = {name: values.rows for name, values in self.block_rows.items()}
+        self.step_context.append(context(rows["steps"], first, ready, self.reach, self.percentile))
+        self.curve_context.append(context(rows["curves"], first, ready, self.reach, self.percentile))
+        self.step_alone.append(nearby(rows["steps_alone"], first, ready))
+        self.curve_alone.append(nearby(rows["curves_alone"], first, ready))
 
-    def block_maxima(self, chunks: numpy.ndarray, blocks: int) -> numpy.ndarray:
-        padded = numpy.zeros((blocks * self.block_chunks, self.channels), dtype=numpy.float32)
-        used = min(len(chunks), len(padded))
-        padded[:used] = chunks[:used]
-        return padded.reshape(blocks, self.block_chunks, self.channels).max(axis=1)
+    def without_largest(self, chunks: numpy.ndarray) -> numpy.ndarray:
+        """Each chunk's largest value more than `isolation` samples from its
+        largest one: chunks [count, hop, channels] to [count, channels].
+        The chunks are overwritten there."""
+        count, hop, channels = chunks.shape
+        where = chunks.argmax(axis=1)[:, None, :] + numpy.arange(-self.isolation, self.isolation + 1)[None, :, None]
+        chunks[numpy.arange(count)[:, None, None], numpy.clip(where, 0, hop - 1),
+               numpy.arange(channels)[None, None, :]] = 0
+        return chunks.max(axis=1)
+
+    def blocks(self, final: bool) -> None:
+        """The maxima of each block whose chunks are all known (with `final`,
+        of the last block too, however few chunks it has), appended to
+        `block_rows`: each chunk is reduced once, so the cost grows with the
+        recording, not with its square."""
+        chunks = len(self.chunk_steps)
+        first = len(self.block_rows["steps"])
+        last = -(-chunks // self.block_chunks) if final else chunks // self.block_chunks
+        if last <= first:
+            return
+        sources = {"steps": self.chunk_steps, "curves": self.chunk_curves,
+                   "steps_alone": self.chunk_steps_alone, "curves_alone": self.chunk_curves_alone}
+        for name, source in sources.items():
+            part = source.rows[first * self.block_chunks:last * self.block_chunks]
+            padded = numpy.zeros(((last - first) * self.block_chunks, self.channels), dtype=numpy.float32)
+            padded[:len(part)] = part
+            self.block_rows[name].append(self.reduce(padded))
+
+    def reduce(self, chunks: numpy.ndarray) -> numpy.ndarray:
+        """Whole blocks of chunks [blocks x block_chunks, channels] to each
+        block's maxima."""
+        return chunks.reshape(-1, self.block_chunks, self.channels).max(axis=1)
 
     def screened_frames(self, final: bool) -> None:
         """The detectors, on every frame whose context is known and that could
@@ -848,9 +1003,13 @@ class Measure:
         near, far = starts // self.block, (starts + self.frame - 1) // self.block
         step_context = numpy.minimum(self.step_context.rows[near], self.step_context.rows[far])
         curve_context = numpy.minimum(self.curve_context.rows[near], self.curve_context.rows[far])
+        step_alone = numpy.minimum(self.step_alone.rows[near], self.step_alone.rows[far])
+        curve_alone = numpy.minimum(self.curve_alone.rows[near], self.curve_alone.rows[far])
         if self.screen:
             run_steps = (steps > self.ratios["clicks"] * step_context) | \
-                (curves > self.ratios["discontinuities"] * curve_context)
+                (curves > self.ratios["discontinuities"] * curve_context) | \
+                (steps > self.alone_ratios["clicks"] * step_alone) | \
+                (curves > self.alone_ratios["discontinuities"] * curve_alone)
             run_bursts = (curves > self.ratios["noise_bursts"] * curve_context) & \
                 (curves >= self.detectors[0].burst_floor)
         else:
@@ -894,10 +1053,9 @@ class Measure:
             last = min(last, known - 2 - margin)
         if last < first:
             return
-        quiet = self.gap_quiet.rows.astype(bool)
         low, high = max(first - margin, 0), min(last + 1 + margin + 1, known)
         padded = numpy.zeros((last - first + 2 * margin + 2, self.channels), dtype=bool)
-        padded[low - (first - margin):high - (first - margin)] = quiet[low:high]
+        padded[low - (first - margin):high - (first - margin)] = self.gap_quiet.rows[low:high].astype(bool)
         near = numpy.lib.stride_tricks.sliding_window_view(padded, 2 * margin + 2, axis=0).any(axis=-1)
         if not self.screen:
             near[:] = True
@@ -1023,10 +1181,18 @@ class Measure:
         return sorted(spans, key=lambda span: (span["start"], span["label"]))
 
     def standing_out(self, name: str, channel: int, sample: int, step: float) -> bool:
-        """Whether an event's step exceeds its ratio times its block's context."""
+        """Whether an event's step exceeds its ratio times its block's
+        context, or (a click or a discontinuity) its ratio alone times
+        what is left of the blocks around it with their largest events
+        taken out."""
         rows = (self.step_context if name == "clicks" else self.curve_context).rows
         block = min(sample // self.block, len(rows) - 1)
-        return step > self.ratios[name] * float(rows[block, channel])
+        if step > self.ratios[name] * float(rows[block, channel]):
+            return True
+        if name not in self.alone_ratios:
+            return False
+        alone = (self.step_alone if name == "clicks" else self.curve_alone).rows
+        return step > self.alone_ratios[name] * float(alone[block, channel])
 
     def events(self, name: str) -> list[dict[str, Any]]:
         found = []
