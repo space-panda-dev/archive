@@ -16,7 +16,7 @@ here writes a record: Door decides every revision.
 | [`match.py`](match.py) | The numpy work matcher, a standalone tool ([ADR 0067](../docs/decisions/0067-matches-and-alignments-pin-runs.md)); uncalibrated |
 | [`cover.py`](cover.py) | Essentia cover similarity and the growing-window search, a standalone tool ([ADR 0071](../docs/decisions/0071-essentia-cover-similarity.md), [ADR 0072](../docs/decisions/0072-windowed-work-matches.md)) |
 | [`enrich.py`](enrich.py) | The `enrich` command that runs a tool against an archive's records |
-| [`bank.py`](bank.py), [`extract.py`](extract.py), [`extractors/`](extractors/frames/extractor.json) | The feature bank's format and reader, the runner that fills it, and the extractors: `frames` (Python, Essentia) and `loudness-r128` (shell) (proposed [ADR 0073](../docs/decisions/0073-proposed-feature-bank.md), [ADR 0074](../docs/decisions/0074-proposed-extractor-contract.md)) |
+| [`bank.py`](bank.py), [`extract.py`](extract.py), [`extractors/`](extractors/frames/extractor.json) | The feature bank's format and reader, the runner that fills it, and the extractors: `frames` (Python, Essentia), `loudness-r128` (shell), and `stems` (Demucs, in its own environment) (proposed [ADR 0073](../docs/decisions/0073-proposed-feature-bank.md), [ADR 0074](../docs/decisions/0074-proposed-extractor-contract.md), [ADR 0075](../docs/decisions/0075-proposed-stems-as-content.md)) |
 | [`media.py`](media.py), [`derived.py`](derived.py) | Derived media, a standalone tool that never touches an archive, and its layout ([ADR 0069](../docs/decisions/0069-derived-media.md)) |
 | [`requirements.txt`](requirements.txt) | The libraries: numpy (detector, matchers, derived media) and scipy (numpy matcher) |
 | [`requirements-match.txt`](requirements-match.txt) | The window matcher's interpreter: Essentia, numpy, and scipy for CPython 3.14, pinned by hash |
@@ -547,7 +547,8 @@ to stderr and exits 1. It needs `ffmpeg` and `ffprobe` (`--ffmpeg` and
 ```sh
 enrich/extract.py list
 enrich/extract.py run <extractor|all> --content <file> --bank <dir> [--digest sha256:<hex>] [--jobs n]
-                  [--config <file>] [--program name=path]... [--extractors <dir>]... [--dry-run]
+                  [--from <extractor>/<output>] [--config <file>] [--program name=path]...
+                  [--extractors <dir>]... [--dry-run]
 ```
 
 Runs extractors on one file and files their features in the feature bank,
@@ -568,6 +569,13 @@ failed or was blocked. `bank.py` reads entries back
 |---|---|---|
 | `frames` | Python, Essentia 2.1b6.dev1438 | on one grid of 4,096-sample frames every 2,048 at 22,050 Hz: `hpcp` (the bits `cover.py` measures), `rms_db`, `centroid`, `rolloff`, `flatness`, `flux`, `onset_hfc`, `mfcc`, `melbands`; scalars `samples`, `seconds` |
 | `loudness-r128` | POSIX shell, ffmpeg | `integrated`: EBU R 128 integrated loudness in LUFS |
+| `stems` | Python under `${demucs-python}` (Demucs 4.1.0, PyTorch), ffmpeg | `vocals`, `drums`, `bass`, `other`: 44.1 kHz stereo 16-bit FLAC from pinned htdemucs weights; `levels` (each stem's RMS every 4,096 samples); each stem's `_rms_db`, `_peak_db`, `_clamped`; `mix_rms_db`, `samples`, `seconds` (proposed [ADR 0075](../docs/decisions/0075-proposed-stems-as-content.md)) |
+
+`--from stems/vocals` measures a stem as content: every extractor runs on it
+unchanged, keyed by the stem's own digest and filed with the recording, after
+the stems are made if they are missing. `stems` runs only where the operator
+configures Demucs's interpreter (`--program demucs-python=<path>`, or
+`programs` in `--config`); `run all` elsewhere skips it and says so.
 
 The format is [docs/feature-bank.md](../docs/feature-bank.md); adding an
 extractor is [docs/adding-an-extractor.md](../docs/adding-an-extractor.md).

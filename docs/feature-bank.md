@@ -95,6 +95,21 @@ while it makes that entry; a second writer waits for it, then finds the
 entry and runs nothing (operational; it may be deleted when no writer
 runs). `tmp/` holds work in progress and may be emptied when no writer runs.
 
+**An entry made from a file feature is filed with the content that feature
+was made from** ([ADR 0075](decisions/0075-proposed-stems-as-content.md)).
+When an extractor measures a stem of a recording, the stem's digest (the
+`sha256` its entry records) is the new entry's `content` and decides its
+key, but the entry lives under the recording's directory:
+`sha256/<recording ab>/<recording cd>/<recording hex>/bank/<extractor>/<key hex>/`.
+Its failure record and lock sit beside it there. Nothing is ever filed under
+a stem's own digest, so a content's directory holds everything made from it.
+A reader that knows the recording finds the stem in the recording's entry
+and then the measure by the stem's digest in the recording's directory
+(`Bank.input_of` and `Bank.entry(..., filed_under=...)` in
+[`enrich/bank.py`](../enrich/bank.py)). The request an extractor receives
+is the same as for any content: `input` names the stem's path, digest, and
+media type.
+
 Entries are never rewritten. Old entries whose keys no installed extractor
 gives are stale; any entry, or the whole root, may be deleted at any time.
 Every entry of a content is under its `sha256/<ab>/<cd>/<hex>/` directory,

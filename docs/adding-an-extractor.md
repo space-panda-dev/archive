@@ -140,10 +140,22 @@ suffix:
 "vocals": {"kind": "file", "media_type": "audio/flac", "suffix": ".flac"}
 ```
 
-An extractor that needs `stems/vocals` receives its path, and the stem's
-measures are filed under the recording's content digest and keyed by the
-stem's entry, so a new separator version reruns everything measured from its
-stems.
+Any extractor measures a stem without change: `extract.py run frames
+--content take.flac --from stems/vocals` makes the stems if they are missing,
+then runs `frames` with the vocal stem as its input and the stem's own
+digest as its content, filing the entry with the recording's
+([ADR 0075](decisions/0075-proposed-stems-as-content.md)). A separator
+version that makes other bits makes other content, measured again; one that
+makes the same bits keeps every measure. Declare `"needs": ["stems/vocals"]`
+only for a measure that is about stems as such, such as one comparing two
+of them.
+
+The shipped separator, `stems`, is the worked example of an extractor in
+another environment: its command is `["${demucs-python}", "stems.py"]`, so
+the runner starts it with the interpreter the operator configured, and its
+test stands in for the model with fixed gains while running the rest of the
+real program
+([`enrich/test_stems.py`](../enrich/test_stems.py)).
 
 ## Other media
 
