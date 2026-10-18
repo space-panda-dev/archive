@@ -240,7 +240,7 @@ count comes first and the strict one second.
 |---|---|---|---|---|---|---|
 | Growing windows, exact distance (as first decided) | 60 | 48 / 41 | 4 / 2 | 8 / 17 | 45 / 38 | about 55 worker-hours on Essentia; about 7 CPU-hours on the port |
 | Whole recording, quarter-rate distance alone | 101 | 70 / 60 | 6 / 3 | 25 / 38 | 64 / 55 | 0.40 CPU-hours; 6.4 minutes on 4 processes |
-| Whole recording, near ties confirmed (this amendment) | 97 | 71 / 61 | 3 / 0 | 23 / 36 | 65 / 56 | about 0.5 CPU-hours |
+| Whole recording, near ties confirmed (this amendment) | 97 | 71 / 61 | 3 / 0 | 23 / 36 | 65 / 56 | 0.61 CPU-hours; 10.5 minutes on 4 processes |
 
 For the second row, the cost splits as follows:
 
@@ -249,6 +249,12 @@ For the second row, the cost splits as follows:
 - decisions took 276;
 - measuring the 17 recordings whole took about 0.06 CPU-hours more;
 - measuring the corpus is the same in every row and is left out.
+
+The third row adds about 770 CPU-seconds for the exact comparisons of its 10
+near ties, about 77 each. Its time is that of `enrich/windows.py` itself,
+which reproduced the second row's kept windows and quarter-rate distances
+bit for bit, and the replayed exact decisions, on the same profiles (Apple
+silicon, Accelerate, one BLAS thread per process).
 
 **The caveats:**
 
@@ -259,8 +265,9 @@ For the second row, the cost splits as follows:
   1, and this search's windows gave 6 with the quarter-rate distance alone.
 - **The third row is a replay.** Its 10 near-tie windows took their exact
   decisions from a run that decided the same windows exactly, on slices of the
-  whole-recording profiles. Confirmation on freshly decoded audio, as decided
-  here, has not yet run on the workset. A slice differs from a fresh
+  whole-recording profiles; the repository's matcher, given slices for those
+  windows, decides them identically. Confirmation on freshly decoded audio, as
+  decided here, has not yet run on the workset. A slice differs from a fresh
   measurement by 0.0034 at the median.
 - **There is a ceiling.** Only 77 of the 98 occurrences have a corpus
   occurrence outside their own session. No search can suggest the other 21.
@@ -277,15 +284,16 @@ For the second row, the cost splits as follows:
 
 - Cost grows with the corpus times the recording's length. Every occurrence
   passes along the whole recording, and every kept window is compared with
-  every occurrence. On the workset that came to about 73 CPU-seconds per
-  recording-hour, at about 92 occurrences.
+  every occurrence. On the workset that came to about 112 CPU-seconds per
+  recording-hour, at about 92 occurrences, 73 of them before near ties.
 - Accepting a new occurrence changes a run's inputs, so the next run searches
   the whole recording again. There is no incremental path.
 - The calibration harness measures each recording whole and splits its work
   per recording, not per run.
-- Hits, regions, alignment paths, and per-occurrence presence along the
-  recording are computed but not recorded. Only the command's answer reports
-  them. Whether any of them becomes a recorded output is open.
+- Hits and regions are computed but not recorded. Only the command's answer
+  counts them. Alignment paths and each occurrence's presence along the
+  recording, which the prototype kept, are not computed. Whether any of them
+  becomes a recorded output is open.
 
 ### Alternatives considered in the amendment
 

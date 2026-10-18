@@ -114,7 +114,7 @@ still takes about 7 CPU-hours. The operator asked for a matcher about a hundred
 times faster than Essentia, not eight.
 
 The whole-recording search in the amendment to
-[ADR 0072](0072-windowed-work-matches.md) does it in about half a CPU-hour. It
+[ADR 0072](0072-windowed-work-matches.md) does it in about 0.6 CPU-hours. It
 decides with a cheaper distance and keeps the exact distance for the near ties
 the cheap one cannot settle.
 
@@ -203,7 +203,8 @@ that down to 3. The measurements and their caveats are in
 
 **Quarter-rate distances are not bit-identical across machines.** Their float32
 matrix products depend on the BLAS library numpy uses. A run records that
-library in its software. A run with another library is another run. The same
+library in its software, by its name and version; Accelerate reports no
+version, so the macOS release that ships it stands in. A run with another library is another run. The same
 library, inputs, and parameters give the same answer, whatever the number of
 processes.
 
@@ -226,10 +227,10 @@ the calibration workset that chose them. That is an
 ### Alternatives considered in the amendment
 
 - **Keep the exact distance for every decision, on the port.** It takes about
-  7 CPU-hours, 14 times more. It suggested 45 accepted occurrences rather than
+  7 CPU-hours, about 11 times more. It suggested 45 accepted occurrences rather than
   65, because reach comes from the search, not from the distance.
-- **Use the quarter-rate distance alone.** It is a little cheaper, but makes 6
-  wrong suggestions against 3, all at near ties.
+- **Use the quarter-rate distance alone.** It takes 0.40 CPU-hours rather than
+  0.61, but makes 6 wrong suggestions against 3, all at near ties.
 - **Rescale quarter-rate scores so that 0.118 reads as 0.08.** The prototype
   did this so it could reuse the old judge. A claim would then show a number on
   Essentia's scale that Essentia never measured.
@@ -237,4 +238,5 @@ the calibration workset that chose them. That is an
   but a slice differs from a fresh measurement by 0.0034 at the median, and by
   up to 0.108. That error is as large as the margins being decided. A fresh
   decode costs about 2 CPU-seconds per window, and about 10 windows in 20
-  recording-hours need one.
+  recording-hours need one. Each confirmation's exact comparisons cost about
+  77 CPU-seconds either way.

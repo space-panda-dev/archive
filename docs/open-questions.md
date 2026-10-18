@@ -198,7 +198,7 @@ unsupported rather than guess.
   ([ADR 0072](decisions/0072-windowed-work-matches.md)).
 - Should the whole-recording search record more than its claims: hits,
   alignment paths, or each corpus occurrence's presence along the recording?
-  They are computed and discarded
+  Hits are computed and discarded; paths and presence are not computed
   ([ADR 0072](decisions/0072-windowed-work-matches.md)).
 - How does the window matcher stay cheap as the corpus grows? Every corpus
   occurrence passes along every recording, and an accepted occurrence makes the

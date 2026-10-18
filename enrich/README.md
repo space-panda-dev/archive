@@ -15,7 +15,7 @@ here writes a record: Door decides every revision.
 | [`detector.py`](detector.py) | The span detector, a standalone tool ([ADR 0066](../docs/decisions/0066-span-suggestions.md)) |
 | [`match.py`](match.py) | The numpy work matcher, a standalone tool ([ADR 0067](../docs/decisions/0067-matches-and-alignments-pin-runs.md)); uncalibrated |
 | [`cover.py`](cover.py) | The measure: Essentia's profiles, measured per span or for a whole recording, the quarter-rate distance, and the bit-exact port of Essentia's distance ([ADR 0071](../docs/decisions/0071-essentia-cover-similarity.md)) |
-| `windows.py` | The whole-recording window search: candidate pass, regions, snapping, claim rounds, and decisions, a standalone tool ([ADR 0072](../docs/decisions/0072-windowed-work-matches.md)) |
+| [`windows.py`](windows.py) | The whole-recording window search: candidate pass, regions, snapping, claim rounds, and decisions, a standalone tool ([ADR 0072](../docs/decisions/0072-windowed-work-matches.md)) |
 | [`calibrate_windows.py`](calibrate_windows.py) | Checks the window matcher's thresholds against an archive's accepted occurrences; proposes nothing |
 | [`enrich.py`](enrich.py) | The `enrich` command that runs a tool against an archive's records |
 | [`media.py`](media.py), [`derived.py`](derived.py) | Derived media, a standalone tool that never touches an archive, and its layout ([ADR 0069](../docs/decisions/0069-derived-media.md)) |
@@ -409,9 +409,12 @@ The capture import runs it last.
   libav libraries, Essentia, numpy, and the BLAS library numpy uses. A rerun
   with the same inputs, software, and parameters answers `unchanged` before
   decoding anything.
-- **Cost.** On the calibration workset, the search took about 0.5 CPU-hours
-  for 19.8 recording-hours against about 92 occurrences. That is roughly 73
-  CPU-seconds per recording-hour, and it grows with the size of the corpus.
+- **Cost.** On the calibration workset, the search took 0.61 CPU-hours for
+  19.8 recording-hours against about 92 occurrences, 10.5 minutes on 4
+  processes. That is roughly 112 CPU-seconds per recording-hour: 73 for the
+  quarter-rate passes, the rest for the exact comparisons of 10 near ties. It
+  grows with the size of the corpus. `--jobs` shares the candidate pass, the
+  largest part; claim rounds and decisions run in one process.
 
 ### The method
 
@@ -477,7 +480,9 @@ occurrences before its suggestions are trusted. It proposes nothing.
   occurrences of other Works, and unaccepted when it overlaps none. Each count
   is given under two rules. The lenient rule counts any overlap. The strict
   rule counts only accepted occurrences that cover more than half of the
-  window.
+  window, and an accepted occurrence counts as suggested only through a
+  correct suggested window that it covers more than half of, so one window
+  never finds two occurrences.
 - **What is reported.** The report gives reach, how many accepted occurrences
   were suggested, and how many were never touched.
 
@@ -485,15 +490,16 @@ occurrences before its suggestions are trusted. It proposes nothing.
 across machines:
 
 - `measure` runs where the audio is. It writes a workset holding the corpus's
-  profiles and each recording's whole-recording profiles, but no audio.
+  profiles and each recording's whole-recording profiles, but no audio, and
+  prints the workset's digest and the source indices to hand out.
 - `search --source-index i` searches one recording from the workset alone.
   This is the unit of work handed out, one per recording.
 - A near tie needs its window decoded afresh, which a workset cannot do. In
   that case `search` reports the window as needing measurement. `measure-windows`,
   run where the audio is, measures every window the results ask for. A second
   `search` with `--windows` then decides them.
-- `judge` refuses any result that still needs a window, and any workset in the
-  earlier, per-window format.
+- `judge` refuses a recording without a result or with two, any result that
+  still needs a window, and any workset in the earlier, per-window format.
 
 A result names the software it ran with. Quarter-rate distances can differ in
 their low bits between BLAS libraries, so `judge` reports which libraries the
