@@ -1,0 +1,152 @@
+{
+ "contract": "archive-extractor/1",
+ "id": "frames",
+ "version": "1",
+ "description": "One decode and one pass over Essentia frames (4096, hop 2048, 22050 Hz): the base tracks other extractors read.",
+ "command": [
+  "${python}",
+  "frames.py"
+ ],
+ "accepts": [
+  "audio/*",
+  "video/*"
+ ],
+ "requires": [
+  "ffmpeg",
+  "essentia@2.1b6.dev1438",
+  "numpy"
+ ],
+ "needs": [],
+ "parameters": {
+  "decoder": "ffmpeg",
+  "decode_arguments": [
+   "-nostdin",
+   "-hide_banner",
+   "-nostats",
+   "-loglevel",
+   "error",
+   "-i",
+   "{input}",
+   "-map",
+   "0:a:0",
+   "-ac",
+   "1",
+   "-ar",
+   "22050",
+   "-c:a",
+   "pcm_s16le",
+   "-f",
+   "s16le",
+   "-"
+  ],
+  "sample_scale": 32768,
+  "essentia": "2.1b6.dev1438",
+  "analysis_rate": 22050,
+  "frame_size": 4096,
+  "hop_size": 2048,
+  "framing": "essentia-framegenerator-centred",
+  "windowing": {
+   "type": "blackmanharris62"
+  },
+  "spectral_peaks": {
+   "orderBy": "magnitude",
+   "magnitudeThreshold": "0.00001",
+   "minFrequency": 40,
+   "maxFrequency": 5000,
+   "maxPeaks": 10000
+  },
+  "hpcp": {},
+  "rms_floor_db": -120,
+  "rolloff_cutoff": "0.85",
+  "onset_method": "hfc",
+  "mfcc": {
+   "numberBands": 40,
+   "numberCoefficients": 13,
+   "highFrequencyBound": 11025
+  }
+ },
+ "outputs": {
+  "hpcp": {
+   "kind": "track",
+   "dtype": "f32",
+   "columns": 12,
+   "grid": "frames",
+   "unit": "1",
+   "description": "pitch-class profile, identical to cover.Analyser.features"
+  },
+  "rms_db": {
+   "kind": "track",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "frames",
+   "unit": "dBFS",
+   "description": "frame RMS, unwindowed, floored at -120"
+  },
+  "centroid": {
+   "kind": "track",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "frames",
+   "unit": "Hz",
+   "description": "spectral centroid"
+  },
+  "rolloff": {
+   "kind": "track",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "frames",
+   "unit": "Hz",
+   "description": "85 % spectral roll-off"
+  },
+  "flatness": {
+   "kind": "track",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "frames",
+   "unit": "1",
+   "description": "spectral flatness"
+  },
+  "flux": {
+   "kind": "track",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "frames",
+   "unit": "1",
+   "description": "L2 spectral flux from the previous frame"
+  },
+  "onset_hfc": {
+   "kind": "track",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "frames",
+   "unit": "1",
+   "description": "high-frequency-content onset detection function"
+  },
+  "mfcc": {
+   "kind": "track",
+   "dtype": "f32",
+   "columns": 13,
+   "grid": "frames",
+   "unit": "1",
+   "description": "13 MFCCs"
+  },
+  "melbands": {
+   "kind": "track",
+   "dtype": "f32",
+   "columns": 40,
+   "grid": "frames",
+   "unit": "1",
+   "description": "40 mel-band energies"
+  },
+  "samples": {
+   "kind": "scalar",
+   "unit": "samples at 22050 Hz",
+   "description": "decoded length"
+  },
+  "seconds": {
+   "kind": "scalar",
+   "unit": "s",
+   "description": "decoded length"
+  }
+ }
+}

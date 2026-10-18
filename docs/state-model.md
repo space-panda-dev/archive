@@ -25,9 +25,12 @@ them unless their behaviour actually differs.
 
 Loss costs time and computation, not history. Examples: indexes, query
 databases, the "current" projection, views, caches, thumbnails, World's store,
-and the derived-media root of waveform peaks and listening copies
+the derived-media root of waveform peaks and listening copies
 ([ADR 0069](decisions/0069-derived-media.md)), which `enrich/media.py` makes
-again from the content.
+again from the content, and the feature bank
+([proposed ADR 0073](decisions/0073-proposed-feature-bank.md)), whose
+extractors make every entry again from the content. A record of an
+extractor's failure beside the bank's entries is operational.
 
 Regenerable means rebuildable in principle, not cheaply: rebuilding World may
 take days and need outside data. Regenerable state never changes through Door
@@ -81,7 +84,7 @@ answer, not a disaster-recovery design.
 |---|---|---|
 | Door | proposals in flight, staging | every recorded transition |
 | World | its store and indexes | everything it was built from; rebuilding costs time and perhaps outside downloads |
-| Enrichment | caches, intermediate output, derived media | admitted results and the content; the rest is recomputed |
+| Enrichment | caches, intermediate output, derived media, the feature bank | admitted results and the content; the rest is recomputed |
 | Annotation | application state, drafts | accepted annotations |
 | Review | application state, queues | recorded assessments |
 | Policy | evaluations, the "current" projection | every policy revision |

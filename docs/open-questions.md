@@ -245,6 +245,35 @@ unsupported rather than guess.
   management make each full-copy item and any projection authorized before
   transfer or publication?
 - Where does program configuration live, and in what format?
+- The feature bank and the extractor contract
+  ([proposed ADR 0073](decisions/0073-proposed-feature-bank.md),
+  [proposed ADR 0074](decisions/0074-proposed-extractor-contract.md)) leave
+  these open:
+  - Should waveform peaks and listening copies become extractors in the same
+    per-content directory, and how would the relay then name them
+    ([ADR 0069](decisions/0069-derived-media.md))?
+  - A key holds no software versions, so a bank filled on another machine with
+    another `ffmpeg` or another build of a library may hold other bits under
+    the same key. Should a reader refuse entries whose recorded software
+    differs from its own, or should a key include a fingerprint of it?
+  - Spool's results are JSON. How does a directory of binary outputs (tracks,
+    stems) return from a worker: Spool result attachments, a worker writing to
+    a shared bank, or something else? And how is the disclosure of content
+    to a worker recorded before the put (the Spool adapter question above)?
+  - A grid is a time base in integer samples. How are spatial grids (images)
+    and fractional frame rates (video at 30000/1001) declared?
+  - An entry belongs to one content. How is a feature of several contents
+    (two recordings' cross-similarity) filed and keyed?
+  - What deletes stale entries, whose keys no installed extractor gives: a
+    command, a policy, or only the operator deleting the root?
+  - Which field of a derivation run's parameters records the features a
+    claim-producing tool read? ADR 0073 proposes each feature's name, its
+    extractor's id and version, and its entry key; the first such tool
+    settles the shape.
+  - May the window search read windows' pitch-class profiles from the
+    whole-recording `frames/hpcp` track? Their edge frames differ from a
+    window measured alone, so it is another method needing its own
+    calibration ([ADR 0071](decisions/0071-essentia-cover-similarity.md)).
 - Where does `enrich.mk`-style mechanism end and derivation policy begin, once
   the policy language exists?
 - When `capture import` stops part way through its enrichment chain, a rerun

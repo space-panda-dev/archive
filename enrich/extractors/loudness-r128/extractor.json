@@ -1,0 +1,14 @@
+{
+ "contract": "archive-extractor/1",
+ "id": "loudness-r128",
+ "version": "1",
+ "description": "Integrated loudness of the first audio stream, EBU R 128, by ffmpeg's ebur128 filter. A shell script: the worked example of an extractor in another language.",
+ "command": ["${sh}", "loudness.sh"],
+ "accepts": ["audio/*", "video/*"],
+ "requires": ["ffmpeg"],
+ "needs": [],
+ "parameters": {"filter": "ebur128=framelog=quiet", "stream": "0:a:0"},
+ "outputs": {
+  "integrated": {"kind": "scalar", "unit": "LUFS", "description": "integrated loudness; -70.0 is the gate's floor, silence"}
+ }
+}

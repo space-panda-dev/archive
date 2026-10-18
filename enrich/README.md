@@ -16,6 +16,7 @@ here writes a record: Door decides every revision.
 | [`match.py`](match.py) | The numpy work matcher, a standalone tool ([ADR 0067](../docs/decisions/0067-matches-and-alignments-pin-runs.md)); uncalibrated |
 | [`cover.py`](cover.py) | Essentia cover similarity and the growing-window search, a standalone tool ([ADR 0071](../docs/decisions/0071-essentia-cover-similarity.md), [ADR 0072](../docs/decisions/0072-windowed-work-matches.md)) |
 | [`enrich.py`](enrich.py) | The `enrich` command that runs a tool against an archive's records |
+| [`bank.py`](bank.py), [`extract.py`](extract.py), [`extractors/`](extractors/frames/extractor.json) | The feature bank's format and reader, the runner that fills it, and the extractors: `frames` (Python, Essentia) and `loudness-r128` (shell) (proposed [ADR 0073](../docs/decisions/0073-proposed-feature-bank.md), [ADR 0074](../docs/decisions/0074-proposed-extractor-contract.md)) |
 | [`media.py`](media.py), [`derived.py`](derived.py) | Derived media, a standalone tool that never touches an archive, and its layout ([ADR 0069](../docs/decisions/0069-derived-media.md)) |
 | [`requirements.txt`](requirements.txt) | The libraries: numpy (detector, matchers, derived media) and scipy (numpy matcher) |
 | [`requirements-match.txt`](requirements-match.txt) | The window matcher's interpreter: Essentia, numpy, and scipy for CPython 3.14, pinned by hash |
@@ -540,6 +541,37 @@ It prints `{"digest", "outputs": {kind: {"path", "status"}}}`, where `status`
 is `written` or `present`; a failure prints `{"status": "failed", "detail"}`
 to stderr and exits 1. It needs `ffmpeg` and `ffprobe` (`--ffmpeg` and
 `--ffprobe` name others) and numpy ([`requirements.txt`](requirements.txt)).
+
+## `extract.py`: the feature bank
+
+```sh
+enrich/extract.py list
+enrich/extract.py run <extractor|all> --content <file> --bank <dir> [--digest sha256:<hex>] [--jobs n]
+                  [--config <file>] [--program name=path]... [--extractors <dir>]... [--dry-run]
+```
+
+Runs extractors on one file and files their features in the feature bank,
+regenerable state laid out by content digest beside derived media (proposed
+[ADR 0073](../docs/decisions/0073-proposed-feature-bank.md) and
+[ADR 0074](../docs/decisions/0074-proposed-extractor-contract.md)). It never
+touches an archive and proposes nothing. Each extractor is a directory under
+[`extractors/`](extractors/frames/extractor.json) with a manifest and a
+program in any language; the runner orders an extractor after the features
+it needs, runs only what is missing, checks every output against the
+manifest, and renames a complete entry into place. It prints each extractor's
+`hit`, `ran`, `failed`, `blocked`, or `skipped` and exits 0 only when none
+failed or was blocked. `bank.py` reads entries back
+(`bank.Bank(root).entry(digest, "frames").track("hpcp")`), and
+`cover.py --bank <dir>` reads whole files' pitch-class profiles from it.
+
+| Extractor | Language | Writes |
+|---|---|---|
+| `frames` | Python, Essentia 2.1b6.dev1438 | on one grid of 4,096-sample frames every 2,048 at 22,050 Hz: `hpcp` (the bits `cover.py` measures), `rms_db`, `centroid`, `rolloff`, `flatness`, `flux`, `onset_hfc`, `mfcc`, `melbands`; scalars `samples`, `seconds` |
+| `loudness-r128` | POSIX shell, ffmpeg | `integrated`: EBU R 128 integrated loudness in LUFS |
+
+The format is [docs/feature-bank.md](../docs/feature-bank.md); adding an
+extractor is [docs/adding-an-extractor.md](../docs/adding-an-extractor.md).
+Entries are readable by their owner only: a stem carries the recording.
 
 ## Test
 

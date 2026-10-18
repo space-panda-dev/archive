@@ -87,3 +87,5 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0070](0070-capture-import.md) | New recordings are imported natively |
 | [0071](0071-essentia-cover-similarity.md) | Cover similarity is measured with Essentia, as the V2 system calibrated it |
 | [0072](0072-windowed-work-matches.md) | A work match can suggest a window of a recording |
+| [0073 proposed](0073-proposed-feature-bank.md) | A feature bank holds regenerable features, keyed by content and method |
+| [0074 proposed](0074-proposed-extractor-contract.md) | An extractor is any program with a manifest, run by request |
