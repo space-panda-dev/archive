@@ -115,6 +115,10 @@ SHIPPED = {
     "loudness-r128": {"version": "1",
                       "code": "sha256:37384ca259e5a38d61a4f09891b496bfeba339e5a10791aea2dc6b401aed0898",
                       "outside": {}},
+    "colour": {"version": "1",
+               "code": "sha256:7ceda9c2572f9a488d116336e7f65173d8a948dc148844c62402f5bfff8a34f4",
+               "outside": {"media.py": "sha256:5a0a81f785f3945a9594302cabd3ed7f8f1658844f7f7a4eb40f488b920f83b7",
+                           "derived.py": "sha256:d1da556693ea266247cbac481f17672578d5cc90043b3f28730e899cd3c28132"}},
 }
 
 
