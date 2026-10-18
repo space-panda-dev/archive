@@ -25,6 +25,12 @@ different result: a different model, a different day, different inputs. Once
 admitted, both kinds behave the same way. Do not build separate code paths for
 them unless their behaviour actually differs.
 
+A contribution or band membership claim is evidence whoever asserted it; the
+booklet scan or saved Discogs or MusicBrainz response it cites is admitted
+first, as an Artifact. The resolved view of credits, which places finer
+claims under coarser ones, is regenerable
+([ADR 0078](decisions/0078-contributions.md)).
+
 ## Regenerable state
 
 Loss costs time and computation, not history. Examples: indexes, query
