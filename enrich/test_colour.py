@@ -1,8 +1,10 @@
 """The colour extractor, run by the real runner on synthetic audio (ADR 0074).
 
-Its peaks must be the derived-media peaks' bytes, its colours must follow the
-frames series it reads, and its preview must decode, in another program's
-PNG decoder, to the image its colours and peaks describe.
+Its colours must be one per pixel of the derived-media peaks (which it must
+not copy), must follow the frames series it reads, and must change where in
+time those series change; its palette must pass its own check; and its
+preview must decode, in another program's PNG decoder, to the image its
+colours and the derived-media peaks describe.
 """
 
 from __future__ import annotations
@@ -61,6 +63,31 @@ def entry(directory: Path, audio: Path, parameters: dict | None = None) -> bank.
         bank.file_digest(audio), "colour")
     assert found is not None
     return found
+
+
+def derived_peaks(directory: Path, audio: Path) -> tuple[int, int, numpy.ndarray]:
+    """The peaks `enrich/media.py` makes for this content as derived media,
+    by the real tool into a derived-media root of its own."""
+    root = directory / "media"
+    root.mkdir(exist_ok=True)
+    digest = bank.file_digest(audio)
+    media.derive(audio, digest, root, kinds=("peaks",))
+    return colour.read_peaks(derived.path(root, digest, "peaks"))
+
+
+def crossing(values: numpy.ndarray, level: float) -> float:
+    """The fractional index where a rising series first reaches ``level``,
+    by linear interpolation between the two samples around it."""
+    above = int(numpy.argmax(values >= level))
+    assert above > 0 and values[above] >= level > values[above - 1]
+    return above - 1 + (level - values[above - 1]) / (values[above] - values[above - 1])
+
+
+def fake_program(directory: Path, name: str, script: str) -> str:
+    path = directory / name
+    path.write_text("#!/bin/sh\n" + script + "\n")
+    path.chmod(0o755)
+    return str(path)
 
 
 def hues_and_lightness(rgb: numpy.ndarray) -> tuple[numpy.ndarray, numpy.ndarray, numpy.ndarray]:
@@ -132,6 +159,8 @@ class Settings(unittest.TestCase):
             "darkest above lightest": {**good, "lightness": {**good["lightness"], "darkest": "0.7"}},
             "boolean width": {**good, "preview": {"width": True, "height": 160}},
             "tiny preview": {**good, "preview": {"width": 4, "height": 160}},
+            "preview too wide to hold": {**good, "preview": {"width": colour.MAX_PREVIEW_WIDTH + 1, "height": 160}},
+            "preview too tall to hold": {**good, "preview": {"width": 1600, "height": colour.MAX_PREVIEW_HEIGHT + 1}},
             "not an object": [],
         }
         for name, value in bad.items():
@@ -201,6 +230,113 @@ class Mapping(unittest.TestCase):
                                     "lightness": {**colour.parameters()["lightness"], "reference": "recording"}})
         self.assertEqual(colour.lightness_range(levels, relative), (-90, -30))
 
+    def test_a_recording_quieter_than_the_floor_is_not_drawn_light(self) -> None:
+        relative = colour.settings({**colour.parameters(),
+                                    "lightness": {**colour.parameters()["lightness"], "reference": "recording"}})
+        silent = numpy.full(10, -120.0)
+        floor_db, ceiling_db = colour.lightness_range(silent, relative)
+        self.assertEqual((floor_db, ceiling_db), (-120, -60))
+        self.assertTrue(numpy.allclose(colour.lightness(silent, floor_db, ceiling_db, relative), relative.darkest))
+        # Just below the floor, the loudest frame is nearly, not quite, the lightest.
+        quiet = colour.lightness(numpy.array([-61.0]), *colour.lightness_range(numpy.array([-61.0]), relative),
+                                 relative)
+        self.assertLess(float(quiet[0]), relative.lightest)
+        self.assertGreater(float(quiet[0]), relative.darkest + 0.9 * (relative.lightest - relative.darkest))
+
+    def test_no_frames_have_no_lightness_range(self) -> None:
+        for reference in ("full-scale", "recording"):
+            with self.subTest(reference):
+                chosen = colour.settings({**colour.parameters(), "lightness": {
+                    **colour.parameters()["lightness"], "reference": reference}})
+                with self.assertRaisesRegex(colour.ColourError, "no frames"):
+                    colour.lightness_range(numpy.zeros(0), chosen)
+
+
+class Palette(unittest.TestCase):
+    """The palette as the program's own writer makes it, and what its check refuses."""
+
+    GRID = {"sample_rate": 22050, "hop": 2048, "frame": 4096, "first_centre": 0}
+
+    def written(self, hue: dict | None = None) -> dict:
+        parameters = {**colour.parameters(), **({"hue": hue} if hue else {})}
+        return json.loads(json.dumps(colour.palette(colour.settings(parameters), parameters, -60.0, 0.0, 800, 441,
+                                                    44100, 2, {"name": "frames", **self.GRID})))
+
+    def test_the_writers_palettes_pass_their_check(self) -> None:
+        centroid = self.written()
+        chroma = self.written({"source": "chroma", "order": "fifths", "reference_hue": 0})
+        for described in (centroid, chroma):
+            colour.check_palette(described)
+        self.assertEqual(centroid["frames"], self.GRID)  # the grid's name is not a grid field
+        self.assertEqual(centroid["peaks"]["kind"], "peaks-1")
+        self.assertEqual(chroma["hue"]["stops"][4]["value"], "C#")
+
+    def test_any_other_shape_is_refused(self) -> None:
+        good = self.written()
+
+        def changed(path: str, value) -> dict:
+            copy = json.loads(json.dumps(good))
+            *parents, last = path.split(".")
+            target = copy
+            for key in parents:
+                target = target[int(key)] if isinstance(target, list) else target[key]
+            if value is KeyError:
+                del target[last]
+            elif isinstance(target, list):
+                target[int(last)] = value
+            else:
+                target[last] = value
+            return copy
+
+        bad = {
+            "other contract": changed("contract", "archive-colour-palette/1"),
+            "extra field": changed("legend", []),
+            "missing field": changed("frames", KeyError),
+            "parameters it would refuse": changed("parameters.interpolation", "cubic"),
+            "rows and pixels differ": changed("colour.rows", 799),
+            "no rows": changed("colour.rows", 0),
+            "other columns": changed("colour.columns", ["r", "g", "b"]),
+            "peaks of another kind": changed("peaks.kind", "peaks-2"),
+            "peaks rate as text": changed("peaks.sample_rate", "44100"),
+            "boolean channels": changed("peaks.channels", True),
+            "grid without a hop": changed("frames.hop", KeyError),
+            "grid with a name": changed("frames.name", "frames"),
+            "hue source unlike the parameters": changed("hue.source", "chroma"),
+            "one hue stop": changed("hue.stops", good["hue"]["stops"][:1]),
+            "hue stop in another unit": changed("hue.stops.0.unit", "kHz"),
+            "hue stop off the circle": changed("hue.stops.0.hue", 400),
+            "hue stop without rgb": changed("hue.stops.0.rgb", KeyError),
+            "rgb not hex": changed("hue.stops.0.rgb", "red"),
+            "saturation unlike the source": changed("saturation", "fixed-ish"),
+            "floor above ceiling": changed("lightness.floor_db", 10),
+            "infinite floor": changed("lightness.floor_db", float("-inf")),
+            "other darkest": changed("lightness.darkest", 0.2),
+            "lightness above one": changed("lightness.stops.0.lightness", 1.5),
+            "lightness in another unit": changed("lightness.unit", "LUFS"),
+            "not an object": [],
+        }
+        for name, value in bad.items():
+            with self.subTest(name):
+                with self.assertRaises(colour.ColourError):
+                    colour.check_palette(value)
+
+
+class Software(unittest.TestCase):
+    def test_a_version_it_cannot_read_is_refused_not_recorded_as_unknown(self) -> None:
+        directory = scratch(self)
+        good = fake_program(directory, "good", 'echo "ffprobe version 9.9-test Copyright"')
+        self.assertEqual(colour.program_version(good, "ffprobe"), "9.9-test")
+        cases = {
+            "another program's answer": fake_program(directory, "other", 'echo "something version 1"'),
+            "no answer": fake_program(directory, "quiet", "true"),
+            "a failure": fake_program(directory, "failing", 'echo "ffprobe version 9.9"; exit 3'),
+            "no program": str(directory / "absent"),
+        }
+        for name, program in cases.items():
+            with self.subTest(name):
+                with self.assertRaises(colour.ColourError):
+                    colour.program_version(program, "ffprobe")
+
 
 class Preview(unittest.TestCase):
     def test_silence_draws_the_centre_and_a_full_scale_column_the_whole_height(self) -> None:
@@ -233,7 +369,7 @@ class Preview(unittest.TestCase):
 @needs_ffmpeg
 @needs_essentia
 class Colour(unittest.TestCase):
-    def test_low_bright_and_silent_parts_get_their_colours_and_the_peaks_are_derived_medias(self) -> None:
+    def test_low_bright_and_silent_parts_get_their_colours_one_per_derived_media_pixel(self) -> None:
         directory = scratch(self)
         mono = support.write_wav(directory / "mono.wav", numpy.concatenate(
             [sine(110, 3, 0.5), bright_noise(3, 0.5), numpy.zeros(2 * RATE)]), RATE)
@@ -244,15 +380,16 @@ class Colour(unittest.TestCase):
         self.assertEqual({k: v["status"] for k, v in answer["extractors"].items()},
                          {"frames": "ran", "colour": "ran"})
         found = entry(directory, audio)
-
-        # The peaks are byte for byte what enrich/media.py serves for this content.
-        root = directory / "media"
-        root.mkdir()
         digest = bank.file_digest(audio)
-        media.derive(audio, digest, root, kinds=("peaks",))
-        self.assertEqual(found.file("peaks").read_bytes(), derived.path(root, digest, "peaks").read_bytes())
-        rate, pixel, peaks = colour.read_peaks(found.file("peaks"))
+
+        # One colour per pixel of the peaks enrich/media.py serves for this
+        # content, and no copy of those peaks in the bank.
+        self.assertEqual(set(found.manifest["outputs"]), {"colour", "palette", "preview"})
+        self.assertEqual([p.name for p in found.path.iterdir() if p.suffix == ".dat"], [])
+        rate, pixel, peaks = derived_peaks(directory, audio)
         self.assertEqual((rate, pixel, peaks.shape), (RATE, 441, (800, 2, 2)))
+        self.assertEqual({s["name"] for s in found.manifest["software"]},
+                         {"ffmpeg", "ffprobe", "numpy", "zlib", "python"})
 
         rgb = found.series("colour")
         self.assertEqual(rgb.shape, (800, 3))
@@ -275,11 +412,14 @@ class Colour(unittest.TestCase):
         self.assertAlmostEqual(float(numpy.median(light[low])), expected, delta=0.01)
 
         described = json.loads(found.file("palette").read_text())
+        colour.check_palette(described)
         self.assertEqual(described["contract"], colour.PALETTE_CONTRACT)
         self.assertEqual(described["parameters"], colour.parameters())
         self.assertEqual(described["colour"]["rows"], 800)
-        self.assertEqual(described["peaks"], {"format": "audiowaveform binary version 2, 8-bit", "sample_rate": RATE,
-                                              "samples_per_pixel": 441, "pixels": 800, "channels": 2})
+        self.assertEqual(described["peaks"], {"kind": "peaks-1", "format": "audiowaveform binary version 2, 8-bit",
+                                              "sample_rate": RATE, "samples_per_pixel": 441, "pixels": 800,
+                                              "channels": 2})
+        self.assertEqual(described["frames"], bank.Bank(directory / "bank").entry(digest, "frames").grid("hpcp"))
         self.assertEqual([s["value"] for s in described["hue"]["stops"]],
                          [100, 125, 250, 500, 1000, 2000, 4000, 8000])
         self.assertEqual((described["lightness"]["floor_db"], described["lightness"]["ceiling_db"]), (-60, 0))
@@ -288,6 +428,39 @@ class Colour(unittest.TestCase):
         shown = decoded_png(found.file("preview"), width, height)
         self.assertTrue(numpy.array_equal(shown, colour.render(peaks, rgb, width, height)))
         self.assertGreater(int((shown[..., 3] > 0).sum()), width)  # more than a centre line
+
+    def test_the_colour_changes_where_the_frames_say_and_leads_the_onset(self) -> None:
+        # Silence, then a sine from exactly 5.000 s: pixel 500 at 100 pixels a second.
+        for rate in (44100, 48000):
+            with self.subTest(rate=rate):
+                directory = scratch(self)
+                audio = support.write_wav(directory / "step.wav", numpy.concatenate(
+                    [numpy.zeros(5 * rate), sine(440, 3, 0.5, rate)]), rate)
+                code, answer = run(directory, audio)
+                self.assertEqual(code, 0, answer)
+                found = entry(directory, audio)
+                _, pixel, peaks = derived_peaks(directory, audio)
+                onset = int(numpy.argmax(peaks[:, 0, 1] > 0))
+                self.assertEqual(onset, 500)
+
+                # The oracle: the time the frames series itself reaches the
+                # level drawn at mid lightness (-30 dBFS between -60 and 0), from
+                # its rows' own times, row r centred at first_centre + r x hop.
+                frames = bank.Bank(directory / "bank").entry(bank.file_digest(audio), "frames")
+                grid = frames.grid("rms_db")
+                row = crossing(frames.series("rms_db")[:, 0].astype(numpy.float64), -30.0)
+                seconds = (grid["first_centre"] + row * grid["hop"]) / grid["sample_rate"]
+                expected = seconds * rate / pixel - 0.5  # pixel k is centred at (k + 0.5) x pixel / rate
+                chosen = colour.settings(colour.parameters())
+                _, light, _ = hues_and_lightness(found.series("colour"))
+                measured = crossing(light, (chosen.darkest + chosen.lightest) / 2)
+                # Half a pixel, or a frame hop (9.3 pixels), off would fail this.
+                self.assertAlmostEqual(measured, expected, delta=0.15)
+                # The README's stated lead: a 4,096-sample window and a dB ramp
+                # up from the -120 dBFS floor reach mid lightness 5 to 12 pixels
+                # (50 to 120 ms) before the onset.
+                self.assertGreater(onset - measured, 5)
+                self.assertLess(onset - measured, 12)
 
     def test_a_second_run_is_a_hit_that_starts_nothing(self) -> None:
         directory = scratch(self)
@@ -356,7 +529,7 @@ class Colour(unittest.TestCase):
         ceiling = json.loads(entry(directory, quiet, relative).file("palette").read_text())["lightness"]["ceiling_db"]
         self.assertAlmostEqual(ceiling, -30, delta=0.2)
         # Clipped: the peaks reach both rails and the colour is as light as it gets.
-        _, _, peaks = colour.read_peaks(entry(directory, clipped).file("peaks"))
+        _, _, peaks = derived_peaks(directory, clipped)
         self.assertEqual((int(peaks[:, 0, 0].min()), int(peaks[:, 0, 1].max())), (-128, 127))
         _, clipped_light, _ = hues_and_lightness(entry(directory, clipped).series("colour")[middle])
         self.assertAlmostEqual(float(numpy.median(clipped_light)), chosen.lightest, delta=0.01)
@@ -370,8 +543,9 @@ class Colour(unittest.TestCase):
         code, answer = run(directory, video)
         self.assertEqual(code, 0, answer)
         self.assertEqual(answer["media_type"], "video/mp4")
-        rate, pixel, peaks = colour.read_peaks(entry(directory, video).file("peaks"))
+        rate, pixel, peaks = derived_peaks(directory, video)
         self.assertEqual((rate, pixel), (48000, 480))
+        self.assertEqual(json.loads(entry(directory, video).file("palette").read_text())["peaks"]["pixels"], len(peaks))
         self.assertEqual(entry(directory, video).series("colour").shape, (len(peaks), 3))
 
 
@@ -453,7 +627,7 @@ class Failures(unittest.TestCase):
         junk.write_bytes(b"RIFF this is not audio")
         out = directory / "out"
         out.mkdir()
-        with self.assertRaises(media.MediaError):
+        with self.assertRaises(media.MediaError):  # the same class as waveform.MediaError
             colour.make({"parameters": colour.parameters(), "input": {"path": str(junk)}, "needs": needs,
                          "output_dir": str(out)})
 

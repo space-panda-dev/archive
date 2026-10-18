@@ -17,7 +17,7 @@ here writes a record: Door decides every revision.
 | [`cover.py`](cover.py) | Essentia cover similarity and the growing-window search, a standalone tool ([ADR 0071](../docs/decisions/0071-essentia-cover-similarity.md), [ADR 0072](../docs/decisions/0072-windowed-work-matches.md)) |
 | [`enrich.py`](enrich.py) | The `enrich` command that runs a tool against an archive's records |
 | [`bank.py`](bank.py), [`extract.py`](extract.py), [`extractors/`](extractors/frames/extractor.json) | The feature bank's format and reader, the runner that fills it, and the extractors: `frames` (Python, Essentia) and `loudness-r128` (shell) (proposed [ADR 0073](../docs/decisions/0073-proposed-feature-bank.md), [ADR 0074](../docs/decisions/0074-proposed-extractor-contract.md)) |
-| [`media.py`](media.py), [`derived.py`](derived.py) | Derived media, a standalone tool that never touches an archive, and its layout ([ADR 0069](../docs/decisions/0069-derived-media.md)) |
+| [`media.py`](media.py), [`waveform.py`](waveform.py), [`derived.py`](derived.py) | Derived media, a standalone tool that never touches an archive; the waveform peaks' format and decode; and the layout ([ADR 0069](../docs/decisions/0069-derived-media.md)) |
 | [`requirements.txt`](requirements.txt) | The libraries: numpy (detector, matchers, derived media) and scipy (numpy matcher) |
 | [`requirements-match.txt`](requirements-match.txt) | The window matcher's interpreter: Essentia, numpy, and scipy for CPython 3.14, pinned by hash |
 | `support.py`, `test_*.py`, `tests/` | Synthetic audio, scratch archives built through Door, and the tests |
@@ -568,7 +568,7 @@ failed or was blocked. `bank.py` reads entries back
 |---|---|---|
 | `frames` | Python, Essentia 2.1b6.dev1438 | on one grid of 4,096-sample frames every 2,048 at 22,050 Hz: `hpcp` (the bits `cover.py` measures), `rms_db`, `centroid`, `rolloff`, `flatness`, `flux`, `onset_hfc`, `mfcc`, `melbands`; scalars `samples`, `seconds` |
 | `loudness-r128` | POSIX shell, ffmpeg | `integrated`: EBU R 128 integrated loudness in LUFS |
-| `colour` | Python, numpy, ffmpeg | for each waveform pixel of [`media.py`](media.py)'s peaks (about 10 ms): file `peaks` (the derived-media peaks' bytes, from its own full-rate decode, since `frames` is mono at 22,050 Hz), series `colour` (`u8` red, green, blue, on grid `peaks`) coloured from `frames/centroid` or `frames/hpcp` (hue) and `frames/rms_db` (lightness), interpolated to each pixel's centre; file `palette` (the mapping and legend stops, JSON); file `preview` (a PNG of the whole recording). The mapping is its parameters |
+| `colour` | Python, numpy, ffmpeg | for each waveform pixel of [`media.py`](media.py)'s derived-media peaks (about 10 ms; the peaks stay derived media and are not copied into the bank): series `colour` (`u8` red, green, blue, on grid `peaks`) coloured from `frames/centroid` or `frames/hpcp` (hue) and `frames/rms_db` (lightness), interpolated to each pixel's centre; file `palette` (the mapping and legend stops, JSON, fields in [its README](extractors/colour/README.md)); file `preview` (a PNG of the whole recording). The mapping is its parameters |
 
 The format is [docs/feature-bank.md](../docs/feature-bank.md); adding an
 extractor is [docs/adding-an-extractor.md](../docs/adding-an-extractor.md).

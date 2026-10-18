@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 """The colour extractor: a colour-coded waveform's data (ADR 0074).
 
-For every pixel of the waveform peaks that `enrich/media.py` makes
-(ADR 0069; about ten milliseconds each), it writes the peak envelope and one
-colour, so a review client can draw the same waveform tinted by what is
-sounding:
+For every pixel of the waveform peaks that `enrich/media.py` serves as
+derived media (ADR 0069, kind `peaks-1`; about ten milliseconds each), it
+writes one colour, so a review client can draw the waveform it already
+draws, tinted by what is sounding. The peaks themselves stay derived media:
+the bank holds no copy of them (ADR 0073).
 
-- `peaks`: the peaks file, byte for byte the derived-media peaks
-  (`peaks-1.dat`): audiowaveform binary version 2, 8-bit, a signed minimum
-  and maximum per channel per pixel, `samples_per_pixel` the source rate over
-  100, rounded half to even. It is made by `media.write_peaks` itself.
 - `colour`: a `u8` series of [pixels, 3], red, green, and blue, one row per
   peaks pixel, on the grid `peaks`. A pixel's centre is half a pixel into it,
   so the grid is written at twice the source rate (`sample_rate` 2 x rate,
@@ -17,7 +14,9 @@ sounding:
   which puts every centre on an integer sample of that grid.
 - `palette`: JSON describing how the colours were made (the mapping, the
   decibel range lightness spans for this recording, and legend stops), so a
-  client can draw a key without knowing this program.
+  client can draw a key without knowing this program. Its fields are in this
+  directory's README; `check_palette` refuses any other shape, and the
+  program checks its own palette before writing it.
 - `preview`: a PNG of the whole recording, transparent behind the waveform.
 
 Colour comes from the bank's `frames` series, read rather than measured
@@ -27,11 +26,13 @@ the chromatic circle), saturation fixed or scaled by how concentrated the
 profile is, and lightness from the frame RMS level in dBFS. The frames grid
 (about 10.8 rows a second) is interpolated linearly to each pixel's centre.
 
-The peak envelope cannot come from the bank: it needs every channel at the
-source's own rate, and `frames` holds one mono channel at 22,050 Hz reduced
-to 4,096-sample frames. So this extractor decodes the content once more, as
-`media.py` does. Essentia has no algorithm for any step here; the
-features it measured arrive through `frames`.
+The peaks grid cannot come from the bank: it needs the source's own rate
+and length, and the preview needs every channel's envelope, while `frames`
+holds one mono channel at 22,050 Hz reduced to 4,096-sample frames. So this
+extractor decodes the content once more with the derived-media decoder
+(`enrich/waveform.py`), into a temporary file it deletes. Essentia has no
+algorithm for any step here; the features it measured arrive through
+`frames`.
 
 Invoked by the runner as `colour.py <request.json>`. Parameters it does not
 implement are refused, never approximated.
@@ -45,6 +46,7 @@ import re
 import struct
 import subprocess
 import sys
+import tempfile
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,16 +58,18 @@ sys.path.insert(0, str(ENRICH))
 import numpy  # noqa: E402
 
 import derived  # noqa: E402
-import media  # noqa: E402
+import waveform  # noqa: E402
 
 NEEDS = ("frames/centroid", "frames/hpcp", "frames/rms_db")
 PEAKS_KIND = derived.KINDS["peaks"]
 # HPCP's bin 0 is A (440 Hz reference) and bins rise by a semitone.
 PITCH_CLASSES = ("A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#")
-PALETTE_CONTRACT = "archive-colour-palette/1"
+PALETTE_CONTRACT = "archive-colour-palette/2"
 DECIMAL = re.compile(r"-?[0-9]+(\.[0-9]+)?")
 # The frames grid's analysis rate: a centroid above its Nyquist frequency cannot occur.
 FRAMES_NYQUIST = 11025
+# The preview is held whole in memory as RGBA: at most 32 MiB.
+MAX_PREVIEW_WIDTH, MAX_PREVIEW_HEIGHT = 8192, 1024
 
 
 class ColourError(Exception):
@@ -159,8 +163,8 @@ def settings(value: Any) -> Settings:
     return Settings(hue=dict(hue), saturation=_fraction(top["saturation"], "saturation", 0.0, 1.0),
                     reference=light["reference"], floor_db=float(floor), ceiling_db=float(ceiling),
                     darkest=darkest, lightest=lightest,
-                    width=_integer(preview["width"], "preview.width", 16, 16384),
-                    height=_integer(preview["height"], "preview.height", 8, 4096))
+                    width=_integer(preview["width"], "preview.width", 16, MAX_PREVIEW_WIDTH),
+                    height=_integer(preview["height"], "preview.height", 8, MAX_PREVIEW_HEIGHT))
 
 
 # -- the bank's series -------------------------------------------------------
@@ -240,12 +244,15 @@ def chroma_hue(hpcp: numpy.ndarray, hue: Mapping[str, Any]) -> tuple[numpy.ndarr
 
 def lightness_range(rms_db: numpy.ndarray, chosen: Settings) -> tuple[float, float]:
     """The decibels lightness spans: as configured, or (reference
-    "recording") shifted so the recording's loudest frame is the ceiling."""
+    "recording") shifted so the recording's loudest frame is the ceiling.
+    The shifted ceiling is never below `floor_db`: a recording quieter
+    throughout than the floor is not raised to the lightest colour."""
+    if rms_db.size == 0:
+        raise ColourError("there are no frames to take a lightness range from")
     if chosen.reference == "full-scale":
         return chosen.floor_db, chosen.ceiling_db
-    loudest = float(rms_db.max()) if rms_db.size else chosen.ceiling_db
-    span = chosen.ceiling_db - chosen.floor_db
-    return loudest - span, loudest
+    ceiling = max(float(rms_db.max()), chosen.floor_db)
+    return ceiling - (chosen.ceiling_db - chosen.floor_db), ceiling
 
 
 def lightness(rms_db: numpy.ndarray, floor_db: float, ceiling_db: float, chosen: Settings) -> numpy.ndarray:
@@ -282,9 +289,17 @@ def colours(chosen: Settings, centroid: numpy.ndarray, hpcp: numpy.ndarray,
     return hsl_to_rgb(hue, saturation, lightness(rms_db, floor_db, ceiling_db, chosen))
 
 
+GRID_FIELDS = ("sample_rate", "hop", "frame", "first_centre")
+PEAKS_FORMAT = "audiowaveform binary version 2, 8-bit"
+CHROMA_SATURATION = "saturation x the pitch-class profile's concentration"
+
+
 def palette(chosen: Settings, parameters_used: Mapping[str, Any], floor_db: float, ceiling_db: float,
-            pixels: int, samples_per_pixel: int, rate: int, channels: int) -> dict[str, Any]:
-    """How the colours were made, with legend stops at mid lightness."""
+            pixels: int, samples_per_pixel: int, rate: int, channels: int,
+            frames_grid: Mapping[str, Any]) -> dict[str, Any]:
+    """How the colours were made, with legend stops at mid lightness. The
+    fields are documented in this directory's README; `check_palette` is
+    their check."""
     middle = (chosen.darkest + chosen.lightest) / 2
     if chosen.hue["source"] == "centroid":
         candidates = [chosen.hue["low_hz"], 125, 250, 500, 1000, 2000, 4000, 8000, chosen.hue["high_hz"]]
@@ -305,11 +320,11 @@ def palette(chosen: Settings, parameters_used: Mapping[str, Any], floor_db: floa
             "parameters": dict(parameters_used),
             "colour": {"dtype": "u8", "columns": ["red", "green", "blue"], "rows": pixels,
                        "row": "peaks pixel k, centred (k + 0.5) x samples_per_pixel / sample_rate seconds"},
-            "peaks": {"format": "audiowaveform binary version 2, 8-bit", "sample_rate": rate,
+            "peaks": {"kind": parameters_used["peaks"], "format": PEAKS_FORMAT, "sample_rate": rate,
                       "samples_per_pixel": samples_per_pixel, "pixels": pixels, "channels": channels},
+            "frames": {field: frames_grid[field] for field in GRID_FIELDS if field in frames_grid},
             "hue": {"source": chosen.hue["source"], "stops": hue_stops},
-            "saturation": ("fixed" if chosen.hue["source"] == "centroid"
-                           else "saturation x the pitch-class profile's concentration"),
+            "saturation": "fixed" if chosen.hue["source"] == "centroid" else CHROMA_SATURATION,
             "lightness": {"source": "frames/rms_db", "unit": "dBFS", "floor_db": round(floor_db, 3),
                           "ceiling_db": round(ceiling_db, 3), "darkest": chosen.darkest,
                           "lightest": chosen.lightest,
@@ -317,17 +332,86 @@ def palette(chosen: Settings, parameters_used: Mapping[str, Any], floor_db: floa
                                      "rgb": hex_colour(c)} for v, l, c in zip(levels, light, grey)]}}
 
 
+HEX_COLOUR = re.compile(r"#[0-9a-f]{6}")
+
+
+def _number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and numpy.isfinite(value)
+
+
+def _count(value: Any, low: int = 1) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= low
+
+
+def check_palette(value: Any) -> None:
+    """Refuse anything but an `archive-colour-palette/2` document: exactly the
+    fields the README lists, of their types, and consistent with each other
+    and with its own parameters."""
+    def require(condition: bool, message: str) -> None:
+        if not condition:
+            raise ColourError(f"palette: {message}")
+
+    top = _fields(value, "palette", {"contract", "parameters", "colour", "peaks", "frames", "hue",
+                                     "saturation", "lightness"})
+    require(top["contract"] == PALETTE_CONTRACT, f"contract is {top['contract']!r}, not {PALETTE_CONTRACT}")
+    chosen = settings(top["parameters"])
+    rows = _fields(top["colour"], "palette.colour", {"dtype", "columns", "rows", "row"})
+    require(rows["dtype"] == "u8" and rows["columns"] == ["red", "green", "blue"], "colour is u8 red, green, blue")
+    require(_count(rows["rows"]) and isinstance(rows["row"], str), "colour.rows is a count and row is text")
+    peaks = _fields(top["peaks"], "palette.peaks",
+                    {"kind", "format", "sample_rate", "samples_per_pixel", "pixels", "channels"})
+    require(peaks["kind"] == top["parameters"]["peaks"], "peaks.kind is the parameters' peaks")
+    require(peaks["format"] == PEAKS_FORMAT, f"peaks.format is {PEAKS_FORMAT!r}")
+    require(all(_count(peaks[f]) for f in ("sample_rate", "samples_per_pixel", "pixels", "channels")),
+            "peaks' rate, samples per pixel, pixels, and channels are counts")
+    require(peaks["pixels"] == rows["rows"], "there is one colour row per peaks pixel")
+    frames = top["frames"]
+    require(isinstance(frames, dict) and set(frames) <= set(GRID_FIELDS)
+            and {"sample_rate", "hop", "first_centre"} <= set(frames)
+            and all(_count(v, 0) for v in frames.values()) and frames["sample_rate"] >= 1 and frames["hop"] >= 1,
+            "frames is a grid: sample_rate, hop, first_centre, and perhaps frame, as integers")
+    hue = _fields(top["hue"], "palette.hue", {"source", "stops"})
+    require(hue["source"] == chosen.hue["source"], "hue.source is the parameters' hue source")
+    stops = hue["stops"]
+    require(isinstance(stops, list) and len(stops) >= 2, "hue.stops is a list of at least two stops")
+    unit = "Hz" if chosen.hue["source"] == "centroid" else "pitch class"
+    for stop in stops:
+        _fields(stop, "palette.hue.stops[]", {"value", "unit", "hue", "rgb"})
+        require(stop["unit"] == unit, f"every hue stop's unit is {unit!r}")
+        require(_number(stop["value"]) if unit == "Hz" else stop["value"] in PITCH_CLASSES,
+                "a hue stop's value is a frequency or a pitch class")
+        require(_number(stop["hue"]) and 0 <= stop["hue"] <= 360, "a hue stop's hue is degrees from 0 to 360")
+        require(isinstance(stop["rgb"], str) and HEX_COLOUR.fullmatch(stop["rgb"]) is not None,
+                "a stop's rgb is #rrggbb")
+    expected = "fixed" if chosen.hue["source"] == "centroid" else CHROMA_SATURATION
+    require(top["saturation"] == expected, f"saturation is {expected!r} for this hue source")
+    light = _fields(top["lightness"], "palette.lightness",
+                    {"source", "unit", "floor_db", "ceiling_db", "darkest", "lightest", "stops"})
+    require(light["source"] == "frames/rms_db" and light["unit"] == "dBFS", "lightness is frames/rms_db in dBFS")
+    require(_number(light["floor_db"]) and _number(light["ceiling_db"]) and light["floor_db"] < light["ceiling_db"],
+            "lightness.floor_db is below ceiling_db")
+    require(light["darkest"] == chosen.darkest and light["lightest"] == chosen.lightest,
+            "lightness.darkest and lightest are the parameters'")
+    require(isinstance(light["stops"], list) and len(light["stops"]) >= 2, "lightness.stops has at least two stops")
+    for stop in light["stops"]:
+        _fields(stop, "palette.lightness.stops[]", {"value", "lightness", "rgb"})
+        require(_number(stop["value"]) and _number(stop["lightness"]) and 0 <= stop["lightness"] <= 1,
+                "a lightness stop is decibels and a lightness from 0 to 1")
+        require(isinstance(stop["rgb"], str) and HEX_COLOUR.fullmatch(stop["rgb"]) is not None,
+                "a stop's rgb is #rrggbb")
+
+
 # -- peaks and the preview ---------------------------------------------------
 
 def read_peaks(path: Path) -> tuple[int, int, numpy.ndarray]:
     """A peaks file's rate, samples per pixel, and [pixels, channels, 2] values."""
     data = path.read_bytes()
-    if len(data) < media.PEAKS_HEADER.size:
+    if len(data) < waveform.PEAKS_HEADER.size:
         raise ColourError(f"{path} is shorter than a peaks header")
-    version, flags, rate, pixel, length, channels = media.PEAKS_HEADER.unpack_from(data)
-    if not media.peaks_complete(path) or version != media.PEAKS_VERSION:
+    version, flags, rate, pixel, length, channels = waveform.PEAKS_HEADER.unpack_from(data)
+    if not waveform.peaks_complete(path) or version != waveform.PEAKS_VERSION:
         raise ColourError(f"{path} is not a complete version 2, 8-bit peaks file")
-    values = numpy.frombuffer(data, dtype=numpy.int8, offset=media.PEAKS_HEADER.size)
+    values = numpy.frombuffer(data, dtype=numpy.int8, offset=waveform.PEAKS_HEADER.size)
     return rate, pixel, values.reshape(length, channels, 2)
 
 
@@ -377,9 +461,18 @@ def png(image: numpy.ndarray) -> bytes:
 
 # -- the program -------------------------------------------------------------
 
-def ffmpeg_version(ffmpeg: str = "ffmpeg") -> str:
-    first = subprocess.run([ffmpeg, "-version"], capture_output=True, text=True).stdout.split("\n", 1)[0].split()
-    return first[2] if len(first) > 2 and first[:2] == ["ffmpeg", "version"] else "unknown"
+def program_version(program: str, name: str) -> str:
+    """The version an ffmpeg-family program reports on its first line
+    (`<name> version <v> ...`). A program that answers otherwise is refused:
+    the result's software is provenance, and "unknown" would not be."""
+    try:
+        answered = subprocess.run([program, "-version"], capture_output=True, text=True)
+    except OSError as exc:
+        raise ColourError(f"{name} could not be run as {program!r}: {exc}") from exc
+    first = answered.stdout.split("\n", 1)[0].split()
+    if answered.returncode != 0 or len(first) < 3 or first[:2] != [name, "version"]:
+        raise ColourError(f"{program} -version did not report a {name} version")
+    return first[2]
 
 
 def make(request: Mapping[str, Any], ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe") -> dict[str, Any]:
@@ -392,11 +485,20 @@ def make(request: Mapping[str, Any], ffmpeg: str = "ffmpeg", ffprobe: str = "ffp
     rms_db, rms_grid = read_need(request, "frames/rms_db", 1)
     if not (len(centroid) == len(hpcp) == len(rms_db) and grid == hpcp_grid == rms_grid):
         raise ColourError("the frames series are not on one grid")
+    software = [{"name": "ffmpeg", "version": program_version(ffmpeg, "ffmpeg")},
+                {"name": "ffprobe", "version": program_version(ffprobe, "ffprobe")},
+                {"name": "numpy", "version": numpy.__version__},
+                {"name": "zlib", "version": zlib.ZLIB_RUNTIME_VERSION},
+                {"name": "python", "version": platform.python_version()}]
 
-    stream = media.probe(source, ffprobe)
-    with open(output / "peaks.dat", "w+b") as handle:
-        media.write_peaks(source, stream, handle, ffmpeg)
-    rate, samples_per_pixel, peaks = read_peaks(output / "peaks.dat")
+    # The derived-media decode, kept only while this program runs: the peaks
+    # are derived media, served from there, and never a bank output.
+    stream = waveform.probe(source, ffprobe)
+    with tempfile.TemporaryDirectory(prefix="colour-peaks-") as scratch:
+        with open(Path(scratch) / "peaks.dat", "w+b") as handle:
+            waveform.write_peaks(source, stream, handle, ffmpeg)
+        rate, samples_per_pixel, peaks = read_peaks(Path(scratch) / "peaks.dat")
+        peaks = peaks.copy()
     pixels = len(peaks)
     check_lengths(pixels, samples_per_pixel, rate, len(centroid), grid)
 
@@ -404,19 +506,17 @@ def make(request: Mapping[str, Any], ffmpeg: str = "ffmpeg", ffprobe: str = "ffp
     floor_db, ceiling_db = lightness_range(rms_db[:, 0], chosen)
     rgb = colours(chosen, interpolate(centroid, positions)[:, 0], interpolate(hpcp, positions),
                   interpolate(rms_db, positions)[:, 0], floor_db, ceiling_db)
-    (output / "colour.u8").write_bytes(rgb.tobytes())
     described = palette(chosen, request["parameters"], floor_db, ceiling_db, pixels, samples_per_pixel, rate,
-                        stream.channels)
+                        stream.channels, grid)
+    check_palette(described)
+    (output / "colour.u8").write_bytes(rgb.tobytes())
     (output / "palette.json").write_text(json.dumps(described, indent=1, sort_keys=True) + "\n")
     (output / "preview.png").write_bytes(png(render(peaks, rgb, chosen.width, chosen.height)))
     return {"contract": "archive-extractor-result/1",
-            "software": [{"name": "ffmpeg", "version": ffmpeg_version(ffmpeg)},
-                         {"name": "numpy", "version": numpy.__version__},
-                         {"name": "zlib", "version": zlib.ZLIB_RUNTIME_VERSION},
-                         {"name": "python", "version": platform.python_version()}],
+            "software": software,
             "grids": {"peaks": {"sample_rate": 2 * rate, "hop": 2 * samples_per_pixel,
                                 "frame": 2 * samples_per_pixel, "first_centre": samples_per_pixel}},
-            "outputs": {"peaks": {}, "colour": {"shape": [pixels, 3]}, "palette": {}, "preview": {}}}
+            "outputs": {"colour": {"shape": [pixels, 3]}, "palette": {}, "preview": {}}}
 
 
 def main(argv: list[str]) -> int:
@@ -427,7 +527,7 @@ def main(argv: list[str]) -> int:
         request = json.loads(Path(argv[0]).read_text(encoding="utf-8"))
         result = make(request)
         (Path(request["output_dir"]) / "result.json").write_text(json.dumps(result))
-    except (ColourError, media.MediaError, OSError, KeyError, TypeError, ValueError) as exc:
+    except (ColourError, waveform.MediaError, OSError, KeyError, TypeError, ValueError) as exc:
         print(f"colour: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
     return 0

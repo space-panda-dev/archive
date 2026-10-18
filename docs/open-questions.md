@@ -251,7 +251,10 @@ unsupported rather than guess.
   these open:
   - Should waveform peaks and listening copies become extractors in the same
     per-content directory, and how would the relay then name them
-    ([ADR 0069](decisions/0069-derived-media.md))?
+    ([ADR 0069](decisions/0069-derived-media.md))? Or should a request be
+    able to name derived media as an input, so that an extractor on their
+    grid (the `colour` extractor follows the peaks pixel by pixel) reads them
+    instead of decoding the content again?
   - A key holds no software versions, so a bank filled on another machine with
     another `ffmpeg` or another build of a library may hold other bits under
     the same key. Should a reader refuse entries whose recorded software

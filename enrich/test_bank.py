@@ -115,9 +115,12 @@ SHIPPED = {
     "loudness-r128": {"version": "1",
                       "code": "sha256:37384ca259e5a38d61a4f09891b496bfeba339e5a10791aea2dc6b401aed0898",
                       "outside": {}},
-    "colour": {"version": "1",
-               "code": "sha256:7ceda9c2572f9a488d116336e7f65173d8a948dc148844c62402f5bfff8a34f4",
-               "outside": {"media.py": "sha256:aa4d89f4e4de9b6a7a3adf5a307ca1e399ebbca4fe1337453da67829cc4ffd09",
+    # colour reads the peaks' format and decode from waveform.py, not the
+    # derived-media tool media.py, so an edit to that tool's routes or
+    # command line leaves colour's pin alone.
+    "colour": {"version": "2",
+               "code": "sha256:ebee70e03d192d968e2ca2406fa369da5aa5ada9f67750b94c0c48ba11c7be6e",
+               "outside": {"waveform.py": "sha256:353aceedf74c7a1c2bbaa330fe03847440f1e74213146bcf6bc0b863db39a424",
                            "derived.py": "sha256:d1da556693ea266247cbac481f17672578d5cc90043b3f28730e899cd3c28132"}},
 }
 
@@ -646,6 +649,21 @@ class Manifests(unittest.TestCase):
                 found = {"version": extractor.version, "code": bank.code_digest(extractor.directory),
                          "outside": {name: bank.file_digest(enrich / name) for name in pinned["outside"]}}
                 self.assertEqual(found, pinned, "the code changed: bump the version, or record the digests")
+
+    def test_each_shipped_pin_names_every_module_its_extractor_imports_from_outside(self) -> None:
+        import ast
+        enrich = Path(bank.__file__).resolve().parent
+        local = {path.stem for path in enrich.glob("*.py")}
+        for extractor in bank.Catalog.load().extractors.values():
+            with self.subTest(extractor=extractor.id):
+                imported = set()
+                for program in extractor.directory.glob("*.py"):
+                    for node in ast.walk(ast.parse(program.read_text(encoding="utf-8"))):
+                        if isinstance(node, ast.Import):
+                            imported |= {alias.name.split(".")[0] for alias in node.names}
+                        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                            imported.add(node.module.split(".")[0])
+                self.assertEqual({f"{name}.py" for name in imported & local}, set(SHIPPED[extractor.id]["outside"]))
 
     def test_a_code_digest_sees_every_file_but_byte_code(self) -> None:
         f = Fixture(self)
