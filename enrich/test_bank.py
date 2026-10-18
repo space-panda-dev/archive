@@ -131,6 +131,9 @@ SHIPPED = {
     "quality": {"version": "1",
                 "code": "sha256:c0e72d32098e4726ac1dffdb6d81be36d2cceff05d2b69fab3cd12005927002d",
                 "outside": {}},
+    "melody": {"version": "1",
+               "code": "sha256:b678b71cc9ab9e80fee833c32722bfea343bf44c418a6d5ec17556169235212d",
+               "outside": {}},
 }
 
 

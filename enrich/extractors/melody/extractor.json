@@ -1,0 +1,138 @@
+{
+ "contract": "archive-extractor/1",
+ "id": "melody",
+ "version": "1",
+ "description": "The predominant melody's pitch contour, voicing, and intonation by Essentia's MELODIA (PredominantPitchMelodia) on whatever audio is the content: the mix, or a stem when a stem is the content. Decodes again at 44,100 Hz, since the frames grid is too coarse for a contour; hop_size is the stride, and the audio is measured in chunks with margins so memory stays bounded.",
+ "command": [
+  "${python}",
+  "melody.py"
+ ],
+ "accepts": [
+  "audio/*",
+  "video/*"
+ ],
+ "requires": [
+  "ffmpeg",
+  "essentia@2.1b6.dev1438",
+  "numpy"
+ ],
+ "needs": [],
+ "parameters": {
+  "decoder": "ffmpeg",
+  "decode_arguments": [
+   "-nostdin",
+   "-hide_banner",
+   "-nostats",
+   "-loglevel",
+   "error",
+   "-i",
+   "{input}",
+   "-map",
+   "0:a:0",
+   "-ac",
+   "1",
+   "-ar",
+   "44100",
+   "-c:a",
+   "pcm_s16le",
+   "-f",
+   "s16le",
+   "-"
+  ],
+  "sample_scale": 32768,
+  "essentia": "2.1b6.dev1438",
+  "analysis_rate": 44100,
+  "frame_size": 2048,
+  "hop_size": 128,
+  "equal_loudness": true,
+  "predominant": {
+   "binResolution": 10,
+   "filterIterations": 3,
+   "guessUnvoiced": false,
+   "harmonicWeight": "0.8",
+   "magnitudeCompression": 1,
+   "magnitudeThreshold": 40,
+   "maxFrequency": 20000,
+   "minDuration": 100,
+   "minFrequency": 80,
+   "numberHarmonics": 20,
+   "peakDistributionThreshold": "0.9",
+   "peakFrameThreshold": "0.9",
+   "pitchContinuity": "27.5625",
+   "referenceFrequency": 55,
+   "timeContinuity": 100,
+   "voiceVibrato": false,
+   "voicingTolerance": "0.2"
+  },
+  "segmentation": {
+   "minDuration": "0.1",
+   "pitchDistanceThreshold": 60,
+   "rmsThreshold": -2
+  },
+  "reference_hz": "440",
+  "chunk_seconds": 120,
+  "margin_seconds": 5
+ },
+ "outputs": {
+  "pitch": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "melody",
+   "unit": "Hz",
+   "description": "melody fundamental frequency; 0 where unvoiced"
+  },
+  "confidence": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "melody",
+   "unit": "1",
+   "description": "MELODIA's confidence in the pitch; 0 where unvoiced"
+  },
+  "voiced": {
+   "kind": "series",
+   "dtype": "u8",
+   "columns": 1,
+   "grid": "melody",
+   "unit": "1",
+   "description": "1 where MELODIA's voicing decision says a melody sounds, else 0; relative to the contours present, not a level gate, so a noise floor is mostly voiced"
+  },
+  "midi": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "melody",
+   "unit": "MIDI note number against reference_hz",
+   "description": "fractional note number, 69 at the reference; 0 where unvoiced"
+  },
+  "cents": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "melody",
+   "unit": "cents",
+   "description": "deviation from the nearest equal-tempered note against reference_hz, -50 to 50; 0 where unvoiced"
+  },
+  "notes": {
+   "kind": "spans",
+   "unit": "s",
+   "description": "notes by PitchContourSegmentation, each valued with its MIDI note against reference_hz rounded to whole hertz"
+  },
+  "voiced_fraction": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "share of rows that are voiced"
+  },
+  "reference_hz": {
+   "kind": "scalar",
+   "unit": "Hz",
+   "description": "the tuning reference midi and cents are measured against (the reference_hz parameter)"
+  },
+  "samples": {
+   "kind": "scalar",
+   "unit": "samples at 44100 Hz",
+   "description": "decoded length of the audio measured"
+  }
+ }
+}

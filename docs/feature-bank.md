@@ -179,7 +179,8 @@ audio, and `n` decoded samples make `ceil(n / 2048) + 1` rows.
 ```
 
 `contract`, `id`, `version`, `command`, `accepts`, and `outputs` are
-required; nothing else is allowed. `version` matches
+required; `description`, `requires`, `needs`, and `parameters` may be
+given; nothing else is allowed. `version` matches
 `[A-Za-z0-9][A-Za-z0-9.]{0,39}`, so that `archive-extractor.<id>@<version>`
 is a Spool capability. Output names match `[a-z][a-z0-9_]{0,62}`.
 A series declares `dtype`, `columns`, and optionally `grid`; a file declares

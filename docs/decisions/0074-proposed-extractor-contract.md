@@ -117,14 +117,29 @@ decoded, and a stream's start offset in its container is not recorded, so a
 video extractor relating its frames to `frames` series adds the audio
 stream's start time itself.
 
-**Two extractors ship.** `frames` (Python with Essentia) decodes once and
+**Extractors ship.** `frames` (Python with Essentia) decodes once and
 writes the base series every audio measure can reuse, on one grid: the
 pitch-class profile exactly as the window matcher computes it, frame level,
 spectral centroid, roll-off, flatness, and flux, an onset function, MFCCs,
 and mel bands. `loudness-r128` is a 31-line shell script around `ffmpeg`
 that writes one scalar, the worked example of
 [adding an extractor](../adding-an-extractor.md), and the proof that the
-runner does not care what an extractor is written in.
+runner does not care what an extractor is written in. `melody` (Python with
+Essentia) measures the mix's predominant melody: its pitch contour,
+voicing, and intonation, with MELODIA.
+
+**A need is fixed; there is no optional one.** An extractor reads exactly
+the features its manifest needs, whatever else is installed. A need that
+became one only when the catalog held its extractor was tried for the
+melody (a vocal stem, a measured tuning) and dropped: an extractor in the
+catalog is not one that can run here (a stem separator whose program is not
+configured would block the melody on every such machine, and where it can
+run, every melody would first pay for a separation), and an output would
+change what it means under the same name when something unrelated was
+installed (the vocal stem's melody is silent on an instrumental recording,
+where the mix's would follow the lead instrument). Measuring a stem is
+running an extractor on the stem as its own content, and a measured tuning
+is applied by whoever reads both the melody and the tuning.
 
 ### Why a new noun
 
