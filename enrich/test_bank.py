@@ -118,6 +118,10 @@ SHIPPED = {
     "rhythm": {"version": "1",
                "code": "sha256:df5fd6e9521df87351d7e1e8d844c0e73ba8847573362ce40f1baa1afd8e53c5",
                "outside": {}},
+    # structure imports the span detector for its novelty curve.
+    "structure": {"version": "1",
+                  "code": "sha256:ec63cd65c49bfc8edef56e0a836cd4d599910de5679096305140ffad16f43f3f",
+                  "outside": {"detector.py": "sha256:892a47fc87e7ffdd71b2c0fa38c553284ba4b4fd5ed607c0956a1a814075d9e4"}},
 }
 
 
