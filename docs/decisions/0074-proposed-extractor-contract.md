@@ -124,10 +124,12 @@ spectral centroid, roll-off, flatness, and flux, an onset function, MFCCs,
 and mel bands. `loudness-r128` is a 31-line shell script around `ffmpeg`
 that writes one scalar, the worked example of
 [adding an extractor](../adding-an-extractor.md), and the proof that the
-runner does not care what an extractor is written in. Seven more measure
+runner does not care what an extractor is written in. Eight more measure
 from Essentia's standard algorithms or from what is already in the bank:
 `rhythm` (beats, tempo, onsets, and how far onsets sit off the beat),
-`tonal` (tuning and its drift, key, chords, dissonance), `melody` (the
+`tonal` (tuning and its drift, pitch-class profiles referenced to the
+tuning, note collection, key and mode, dissonance), `chords` (a chord per half beat from
+`tonal`'s profiles on `rhythm`'s beats, without decoding), `melody` (the
 mix's predominant melody with MELODIA), `structure` (playing, tuning,
 count-ins, false starts, endings, sections, and loops, from `frames` and
 `rhythm` without decoding), `quality` (how well the recording was captured),
@@ -176,20 +178,31 @@ is applied by whoever reads both the melody and the tuning.
   than every series together.
 - So does an extractor on the `frames` grid that needs a per-frame
   intermediate `frames` does not keep. `tonal` is the first: its tuning,
-  pitch gate, and dissonance need each frame's spectral peaks, a ragged list
-  that no output kind declares, so it decodes with `frames`' own decoder and
-  framing, repeats its windowing, spectrum, and peak picking, and checks
-  that its rows are `frames`' rows. That about doubles a recording's
-  spectral cost: on a 600 s synthetic recording, `tonal` took 0.58 s of
-  processor time beside `frames`' 0.73 s (both without ffmpeg's decode),
-  or about 3.5 s against 4.4 s a recording-hour. Removing it would take a new `frames` version (a new key for every
-  `frames` entry) with new outputs, such as each frame's 100-bin deviation
-  of peaks from the tempered grid (which would serve the tuning and the
-  pitch gate, at 400 bytes a row, about 15 MB a recording-hour, more than
-  all of `frames` today) and its dissonance. At that cost it is not worth
-  it for one reader; it becomes worth it when a second extractor needs the
-  same peaks. An extractor that repeats `frames`' work says so in its
-  manifest's description, so that the cost is visible where it is chosen.
+  pitch gate, dissonance, and its profiles referenced to the measured
+  tuning need each frame's spectral peaks, a ragged list that no output
+  kind declares, so it decodes with `frames`' own decoder and framing,
+  repeats its windowing, spectrum, and peak picking, and checks that its
+  rows are `frames`' rows. Versions 3 and 4 do that twice, once to find the
+  tuning and once to fold the peaks onto it, because holding the peaks
+  between the passes would grow with the recording (some 200 MB for three
+  hours). Version 2, with one pass, took about as long as `frames` (on a
+  600 s synthetic recording 0.58 s of processor time beside `frames`'
+  0.73 s, both without ffmpeg's decode, or about 3.5 s against 4.4 s a
+  recording-hour). Version 4 (version 3 with mains hum left out) took 1.5
+  to 1.65 times `frames`' processor time on three tracks of an album of
+  masters, each timed with its process start and its decodes, one after
+  the other on a shared machine (3.4 to 4.0 s against 2.2 to 2.7 s): the
+  second pass is partly paid for by dropping Essentia's `TuningFrequency`,
+  which version 2 ran once for every open window on every pitched frame.
+  Removing the repetition would take a new `frames` version (a new key for
+  every `frames` entry) with new outputs, such as each frame's 100-bin
+  deviation of peaks from the tempered grid (which would serve the tuning
+  and the pitch gate, at 400 bytes a row, about 15 MB a recording-hour, more
+  than all of `frames` today), its dissonance, and a profile fine enough to
+  refer to any tuning. At that cost it is not worth it for one reader; it
+  becomes worth it when a second extractor needs the same peaks. An
+  extractor that repeats `frames`' work says so in its manifest's
+  description, so that the cost is visible where it is chosen.
 - `quality` is the measured case of a second decode at another rate: it
   decodes again at the stream's own rate
   with every channel, because downmixing and resampling to 22,050 Hz remove
@@ -202,16 +215,16 @@ is applied by whoever reads both the melody and the tuning.
   core-minutes for a four-hour recording, the detectors' frame loop and
   not the decode being the cost, so it grows with the sample rate.
 - What each shipped extractor decodes: `frames` the first audio stream
-  at 22,050 Hz mono, once; `structure` nothing; `tonal` the same again
-  (above); `rhythm` and `melody` 44,100 Hz mono, which their algorithms
+  at 22,050 Hz mono, once; `structure` and `chords` nothing; `tonal` the
+  same twice more (above); `rhythm` and `melody` 44,100 Hz mono, which their algorithms
   are tuned for; `quality` the stream's own rate and channels (above);
   `colour` enough to learn the peaks' grid (ADR 0073); `loudness-r128`
   and `stems` through `ffmpeg` at the rate they need. Run together by
   `run all` on a synthesised three-minute 48 kHz stereo FLAC, on a shared
   development Mac (load average 13 to 15), one at a time, each took, in
   times real time: `structure` about 600, `loudness-r128` 450, `colour`
-  140, `frames` 83, `tonal` 78, `rhythm` 36, `melody` 16, and `quality`
-  9; about 43 seconds in all, or roughly 14 minutes a recording-hour, of
+  140, `frames` 83, `tonal` 78 (version 2), `rhythm` 36, `melody` 16, and
+  `quality` 9; about 43 seconds in all, or roughly 14 minutes a recording-hour, of
   which `quality` and `melody` are three quarters
   ([`enrich/test_extractors.py`](../../enrich/test_extractors.py) measures
   it). `stems` there ran a stand-in for the model, so its time says

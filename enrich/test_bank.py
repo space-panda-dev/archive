@@ -112,11 +112,19 @@ SHIPPED = {
     "frames": {"version": "1",
                "code": "sha256:8d05ebb444442eb4b08a516df7f2d03f403c4ab56aef7a74aff16446592a3282",
                "outside": {"cover.py": "sha256:9170a3edb3dfbecfac99b2d17967f3ba3ae2449021427c805dc559d936c05c55"}},
-    "tonal": {"version": "2",
-              "code": "sha256:81bcd9c9a129dbe60a025a3e00cfad58dd6e61f336b248039bcf43fc02fd06a4",
+    # Version 3: the tuning from a histogram of the windows, profiles
+    # referenced to it, the key as a mode; chords move to their own extractor.
+    # Version 4: mains hum left out; a tonic named only where it leads; key
+    # regions by note collection.
+    "tonal": {"version": "4",
+              "code": "sha256:9f5bcc7ef500abf52da8b909e97a8a63a560718c8fee9391639abf7508622e11",
               "outside": {"cover.py": "sha256:9170a3edb3dfbecfac99b2d17967f3ba3ae2449021427c805dc559d936c05c55",
                           "extractors/frames/frames.py":
                               "sha256:acac662e87efbcafcebab714b858e8b42c287de7963156c7e2a14adfd860c565"}},
+    # Version 2: the six-note m11 priced above the five-note chords.
+    "chords": {"version": "2",
+               "code": "sha256:fdfc361ef79a5e0841630078bb3a5799f9ab78185f8dc153d94521e44011200c",
+               "outside": {}},
     "loudness-r128": {"version": "1",
                       "code": "sha256:37384ca259e5a38d61a4f09891b496bfeba339e5a10791aea2dc6b401aed0898",
                       "outside": {}},
