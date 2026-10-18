@@ -6,6 +6,21 @@ installed contract bundle, and raw record revisions. World does not read archive
 or write to the archive. Its store is regenerable; `CURRENT` selects an
 immutable generation built from one snapshot and projection version.
 
+## Credits
+
+[`contributions.py`](contributions.py) holds the rules of the two contracts of
+[ADR 0078](../docs/decisions/0078-contributions.md),
+`archive.claim/contribution` and `archive.claim/band_membership`, the
+MusicBrainz relationship types each scope accepts, the resolved view in which
+a finer credit refines a coarser one, and the join from a chord stacks claim
+to whose part it is. It needs only the standard library. No specification
+release installs the contracts yet, so World does not project them and Door
+admits neither. Its tests run alone:
+
+```sh
+python3 -m unittest world.tests.test_contributions
+```
+
 ## Install
 
 Use a virtual environment and the dependency pinned to the initial Oxigraph
