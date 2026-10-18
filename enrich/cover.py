@@ -15,8 +15,8 @@ The measure is the V2 system's, with its calibrated thresholds:
 3. `ChromaCrossSimilarity` with the optimal transposition index, then
    `CoverSongSimilarity` with the serra09 alignment and the asymmetric
    distance, in both directions. The distance is the smaller one. The
-   cross-similarity is Essentia's, reproduced bit for bit in NumPy and
-   measured once: the other direction is its transpose.
+   cross-similarity is Essentia's, reproduced bit for bit in NumPy; its dot
+   products are summed once and serve both directions.
 4. The score is that distance rounded half to even to four places. Lower is
    closer.
 
@@ -244,6 +244,11 @@ def _options(options: dict[str, Any]) -> dict[str, Any]:
 # Essentia's order. All products are non-negative, so both sums lie within
 # 2^-45 of the exact one, relative; wherever that interval could round to
 # two float32 values, the dot product is summed again in Essentia's order.
+#
+# The bits have been compared only with the pinned macOS arm64 wheel. The
+# x86_64 Linux wheel is another compilation of the same float32 arithmetic,
+# and whether its compiler fused any of it (such as the percentile's two
+# products into one) has not been checked.
 
 _STACK = ANALYSIS["chroma_cross_similarity"]["frameStackSize"]
 _BINS = 12
@@ -379,15 +384,18 @@ def cross_similarity(a: numpy.ndarray, b: numpy.ndarray) -> numpy.ndarray:
 
 
 def cross_similarities(a: numpy.ndarray, b: numpy.ndarray) -> tuple[numpy.ndarray, numpy.ndarray]:
-    """`cross_similarity(a, b)` and `cross_similarity(b, a)`, the second the
-    first's transpose wherever that is the same bits.
+    """`cross_similarity(a, b)` and `cross_similarity(b, a)`, the second
+    from the first's dot products wherever they are the same bits.
 
     Both directions compare the same pairs of stacks, and when the two
     transposition indices undo each other every dot product has the same
-    products, only summed in another order. The transpose is used when,
-    besides, rotating the stacks leaves their norms' bits alone and no
-    re-summed cross dot product changes in the other order; otherwise the
-    other direction is measured on its own."""
+    products, only summed in another order. The first's dot products are
+    reused when, besides, rotating the stacks leaves their norms' bits alone
+    and no re-summed cross dot product changes in the other order; otherwise
+    the other direction is measured on its own. The binary matrix is never
+    simply transposed: the other direction adds the norms in the other order,
+    x.x - 2 x.y + y.y against y.y - 2 x.y + x.x, which in float32 can differ
+    in the last bit and move a threshold, so its distances are added again."""
     a, b = _profiles(a), _profiles(b)
     forward = _forward(a, b)
     if forward is None:
@@ -400,7 +408,10 @@ def cross_similarities(a: numpy.ndarray, b: numpy.ndarray) -> tuple[numpy.ndarra
                 and numpy.array_equal(_ordered_dot(stacks_turned, stacks_turned), forward.query_norms)
                 and numpy.array_equal(_ordered_dot(stacks_b[columns], stacks_turned[rows]),
                                       forward.cross[rows, columns])):
-            return forward.matrix, numpy.ascontiguousarray(forward.matrix.T)
+            cross = numpy.ascontiguousarray(forward.cross.T)
+            distances = _matrix(forward.reference_norms, cross, forward.query_norms)
+            if not numpy.isnan(distances).any():
+                return forward.matrix, _binarise(distances)
     return forward.matrix, cross_similarity(b, a)
 
 
@@ -430,8 +441,8 @@ class Analyser:
         return cross_similarity(a, b)
 
     def distance(self, a: numpy.ndarray, b: numpy.ndarray) -> float:
-        """The smaller of the two directions' distances. The cross-similarity
-        is measured once; the other direction is its transpose."""
+        """The smaller of the two directions' distances. The stacks' dot
+        products are summed once and serve both directions."""
         forward, backward = cross_similarities(a, b)
         _, ab = self.cover(forward)
         _, ba = self.cover(backward)

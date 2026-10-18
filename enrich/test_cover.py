@@ -383,7 +383,7 @@ class CrossSimilarity(unittest.TestCase):
             with self.subTest(frames=(len(a), len(b))):
                 self.assert_essentias(a, b)
 
-    def test_the_reverse_direction_is_the_transpose_and_essentia_is_never_called(self) -> None:
+    def test_the_reverse_direction_reuses_the_dot_products_and_essentia_is_never_called(self) -> None:
         query, same = self.profiles["query"], self.profiles["same"]
         forward, backward = essentia_cross(query, same), essentia_cross(same, query)
         expected = self.analyser.distance(query, same)
@@ -482,11 +482,11 @@ class CrossSimilarity(unittest.TestCase):
 
 
 class ReverseDirection(unittest.TestCase):
-    """The reverse direction is measured on its own wherever its bits could
-    differ from the transpose. Each case is built so a sum in double rounds
-    differently in the other direction's order: 1, four of 2^-54, and 2^-24
-    sum to 1 + 2^-24, which rounds to 1 in float32, when 1 comes first, and
-    to 1 + 2^-23 when it comes last."""
+    """The reverse direction is measured on its own wherever its dot
+    products' bits could differ from the forward one's. Each such case is
+    built so a sum in double rounds differently in the other direction's
+    order: 1, four of 2^-54, and 2^-24 sum to 1 + 2^-24, which rounds to 1
+    in float32, when 1 comes first, and to 1 + 2^-23 when it comes last."""
 
     @staticmethod
     def profiles(frame: list[float], at: int, frames: int = 30) -> numpy.ndarray:
@@ -544,6 +544,31 @@ class ReverseDirection(unittest.TestCase):
         self.assertFalse(numpy.array_equal(cover._ordered_dot(stacks_b[columns], turned_a[rows]),
                                            forward.cross[rows, columns]))
         self.assert_measured_on_its_own(a, b)
+
+    def test_the_reverse_distances_are_added_in_their_own_order_not_transposed(self) -> None:
+        # b's first stack lies between a's two, a hair nearer one, so the
+        # row of a's two distances to it is decided in the last bit; the
+        # norms are added in the other order the other way, and that bit
+        # moves.
+        rng = numpy.random.default_rng(2)
+        a = ((0.5 + rng.integers(0, 2 ** 22, size=(11, 12)) / 2 ** 23) * (1 + 3 * rng.random((11, 1))))
+        a = a.astype(numpy.float32)
+        b = numpy.concatenate([((a[:-1].astype(numpy.float64) + a[1:]) / 2).astype(numpy.float32), a[-1:]])
+        forward = cover._forward(a, b)
+        assert forward is not None
+        distances = cover._matrix(forward.query_norms, forward.cross, forward.reference_norms)
+        reverse = cover._matrix(forward.reference_norms, forward.cross.T, forward.query_norms)
+        # Anchor: the reverse distances differ from the transpose, and enough
+        # to make the transposed matrix wrong.
+        self.assertFalse(numpy.array_equal(reverse, distances.T))
+        self.assertFalse(numpy.array_equal(cover._binarise(reverse), forward.matrix.T))
+        with patch.object(cover, "_essentia_cross", _bomb), patch.object(cover, "cross_similarity", _bomb):
+            ab, ba = cover.cross_similarities(a, b)
+        self.assertTrue(numpy.array_equal(ab, forward.matrix))
+        self.assertTrue(numpy.array_equal(ba, cover._binarise(reverse)))
+        if ESSENTIA:
+            self.assertTrue(numpy.array_equal(ab, essentia_cross(a, b)))
+            self.assertTrue(numpy.array_equal(ba, essentia_cross(b, a)))
 
 
 if __name__ == "__main__":
