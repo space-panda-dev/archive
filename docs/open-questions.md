@@ -286,6 +286,18 @@ unsupported rather than guess.
     extractor needs them.
   - An entry belongs to one content. How is a feature of several contents
     (two recordings' cross-similarity) filed and keyed?
+  - A stem is measured as content of its own
+    ([proposed ADR 0075](decisions/0075-proposed-stems-as-content.md)), so
+    an extractor run on it cannot also need a feature of the recording it
+    came from (a vocal line's level against the mix's `frames`). Should
+    `needs` be able to name the source content's features, and how would the
+    key hold them?
+  - Stems are separated in 600-second chunks joined by crossfades. How far
+    does a long recording's chunked separation differ from a whole-file run
+    on real material, and does it matter to any measure?
+  - Whether a stem holds what its name says depends on who played: an empty
+    `bass` is right where there is no bassist. Should a lineup be a claim a
+    stem's measures can be read against, and where would it come from?
   - What deletes stale entries, whose keys no installed extractor gives: a
     command, a policy, or only the operator deleting the root?
   - Which field of a derivation run's parameters records the features a

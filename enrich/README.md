@@ -16,7 +16,7 @@ here writes a record: Door decides every revision.
 | [`match.py`](match.py) | The numpy work matcher, a standalone tool ([ADR 0067](../docs/decisions/0067-matches-and-alignments-pin-runs.md)); uncalibrated |
 | [`cover.py`](cover.py) | Essentia cover similarity and the growing-window search, a standalone tool ([ADR 0071](../docs/decisions/0071-essentia-cover-similarity.md), [ADR 0072](../docs/decisions/0072-windowed-work-matches.md)) |
 | [`enrich.py`](enrich.py) | The `enrich` command that runs a tool against an archive's records |
-| [`bank.py`](bank.py), [`extract.py`](extract.py), [`extractors/`](extractors/frames/extractor.json) | The feature bank's format and reader, the runner that fills it, and the extractors: `frames` (Python, Essentia), `loudness-r128` (shell), and `tonal` (tuning and its drift, key, chords, dissonance; Python, Essentia, reading `frames`) (proposed [ADR 0073](../docs/decisions/0073-proposed-feature-bank.md), [ADR 0074](../docs/decisions/0074-proposed-extractor-contract.md)) |
+| [`bank.py`](bank.py), [`extract.py`](extract.py), [`extractors/`](extractors/frames/extractor.json) | The feature bank's format and reader, the runner that fills it, and the extractors (one table under [`extract.py`: the feature bank](#extractpy-the-feature-bank) says what each writes): `frames`, `loudness-r128`, `rhythm`, `tonal`, `melody`, `structure`, `quality`, `colour`, and `stems` (proposed [ADR 0073](../docs/decisions/0073-proposed-feature-bank.md), [ADR 0074](../docs/decisions/0074-proposed-extractor-contract.md), [ADR 0075](../docs/decisions/0075-proposed-stems-as-content.md)) |
 | [`media.py`](media.py), [`waveform.py`](waveform.py), [`derived.py`](derived.py) | Derived media, a standalone tool that never touches an archive; the waveform peaks' format and decode; and the layout ([ADR 0069](../docs/decisions/0069-derived-media.md)) |
 | [`requirements.txt`](requirements.txt) | The libraries: numpy (detector, matchers, derived media) and scipy (numpy matcher) |
 | [`requirements-match.txt`](requirements-match.txt) | The window matcher's interpreter: Essentia, numpy, and scipy for CPython 3.14, pinned by hash |
@@ -547,7 +547,8 @@ to stderr and exits 1. It needs `ffmpeg` and `ffprobe` (`--ffmpeg` and
 ```sh
 enrich/extract.py list
 enrich/extract.py run <extractor|all> --content <file> --bank <dir> [--digest sha256:<hex>] [--jobs n]
-                  [--config <file>] [--program name=path]... [--extractors <dir>]... [--dry-run]
+                  [--from <extractor>/<output>] [--config <file>] [--program name=path]...
+                  [--extractors <dir>]... [--dry-run]
 ```
 
 Runs extractors on one file and files their features in the feature bank,
@@ -569,10 +570,18 @@ failed or was blocked. `bank.py` reads entries back
 | `frames` | Python, Essentia 2.1b6.dev1438 | on one grid of 4,096-sample frames every 2,048 at 22,050 Hz: `hpcp` (the bits `cover.py` measures), `rms_db`, `centroid`, `rolloff`, `flatness`, `flux`, `onset_hfc`, `mfcc`, `melbands`; scalars `samples`, `seconds` |
 | `loudness-r128` | POSIX shell, ffmpeg | `integrated`: EBU R 128 integrated loudness in LUFS |
 | `rhythm` | Python, Essentia 2.1b6.dev1438 | from its own 44,100 Hz decode (both algorithms need that rate and hops finer than `frames`), in 300 s chunks overlapping by 30 s: events `beats` (RhythmExtractor2013 multifeature, moved onto the onsets' time base, kept only on an onset or between onsets) and `onsets` (OnsetRate, a few ms before each attack); on a 1 s grid of 10 s windows `tempo`, `onset_count`, `onset_deviation` (ms from the beat grid divided into 4), `offgrid`; per chunk `chunk_bpm`, `chunk_confidence`; scalars `bpm`, `confidence`, `onset_rate`, `seconds` |
+| `tonal` | Python, Essentia 2.1b6.dev1438, ffmpeg | from `frames/hpcp` and `frames/rms_db`, plus a second decode that repeats `frames`' framing for its spectral peaks: scalars `tuning_frequency`, `tuning_cents`, `tuning_confidence` (TuningFrequency), `drift_spread_cents`, `detuned`, `key`, `scale`, `key_strength` (Key), `chords_changes_rate`, `chords_number_rate`; series `tuning_windows` (grid `tuning`); spans `tuning_drift`, `keys`, `chords` (ChordsDetection); on the `frames` grid, `pitched` and `dissonance`. Key and chords are blank where `detuned` |
 | `structure` | Python, numpy; decodes nothing | from `frames` and `rhythm`: spans `playing`, `tuning` (held single pitches between the playing, labelled by pitch class), `count_ins` (three or more regular onsets before playing), `false_starts` (playing of at most 30 s and a restart, with the openings' similarity), `endings` (`stop`, `fade`, or `abrupt`), `sections` (self-similarity novelty peaks, labelled `A`, `B`, ...), `loops` (a pitch-class period repeated three or more times); series `novelty` a block of about 1 s; scalars `floor_db`, `reference_db`, `threshold_db`; every span but `playing` with a confidence. Not claims: span suggestions are the span detector's |
 | `quality` | Python, Essentia 2.1b6.dev1438, ffmpeg | how well a recording was captured, from one more decode at the stream's own rate with every channel: EBU R 128 `integrated`, `loudness_range`, and `true_peak`; `sample_peak`, `full_scale_samples`, `clipped_seconds`, `dc_offset`, `whole_correlation`, `anti_phase`, `false_stereo`, `noise_floor`, `snr`, `bandwidth`, `band_limited`; per channel, `clipping`, `gaps`, `noise_bursts` (spans) and `clicks`, `discontinuities` (events); `hum` (spans); on the `frames` grid, `correlation` and `peak_db` |
 | `melody` | Python, Essentia 2.1b6.dev1438 | on a grid of 2,048-sample frames every 128 (the `hop_size` stride) at 44,100 Hz: `pitch` (MELODIA), `confidence`, `voiced`, `midi`, `cents`; `notes` spans; scalars `voiced_fraction`, `reference_hz`, `samples`. The predominant melody of whatever audio is the content; `voiced` is MELODIA's decision, not a level gate |
 | `colour` | Python, numpy, ffmpeg | for each waveform pixel of [`media.py`](media.py)'s derived-media peaks (about 10 ms; the peaks stay derived media and are not copied into the bank): series `colour` (`u8` red, green, blue, on grid `peaks`) coloured from `frames/centroid` or `frames/hpcp` (hue) and `frames/rms_db` (lightness), interpolated to each pixel's centre; file `palette` (the mapping and legend stops, JSON, fields in [its README](extractors/colour/README.md)); file `preview` (a PNG of the whole recording). The mapping is its parameters |
+| `stems` | Python under `${demucs-python}` (Demucs 4.1.0, PyTorch), ffmpeg | `vocals`, `drums`, `bass`, `other`: 44.1 kHz stereo 16-bit FLAC from pinned htdemucs weights; `levels` (each stem's RMS every 4,096 samples); each stem's `_rms_db`, `_peak_db`, `_clamped`; `mix_rms_db`, `samples`, `seconds` (proposed [ADR 0075](../docs/decisions/0075-proposed-stems-as-content.md)) |
+
+`--from stems/vocals` measures a stem as content: every extractor runs on it
+unchanged, keyed by the stem's own digest and filed with the recording, after
+the stems are made if they are missing. `stems` runs only where the operator
+configures Demucs's interpreter (`--program demucs-python=<path>`, or
+`programs` in `--config`); `run all` elsewhere skips it and says so.
 
 The format is [docs/feature-bank.md](../docs/feature-bank.md); adding an
 extractor is [docs/adding-an-extractor.md](../docs/adding-an-extractor.md).

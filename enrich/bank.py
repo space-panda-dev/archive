@@ -142,7 +142,9 @@ def key_of(extractor_id: str, version: str, parameters: Mapping[str, Any], conte
 # -- layout ------------------------------------------------------------------
 
 def entry_directory(root: Path, content: str, extractor_id: str, key: str) -> Path:
-    """Where the entry with this key lives: beside the content's derived media."""
+    """Where the entry with this key lives: beside the content's derived media.
+    For an entry made from a file feature (a stem), `content` is the digest of
+    the content that feature was made from, not the stem's own (ADR 0075)."""
     if not KEY.fullmatch(key) or not ID.fullmatch(extractor_id):
         raise BankError(f"not an entry key and extractor: {key!r}, {extractor_id!r}")
     return derived.directory(root, content) / "bank" / extractor_id / key.removeprefix("sha256:")
@@ -655,25 +657,44 @@ class Bank:
         self.catalog = catalog if catalog is not None else Catalog.load()
         self.parameters = parameters
 
-    def entry(self, content: str, extractor_id: str) -> Entry | None:
-        """The current entry of one extractor for one content digest, or None."""
+    def entry(self, content: str, extractor_id: str, filed_under: str | None = None) -> Entry | None:
+        """The current entry of one extractor for one content digest, or None.
+        `filed_under` is the digest whose directory holds it, when the
+        content is a file feature of other content (a stem of a recording);
+        see `input_of`."""
         key = self.catalog.keys(content, [extractor_id], self.parameters)[extractor_id]
-        found = read_entry(entry_directory(self.root, content, extractor_id, key))
+        found = read_entry(entry_directory(self.root, filed_under or content, extractor_id, key))
         if found is not None and found.manifest["key"] != key:
             raise BankError(f"{found.path} holds key {found.manifest['key']}, not {key}")
         return found
 
-    def feature(self, content: str, feature: str) -> tuple[Entry, str] | None:
+    def feature(self, content: str, feature: str, filed_under: str | None = None) -> tuple[Entry, str] | None:
         """The entry holding `<extractor>/<output>`, and the output's name."""
         match = FEATURE.fullmatch(feature)
         if match is None:
             raise BankError(f"not a feature name: {feature!r}")
         extractor_id, output = match.groups()
-        found = self.entry(content, extractor_id)
+        found = self.entry(content, extractor_id, filed_under)
         if found is None:
             return None
         found.output(output)
         return found, output
+
+    def input_of(self, content: str, feature: str) -> tuple[Path, str, str] | None:
+        """A file feature of this content as content in its own right: its
+        path, its digest, and its media type, or None when it is not in the
+        bank. Every extractor measures it as it measures any content; the
+        entries are filed under `content`'s directory with `filed_under`, so
+        deleting a content's directory deletes everything made from it
+        (ADR 0075)."""
+        found = self.feature(content, feature)
+        if found is None:
+            return None
+        entry, output = found
+        described = entry.output(output)
+        if described["kind"] != "file":
+            raise BankError(f"{feature} is a {described['kind']}, not a file; only a file can be content")
+        return entry.path / described["file"], described["sha256"], described["media_type"]
 
 
 def environment_root() -> Path | None:

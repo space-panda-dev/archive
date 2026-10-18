@@ -141,6 +141,7 @@ SHIPPED = {
                "code": "sha256:ebee70e03d192d968e2ca2406fa369da5aa5ada9f67750b94c0c48ba11c7be6e",
                "outside": {"waveform.py": "sha256:353aceedf74c7a1c2bbaa330fe03847440f1e74213146bcf6bc0b863db39a424",
                            "derived.py": "sha256:d1da556693ea266247cbac481f17672578d5cc90043b3f28730e899cd3c28132"}},
+    "stems": {"version": "1", "code": "sha256:235a4c30a38d1f897958ef1354441011e435709c34732cfe4aad503ab1481c3e", "outside": {}},
 }
 
 
@@ -536,14 +537,24 @@ class Failure(unittest.TestCase):
     def test_an_unconfigured_program_is_a_failure_not_a_guess(self) -> None:
         f = Fixture(self)
         directory = f.add("a")
+        f.add("b", needs=("a/x",))
         data = json.loads((directory / "extractor.json").read_text())
         data["command"] = ["${demucs-python}", "program.py"]
         (directory / "extractor.json").write_text(json.dumps(data))
-        code, answer = f.run()
-        self.assertEqual(code, 1)
-        self.assertIn("--program demucs-python=", answer["extractors"]["a"]["error"])
+        # Named, or needed by what is named, it fails.
+        for target in ("a", "b"):
+            code, answer = f.run(target)
+            self.assertEqual(code, 1)
+            self.assertIn("--program demucs-python=", answer["extractors"]["a"]["error"])
+        # In `all` it is skipped, and says why, as is what needs it; the rest runs.
+        f.add("c")
+        code, answer = f.run("all")
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(f.statuses(answer), {"a": "skipped", "b": "skipped", "c": "ran"})
+        self.assertIn("--program demucs-python=", answer["extractors"]["a"]["reason"])
         code, answer = f.run("all", "--program", f"demucs-python={sys.executable}")
         self.assertEqual(code, 0, answer)
+        self.assertEqual(f.statuses(answer), {"a": "ran", "b": "ran", "c": "hit"})
 
 
 class Reading(unittest.TestCase):
@@ -698,7 +709,7 @@ class Manifests(unittest.TestCase):
         catalog = bank.Catalog.load()
         self.assertIn("frames", catalog.extractors)
         self.assertIn("loudness-r128", catalog.extractors)
-        programs = {"python": sys.executable, "sh": "/bin/sh"}
+        programs = {"python": sys.executable, "sh": "/bin/sh", "demucs-python": sys.executable}
         for extractor in catalog.extractors.values():
             command = extract.resolve_command(extractor, programs)
             self.assertTrue(any(Path(word).is_file() and Path(word).parent == extractor.directory

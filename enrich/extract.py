@@ -3,8 +3,8 @@
 
     extract.py list [--extractors <dir>]...
     extract.py run <extractor|all> --content <file> [--digest sha256:<hex>] [--media-type <type>]
-                   --bank <dir> [--jobs <n>] [--config <file>] [--program <name>=<path>]...
-                   [--extractors <dir>]... [--timeout <seconds>] [--dry-run]
+                   --bank <dir> [--from <extractor>/<output>] [--jobs <n>] [--config <file>]
+                   [--program <name>=<path>]... [--extractors <dir>]... [--timeout <seconds>] [--dry-run]
 
 `run` resolves what the named extractor needs as a graph over the bank, runs
 only the extractors whose entries are missing, each once, upstream first and
@@ -27,6 +27,15 @@ With `--digest`, the content is not hashed while every entry is present; the
 first extractor to run hashes it and refuses the run if the digest is wrong,
 so nothing is ever filed under another file's digest. `--dry-run` prints the
 requests that would run, as a worker would receive them, and runs nothing.
+
+With `--from stems/vocals`, the extractors measure that file feature of the
+content instead of the content itself: the runner makes the feature first if
+it is missing, then runs the named extractors with the stem as their input,
+its own digest as their content, and the content's directory as where their
+entries are filed (ADR 0075). An extractor never knows it measures a stem.
+With `all`, an extractor whose command names a program that is not
+configured (`${demucs-python}` on a machine without Demucs) is skipped, and
+said to be; named on its own, it fails.
 
 The runner uses only Python's standard library. It never reads or writes an
 archive and proposes nothing: features are not claims.
@@ -183,10 +192,16 @@ class Run:
     """One `run`: the content, the catalog, the bank, and what happened."""
 
     def __init__(self, catalog: bank.Catalog, root: Path, content: Path, media_type: str, digest: str | None,
-                 programs: dict[str, str], parameters: dict[str, dict[str, Any]], timeout: float | None):
+                 programs: dict[str, str], parameters: dict[str, dict[str, Any]], timeout: float | None,
+                 filed_under: str | None = None, optional: bool = False):
         self.catalog, self.root, self.content, self.media_type = catalog, root, content, media_type
         self.digest, self.digest_checked = digest, digest is None
         self.programs, self.parameters, self.timeout = programs, parameters, timeout
+        # The digest whose directory holds the entries: the content's own,
+        # or, for a file feature measured as content, the content it was made from.
+        self.filed_under = filed_under
+        # Whether an extractor whose program is not configured is skipped (`all`) rather than failed.
+        self.optional = optional
         self.lock = threading.Lock()
         self.scratch: Path | None = None
 
@@ -196,6 +211,9 @@ class Run:
         if self.digest is None:
             self.digest = bank.file_digest(self.content)
         return self.digest
+
+    def directory_digest(self) -> str:
+        return self.filed_under or self.content_digest()
 
     def verify_digest(self) -> None:
         """Hash the content once, before anything is filed under its digest."""
@@ -219,6 +237,9 @@ class Run:
             extractor = self.catalog[extractor_id]
             if not extractor.accepts(self.media_type):
                 unusable[extractor_id] = f"does not accept {self.media_type}"
+            elif self.optional and (missing := unconfigured(extractor, self.programs)):
+                unusable[extractor_id] = (f"runs ${{{missing}}}, which is not configured here; "
+                                          f"pass --program {missing}=<path> to run it")
             else:
                 for source in self.catalog.upstream(extractor_id):
                     if source in unusable:
@@ -233,7 +254,7 @@ class Run:
         needs: dict[str, Any] = {}
         for need in extractor.needs:
             source, output = need.split("/", 1)
-            entry = bank.read_entry(bank.entry_directory(self.root, self.content_digest(), source, keys[source]))
+            entry = bank.read_entry(bank.entry_directory(self.root, self.directory_digest(), source, keys[source]))
             if entry is None:
                 raise bank.BankError(f"{need} is missing from the bank")
             described = dict(entry.output(output))
@@ -257,11 +278,11 @@ class Run:
         """Run one extractor, once per key across every runner on this bank:
         a runner that finds another making the same entry waits for it."""
         key = keys[extractor_id]
-        final = bank.entry_directory(self.root, self.content_digest(), extractor_id, key)
+        final = bank.entry_directory(self.root, self.directory_digest(), extractor_id, key)
         self.verify_digest()
         try:
             final.parent.mkdir(parents=True, exist_ok=True)
-            lock = open(bank.lock_path(self.root, self.content_digest(), extractor_id, key), "a+b")
+            lock = open(bank.lock_path(self.root, self.directory_digest(), extractor_id, key), "a+b")
         except OSError as exc:
             return self.failed(extractor_id, key, f"{extractor_id} cannot lock its entry: {exc}", b"")
         with lock:
@@ -321,7 +342,7 @@ class Run:
                 if bank.read_entry(final) is None:
                     raise
                 return {"status": "hit", "key": key, "entry": str(final), "raced": True}
-            bank.failure_path(self.root, self.content_digest(), extractor_id, key).unlink(missing_ok=True)
+            bank.failure_path(self.root, self.directory_digest(), extractor_id, key).unlink(missing_ok=True)
             return {"status": "ran", "key": key, "entry": str(final),
                     "seconds": round(time.monotonic() - clock, 3)}
         except (bank.BankError, OSError) as exc:
@@ -346,7 +367,7 @@ class Run:
 
     def record_failure(self, extractor_id: str, key: str, failure: dict[str, Any]) -> None:
         """Operational: the last failure, replaced atomically. Never read as an entry."""
-        path = bank.failure_path(self.root, self.content_digest(), extractor_id, key)
+        path = bank.failure_path(self.root, self.directory_digest(), extractor_id, key)
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}")
         try:
@@ -367,7 +388,7 @@ class Run:
                                          "reason": unusable[extractor_id]}
                 continue
             try:
-                entry = bank.read_entry(bank.entry_directory(self.root, self.content_digest(), extractor_id,
+                entry = bank.read_entry(bank.entry_directory(self.root, self.directory_digest(), extractor_id,
                                                              keys[extractor_id]))
             except bank.BankError as exc:
                 # Damage blocks only what needs this entry. The bank is
@@ -388,7 +409,8 @@ class Run:
                              "requires": extractor.manifest.get("requires", []),
                              "after": [keys[s] for s in self.catalog.upstream(extractor_id)],
                              "parameters": self.catalog.parameters(extractor_id, self.parameters),
-                             "input": {"digest": self.content_digest(), "media_type": self.media_type}}}
+                             "input": {"digest": self.content_digest(), "media_type": self.media_type,
+                                       **({"filed_under": self.filed_under} if self.filed_under else {})}}}
             return self.answer(order, outcome)
         if pending:
             (self.root / "tmp").mkdir(parents=True, exist_ok=True)
@@ -422,9 +444,64 @@ class Run:
 
     def answer(self, order: list[str], outcome: dict[str, dict[str, Any]]) -> dict[str, Any]:
         ok = all(outcome[e]["status"] in ("hit", "ran", "skipped", "would_run") for e in order)
-        return {"status": "ok" if ok else "failed", "content": self.content_digest(),
-                "media_type": self.media_type, "bank": str(self.root),
-                "extractors": {e: outcome[e] for e in order}}
+        answer = {"status": "ok" if ok else "failed", "content": self.content_digest(),
+                  "media_type": self.media_type, "bank": str(self.root),
+                  "extractors": {e: outcome[e] for e in order}}
+        if self.filed_under is not None:
+            answer["filed_under"] = self.filed_under
+        return answer
+
+
+def run_from(catalog: bank.Catalog, root: Path, content: Path, media_type: str, digest: str | None,
+             programs: dict[str, str], parameters: dict[str, dict[str, Any]], timeout: float | None,
+             feature: str, targets: list[str], jobs: int, dry_run: bool, optional: bool) -> dict[str, Any]:
+    """Run `targets` on a file feature of the content, as content (ADR 0075).
+
+    The feature's extractor runs first, on the content, if its entry is
+    missing. Then the targets run with the feature's file as their input:
+    its digest, recorded in the entry and checked again before anything is
+    filed, is their content, so their keys depend on the stem's bits and
+    nothing else; their entries are filed under the content's directory,
+    which holds everything made from it."""
+    match = bank.FEATURE.fullmatch(feature)
+    if match is None:
+        raise RunError(f"--from takes <extractor>/<output>, not {feature!r}")
+    source, output = match.groups()
+    declared = catalog[source].outputs.get(output)
+    if declared is None or declared["kind"] != "file":
+        raise RunError(f"--from {feature}: only a file feature can be measured as content")
+    for target in targets:
+        if source in catalog.order([target]):
+            raise RunError(f"{target} would measure {feature}, which it makes or needs; it cannot be its own input")
+    first = Run(catalog, root, content, media_type, digest, programs, parameters, timeout)
+    made = first.execute([source], jobs, dry_run)
+    origin = {"feature": feature, "content": made["content"], "extractors": made["extractors"]}
+    status = made["extractors"][source]["status"]
+    if status not in ("hit", "ran"):
+        # Failed, blocked, skipped, or (in a dry run) not made yet: there is
+        # no file, so there is no digest to key anything on.
+        ok = dry_run and status == "would_run"
+        return {"status": "ok" if ok else "failed", "content": None, "media_type": declared["media_type"],
+                "bank": str(root), "extractors": {}, "from": origin}
+    found = bank.Bank(root, catalog, parameters).input_of(made["content"], feature)
+    if found is None:
+        raise RunError(f"{feature} was made but its entry cannot be found")
+    path, stem_digest, stem_type = found
+    origin["entry"] = made["extractors"][source]["key"]
+    second = Run(catalog, root, path, stem_type, stem_digest, programs, parameters, timeout,
+                 filed_under=made["content"], optional=optional)
+    answer = second.execute(targets, jobs, dry_run)
+    answer["from"] = origin
+    return answer
+
+
+def unconfigured(extractor: bank.Extractor, programs: dict[str, str]) -> str | None:
+    """The first program the extractor's command names that is not configured."""
+    for word in extractor.manifest["command"]:
+        match = bank.PROGRAM.fullmatch(word)
+        if match and match.group(1) not in programs:
+            return match.group(1)
+    return None
 
 
 # -- the command line ----------------------------------------------------------
@@ -470,6 +547,7 @@ def main(argv: list[str] | None = None) -> int:
     running.add_argument("--extractors", action="append")
     running.add_argument("--timeout", type=float)
     running.add_argument("--dry-run", action="store_true")
+    running.add_argument("--from", dest="source", metavar="EXTRACTOR/OUTPUT")
     arguments = parser.parse_args(argv)
     try:
         config = load_config(arguments.config)
@@ -495,12 +573,24 @@ def main(argv: list[str] | None = None) -> int:
                 raise RunError(f"--program takes <name>=<path>, not {item!r}")
             programs[name] = value
         catalog.check_overrides(config.get("parameters", {}), f"configuration {arguments.config}")
-        targets = sorted(catalog.extractors) if arguments.extractor == "all" else [arguments.extractor]
+        everything = arguments.extractor == "all"
+        targets = sorted(catalog.extractors) if everything else [arguments.extractor]
         for target in targets:
             catalog[target]
-        run = Run(catalog, Path(arguments.bank).resolve(), content, arguments.media_type or media_type_of(content),
-                  arguments.digest, programs, config.get("parameters", {}), arguments.timeout)
-        answer = run.execute(targets, arguments.jobs, arguments.dry_run)
+        root = Path(arguments.bank).resolve()
+        media_type = arguments.media_type or media_type_of(content)
+        if arguments.source is not None:
+            if everything:
+                # Everything that can measure the feature; not what makes it.
+                source = arguments.source.split("/", 1)[0]
+                targets = [t for t in targets if source not in catalog.order([t])]
+            answer = run_from(catalog, root, content, media_type, arguments.digest, programs,
+                              config.get("parameters", {}), arguments.timeout, arguments.source, targets,
+                              arguments.jobs, arguments.dry_run, everything)
+        else:
+            run = Run(catalog, root, content, media_type, arguments.digest, programs, config.get("parameters", {}),
+                      arguments.timeout, optional=everything)
+            answer = run.execute(targets, arguments.jobs, arguments.dry_run)
     except (RunError, bank.BankError) as exc:
         print(json.dumps({"status": "failed", "detail": str(exc)}), file=sys.stderr)
         return 1
