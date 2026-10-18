@@ -1,6 +1,6 @@
 # 0071. Cover similarity is measured with Essentia, as the V2 system calibrated it
 
-Status: accepted; an amendment of 2026-10-18 is proposed (window matches
+Status: accepted; amended 2026-10-18, accepted the same day (window matches
 are decided by the quarter-rate distance, with near ties confirmed exactly)
 
 The work matcher in `enrich/` (ADR 0067) implements the cover-song measure of
@@ -105,10 +105,12 @@ AGPL-3.0-or-later.
 
 ## Amendment, 2026-10-18: window matches are decided by the quarter-rate distance
 
-Status: proposed. The operator set its goal on 2026-10-18, a window matcher
-about a hundred times faster than Essentia, and has not yet accepted this
-text, its thresholds, or its method. Until a person accepts it, the decision
-above stands.
+Status: accepted by the operator on 2026-10-18, who set its goal the same day:
+a window matcher about a hundred times faster than Essentia. The operator
+accepted this text with a near-tie margin of 0.02, one claim per suggested
+window naming only its closest Work, the method
+`archive-enrich/whole-recording-serra09`, and the quarter-rate scale beside
+Essentia's. Where it differs from the decision above, it replaces it.
 
 Deciding every window match by Essentia's exact distance costs too much.
 Today's growing-window search takes about 55 worker-hours on Essentia for the

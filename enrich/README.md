@@ -337,7 +337,7 @@ claim for the Works of the corpus. Each suggested window becomes an
 `archive.claim/work_match` version 3 claim
 ([ADR 0071](../docs/decisions/0071-essentia-cover-similarity.md) and
 [ADR 0072](../docs/decisions/0072-windowed-work-matches.md), as their
-amendments of 2026-10-18 propose; the operator has not yet accepted them). All claims are made by one derivation run in one Door batch.
+amendments of 2026-10-18, which the operator accepted that day). All claims are made by one derivation run in one Door batch.
 
 It prints one JSON object. The object holds every kept window with its
 closest occurrences, the path that decided it, and whether it was proposed,

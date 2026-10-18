@@ -184,7 +184,7 @@ unsupported rather than guess.
   wrong suggestions that followed. They need a held-out set of recordings, and
   a listening pass over the unaccepted suggestions, before their precision is a
   claim ([ADR 0072](decisions/0072-windowed-work-matches.md), amendment of
-  2026-10-18, proposed).
+  2026-10-18).
 - Does confirming near ties on freshly decoded audio decide as the replay on
   sliced profiles did? The measured confirmation used slices; the matcher
   decodes afresh. Of the workset's 10 near ties, 2 sit within about one median

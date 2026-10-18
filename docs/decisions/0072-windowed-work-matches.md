@@ -1,7 +1,7 @@
 # 0072. A work match can suggest a window of a recording
 
-Status: accepted; an amendment of 2026-10-18 is proposed (a whole-recording
-search replaces the growing windows)
+Status: accepted; amended 2026-10-18, accepted the same day (a
+whole-recording search replaces the growing windows)
 
 A fresh recording reaches World as an Artifact with suggested spans
 (ADR 0066). A version 2 `work_match` (ADR 0067) compares a song occurrence or
@@ -118,10 +118,12 @@ part of each session.
 
 ## Amendment, 2026-10-18: a whole-recording search replaces the growing windows
 
-Status: proposed. The operator set its goal on 2026-10-18, a window matcher
-about a hundred times faster than Essentia, and has not yet accepted this
-text, its thresholds, or its method. Until a person accepts it, the decision
-above stands.
+Status: accepted by the operator on 2026-10-18, who set its goal the same day:
+a window matcher about a hundred times faster than Essentia. The operator
+accepted this text with a near-tie margin of 0.02, one claim per suggested
+window naming only its closest Work, the method
+`archive-enrich/whole-recording-serra09`, and the quarter-rate scale beside
+Essentia's. Where it differs from the decision above, it replaces it.
 
 The record stays as it is. `archive.claim/work_match` version 3,
 specification 0.0.8, and Door's `x-archive-span-window` rule are unchanged, and
@@ -351,5 +353,5 @@ and 36 unaccepted became 35 under the strict one.
   requires.
 - **Record the change as a new decision.** The record, the Door rule, and the
   search's place in the run all stand. Only the search's mechanism changes, so
-  it is proposed as an amendment, as earlier changes to this record were
+  it is made as an amendment, as earlier changes to this record were
   made.
