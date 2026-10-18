@@ -20,10 +20,32 @@ trackers hold several detection functions of the whole signal) and give a
 long recording of many songs a confidence per chunk rather than one number
 for all of it.
 
-Beat trackers find beats in silence: on digital silence RhythmExtractor2013
-reports 738 BPM with confidence 5.0, its maximum. So a beat is kept only if
-an onset lies within `beat_gate_seconds` of it, and a chunk with no onset
-has confidence 0.
+The two algorithms keep different time bases. OnsetRate reports an onset
+before the attack it marks: measured on synthetic hits at random positions,
+the median is 14.6 ms early for a 1.5 kHz click, 13.7 for a noise burst,
+11.7 for a kick, 9.0 for a tone rising in 5 ms and 3.6 for one rising in
+20 ms, each spread over about 11 ms (its 512-sample hop). RhythmExtractor2013
+places a whole call's ticks about 15 ms early or 15 ms late, the sign
+depending on the input's tempo and length, not on the playing. Left alone,
+perfectly quantised eighths read as up to 30 ms off the grid (offgrid 0.19
+to 0.27 at 100 to 140 BPM, where 0.25 is random). So each
+chunk's ticks are moved by the mean distance from a tick to the nearest
+onset within `beat_align_ms` (with at least `ALIGN_MINIMUM` such
+pairs; otherwise by the previous chunk's shift, or not at all): the beats
+are then on the onsets' time base, early by the same attack-dependent lead,
+and an onset on a beat sits on its beat. Neither is corrected to the true
+attack, since how early depends on the sound.
+
+OnsetRate also reports an onset at its first hop wherever the decoded audio
+does not start in digital silence (the step from its zero padding into the
+signal), so onsets in the first `edge_onset_ms` are dropped.
+
+Beat trackers find beats where nothing is played: on digital silence
+RhythmExtractor2013 reports 738 BPM with confidence 5.0, its maximum, and
+around playing it carries the pulse on before the first onset and after
+the last. So a beat is kept only if an onset lies within
+`beat_align_ms` of it, or onsets lie within `beat_gate_seconds` on both
+sides of it; a chunk that keeps no onset has confidence 0.
 
 Why it does not read the `frames` series: both Essentia algorithms require
 audio at 44,100 Hz and compute their own detection functions with hops of
@@ -33,7 +55,9 @@ measures. Decoding is under a tenth of the cost; the trackers are the rest.
 
 Outputs:
 
-- `beats`, `onsets`: events, in seconds from the first decoded sample;
+- `beats`, `onsets`: events, in seconds from the first decoded sample, on
+  OnsetRate's time base (an onset is 4 to 15 ms before its attack, see
+  above; the beats are aligned to the onsets);
 - on the `seconds` grid (a row a second, each summarising the
   `window_seconds` centred on it):
   `tempo` (BPM, 60 over the median beat interval whose middle is in the
@@ -41,16 +65,21 @@ Outputs:
   lie between two kept beats), `onset_deviation` (milliseconds: the mean
   absolute and the mean signed distance from each such onset to the
   nearest point of the beat grid divided into `subdivisions`; positive is
-  late), and `offgrid` (the mean absolute distance as a fraction of the
-  subdivision's length, 0 on the grid, 0.25 for onsets placed at random,
-  0.5 at most). Means, not medians: when half the onsets are the beats
-  themselves, a median hides how far the other half stray, and each
-  distance is bounded by half a subdivision, so no outlier dominates.
+  late; since the beats are aligned to the onsets on them, the signed
+  mean says whether the onsets between beats come later or earlier than
+  even division of the played beats, as in swing), and `offgrid` (the mean
+  absolute distance as a fraction of the subdivision's length: about 0.03
+  for onsets placed exactly on the grid, where both algorithms' 512-sample
+  steps remain, 0.25 for onsets placed at random, 0.5 at most). Means,
+  not medians: when half the onsets are the beats themselves, a median
+  hides how far the other half stray, and each distance is bounded by
+  half a subdivision, so no outlier dominates.
   Essentia's onsets and beats both fall on 512-sample (11.6 ms) steps, so
   a single distance is resolved to about that;
 - on the `chunks` grid (a row a chunk): `chunk_bpm` and `chunk_confidence`,
   RhythmExtractor2013's own, confidence from 0 to 5.32 (above 3.5 is
-  excellent by Essentia's guide);
+  excellent by Essentia's guide); the last row's chunk may be shorter than
+  the grid's `frame`, down to just over `overlap_seconds`;
 - scalars: `bpm` (60 over the median of every kept beat interval),
   `confidence` (the chunks' confidences weighted by the seconds each keeps),
   `onset_rate` (onsets a second), and `seconds`.
@@ -76,6 +105,8 @@ import numpy
 RATE = 44100
 ESSENTIA_BUILD = "2.1b6.dev1438"
 SECOND = RATE
+# Fewest tick-to-onset pairs a chunk's alignment shift is measured from.
+ALIGN_MINIMUM = 8
 TUNABLE = {"min_tempo": (40, 180), "max_tempo": (60, 250), "subdivisions": (1, 12), "window_seconds": (2, 120),
            "chunk_seconds": (60, 3600), "overlap_seconds": (10, 600), "beat_gate_seconds": (1, 30)}
 
@@ -96,7 +127,8 @@ def parameters() -> dict[str, Any]:
     return {"decoder": "ffmpeg", "decode_arguments": decode_arguments("{input}"), "essentia": ESSENTIA_BUILD,
             "analysis_rate": RATE, "beats": "RhythmExtractor2013", "method": "multifeature", "min_tempo": 40,
             "max_tempo": 208, "onsets": "OnsetRate", "chunk_seconds": 300, "overlap_seconds": 30,
-            "beat_gate_seconds": 2, "window_seconds": 10, "subdivisions": 4}
+            "beat_gate_seconds": 2, "beat_align_ms": 50, "edge_onset_ms": 25,
+            "window_seconds": 10, "subdivisions": 4}
 
 
 def settings(requested: Any) -> dict[str, Any]:
@@ -227,6 +259,8 @@ class Measured:
     chunk_confidence: list[float] = field(default_factory=list)
     chunk_kept_seconds: list[float] = field(default_factory=list)
     chunk_onsets: list[int] = field(default_factory=list)
+    chunk_shift: list[float] = field(default_factory=list)  # seconds each chunk's ticks were moved
+    shift: float = 0.0  # the latest measured shift, for a chunk too sparse to measure its own
     samples: int = 0
 
 
@@ -249,6 +283,26 @@ def join_beats(before: list[float], after: list[float], shortest: float) -> list
     return before + after[index:]
 
 
+def nearest(times: numpy.ndarray, at: numpy.ndarray) -> numpy.ndarray:
+    """For each of `at`, the signed distance to the nearest of the sorted,
+    non-empty `times`."""
+    index = numpy.searchsorted(times, at)
+    before = times[numpy.clip(index - 1, 0, len(times) - 1)] - at
+    after = times[numpy.clip(index, 0, len(times) - 1)] - at
+    return numpy.where(numpy.abs(before) <= numpy.abs(after), before, after)
+
+
+def alignment(ticks: Any, onsets: Any, reach: float) -> float | None:
+    """The mean distance from a tick to the nearest onset, over the ticks
+    with one within `reach` seconds; None with fewer than `ALIGN_MINIMUM`."""
+    ticks, onsets = numpy.asarray(ticks, dtype=numpy.float64), numpy.asarray(onsets, dtype=numpy.float64)
+    if not len(ticks) or not len(onsets):
+        return None
+    distance = nearest(onsets, ticks)
+    close = distance[numpy.abs(distance) <= reach]
+    return float(numpy.mean(close)) if len(close) >= ALIGN_MINIMUM else None
+
+
 def measure(pieces: Iterable[Chunk], config: dict[str, Any], es: Any) -> Measured:
     extractor = es.RhythmExtractor2013(method=config["method"], minTempo=config["min_tempo"],
                                        maxTempo=config["max_tempo"])
@@ -262,29 +316,40 @@ def measure(pieces: Iterable[Chunk], config: dict[str, Any], es: Any) -> Measure
         onset_rate.reset()
         bpm, ticks, confidence, _, _ = extractor(chunk.audio)
         onsets, _ = onset_rate(chunk.audio)
+        onsets = numpy.asarray(onsets, dtype=numpy.float64)
+        if chunk.start == 0:
+            onsets = onsets[onsets >= config["edge_onset_ms"] / 1000]
+        shift = alignment(ticks, onsets, config["beat_align_ms"] / 1000)
+        if shift is not None:
+            found.shift = shift
+        found.chunk_shift.append(found.shift)
         chunk_onsets = kept(onsets, chunk)
         found.onsets.extend(chunk_onsets)
-        found.beats = join_beats(found.beats, kept(ticks, chunk), shortest)
+        found.beats = join_beats(found.beats, kept(numpy.asarray(ticks, dtype=numpy.float64) + found.shift, chunk),
+                                 shortest)
         found.chunk_bpm.append(float(bpm))
-        # A tracker scores digital silence 5.0; a chunk with nothing in it has no beat to be sure of.
-        found.chunk_confidence.append(float(confidence) if len(onsets) else 0.0)
+        # A tracker scores digital silence 5.0; a chunk that keeps no onset has no beat to be sure of.
+        found.chunk_confidence.append(float(confidence) if chunk_onsets else 0.0)
         found.chunk_kept_seconds.append((chunk.keep_to - chunk.keep_from) / RATE)
         found.chunk_onsets.append(len(chunk_onsets))
     return found
 
 
-def gate(beats: list[float], onsets: list[float], reach: float) -> list[float]:
-    """The beats with an onset within `reach` seconds of them."""
-    if not onsets:
+def gate(beats: list[float], onsets: list[float], reach: float, on: float) -> list[float]:
+    """The beats with an onset within `on` seconds of them, or with onsets
+    within `reach` seconds both before and after them: not the pulse a
+    tracker carries on into silence before the first onset or after the
+    last."""
+    if not onsets or not beats:
         return []
-    times = numpy.asarray(onsets)
-    kept_beats = []
-    for beat in beats:
-        index = int(numpy.searchsorted(times, beat))
-        near = [times[i] for i in (index - 1, index) if 0 <= i < len(times)]
-        if any(abs(t - beat) <= reach for t in near):
-            kept_beats.append(beat)
-    return kept_beats
+    times = numpy.asarray(onsets, dtype=numpy.float64)
+    at = numpy.asarray(beats, dtype=numpy.float64)
+    index = numpy.searchsorted(times, at)
+    previous = numpy.where(index > 0, times[numpy.maximum(index - 1, 0)], -numpy.inf)
+    following = numpy.where(index < len(times), times[numpy.minimum(index, len(times) - 1)], numpy.inf)
+    near = numpy.minimum(at - previous, following - at) <= on
+    between = (at - previous <= reach) & (following - at <= reach)
+    return [float(b) for b in at[near | between]]
 
 
 def intervals(beats: list[float], longest: float) -> list[tuple[float, float]]:
@@ -322,30 +387,37 @@ def windows(samples: int, window: int) -> tuple[int, numpy.ndarray, numpy.ndarra
     return rows, centres - window / 2, centres + window / 2
 
 
+def window_sums(times: numpy.ndarray, values: numpy.ndarray, low: numpy.ndarray,
+                high: numpy.ndarray) -> tuple[numpy.ndarray, numpy.ndarray]:
+    """For each window [low, high): how many of the sorted `times` fall in
+    it, and the sums of each column of `values` over them, by cumulative
+    sums, so the cost is linear in rows and times."""
+    first = numpy.searchsorted(times, low, side="left")
+    last = numpy.searchsorted(times, high, side="left")
+    totals = numpy.vstack((numpy.zeros((1, values.shape[1])), numpy.cumsum(values, axis=0)))
+    return last - first, totals[last] - totals[first]
+
+
 def series(found: Measured, beats: list[float], config: dict[str, Any]) -> dict[str, numpy.ndarray]:
     rows, low, high = windows(found.samples, config["window_seconds"])
     pairs = intervals(beats, 60.0 / config["min_tempo"])
-    middles = numpy.asarray([(a + b) / 2 for a, b in pairs])
-    lengths = numpy.asarray([b - a for a, b in pairs])
+    middles = numpy.asarray([(a + b) / 2 for a, b in pairs], dtype=numpy.float64)
+    lengths = numpy.asarray([b - a for a, b in pairs], dtype=numpy.float64)
     measured = deviations(found.onsets, pairs, config["subdivisions"])
-    onset_times = numpy.asarray([m[0] for m in measured])
-    signed = numpy.asarray([m[1] for m in measured]) * 1000
-    fraction = numpy.asarray([m[2] for m in measured])
+    onset_times = numpy.asarray([m[0] for m in measured], dtype=numpy.float64)
+    signed = numpy.asarray([m[1] for m in measured], dtype=numpy.float64) * 1000
+    fraction = numpy.asarray([m[2] for m in measured], dtype=numpy.float64)
     tempo = numpy.zeros((rows, 1), dtype="<f4")
-    count = numpy.zeros((rows, 1), dtype="<f4")
-    deviation = numpy.zeros((rows, 2), dtype="<f4")
-    offgrid = numpy.zeros((rows, 1), dtype="<f4")
-    for k in range(rows):
-        in_window = (middles >= low[k]) & (middles < high[k]) if len(middles) else numpy.zeros(0, bool)
-        if in_window.any():
-            tempo[k, 0] = 60.0 / float(numpy.median(lengths[in_window]))
-        if len(onset_times):
-            chosen = (onset_times >= low[k]) & (onset_times < high[k])
-            if chosen.any():
-                count[k, 0] = int(chosen.sum())
-                deviation[k, 0] = float(numpy.mean(numpy.abs(signed[chosen])))
-                deviation[k, 1] = float(numpy.mean(signed[chosen]))
-                offgrid[k, 0] = float(numpy.mean(fraction[chosen]))
+    first = numpy.searchsorted(middles, low, side="left")
+    last = numpy.searchsorted(middles, high, side="left")
+    for k in numpy.flatnonzero(last > first):
+        tempo[k, 0] = 60.0 / float(numpy.median(lengths[first[k]:last[k]]))
+    columns = numpy.column_stack((numpy.abs(signed), signed, fraction)) if len(measured) else numpy.zeros((0, 3))
+    counts, sums = window_sums(onset_times, columns, low, high)
+    means = sums / numpy.maximum(counts, 1)[:, None]
+    count = counts.astype("<f4").reshape(-1, 1)
+    deviation = means[:, :2].astype("<f4")
+    offgrid = means[:, 2:].astype("<f4")
     return {"tempo": tempo, "onset_count": count, "onset_deviation": deviation, "offgrid": offgrid,
             "chunk_bpm": numpy.asarray(found.chunk_bpm, dtype="<f4").reshape(-1, 1),
             "chunk_confidence": numpy.asarray(found.chunk_confidence, dtype="<f4").reshape(-1, 1)}
@@ -365,8 +437,13 @@ def events(times: list[float]) -> list[dict[str, float]]:
 
 
 def ffmpeg_version(ffmpeg: str = "ffmpeg") -> str:
-    first = subprocess.run([ffmpeg, "-version"], capture_output=True, text=True).stdout.split("\n", 1)[0].split()
-    return first[2] if len(first) > 2 and first[:2] == ["ffmpeg", "version"] else "unknown"
+    """The version `ffmpeg -version` names; refused rather than recorded as
+    unknown when it names none, since the provenance would then be false."""
+    answer = subprocess.run([ffmpeg, "-version"], capture_output=True, text=True)
+    first = answer.stdout.split("\n", 1)[0].split()
+    if answer.returncode != 0 or len(first) < 3 or first[:2] != ["ffmpeg", "version"]:
+        raise RhythmError(f"`{ffmpeg} -version` names no version (exit {answer.returncode})")
+    return first[2]
 
 
 def main(argv: list[str]) -> int:
@@ -382,7 +459,7 @@ def main(argv: list[str]) -> int:
                                config["overlap_seconds"] * RATE), config, es)
         if found.samples == 0:
             raise RhythmError(f"{request['input']['path']} decodes to no samples")
-        beats = gate(found.beats, found.onsets, config["beat_gate_seconds"])
+        beats = gate(found.beats, found.onsets, config["beat_gate_seconds"], config["beat_align_ms"] / 1000)
         outputs: dict[str, Any] = {}
         for name, values in series(found, beats, config).items():
             (output / f"{name}.f32").write_bytes(values.tobytes())

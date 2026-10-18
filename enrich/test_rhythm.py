@@ -10,6 +10,7 @@ from __future__ import annotations
 import io
 import json
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -56,6 +57,22 @@ def hits(seconds: float, times, bed: float = 0.0, seed: int = 0, amplitude: floa
         if 0 <= at < count:
             samples[at:end] += shape[:end - at]
     return samples
+
+
+def measured(samples: numpy.ndarray, config: dict | None = None) -> tuple[rhythm.Measured, list[float]]:
+    """What the extractor's own steps find in samples, in process: the
+    measurement and the gated beats."""
+    config = config or rhythm.parameters()
+    found = rhythm.measure(rhythm.chunks([samples.astype(numpy.float32)], config["chunk_seconds"] * RATE,
+                                         config["overlap_seconds"] * RATE), config, rhythm.essentia_standard())
+    return found, rhythm.gate(found.beats, found.onsets, config["beat_gate_seconds"], config["beat_align_ms"] / 1000)
+
+
+def on_grid(bpm: float, seconds: float, start: float) -> numpy.ndarray:
+    """Exactly placed hits on every beat and every eighth between, over a bed."""
+    beat = 60 / bpm
+    beats = numpy.arange(start, seconds - 1, beat)
+    return numpy.sort(numpy.concatenate((beats, beats[:-1] + beat / 2)))
 
 
 def run(directory: Path, audio: Path, parameters: dict | None = None) -> tuple[int, dict]:
@@ -142,9 +159,63 @@ class Chunking(unittest.TestCase):
         self.assertEqual(rhythm.join_beats([1.0, 1.5], [1.9, 2.4], 0.3), [1.0, 1.5, 1.9, 2.4])
         self.assertEqual(rhythm.join_beats([], [0.1, 0.2], 0.3), [0.1, 0.2])
 
-    def test_a_beat_needs_an_onset_near_it(self) -> None:
-        self.assertEqual(rhythm.gate([1.0, 5.0, 9.0], [1.2, 8.5], 2), [1.0, 9.0])
-        self.assertEqual(rhythm.gate([1.0, 2.0], [], 2), [])
+    def test_a_beat_needs_an_onset_on_it_or_onsets_on_both_sides(self) -> None:
+        onsets = [1.0, 2.0, 3.0, 4.5, 20.0]
+        beats = [0.0, 0.99, 1.5, 2.6, 3.8, 5.0, 6.0, 12.0, 19.0, 20.02, 21.0]
+        # 1.5, 2.6, 3.8: onsets within 2 s each side; 0.99, 20.02: an onset on them.
+        # 0.0 is before the first onset, 5.0 and 6.0 after the playing stops, 12.0 and 19.0 in a gap, 21.0 after the last.
+        self.assertEqual(rhythm.gate(beats, onsets, 2, 0.05), [0.99, 1.5, 2.6, 3.8, 20.02])
+        self.assertEqual(rhythm.gate([1.0, 2.0], [], 2, 0.05), [])
+        self.assertEqual(rhythm.gate([], [1.0], 2, 0.05), [])
+
+    def test_ticks_are_aligned_by_their_mean_distance_to_the_nearest_onset(self) -> None:
+        onsets = numpy.arange(1.0, 20.0, 0.25)
+        ticks = numpy.arange(1.0, 20.0, 0.5) + 0.015
+        self.assertAlmostEqual(rhythm.alignment(ticks, onsets, 0.05), -0.015)
+        self.assertAlmostEqual(rhythm.alignment(onsets[::2] - 0.03, onsets, 0.05), 0.03)
+        # A tick with no onset within reach does not count; too few that do give no alignment.
+        self.assertAlmostEqual(rhythm.alignment(numpy.r_[ticks, 30.0], onsets, 0.05), -0.015)
+        self.assertIsNone(rhythm.alignment(ticks[:rhythm.ALIGN_MINIMUM - 1], onsets, 0.05))
+        self.assertIsNone(rhythm.alignment(ticks + 0.2, onsets[::4], 0.05))
+        self.assertIsNone(rhythm.alignment(ticks, [], 0.05))
+        self.assertIsNone(rhythm.alignment([], onsets, 0.05))
+        self.assertEqual(list(rhythm.nearest(numpy.asarray([1.0]), numpy.asarray([0.0, 3.0]))), [1.0, -2.0])
+
+    def test_a_chunk_that_keeps_no_onset_has_no_confidence_and_borrows_the_last_shift(self) -> None:
+        # Two 60 s chunks overlapping by 10 s, so the second keeps from 55 s.
+        config = {**rhythm.parameters(), **SHORT_CHUNKS}
+        played = numpy.arange(1.0, 54.0, 0.5)
+
+        class Tracker:
+            """RhythmExtractor2013's shape: ticks 15 ms after each chunk's onsets."""
+            def __init__(self, **_: object) -> None:
+                self.start = 0.0
+
+            def reset(self) -> None:
+                pass
+
+            def __call__(self, audio: numpy.ndarray):
+                ticks = numpy.asarray([t - self.start + 0.015 for t in played if t >= self.start])
+                self.start += 50.0
+                return 120.0, ticks, 4.0, None, None
+
+        class Onsets(Tracker):
+            def __call__(self, audio: numpy.ndarray):
+                onsets = numpy.asarray([0.01] + [t - self.start for t in played if t >= self.start])
+                self.start += 50.0
+                return onsets, None
+
+        es = type("Essentia", (), {"RhythmExtractor2013": Tracker, "OnsetRate": Onsets})
+        found = rhythm.measure(rhythm.chunks([numpy.zeros(75 * RATE, dtype=numpy.float32)], 60 * RATE, 10 * RATE),
+                               config, es)
+        # The first chunk's onset at its first hop is the start of the audio, not playing.
+        self.assertEqual(found.onsets[0], 1.0)
+        # Anchor: the second chunk's tracker saw onsets (50 to 54 s), but it keeps none.
+        self.assertEqual(found.chunk_onsets, [len(played), 0])
+        self.assertEqual(found.chunk_confidence, [4.0, 0.0])
+        # The second chunk has too few ticks to align by and takes the first chunk's shift.
+        self.assertEqual([round(s, 9) for s in found.chunk_shift], [-0.015, -0.015])
+        self.assertTrue(numpy.allclose(found.beats, played))
 
     def test_deviation_is_to_the_nearest_subdivision_and_signed(self) -> None:
         pairs = rhythm.intervals([10.0, 11.0, 12.0, 20.0, 21.0], 1.5)
@@ -155,6 +226,67 @@ class Chunking(unittest.TestCase):
         signed = [round(s, 6) for _, s, _ in found]
         self.assertEqual(signed, [0.01, -0.01, 0.0])
         self.assertEqual([round(f, 6) for _, _, f in found], [0.04, 0.04, 0.0])
+
+    def test_window_sums_are_those_of_each_window(self) -> None:
+        rng = numpy.random.default_rng(5)
+        config = rhythm.parameters()
+        beats = list(numpy.cumsum(rng.uniform(0.3, 0.7, 400)))
+        onsets = list(numpy.sort(rng.uniform(0, beats[-1] + 5, 900)))
+        found = rhythm.Measured(beats=beats, onsets=onsets, samples=int((beats[-1] + 7) * RATE))
+        got = rhythm.series(found, beats, config)
+        # The windows by brute force, as the row-by-row masks the cumulative sums replace.
+        rows, low, high = rhythm.windows(found.samples, config["window_seconds"])
+        pairs = rhythm.intervals(beats, 60.0 / config["min_tempo"])
+        middles = numpy.asarray([(a + b) / 2 for a, b in pairs])
+        lengths = numpy.asarray([b - a for a, b in pairs])
+        each = rhythm.deviations(onsets, pairs, config["subdivisions"])
+        times = numpy.asarray([m[0] for m in each])
+        signed = numpy.asarray([m[1] for m in each]) * 1000
+        fraction = numpy.asarray([m[2] for m in each])
+        self.assertGreater(len(each), 500)  # anchor: most onsets are measured
+        for k in range(rows):
+            mask = (middles >= low[k]) & (middles < high[k])
+            chosen = (times >= low[k]) & (times < high[k])
+            expected_tempo = 60 / numpy.median(lengths[mask]) if mask.any() else 0
+            self.assertAlmostEqual(float(got["tempo"][k, 0]), expected_tempo, places=3)
+            self.assertEqual(got["onset_count"][k, 0], chosen.sum())
+            if chosen.any():
+                self.assertAlmostEqual(float(got["onset_deviation"][k, 0]), numpy.abs(signed[chosen]).mean(), places=3)
+                self.assertAlmostEqual(float(got["onset_deviation"][k, 1]), signed[chosen].mean(), places=3)
+                self.assertAlmostEqual(float(got["offgrid"][k, 0]), fraction[chosen].mean(), places=5)
+            else:
+                self.assertEqual(float(got["offgrid"][k, 0]), 0.0)
+
+    def test_series_is_linear_in_the_recording(self) -> None:
+        # Nine hours at 4.2 onsets a second: the row-by-row masks took about 35 s here.
+        seconds = 9 * 3600
+        rng = numpy.random.default_rng(0)
+        beats = list(numpy.arange(0.3, seconds, 0.476))
+        onsets = list(numpy.sort(rng.uniform(0, seconds, int(4.2 * seconds))))
+        found = rhythm.Measured(beats=beats, onsets=onsets, samples=seconds * RATE)
+        real_mean = numpy.mean
+        with patch.object(rhythm.numpy, "mean", side_effect=AssertionError("a mean per row")):
+            got = rhythm.series(found, beats, rhythm.parameters())
+        self.assertIs(rhythm.numpy.mean, real_mean)
+        self.assertEqual(got["offgrid"].shape, (seconds, 1))
+        self.assertTrue(numpy.all(got["onset_count"][10:-10] > 10))  # anchor: every window is measured
+
+
+class Provenance(unittest.TestCase):
+    def test_an_ffmpeg_that_names_no_version_is_refused(self) -> None:
+        for answer in (subprocess.CompletedProcess(["ffmpeg"], 1, stdout="", stderr="broken"),
+                       subprocess.CompletedProcess(["ffmpeg"], 0, stdout="something else\n", stderr="")):
+            with self.subTest(answer=answer):
+                with patch.object(rhythm.subprocess, "run", return_value=answer):
+                    with self.assertRaisesRegex(rhythm.RhythmError, "names no version"):
+                        rhythm.ffmpeg_version()
+        with patch.object(rhythm.subprocess, "run", return_value=subprocess.CompletedProcess(
+                ["ffmpeg"], 0, stdout="ffmpeg version 7.1 Copyright\nmore\n", stderr="")):
+            self.assertEqual(rhythm.ffmpeg_version(), "7.1")
+
+    @needs_ffmpeg
+    def test_the_installed_ffmpeg_names_its_version(self) -> None:
+        self.assertRegex(rhythm.ffmpeg_version(), r"^[0-9n]")
 
 
 @needs_ffmpeg
@@ -215,6 +347,54 @@ class Rhythm(unittest.TestCase):
         self.assertLess(measured["tight"][1], 8, measured)  # Essentia's onsets and beats move in 11.6 ms steps
         self.assertGreater(measured["loose"][0], measured["tight"][0] + 0.05, measured)
         self.assertGreater(measured["loose"][1], measured["tight"][1] + 5, measured)
+
+    def test_on_grid_playing_reads_on_the_grid_at_any_tempo_length_and_phase(self) -> None:
+        shifts = []
+        for bpm, seconds, start in ((100, 40, 0.5), (120, 41, 0.5), (126, 40, 1.013), (140, 60, 0.4),
+                                    (120, 60, 1.013), (100, 61, 1.0)):
+            with self.subTest(bpm=bpm, seconds=seconds, start=start):
+                found, beats = measured(hits(seconds, on_grid(bpm, seconds, start), bed=0.15))
+                rows = rhythm.series(found, beats, rhythm.parameters())
+                playing = rows["onset_count"][:, 0] > 10
+                self.assertGreater(playing.sum(), seconds - 15)  # anchor: the playing is measured
+                offgrid = float(numpy.median(rows["offgrid"][playing, 0]))
+                signed = float(numpy.median(rows["onset_deviation"][playing, 1]))
+                self.assertLess(offgrid, 0.05, (offgrid, signed))
+                self.assertLess(abs(signed), 3, (offgrid, signed))
+                shifts.append(found.chunk_shift[0])
+                if abs(found.chunk_shift[0]) > 0.02:
+                    # The tracker's own ticks, unaligned, are what read as off the grid.
+                    unaligned = [b - found.chunk_shift[0] for b in beats]
+                    before = rhythm.series(found, unaligned, rhythm.parameters())
+                    self.assertGreater(float(numpy.median(before["offgrid"][playing, 0])), 0.15)
+        # Anchor: the sweep includes inputs whose ticks were well off the onsets and some that were not:
+        # the tracker's ticks fall about 15 ms either side of the attack, the onsets about 15 ms before it.
+        self.assertGreater(max(shifts) - min(shifts), 0.02, shifts)
+        self.assertGreater(max(abs(s) for s in shifts), 0.02, shifts)
+
+    def test_events_are_on_one_time_base_just_before_the_attacks(self) -> None:
+        played = numpy.arange(1.0, 40.0, 0.5)
+        found, beats = measured(hits(41, played, bed=0.1))
+        onsets, beats = numpy.asarray(found.onsets), numpy.asarray(beats)
+        self.assertEqual(len(onsets), len(played))  # anchor: one onset a hit
+        lead = -rhythm.nearest(played, onsets)
+        # OnsetRate's lead on this sharp click: about 14.5 ms, spread over its 11.6 ms hop.
+        self.assertTrue(numpy.all((lead > -0.022) & (lead < -0.007)), lead * 1000)
+        self.assertAlmostEqual(float(numpy.median(lead)), -0.0145, delta=0.002)
+        # The beats sit on the onsets, whichever way the tracker's ticks were off.
+        self.assertGreater(len(beats), len(played) - 3)
+        self.assertLess(abs(float(numpy.median(rhythm.nearest(onsets, beats)))), 0.003)
+        self.assertTrue(numpy.all(numpy.abs(rhythm.nearest(onsets, beats)) < 0.012))
+
+    def test_no_beat_is_carried_on_past_the_playing(self) -> None:
+        # Two songs with 20 s of room noise between, in a recording that starts in room noise.
+        first, second = numpy.arange(1.0, 20.0, 0.5), numpy.arange(40.0, 59.6, 0.5)
+        found, beats = measured(hits(61, numpy.concatenate((first, second))))
+        beats = numpy.asarray(beats)
+        self.assertGreater(((beats > 0.9) & (beats < 19.6)).sum(), 34)  # anchor: both songs have beats
+        self.assertGreater(((beats > 39.9) & (beats < 59.6)).sum(), 36)
+        self.assertGreaterEqual(min(found.onsets), 0.95)  # no onset at the start of the audio
+        self.assertEqual(list(beats[(beats < 0.95) | ((beats > 19.55) & (beats < 39.95)) | (beats > 59.55)]), [])
 
     def test_silence_has_no_beats_and_no_confidence(self) -> None:
         directory = scratch(self)

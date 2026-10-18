@@ -49,6 +49,8 @@
   "chunk_seconds": 300,
   "overlap_seconds": 30,
   "beat_gate_seconds": 2,
+  "beat_align_ms": 50,
+  "edge_onset_ms": 25,
   "window_seconds": 10,
   "subdivisions": 4
  },
@@ -56,12 +58,12 @@
   "beats": {
    "kind": "events",
    "unit": "s",
-   "description": "beats with an onset within beat_gate_seconds"
+   "description": "the tracker's beats moved onto the onsets' time base, each with an onset within beat_align_ms or onsets within beat_gate_seconds on both sides"
   },
   "onsets": {
    "kind": "events",
    "unit": "s",
-   "description": "OnsetRate's onsets"
+   "description": "OnsetRate's onsets, but none in the first edge_onset_ms; 4 to 15 ms before the attack, by its sharpness"
   },
   "tempo": {
    "kind": "series",
@@ -85,7 +87,7 @@
    "columns": 2,
    "grid": "seconds",
    "unit": "ms",
-   "description": "mean absolute and mean signed distance of those onsets from the subdivided beat grid; positive is late"
+   "description": "mean absolute and mean signed distance of those onsets from the subdivided beat grid, the beats aligned to the onsets on them; positive is late"
   },
   "offgrid": {
    "kind": "series",
@@ -93,7 +95,7 @@
    "columns": 1,
    "grid": "seconds",
    "unit": "1",
-   "description": "mean absolute distance as a fraction of a subdivision: 0 on the grid, 0.25 at random, 0.5 at most"
+   "description": "mean absolute distance as a fraction of a subdivision: about 0.03 on the grid, 0.25 at random, 0.5 at most"
   },
   "chunk_bpm": {
    "kind": "series",
@@ -109,7 +111,7 @@
    "columns": 1,
    "grid": "chunks",
    "unit": "1",
-   "description": "BeatTrackerMultiFeature's confidence of each chunk, 0 to 5.32; 0 for a chunk with no onset"
+   "description": "BeatTrackerMultiFeature's confidence of each chunk, 0 to 5.32; 0 for a chunk that keeps no onset; the last chunk may be shorter than the grid's frame"
   },
   "bpm": {
    "kind": "scalar",
