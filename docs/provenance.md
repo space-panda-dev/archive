@@ -50,6 +50,25 @@ So there is no universal confidence scale. A classifier's 0.72 and a person's
 This is about belief. Who may *cause* something (publish, destroy, change
 policy) is a different question, and the answer is the operator.
 
+## Credits
+
+A credit's provenance is its asserter
+([ADR 0078](decisions/0078-contributions.md)):
+
+- a booklet, Discogs, or MusicBrainz credit pins the admitted document, keeps
+  the source's own wording and the name as credited, and may say where it was
+  retrieved and when;
+- the operator's credit ("this player played keys on this take") names the
+  operator as its agent;
+- an instrument detector's claim pins its run, keeps its confidence in its
+  own scale, and names no contributor: it can locate a person's credit, never
+  become one.
+
+Each source's credit is its own claim; none is merged into another or
+skipped because another source agrees. Sources that copy each other agree
+without being independent, so nothing counts agreement. A finer credit
+refines a coarser one whoever asserted either, and the resolved view says why.
+
 ## Disagreement is evidence
 
 The archive must be able to hold, at the same time:

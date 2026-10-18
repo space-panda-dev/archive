@@ -95,7 +95,10 @@ unsupported rather than guess.
   procedures ([ADR 0012](decisions/0012-inherited-meaning.md),
   [ADR 0013](decisions/0013-physical-collections.md)).
 - How exactly do MusicBrainz kinds map onto the Library Reference Model (for
-  example, whether a MusicBrainz Recording is an LRM Expression)?
+  example, whether a MusicBrainz Recording is an LRM Expression)? This now
+  covers the `release` and `recording` Entity kinds of
+  [ADR 0078](decisions/0078-contributions.md), which take MusicBrainz's
+  meaning and no LRM class yet.
 - What origin values mark the operator's own work across media (a recording, a
   book, a photograph), and how are co-authored works (a band's album) handled
   ([ADR 0010](decisions/0010-publication.md))?
@@ -179,6 +182,33 @@ unsupported rather than guess.
 - Should the window search start from more than the first span of each run?
   A single start reached 57.5% of accepted performances in the V2 system
   ([ADR 0072](decisions/0072-windowed-work-matches.md)).
+
+- Which recordings does a release carry? No contract states a tracklist, so a
+  release credit never reaches a recording in the resolved view of credits,
+  and an importer cannot place a release-wide performer on each track
+  ([ADR 0078](decisions/0078-contributions.md)). Is a tracklist a claim about
+  the release, and does a release credit then apply to every track, as
+  MusicBrainz's style guide reads it?
+- How is an Entity matched to a MusicBrainz artist, release, or recording, or
+  to a Discogs artist? ADR 0042's correspondence covers only Works; until a
+  contract covers the rest, an importer cannot recognise an Entity it made
+  before except by the operator's choice.
+- What Entity kind credits a place, such as a studio? MusicBrainz credits
+  places, but local place identity is open
+  ([ADR 0043](decisions/0043-geographic-evidence-and-route-handoff.md)), so a
+  place credit keeps the place as text and pins no contributor.
+- Which edition does a MusicBrainz release-group credit mean, and is a
+  release group an Entity kind? Release-group credits are not imported.
+- Should the resolved view of credits relate a span on a mix to a channel of
+  the same take? A channel and the mix are different Artifacts; only a
+  capture alignment relates their samples, and the view does not use one.
+- Should a contribution say more than MusicBrainz can, such as a part within
+  an instrument (second trombone) or a doubling? Today that survives only in
+  the credit text.
+- How does a person's sensitivity limit "the rehearsals I play in"
+  ([ADR 0018](decisions/0018-people-in-the-archive.md)) relate to
+  contributions? Channel and span credits could select that content; whether
+  they may, and who asserts them, is undecided.
 
 - How does a person's sensitivity claim select the content it covers ("the
   rehearsals I play in") rather than naming objects one by one

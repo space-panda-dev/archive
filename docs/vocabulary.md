@@ -181,6 +181,29 @@ formats that will stay readable.
 **Usage observation**: a periodic count of how content was used (plays, views),
 from an outside service.
 
+## Credits
+
+([ADR 0078](decisions/0078-contributions.md))
+
+**Contribution**: a claim that a **contributor** (a person or organisation
+Entity) took part in a **role** in one **scope**. The role is a MusicBrainz
+relationship type, with its attributes, instruments, and vocals; a contribution
+may keep only the source's words when no type fits. Not a billing credit: an
+`artist_credit` says whom a selection is presented as by, a contribution says
+who did what.
+**Scope**: how much of the music a contribution is about: a Work, a
+**release** (one edition as issued), a **recording** (a recording, or a take
+in the archive), a **span** (sample ranges of a recording), or a **channel**
+(one source within a recording: a stem, an input channel's own file, or one
+channel of a multichannel file). **Credit text**: the credit exactly as the
+source printed it, kept beside the role.
+A finer claim **refines** a coarser one when it names the same contributor and
+role about part of the coarser subject; a claim with no contributor that
+matches only **locates** it. A claim nothing refines is **finest**. Refining
+never contradicts: no credit asserts absence.
+**Band membership**: a claim that a person was a member of a band (an
+organisation), with instruments and partial from and to dates.
+
 ## Naming discipline
 
 When an established concept is meant, use its established word:

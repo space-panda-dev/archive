@@ -87,3 +87,4 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0070](0070-capture-import.md) | New recordings are imported natively |
 | [0071](0071-essentia-cover-similarity.md) | Cover similarity is measured with Essentia, as the V2 system calibrated it |
 | [0072](0072-windowed-work-matches.md) | A work match can suggest a window of a recording |
+| [0078](0078-contributions.md) | A contribution names who did what, in which role, to how much of the music |
