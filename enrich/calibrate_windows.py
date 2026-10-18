@@ -19,15 +19,25 @@ subcommands split that across machines, one task per recording:
   prints its result as one line. A near tie needs its window measured afresh,
   which a workset cannot do: the result then lists it under `needs_exact`.
 - `measure-windows` runs where the audio is and measures every window the
-  results list, into one file; `search --windows` with it decides them.
+  results list, into one file bound to the workset; `search --windows` with
+  it decides them, and refuses a file measured for another workset.
 - `judge` reads one complete result per recording and reports as `all` does.
   It refuses a result that still needs a window, and a workset in the
   earlier, per-window format.
 
-Profiles differ in their low bits between x86_64 Linux and arm64 macOS, so
-`search` refuses a workset whose profiles were measured with other software.
-Quarter-rate distances depend on the BLAS library too, which each result
-names and `judge` reports.
+`search` refuses a workset measured with other versions of Essentia or numpy.
+That check cannot tell platforms apart: profiles differ in their low bits
+between x86_64 Linux and arm64 macOS, and quarter-rate distances depend on the
+BLAS library and its kernel (`cover.software`). Each result names its
+software, and `judge` refuses results whose software differs, since a run with
+other software is another run. Split a workset only across machines whose
+software agrees.
+
+Memory: searching one recording holds its profiles (about 1.9 MB per hour)
+and the corpus's. A near tie's exact comparisons are the expensive part; on
+the calibration workset a 1.55-hour recording with 3 near ties peaked at about
+2.3 GB resident, against about 0.8 GB without them. `--jobs` processes share
+the candidate pass and the exact comparisons.
 
 The thresholds were fitted on one archive's accepted occurrences; this checks
 them on another before its suggestions are trusted. It reads the archive only
@@ -63,13 +73,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import numpy
-
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import cover  # noqa: E402  first: it pins BLAS to one thread before numpy loads it
+import numpy  # noqa: E402
+
 import adapter  # noqa: E402
-import cover  # noqa: E402
 import enrich  # noqa: E402
 import windows  # noqa: E402
 from windows import overlap  # noqa: E402
@@ -139,6 +149,11 @@ class Workset:
         data = json.dumps(manifest, indent=1, sort_keys=True).encode("utf-8")
         (directory / "manifest.json").write_bytes(data)
         return "sha256:" + hashlib.sha256(data).hexdigest()
+
+    @staticmethod
+    def digest(directory: Path) -> str:
+        """The digest of the workset's manifest, which names every other file."""
+        return "sha256:" + hashlib.sha256((directory / "manifest.json").read_bytes()).hexdigest()
 
     @staticmethod
     def manifest_of(directory: Path, digest: str | None = None) -> dict[str, Any]:
@@ -355,8 +370,11 @@ def judge(manifest: dict[str, Any], results: list[dict[str, Any]]) -> dict[str, 
             for d in by_source[i]["kept"] if d["distances"]]
     report: dict[str, Any] = {key: manifest[key] for key in ("corpus", "skipped_links")}
     report["unmeasured"] = manifest.get("unmeasured", {})
-    report["software"] = sorted({json.dumps(r["software"]) for r in by_source.values()})
-    report["software"] = [json.loads(s) for s in report["software"]]
+    software = sorted({json.dumps(r["software"]) for r in by_source.values()})
+    if len(software) > 1:
+        raise enrich.CommandError(f"the results were searched with {len(software)} different software sets "
+                                  f"({'; '.join(software)}); a run with other software is another run")
+    report["software"] = [json.loads(s) for s in software]
     report["corpus_sizes"] = {s["artifact"]: s["corpus_size"] for s in sources}
     for rule in RULES:
         report[rule] = judge_windows(manifest, windows_of, rule)
@@ -397,6 +415,10 @@ def calibrate(args: argparse.Namespace) -> dict[str, Any]:
     return judge(workset.manifest, results)
 
 
+# The measure-windows file's entry naming the workset it was measured for.
+WORKSET_KEY = "workset"
+
+
 def window_key(index: int, window: tuple[int, int]) -> str:
     return f"source-{index}-window-{window[0]}-{window[1]}"
 
@@ -412,6 +434,10 @@ def search(args: argparse.Namespace) -> dict[str, Any]:
     if args.windows is not None:
         with numpy.load(args.windows) as arrays:
             fresh = {key: arrays[key] for key in arrays.files}
+        bound = str(fresh.pop(WORKSET_KEY)) if WORKSET_KEY in fresh else None
+        if bound != Workset.digest(args.workset):
+            raise enrich.CommandError(f"{args.windows} was measured for workset {bound}, not "
+                                      f"{Workset.digest(args.workset)}")
 
     def window_features(start: int, end: int) -> cover.Features | None:
         profiles = fresh.get(window_key(args.source_index, (start, end)))
@@ -419,7 +445,7 @@ def search(args: argparse.Namespace) -> dict[str, Any]:
             return None
         return cover.Features(profiles, tuple(float(v) for v in profiles.mean(axis=0)))
 
-    with cover.Comparer(1) as comparer:
+    with cover.Comparer(args.jobs) as comparer:
         comparer.use_corpus(workset.corpus)
         result = search_source(workset.manifest, args.source_index, workset.corpus,
                                workset.recordings[args.source_index], window_features, comparer.distances, args.jobs)
@@ -442,7 +468,7 @@ def measure_windows(args: argparse.Namespace) -> dict[str, Any]:
             path = enrich.content_path(reader.root, reader.head(source["artifact"]))
             for window, features in comparer.measure_windows(path, source["sample_rate"], needed).items():
                 measured[window_key(index, window)] = features.profiles
-    numpy.savez(args.out, **measured)
+    numpy.savez(args.out, **measured, **{WORKSET_KEY: numpy.array(Workset.digest(args.workset))})
     return {"windows": str(args.out), "digest": digest_of(args.out), "measured": len(measured),
             "sources": sorted(wanted)}
 

@@ -336,8 +336,8 @@ Searches the whole recording behind one `archive.claim/span_suggestions`
 claim for the Works of the corpus. Each suggested window becomes an
 `archive.claim/work_match` version 3 claim
 ([ADR 0071](../docs/decisions/0071-essentia-cover-similarity.md) and
-[ADR 0072](../docs/decisions/0072-windowed-work-matches.md), both as amended on
-2026-10-18). All claims are made by one derivation run in one Door batch.
+[ADR 0072](../docs/decisions/0072-windowed-work-matches.md), as their
+amendments of 2026-10-18 propose; the operator has not yet accepted them). All claims are made by one derivation run in one Door batch.
 
 It prints one JSON object. The object holds every kept window with its
 closest occurrences, the path that decided it, and whether it was proposed,
@@ -378,17 +378,18 @@ The capture import runs it last.
   region keeps its 5 closest Works. A region snaps to the group of `music` and
   `unknown` spans it overlaps most. A `talk` or `quiet` span between them does
   not split the group. That gives an outer variant and an inner one, and
-  either is dropped when it is under two seconds. Each window's edges are
-  span edges, which Door checks.
+  either is dropped when the quarter-rate distance cannot compare it: when
+  its profiles make 10 or fewer quarter-rate frames, under 44 frames or about
+  3.9 seconds. Each window's edges are span edges, which Door checks.
 - **Claim rounds.** Windows are compared with the occurrences of their
   candidate Works, which are the region's Works and up to 8 Works hit inside
   the window. The closest window is kept and claims its spans, and the other
   regions snap again without those spans. Kept windows never overlap in spans.
 - **The decision.** Each kept window is compared with every corpus occurrence
-  by the quarter-rate distance. It is suggested when its closest Work is at or
-  below 0.118.
+  by the quarter-rate distance. It is suggested when its closest occurrence's
+  score, rounded to four places, is at or below 0.118.
   - **A near tie** is a suggested window whose closest Work beats the next by
-    less than 0.01475. It is decided again by Essentia's exact distance, on
+    less than 0.01475, compared on the unrounded distances. It is decided again by Essentia's exact distance, on
     its audio decoded afresh. It is compared with its candidate Works'
     occurrences and with the half of the corpus closest by mean chroma, and is
     suggested only at or below 0.08.
@@ -406,15 +407,27 @@ The capture import runs it last.
   near tie. Other Works within the distance are not claimed.
 - **The run** reads the suggestions, their source and stream, and everything
   `enrich match` reads for the corpus. Its software is ffprobe, ffmpeg, the
-  libav libraries, Essentia, numpy, and the BLAS library numpy uses. A rerun
+  libav libraries, Essentia, numpy, the BLAS library numpy uses, and how that
+  library runs (`blas-runtime`): the kernel it chose for this CPU (OpenBLAS)
+  or the CPU model (Accelerate), and one thread. `cover.py` pins BLAS to one
+  thread in every process before numpy loads it, and refuses to name a run
+  whose numpy loaded first. A rerun
   with the same inputs, software, and parameters answers `unchanged` before
   decoding anything.
-- **Cost.** On the calibration workset, the search took 0.61 CPU-hours for
-  19.8 recording-hours against about 92 occurrences, 10.5 minutes on 4
-  processes. That is roughly 112 CPU-seconds per recording-hour: 73 for the
-  quarter-rate passes, the rest for the exact comparisons of 10 near ties. It
+- **Cost.** On the calibration workset, the search took 0.59 to 0.64
+  CPU-hours for 19.8 recording-hours against about 92 occurrences, in three
+  runs of 10 to 11 minutes on 4 processes with one BLAS thread each. That is
+  roughly 107 to 116 CPU-seconds per recording-hour: 73 for the quarter-rate
+  passes, the rest for the exact comparisons of 10 near ties, about 71 to 77
+  CPU-seconds each. Measuring the recordings whole adds about 0.06
+  CPU-hours, so the whole command costs about 0.65 to 0.70 CPU-hours there. It
   grows with the size of the corpus. `--jobs` shares the candidate pass, the
-  largest part; claim rounds and decisions run in one process.
+  largest part, and a near tie's exact comparisons; claim rounds and
+  decisions run in one process.
+- **Memory.** Measuring a recording whole holds its profiles and one block of
+  audio: a 1.6-hour, 48 kHz stereo file peaked at about 250 MB. The search
+  itself stays under about 0.8 GB resident for a 1.55-hour recording, but a
+  near tie's exact comparisons raised that recording's peak to about 2.3 GB.
 
 ### The method
 
@@ -498,12 +511,20 @@ across machines:
   that case `search` reports the window as needing measurement. `measure-windows`,
   run where the audio is, measures every window the results ask for. A second
   `search` with `--windows` then decides them.
+  The windows file names the workset it was measured for, and `search`
+  refuses one measured for another.
 - `judge` refuses a recording without a result or with two, any result that
   still needs a window, and any workset in the earlier, per-window format.
 
 A result names the software it ran with. Quarter-rate distances can differ in
-their low bits between BLAS libraries, so `judge` reports which libraries the
-results came from.
+their low bits between BLAS libraries and kernels, and a run with other
+software is another run, so `judge` refuses results whose software differs.
+`search` checks only the Essentia and numpy versions against the workset's, so
+split a workset only across machines whose software agrees.
+
+The workset and the windows file are regenerable: they are measured again
+from the audio. They are derived from the operator's recordings, so they stay
+outside this repository.
 
 ## The adapter interface
 

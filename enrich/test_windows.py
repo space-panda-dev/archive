@@ -1,4 +1,4 @@
-"""The whole-recording window search (ADR 0072, amended 2026-10-18).
+"""The whole-recording window search (ADR 0072, amendment of 2026-10-18).
 
 The recording and the corpus are synthetic audio measured by the real
 writers: `cover.measure_whole` for the recording, `cover.Analyser.features`
@@ -17,9 +17,8 @@ from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
+import cover  # first: it pins BLAS to one thread before numpy loads it
 import numpy
-
-import cover
 import support
 import windows
 from support import needs_ffmpeg
@@ -234,11 +233,25 @@ class Snap(unittest.TestCase):
         got = windows.snap(self.frames(0, 250_000), self.recording, self.spans, {2})
         self.assertEqual(got["outer"], (0, 100_000))
 
-    def test_a_window_under_two_seconds_is_dropped(self) -> None:
-        spans = [cover.Span(0, 44_000, "music"), cover.Span(44_000, 200_000, "talk")]
-        self.assertEqual(windows.snap(self.frames(0, 40_000), self.recording, spans, set()), {})
-        spans = [cover.Span(0, 44_100, "music"), cover.Span(44_100, 200_000, "talk")]
-        self.assertEqual(windows.snap(self.frames(0, 40_000), self.recording, spans, set())["outer"], (0, 44_100))
+    def test_a_window_too_short_for_the_quarter_rate_distance_is_dropped(self) -> None:
+        # 86,016 samples are 42 hops: 43 frames, 10 quarter-rate frames. One
+        # sample more makes 44 frames, 11 quarter-rate frames.
+        quarter = cover.QuarterRate({"k": numpy.ones((400, 12), numpy.float32)})
+        for end, kept in ((86_016, False), (86_017, True)):
+            with self.subTest(end=end):
+                spans = [cover.Span(0, end, "music"), cover.Span(end, 300_000, "talk")]
+                got = windows.snap(self.frames(0, 80_000), self.recording, spans, set())
+                self.assertEqual(got, {"outer": (0, end), "inner": (0, end)} if kept else {})
+                self.assertEqual(windows.comparable(self.recording, (0, end), 4), kept)
+                # Anchor: the floor is the quarter-rate distance's own.
+                query = cover.quarter_rate(self.recording.window(0, end))
+                if kept:
+                    self.assertIn("k", quarter.distances(query, ["k"]))
+                else:
+                    with self.assertRaises(cover.TooShort):
+                        quarter.distances(query, ["k"])
+        # Fewer frames to a group raise the frame count it takes, not the floor.
+        self.assertTrue(windows.comparable(self.recording, (0, 86_016), 3))
 
     def test_only_the_search_classes_are_snapped_to(self) -> None:
         self.assertEqual(windows.snap(self.frames(110_000, 190_000), self.recording, self.spans, set()), {})
@@ -372,6 +385,38 @@ class Search(unittest.TestCase):
         found = self.s.search(corpus, window_features=lambda s, e: None, exact=_bomb)
         self.assertEqual((found["decisions"][0].path, found["decisions"][0].suggested), ("unmeasured", False))
 
+    def test_a_window_too_short_to_compare_is_refused_not_passed_over(self) -> None:
+        # Snapping drops such windows, so meeting one later is a defect: the
+        # claim rounds and the decision raise rather than skip it.
+        quarter = cover.QuarterRate({k: f.profiles for k, f in self.s.corpus().items()})
+        means = {k: f.mean for k, f in self.s.corpus().items()}
+        short = (self.s.p[0], self.s.p[0] + 2 * RATE)
+        self.assertFalse(windows.comparable(self.s.recording, short, 4))
+        with self.assertRaises(cover.TooShort):
+            windows.decide(short, {"work-x"}, self.s.recording, quarter, means, self.s.works_of, _bomb, _bomb)
+        region = windows.Region(frames_of(short), [], ["work-x"])
+        with patch.object(windows, "snap", lambda *_: {"outer": short}), self.assertRaises(cover.TooShort):
+            windows.claim_rounds([region], self.s.recording, self.s.spans, [], self.s.works_of, quarter)
+
+    def test_profiles_that_are_not_finite_are_refused(self) -> None:
+        # Anchor: a sign-bit NaN gets the smallest order key, so a distance
+        # that is not a number would count as the closest.
+        keys = cover.order_keys(numpy.array([1, -numpy.nan, 0.5], numpy.float32))
+        self.assertEqual(int(numpy.argmin(keys)), 1)
+        for bad in (numpy.nan, -numpy.nan, numpy.inf, -1.0):
+            with self.subTest(bad=bad):
+                profiles = self.s.profiles.copy()
+                profiles[200:240, 3] = bad
+                with self.assertRaisesRegex(cover.CoverError, "finite and non-negative"):
+                    windows.Recording(profiles, RATE)
+                corpus = dict(self.s.corpus())
+                corpus["x1"] = cover.Features(profiles, corpus["x1"].mean)
+                with patch.object(windows, "candidates_of", _bomb), \
+                        self.assertRaisesRegex(cover.CoverError, "x1 profiles must be finite"):
+                    self.s.search(corpus)
+                with self.assertRaisesRegex(cover.CoverError, "x1 profiles must be finite"):
+                    cover.QuarterRate({"x1": profiles})
+
     def test_nothing_aligning_is_an_answer_not_a_suggestion(self) -> None:
         found = self.s.search()
         self.assertTrue(found["decisions"])
@@ -418,7 +463,6 @@ class ParametersAreLive(unittest.TestCase):
 
     ROWS = {
         "span_classes": (["music"], {}),
-        "min_window_seconds": (40, {}),
         "quarter_rate_frames": (3, {}),
         "chunk_length": ("3", {}),
         "chunk_hop": ("0.5", {}),
@@ -451,6 +495,20 @@ class ParametersAreLive(unittest.TestCase):
         def answer(search: dict) -> str:
             found = windows.search_recording(recording, spans, corpus, s.works_of, fresh, s.exact(corpus), 1, search)
             return json.dumps({**found, "decisions": [asdict(d) for d in found["decisions"]]}, default=str)
+        # Anchor quarter_rate_frames: the corpus is reduced by the search's
+        # group, as the recording is, not by the default.
+        made = []
+        real = cover.QuarterRate.__init__
+
+        def spy(quarter, corpus, frames=None):
+            made.append(quarter)
+            real(quarter, corpus, frames)
+        with patch.object(cover.QuarterRate, "__init__", spy):
+            answer(dict(cover.SEARCH, quarter_rate_frames=3))
+        [quarter] = made
+        self.assertNotEqual(cover.SEARCH["quarter_rate_frames"], 3)
+        self.assertEqual({k: len(quarter.reference(k)) for k in corpus},
+                         {k: len(f.profiles) // 3 for k, f in corpus.items()})
         for leaf, (value, base) in self.ROWS.items():
             with self.subTest(leaf=leaf):
                 before = dict(cover.SEARCH, **base)

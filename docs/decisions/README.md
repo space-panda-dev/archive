@@ -85,5 +85,5 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0068](0068-specification-upgrade.md) | An archive upgrades its specification by a transition |
 | [0069](0069-derived-media.md) | Waveform peaks and listening copies are derived media, served by digest |
 | [0070](0070-capture-import.md) | New recordings are imported natively |
-| [0071](0071-essentia-cover-similarity.md) | Cover similarity is measured with Essentia, as the V2 system calibrated it (amended 2026-10-18) |
-| [0072](0072-windowed-work-matches.md) | A work match can suggest a window of a recording (amended 2026-10-18) |
+| [0071](0071-essentia-cover-similarity.md) | Cover similarity is measured with Essentia, as the V2 system calibrated it (amendment of 2026-10-18 proposed) |
+| [0072](0072-windowed-work-matches.md) | A work match can suggest a window of a recording (amendment of 2026-10-18 proposed) |

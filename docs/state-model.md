@@ -27,7 +27,12 @@ Loss costs time and computation, not history. Examples: indexes, query
 databases, the "current" projection, views, caches, thumbnails, World's store,
 and the derived-media root of waveform peaks and listening copies
 ([ADR 0069](decisions/0069-derived-media.md)), which `enrich/media.py` makes
-again from the content.
+again from the content. So are the window matcher's profiles
+([ADR 0072](decisions/0072-windowed-work-matches.md)): `enrich match-windows`
+holds a recording's whole-recording profiles in memory only, and the
+calibration harness's workset and measured-windows files are measured again
+from the audio. Both are derived from the operator's recordings, so they stay
+outside this repository.
 
 Regenerable means rebuildable in principle, not cheaply: rebuilding World may
 take days and need outside data. Regenerable state never changes through Door

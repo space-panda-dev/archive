@@ -18,7 +18,8 @@ import wave
 from pathlib import Path
 from typing import Any
 
-import numpy as np
+import cover  # noqa: F401  first: it pins BLAS to one thread before numpy loads it
+import numpy as np  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 REPOSITORY = HERE.parent

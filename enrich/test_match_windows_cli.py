@@ -1,7 +1,7 @@
 """`enrich match-windows` and the calibration harness end to end: a scratch
 archive built through the real Door, span suggestions proposed by the real
 adapter, matches admitted by the real Door, and the claims read back (ADRs
-0071, 0072, amended 2026-10-18)."""
+0071, 0072, amendment of 2026-10-18)."""
 
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ from unittest.mock import patch
 
 import adapter
 import cover
+import numpy
+
 import enrich
 import support
 import windows
@@ -255,10 +257,12 @@ class MatchWindowsClaims(MatchWindowsCommand):
         run = self.show(run_ref["id"])
         self.assertEqual(run["payload"]["method"], {"id": cover.METHOD_ID, "version": cover.METHOD_VERSION})
         blas_name, blas_version = cover.blas()
-        self.assertEqual(run["payload"]["software"][-3:],
+        self.assertEqual(run["payload"]["software"][-4:],
                          [{"name": "essentia", "version": cover.ESSENTIA_BUILD},
-                          {"name": "numpy", "version": __import__("numpy").__version__},
-                          {"name": blas_name, "version": blas_version}])
+                          {"name": "numpy", "version": numpy.__version__},
+                          {"name": blas_name, "version": blas_version},
+                          {"name": "blas-runtime", "version": cover.blas_runtime()}])
+        self.assertTrue(cover.blas_runtime().endswith(", 1 thread"))
         used = {(r["id"], r["revision_id"]) for r in run["refs"] if r["role"] == "used"}
         for key in ("query", "x1", "x2", "y1", "x1-occurrence", "x2-occurrence", "y1-occurrence", "short-occurrence",
                     "link-x1", "link-y1", "work-x", "work-y"):
@@ -511,6 +515,17 @@ class MatchWindowsNearTie(MatchWindowsCommand):
                                   "--results", str(results), "--out", str(fresh))
         self.assertEqual(windowed.returncode, 0, windowed.stderr)
         self.assertEqual(json.loads(windowed.stdout)["measured"], 1)
+        # A file bound to another workset, or to none, is refused.
+        with numpy.load(fresh) as arrays:
+            entries = {key: arrays[key] for key in arrays.files}
+        self.assertEqual(str(entries["workset"]), plan["digest"])
+        for bound in ({"workset": numpy.array("sha256:" + "0" * 64)}, {}):
+            foreign = self.tmp / "foreign.npz"
+            numpy.savez(foreign, **{k: v for k, v in entries.items() if k != "workset"}, **bound)
+            refused = self.calibrate("search", "--workset", str(workset), "--source-index", "0",
+                                     "--windows", str(foreign))
+            self.assertEqual(refused.returncode, 1)
+            self.assertIn("was measured for workset", refused.stderr)
         second = self.calibrate("search", "--workset", str(workset), "--source-index", "0", "--windows", str(fresh))
         self.assertEqual(second.returncode, 0, second.stderr)
         decided = json.loads(second.stdout)
@@ -522,6 +537,27 @@ class MatchWindowsNearTie(MatchWindowsCommand):
         self.assertEqual(judged.returncode, 0, judged.stderr)
         self.assertEqual(json.loads(split_out.read_text()), report)
         self.assertEqual(support.head(self.root), head)
+
+
+@needs_essentia
+class JudgeSoftware(unittest.TestCase):
+    """A run with other software is another run: judge refuses to merge them."""
+
+    def test_results_searched_with_different_software_are_refused(self) -> None:
+        import calibrate_windows
+        manifest = {"format": calibrate_windows.FORMAT, "corpus": 0, "skipped_links": 0, "works_of": {},
+                    "sources": [{"artifact": a, "accepted": [], "corpus_size": 0} for a in ("a", "b")]}
+
+        def result(index: int, software: list) -> dict:
+            return {"format": calibrate_windows.FORMAT, "source": index, "artifact": "ab"[index], "needs_exact": [],
+                    "kept": [], "software": software}
+        here = [list(s) for s in cover.software()]
+        other = [*here[:-1], ["blas-runtime", "another kernel, 1 thread"]]
+        # Anchor: the same software is judged.
+        report = calibrate_windows.judge(manifest, [result(0, here), result(1, here)])
+        self.assertEqual(report["software"], [here])
+        with self.assertRaisesRegex(enrich.CommandError, "2 different software sets"):
+            calibrate_windows.judge(manifest, [result(0, here), result(1, other)])
 
 
 class SessionArtifacts(unittest.TestCase):

@@ -1,7 +1,7 @@
 # 0072. A work match can suggest a window of a recording
 
-Status: accepted; amended 2026-10-18 (a whole-recording search replaces the
-growing windows)
+Status: accepted; an amendment of 2026-10-18 is proposed (a whole-recording
+search replaces the growing windows)
 
 A fresh recording reaches World as an Artifact with suggested spans
 (ADR 0066). A version 2 `work_match` (ADR 0067) compares a song occurrence or
@@ -118,7 +118,10 @@ part of each session.
 
 ## Amendment, 2026-10-18: a whole-recording search replaces the growing windows
 
-Status: accepted. The operator decided this on 2026-10-18.
+Status: proposed. The operator set its goal on 2026-10-18, a window matcher
+about a hundred times faster than Essentia, and has not yet accepted this
+text, its thresholds, or its method. Until a person accepts it, the decision
+above stands.
 
 The record stays as it is. `archive.claim/work_match` version 3,
 specification 0.0.8, and Door's `x-archive-span-window` rule are unchanged, and
@@ -179,7 +182,10 @@ version 1. Every value below is recorded in the run's parameters.
    - it gives two variants. The outer one is the group's extent. The inner one
      runs from the first to the last span of which the region covers at least
      half, or is the outer one when there is none;
-   - a variant shorter than two seconds is dropped.
+   - a variant the quarter-rate distance cannot compare is dropped: one whose
+     profiles make 10 or fewer quarter-rate frames, that is under 44 frames,
+     about 3.9 seconds. The decision above dropped windows under two
+     seconds; this floor is higher, and is the distance's own.
 
    Every edge is a span edge, so `x-archive-span-window` holds.
 5. **Claim rounds.** Each window is compared, by the quarter-rate distance,
@@ -210,8 +216,9 @@ its session never enter any of these steps.
 **What it replaces, and why:**
 
 - **Windows no longer grow from the first span of each run.** The candidate
-  pass finds starts anywhere in the recording. This answers the open question
-  of whether the search should start from more than the first span.
+  pass finds starts anywhere in the recording. Once accepted, this answers the
+  open question of whether the search should start from more than the first
+  span.
 - **A window may cross a `talk` or `quiet` span** that lies between two
   `music` or `unknown` spans. The decision above bridged no talk. A hit that
   spans the gap is evidence that the song goes on through it, as in a quiet
@@ -240,7 +247,7 @@ count comes first and the strict one second.
 |---|---|---|---|---|---|---|
 | Growing windows, exact distance (as first decided) | 60 | 48 / 41 | 4 / 2 | 8 / 17 | 45 / 38 | about 55 worker-hours on Essentia; about 7 CPU-hours on the port |
 | Whole recording, quarter-rate distance alone | 101 | 70 / 60 | 6 / 3 | 25 / 38 | 64 / 55 | 0.40 CPU-hours; 6.4 minutes on 4 processes |
-| Whole recording, near ties confirmed (this amendment) | 97 | 71 / 61 | 3 / 0 | 23 / 36 | 65 / 56 | 0.61 CPU-hours; 10.5 minutes on 4 processes |
+| Whole recording, near ties confirmed (this amendment) | 97 | 71 / 61 | 3 / 0 | 23 / 36 | 65 / 56 | 0.59 to 0.64 CPU-hours; 10 to 11 minutes on 4 processes |
 
 For the second row, the cost splits as follows:
 
@@ -250,11 +257,15 @@ For the second row, the cost splits as follows:
 - measuring the 17 recordings whole took about 0.06 CPU-hours more;
 - measuring the corpus is the same in every row and is left out.
 
-The third row adds about 770 CPU-seconds for the exact comparisons of its 10
-near ties, about 77 each. Its time is that of `enrich/windows.py` itself,
-which reproduced the second row's kept windows and quarter-rate distances
-bit for bit, and the replayed exact decisions, on the same profiles (Apple
-silicon, Accelerate, one BLAS thread per process).
+The third row adds about 710 to 770 CPU-seconds for the exact comparisons of
+its 10 near ties, 71 to 77 each. Its time is that of `enrich/windows.py`
+itself, which reproduced the second row's kept windows and quarter-rate
+distances bit for bit, and the replayed exact decisions, on the same profiles
+(Apple silicon, Accelerate, one BLAS thread per process). It was measured
+three times, at 2,126 to 2,298 CPU-seconds and 605 to 652 seconds of wall
+time, with the same decisions each time. Like
+the second row's, it leaves out measuring the recordings whole, about
+0.06 CPU-hours, so the command as a whole costs about 0.65 to 0.70 CPU-hours.
 
 **The caveats:**
 
@@ -267,8 +278,11 @@ silicon, Accelerate, one BLAS thread per process).
   decisions from a run that decided the same windows exactly, on slices of the
   whole-recording profiles; the repository's matcher, given slices for those
   windows, decides them identically. Confirmation on freshly decoded audio, as
-  decided here, has not yet run on the workset. A slice differs from a fresh
-  measurement by 0.0034 at the median.
+  proposed here, has not yet run on the workset. A slice differs from a fresh
+  measurement by 0.0034 at the median, and 2 of the 10 near ties sit about
+  that close to the exact limit: one at 0.0790, suggested, and one at 0.0839,
+  not. Fresh decoding could flip either, so the third row's 3 and 0 wrong
+  suggestions hold for slices only.
 - **There is a ceiling.** Only 77 of the 98 occurrences have a corpus
   occurrence outside their own session. No search can suggest the other 21.
 - **More suggestions are unaccepted:** 23, against 8 today. On the earlier
@@ -289,7 +303,13 @@ silicon, Accelerate, one BLAS thread per process).
 - Accepting a new occurrence changes a run's inputs, so the next run searches
   the whole recording again. There is no incremental path.
 - The calibration harness measures each recording whole and splits its work
-  per recording, not per run.
+  per recording, not per run. Its workset (about 1.9 MB per recording-hour of
+  profiles, and the corpus's) and its file of freshly measured windows are
+  regenerable: both are measured again from the audio. `enrich match-windows`
+  keeps the whole-recording profiles in memory only.
+- A near tie's exact comparisons are the expensive part in memory as well as
+  time: on the workset, a 1.55-hour recording with 3 near ties peaked at about
+  2.3 GB resident, against about 0.8 GB without them.
 - Hits and regions are computed but not recorded. Only the command's answer
   counts them. Alignment paths and each occurrence's presence along the
   recording, which the prototype kept, are not computed. Whether any of them
@@ -307,5 +327,5 @@ silicon, Accelerate, one BLAS thread per process).
   requires.
 - **Record the change as a new decision.** The record, the Door rule, and the
   search's place in the run all stand. Only the search's mechanism changes, so
-  the operator chose to amend the decision, as earlier changes to this record
-  were made.
+  it is proposed as an amendment, as earlier changes to this record were
+  made.

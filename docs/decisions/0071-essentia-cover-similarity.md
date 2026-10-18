@@ -1,7 +1,7 @@
 # 0071. Cover similarity is measured with Essentia, as the V2 system calibrated it
 
-Status: accepted; amended 2026-10-18 (window matches are decided by the
-quarter-rate distance, with near ties confirmed exactly)
+Status: accepted; an amendment of 2026-10-18 is proposed (window matches
+are decided by the quarter-rate distance, with near ties confirmed exactly)
 
 The work matcher in `enrich/` (ADR 0067) implements the cover-song measure of
 Serrà, Serra, and Andrzejak (2009) in numpy and scipy, under its own method
@@ -105,7 +105,10 @@ AGPL-3.0-or-later.
 
 ## Amendment, 2026-10-18: window matches are decided by the quarter-rate distance
 
-Status: accepted. The operator decided this on 2026-10-18.
+Status: proposed. The operator set its goal on 2026-10-18, a window matcher
+about a hundred times faster than Essentia, and has not yet accepted this
+text, its thresholds, or its method. Until a person accepts it, the decision
+above stands.
 
 Deciding every window match by Essentia's exact distance costs too much.
 Today's growing-window search takes about 55 worker-hours on Essentia for the
@@ -114,8 +117,9 @@ still takes about 7 CPU-hours. The operator asked for a matcher about a hundred
 times faster than Essentia, not eight.
 
 The whole-recording search in the amendment to
-[ADR 0072](0072-windowed-work-matches.md) does it in about 0.6 CPU-hours. It
-decides with a cheaper distance and keeps the exact distance for the near ties
+[ADR 0072](0072-windowed-work-matches.md) searches in about 0.6 CPU-hours,
+or about 0.7 with measuring the recordings whole, which every row of the
+comparison below needs in some form. It decides with a cheaper distance and keeps the exact distance for the near ties
 the cheap one cannot settle.
 
 **The method of `enrich match-windows` is
@@ -155,12 +159,14 @@ corpus occurrence's:
    `archive-enrich/whole-recording-serra09/quarter-rate-distance`, and lower is
    closer.
 
-**A window is suggested** when its closest Work's quarter-rate score is at or
-below 0.118. Its closest Work is the Work of its closest corpus occurrence,
-compared against every occurrence in the corpus.
+**A window is suggested** when its closest Work's quarter-rate score, the
+distance rounded to four places, is at or below 0.118. Its closest Work is the
+Work of its closest corpus occurrence, compared against every occurrence in
+the corpus.
 
 **Near ties are confirmed exactly.** Take a suggested window whose closest Work
-beats the next Work by less than 0.01475 in raw quarter-rate distance.
+beats the next Work by less than 0.01475, comparing the unrounded float
+distances (each Work's closest occurrence's).
 
 - That window is decided again by the exact distance: Essentia's distance, by
   the bit-exact port, measured on the window's audio decoded afresh, not on a
@@ -176,6 +182,15 @@ beats the next Work by less than 0.01475 in raw quarter-rate distance.
 The margin was fitted as 0.01 on a scale where 0.118 maps to 0.08. That is
 0.01475 in quarter-rate units. Every other window is decided by the
 quarter-rate distance alone, and the exact distance never runs for it.
+
+The prototype that fitted these rules applied them to the rescaled distance,
+written to six places: suggested at or below 0.08, a near tie below a margin of
+0.01. The rules above agree with it except within about 10⁻⁶ of a boundary,
+and in one band: a distance in (0.1180007, 0.11805] is suggested here and was
+not there. On the calibration workset no kept window lies within 0.0006 of
+0.118. The nearest margin to the cut is 0.0146979, 5 × 10⁻⁵ below 0.01475; a
+rule fitted on 98 occurrences with a window that close to its cut is fitted
+in-sample, which the caveats in ADR 0072's amendment say.
 
 **Why exact equivalence is no longer the decision.** The exact distance was
 worth its cost because it carried the V2 system's measured false-positive rate.
@@ -202,11 +217,22 @@ that down to 3. The measurements and their caveats are in
   `archive-enrich/essentia-serra09` method as before.
 
 **Quarter-rate distances are not bit-identical across machines.** Their float32
-matrix products depend on the BLAS library numpy uses. A run records that
-library in its software, by its name and version; Accelerate reports no
-version, so the macOS release that ships it stands in. A run with another library is another run. The same
-library, inputs, and parameters give the same answer, whatever the number of
-processes.
+matrix products depend on the BLAS library numpy uses, on the kernel it runs
+on the CPU, and possibly on its thread count. So:
+
+- every process runs BLAS on one thread: `cover.py` pins it before numpy loads
+  the library, and the workers inherit the pin. A run whose numpy loaded BLAS
+  first is refused. The cost figures were measured this way;
+- a run records the library by its name and version (Accelerate reports no
+  version, so the macOS release that ships it stands in), and how it runs: the
+  kernel OpenBLAS chose for the CPU, or the CPU model for Accelerate, and the
+  one thread. Where the kernel cannot be asked, the run says so;
+- a run with other software, by that record, is another run.
+
+The tests check that one and two processes give the same bits on one machine,
+with these pins. That the same record means the same answer on another machine
+is assumed, not measured. On one Apple silicon machine, Accelerate gave the
+same bits on one thread and on its default.
 
 **The V2 thresholds describe only the exact scale.** The false-positive rate of
 one in 2,779 pairs, and the release threshold of about 0.11, apply to exact

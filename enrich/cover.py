@@ -1,5 +1,5 @@
 """Cover similarity: Essentia's profiles, the quarter-rate distance, and the
-bit-exact port of Essentia's distance (ADR 0071, amended 2026-10-18).
+bit-exact port of Essentia's distance (ADR 0071, amendment of 2026-10-18).
 
 A tool, not an Archive client: it takes audio and returns plain numbers.
 `windows.py` searches a recording with these measures, and `enrich
@@ -42,9 +42,11 @@ file, under the `archive-enrich/essentia-serra09` method.
 
 from __future__ import annotations
 
+import ctypes
 import importlib.metadata
 import json
 import math
+import os
 import platform
 import subprocess
 import sys
@@ -55,10 +57,20 @@ from decimal import ROUND_HALF_EVEN, Decimal
 from pathlib import Path
 from typing import Any, Sequence
 
-import numpy
+# The quarter-rate distance's float32 matrix products run on one BLAS thread
+# in every process, as its cost and its answers were measured. A BLAS library
+# reads its thread count when it loads, so this must happen before numpy is
+# imported; the variables are inherited by every worker process. `software`
+# refuses to name a run whose BLAS was loaded before the pin.
+BLAS_THREAD_VARIABLES = ("OPENBLAS_NUM_THREADS", "VECLIB_MAXIMUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS")
+_BLAS_PINNED_AT_LOAD = "numpy" not in sys.modules or all(os.environ.get(v) == "1" for v in BLAS_THREAD_VARIABLES)
+for _variable in BLAS_THREAD_VARIABLES:
+    os.environ[_variable] = "1"
+
+import numpy  # noqa: E402
 
 AGENT = "pkg:generic/archive-enrich-cover@0.2.0"
-# The window matcher's method (ADR 0072, amended 2026-10-18).
+# The window matcher's method (ADR 0072, amendment of 2026-10-18).
 METHOD_ID = "archive-enrich/whole-recording-serra09"
 METHOD_VERSION = "1"
 QUARTER_RATE_SCALE = "archive-enrich/whole-recording-serra09/quarter-rate-distance"
@@ -87,14 +99,13 @@ ANALYSIS: dict[str, Any] = {
     "cover_song_similarity": {"distanceType": "asymmetric", "alignmentType": "serra09"},
     "score_places": 4,
 }
-# The whole-recording search (windows.py; ADR 0072, amended 2026-10-18).
+# The whole-recording search (windows.py; ADR 0072, amendment of 2026-10-18).
 # The hit distance, the suggestion distance, and the near-tie margin were
 # fitted on the calibration workset's 98 accepted occurrences and are on the
 # quarter-rate scale; the exact suggestion distance is the V2 system's, one
 # false positive in 2,779 controlled pairs of the operator's own recordings.
 SEARCH: dict[str, Any] = {
     "span_classes": ["music", "unknown"],
-    "min_window_seconds": 2,
     "quarter_rate_frames": 4,
     "chunk_length": "2",
     "chunk_hop": "1",
@@ -172,10 +183,64 @@ def blas() -> tuple[str, str]:
     return name, version
 
 
+def _openblas_runtime() -> tuple[str, int] | None:
+    """The kernel OpenBLAS chose for this CPU and its thread count, asked of
+    the library numpy loaded, or None when it cannot be found. OpenBLAS
+    built for several CPUs picks its kernels when it loads."""
+    libraries = Path(numpy.__file__).resolve().parent.parent / "numpy.libs"
+    for path in sorted(libraries.glob("lib*openblas*.so*")):
+        try:
+            library = ctypes.CDLL(str(path))
+        except OSError:
+            continue
+        for prefix, suffix in (("scipy_", "64_"), ("scipy_", ""), ("", "64_"), ("", "")):
+            corename = getattr(library, f"{prefix}openblas_get_corename{suffix}", None)
+            threads = getattr(library, f"{prefix}openblas_get_num_threads{suffix}", None)
+            if corename is not None and threads is not None:
+                corename.restype = ctypes.c_char_p
+                return corename().decode("ascii", "replace"), int(threads())
+    return None
+
+
+def _cpu_brand() -> str | None:
+    """The CPU's model, as macOS names it, or None."""
+    try:
+        completed = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True,
+                                   timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.strip() or None
+
+
+def blas_runtime() -> str:
+    """What else the BLAS library's float32 products depend on: the kernel it
+    runs (OpenBLAS's runtime choice, or the CPU model for Accelerate, which
+    picks its own), and the one thread every process uses. "unknown kernel"
+    is recorded where the kernel cannot be asked. Refused when numpy loaded
+    BLAS before this module pinned its threads."""
+    if not _BLAS_PINNED_AT_LOAD:
+        raise CoverError("numpy was imported before cover.py pinned BLAS to one thread; import cover first, or set "
+                         + ", ".join(f"{v}=1" for v in BLAS_THREAD_VARIABLES))
+    name = blas()[0]
+    kernel = None
+    if "openblas" in name:
+        found = _openblas_runtime()
+        if found is not None:
+            kernel, threads = found
+            if threads != 1:
+                raise CoverError(f"OpenBLAS runs {threads} threads; the matcher is measured with one")
+    elif name == "accelerate":
+        kernel = _cpu_brand()
+    kernel = kernel or f"unknown kernel on {platform.machine() or 'an unknown machine'}"
+    return f"{kernel}, 1 thread"[:100]
+
+
 def software() -> tuple[tuple[str, str], ...]:
     """The libraries the window matcher's answers depend on, as installed
-    now: the profiles' and the BLAS library's."""
-    return (*profile_software(), blas())
+    now: the profiles', the BLAS library's, and how BLAS runs."""
+    return (*profile_software(), blas(), ("blas-runtime", blas_runtime()))
 
 
 def rounded(distance: float) -> Decimal:
@@ -666,6 +731,18 @@ def ranked(raw: dict[str, float]) -> tuple[list[Distance], list[str]]:
 _KAPPA = float(ANALYSIS["chroma_cross_similarity"]["binarizePercentile"])
 
 
+def checked_profiles(profiles: numpy.ndarray, what: str) -> numpy.ndarray:
+    """Profiles as contiguous float32 frames of 12 bins, refused unless every
+    value is finite and non-negative, as HPCP values are. A NaN would sort
+    among the distances by its bits and could count as the closest."""
+    array = numpy.ascontiguousarray(profiles, dtype=numpy.float32)
+    if array.ndim != 2 or array.shape[1] != _BINS:
+        raise CoverError(f"{what} profiles of shape {array.shape} are not ({_BINS} bins) frames")
+    if not numpy.isfinite(array).all() or (array < 0).any():
+        raise CoverError(f"{what} profiles must be finite and non-negative")
+    return array
+
+
 def quarter_rate(profiles: numpy.ndarray, frames: int | None = None) -> numpy.ndarray:
     """The mean of every `frames` frames (the search's
     `quarter_rate_frames`), each divided by its largest bin, as HPCP frames
@@ -721,11 +798,13 @@ def key_shift(query: numpy.ndarray, reference: numpy.ndarray) -> int:
 
 class QuarterRate:
     """The quarter-rate distance against a corpus of full-rate profiles,
-    each reduced once, with its stacks cached per key shift. `cells` and
+    each reduced once by `frames` (the search's `quarter_rate_frames`) as the
+    query must be, with its stacks cached per key shift. `cells` and
     `comparisons` count the work done."""
 
-    def __init__(self, corpus: dict[str, numpy.ndarray]):
-        self.corpus = corpus
+    def __init__(self, corpus: dict[str, numpy.ndarray], frames: int | None = None):
+        self.corpus = {key: checked_profiles(profiles, key) for key, profiles in corpus.items()}
+        self.group = SEARCH["quarter_rate_frames"] if frames is None else frames
         self.reduced: dict[str, numpy.ndarray] = {}
         self.turned: dict[tuple[str, int], tuple[numpy.ndarray, numpy.ndarray]] = {}
         self.cells = 0
@@ -733,7 +812,7 @@ class QuarterRate:
 
     def reference(self, key: str) -> numpy.ndarray:
         if key not in self.reduced:
-            self.reduced[key] = quarter_rate(self.corpus[key])
+            self.reduced[key] = quarter_rate(self.corpus[key], self.group)
         return self.reduced[key]
 
     def distances(self, query: numpy.ndarray, keys: Sequence[str]) -> dict[str, float]:

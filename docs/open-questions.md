@@ -183,15 +183,20 @@ unsupported rather than guess.
   98 accepted occurrences, and leave-one-recording-out did not predict the
   wrong suggestions that followed. They need a held-out set of recordings, and
   a listening pass over the unaccepted suggestions, before their precision is a
-  claim ([ADR 0072](decisions/0072-windowed-work-matches.md), amended
-  2026-10-18).
+  claim ([ADR 0072](decisions/0072-windowed-work-matches.md), amendment of
+  2026-10-18, proposed).
 - Does confirming near ties on freshly decoded audio decide as the replay on
   sliced profiles did? The measured confirmation used slices; the matcher
-  decodes afresh ([ADR 0071](decisions/0071-essentia-cover-similarity.md),
-  amended 2026-10-18).
+  decodes afresh. Of the workset's 10 near ties, 2 sit within about one median
+  slice-to-fresh difference (0.0034) of the exact limit of 0.08: one at 0.0790,
+  suggested, and one at 0.0839, not. Fresh decoding could flip either
+  ([ADR 0071](decisions/0071-essentia-cover-similarity.md), amendment of
+  2026-10-18, proposed).
 - Do quarter-rate distances agree across BLAS libraries closely enough that a
-  run on another machine suggests the same windows? Runs record the library;
-  agreement between the pinned Linux and macOS builds is unmeasured
+  run on another machine suggests the same windows? Runs record the library,
+  its kernel, and its one thread. The matcher's tests pass on x86_64 Linux with
+  OpenBLAS as on macOS with Accelerate, but agreement on real recordings is
+  unmeasured
   ([ADR 0071](decisions/0071-essentia-cover-similarity.md)).
 - Should a window match name more than its closest Work? Each suggested window
   claims one Work; other Works within the distance were never judged

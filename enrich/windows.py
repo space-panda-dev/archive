@@ -1,4 +1,4 @@
-"""The whole-recording window search (ADR 0072, amended 2026-10-18).
+"""The whole-recording window search (ADR 0072, amendment of 2026-10-18).
 
 A tool, not an Archive client: it takes a recording's profiles, its
 suggested spans, and a corpus of profiles, and returns plain data. `enrich
@@ -14,7 +14,8 @@ match-windows` and `calibrate_windows.py` both search through
    each with its 5 closest Works.
 3. **Snapping** (`snap`): a region becomes windows of whole `music` and
    `unknown` spans, an outer and an inner variant; a `talk` or `quiet` span
-   between two of them does not split them.
+   between two of them does not split them. A window too short for the
+   quarter-rate distance (`comparable`) is dropped.
 4. **Claim rounds** (`claim_rounds`): each window is compared by the
    quarter-rate distance with its candidate Works' occurrences; the closest
    is kept and claims its spans, and the other regions snap again.
@@ -57,9 +58,7 @@ class Recording:
     """A whole recording's profiles and how its frames map to its samples."""
 
     def __init__(self, profiles: numpy.ndarray, sample_rate: int):
-        self.profiles = numpy.ascontiguousarray(profiles, dtype=numpy.float32)
-        if self.profiles.ndim != 2 or self.profiles.shape[1] != 12:
-            raise cover.CoverError(f"profiles of shape {self.profiles.shape} are not (12 bins) frames")
+        self.profiles = cover.checked_profiles(profiles, "the recording's")
         self.rate = sample_rate
         self.frames = len(self.profiles)
 
@@ -200,7 +199,7 @@ def candidate_pass(recording: Recording, corpus: dict[str, numpy.ndarray], jobs:
     group = search["quarter_rate_frames"]
     reduced = cover.quarter_rate(recording.profiles, group)
     keys = sorted(corpus)
-    references = {key: cover.quarter_rate(corpus[key], group) for key in keys}
+    references = {key: cover.quarter_rate(cover.checked_profiles(corpus[key], key), group) for key in keys}
     if jobs == 1 or len(keys) < 2:
         _hold(reduced, recording.frames, search)
         try:
@@ -279,7 +278,8 @@ def snap(frames: tuple[int, int], recording: Recording, spans: Sequence[cover.Sp
     search's classes that it overlaps, the contiguous group (split by a
     claimed span, not by another class) it overlaps most; its outer extent,
     and its inner one from the first to the last span the region covers at
-    least half of. A variant under the shortest window is dropped."""
+    least half of. A variant too short for the quarter-rate distance to
+    compare is dropped (`comparable`)."""
     search = cover.SEARCH if search is None else search
     lo, hi = recording.covered
     hit = (recording.sample_of(frames[0]), recording.sample_of(frames[1] - 1))
@@ -302,8 +302,14 @@ def snap(frames: tuple[int, int], recording: Recording, spans: Sequence[cover.Sp
     inner = [i for i in group if overlap(hit, (spans[i].start_sample, spans[i].end_sample)) * 2
              >= spans[i].end_sample - spans[i].start_sample]
     variants["inner"] = (spans[inner[0]].start_sample, spans[inner[-1]].end_sample) if inner else variants["outer"]
-    shortest = search["min_window_seconds"] * recording.rate
-    return {name: w for name, w in variants.items() if w[1] - w[0] >= shortest}
+    return {name: w for name, w in variants.items() if comparable(recording, w, search["quarter_rate_frames"])}
+
+
+def comparable(recording: Recording, window: tuple[int, int], group: int) -> bool:
+    """Whether the quarter-rate distance can compare the window: whether its
+    profiles make more than 10 quarter-rate frames (`cover.QuarterRate`), at
+    least 44 frames at the default 4 frames a group, about 3.9 seconds."""
+    return len(recording.window(*window)) // group > STACK + 1
 
 
 # -- 4. claim rounds ----------------------------------------------------------------
@@ -355,10 +361,8 @@ def claim_rounds(regions: list[Region], recording: Recording, spans: Sequence[co
             if entry.distances is not None:
                 continue
             keys = allowed_of(entry.works, quarter.corpus, works_of)
-            try:
-                entry.distances = quarter.distances(cover.quarter_rate(recording.window(*w), group), keys)
-            except cover.TooShort:
-                entry.distances = {}
+            # Snapping keeps only comparable windows, so TooShort here is a defect and is raised.
+            entry.distances = quarter.distances(cover.quarter_rate(recording.window(*w), group), keys)
             finite = [(v, k) for k, v in entry.distances.items() if v != math.inf]
             entry.closest = min(finite) if finite else None
 
@@ -433,11 +437,9 @@ def decide(window: tuple[int, int], candidates: set[str], recording: Recording, 
     search = cover.SEARCH if search is None else search
     keys = sorted(quarter.corpus)
     query = cover.quarter_rate(recording.window(*window), search["quarter_rate_frames"])
-    try:
-        raw = quarter.distances(query, keys)
-        too_short = quarter.too_short(keys)
-    except cover.TooShort:
-        raw, too_short = {}, keys
+    # A kept window is comparable (`snap`); TooShort here is a defect and is raised.
+    raw = quarter.distances(query, keys)
+    too_short = quarter.too_short(keys)
     compared, apart = cover.ranked(raw)
     works = per_work(compared, works_of)
     margin = works[1][0] - works[0][0] if len(works) > 1 else None
@@ -487,7 +489,7 @@ def search_recording(recording: Recording, spans: Sequence[cover.Span], corpus: 
     hit_distance = float(search["hit_distance"])
     hits = [h for key in sorted(alignments) for h in hits_of(alignments[key], hit_distance)]
     regions = regions_of(hits, works_of, search["works_per_region"])
-    quarter = cover.QuarterRate(profiles)
+    quarter = cover.QuarterRate(profiles, search["quarter_rate_frames"])
     kept, windows = claim_rounds(regions, recording, spans, hits, works_of, quarter, search)
     claim_comparisons = quarter.comparisons
     decisions = [decide(w, windows[w].works, recording, quarter, means, works_of, window_features, exact, search)

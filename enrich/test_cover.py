@@ -1,5 +1,5 @@
 """The measure: Essentia's profiles, the bit-exact port of its distance, and
-the quarter-rate distance (ADR 0071, amended 2026-10-18). The measure runs
+the quarter-rate distance (ADR 0071, amendment of 2026-10-18). The measure runs
 the pinned Essentia build on synthetic tunes; the search has its own tests
 (test_windows.py)."""
 
@@ -14,9 +14,8 @@ from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
+import cover  # first: it pins BLAS to one thread before numpy loads it
 import numpy
-
-import cover
 import support
 from support import needs_ffmpeg
 
@@ -292,15 +291,26 @@ class CrossSimilarity(unittest.TestCase):
 
     def test_a_distance_that_is_not_a_number_is_left_to_essentia(self) -> None:
         # A nearly identical stack can make x.x - 2 x.y + y.y negative.
+        # Which nudge does it depends on the profiles' low bits, which differ
+        # between platforms, so the first of several that does is used.
         same = self.profiles["same"]
-        nudged = same.copy()
-        nudged[::3, 4] = numpy.nextafter(nudged[::3, 4], numpy.float32(2))
-        a, b = cover._profiles(same), cover._profiles(nudged)
-        stacks_a, stacks_b = cover._stacks(a), cover._stacks(numpy.roll(b, cover.transposition_index(a, b), axis=1))
-        distances = cover._matrix(cover._ordered_dot(stacks_a, stacks_a),
-                                  cover._ordered_dot(stacks_a[:, None], stacks_b[None, :]),
-                                  cover._ordered_dot(stacks_b, stacks_b))
-        self.assertTrue(numpy.isnan(distances).any())
+
+        def has_nan(nudged: numpy.ndarray) -> bool:
+            a, b = cover._profiles(same), cover._profiles(nudged)
+            stacks_a = cover._stacks(a)
+            stacks_b = cover._stacks(numpy.roll(b, cover.transposition_index(a, b), axis=1))
+            distances = cover._matrix(cover._ordered_dot(stacks_a, stacks_a),
+                                      cover._ordered_dot(stacks_a[:, None], stacks_b[None, :]),
+                                      cover._ordered_dot(stacks_b, stacks_b))
+            return bool(numpy.isnan(distances).any())
+        candidates = []
+        for step in (3, 2, 1):
+            for bin_ in (4, *range(12)):
+                nudged = same.copy()
+                nudged[::step, bin_] = numpy.nextafter(nudged[::step, bin_], numpy.float32(2))
+                candidates.append(nudged)
+        nudged = next((n for n in candidates if has_nan(n)), None)
+        self.assertIsNotNone(nudged, "no nudge made a distance that is not a number")
         with patch.object(cover, "_binarise", _bomb):
             self.assert_essentias(same, nudged)
 
@@ -724,8 +734,61 @@ class Software(unittest.TestCase):
             self.assertEqual(cover.blas(), ("accelerate", "macOS 15.5"))
 
     @needs_essentia
-    def test_the_software_is_the_profiles_and_the_blas_library(self) -> None:
-        self.assertEqual(cover.software(), (*cover.profile_software(), cover.blas()))
+    def test_the_software_is_the_profiles_the_blas_library_and_how_it_runs(self) -> None:
+        self.assertEqual(cover.software(), (*cover.profile_software(), cover.blas(),
+                                            ("blas-runtime", cover.blas_runtime())))
+
+    def test_blas_runs_one_thread_in_this_process_and_its_workers(self) -> None:
+        self.assertTrue(cover.blas_runtime().endswith(", 1 thread"))
+        self.assertNotIn("unknown", cover.blas_runtime())
+        for variable in cover.BLAS_THREAD_VARIABLES:
+            self.assertEqual(os.environ[variable], "1", variable)
+
+    def test_numpy_loaded_before_the_pin_is_refused(self) -> None:
+        # In a fresh interpreter: numpy first, with no thread variables set.
+        script = ("import numpy, cover\ntry:\n    cover.blas_runtime()\nexcept cover.CoverError as exc:\n"
+                  "    print('refused:', exc)\n")
+        env = {k: v for k, v in os.environ.items() if k not in cover.BLAS_THREAD_VARIABLES}
+        import subprocess
+        import sys
+        completed = subprocess.run([sys.executable, "-c", script], cwd=Path(cover.__file__).parent, env=env,
+                                   capture_output=True, text=True, check=True)
+        self.assertIn("refused: numpy was imported before cover.py pinned BLAS", completed.stdout)
+        # Anchor: cover first is accepted in the same interpreter.
+        completed = subprocess.run([sys.executable, "-c", script.replace("import numpy, cover", "import cover, numpy")
+                                    + "else:\n    print('pinned')\n"], cwd=Path(cover.__file__).parent, env=env,
+                                   capture_output=True, text=True, check=True)
+        self.assertEqual(completed.stdout.strip(), "pinned")
+
+    def test_a_kernel_that_cannot_be_asked_is_recorded_as_unknown(self) -> None:
+        openblas = {"Build Dependencies": {"blas": {"name": "scipy-openblas", "version": "0.3.29"}}}
+        accelerate = {"Build Dependencies": {"blas": {"name": "accelerate", "version": "unknown"}}}
+        with patch.object(numpy, "show_config", return_value=openblas), \
+                patch.object(cover, "_openblas_runtime", return_value=None):
+            self.assertTrue(cover.blas_runtime().startswith("unknown kernel on "))
+        with patch.object(numpy, "show_config", return_value=openblas), \
+                patch.object(cover, "_openblas_runtime", return_value=("Haswell", 1)):
+            self.assertEqual(cover.blas_runtime(), "Haswell, 1 thread")
+        with patch.object(numpy, "show_config", return_value=openblas), \
+                patch.object(cover, "_openblas_runtime", return_value=("Haswell", 8)), \
+                self.assertRaisesRegex(cover.CoverError, "OpenBLAS runs 8 threads"):
+            cover.blas_runtime()
+        with patch.object(numpy, "show_config", return_value=accelerate), \
+                patch.object(cover.subprocess, "run", side_effect=OSError("no sysctl")):
+            self.assertTrue(cover.blas_runtime().startswith("unknown kernel on "))
+        with patch.object(cover, "_BLAS_PINNED_AT_LOAD", False), \
+                self.assertRaisesRegex(cover.CoverError, "imported before cover.py pinned BLAS"):
+            cover.blas_runtime()
+
+    def test_openblas_is_asked_through_the_library_numpy_loaded(self) -> None:
+        # No OpenBLAS beside this numpy (Accelerate here) answers None; the
+        # lookup itself runs where numpy bundles OpenBLAS.
+        if "openblas" in cover.blas()[0]:
+            kernel, threads = cover._openblas_runtime()
+            self.assertEqual(threads, 1)
+            self.assertTrue(kernel)
+        else:
+            self.assertIsNone(cover._openblas_runtime())
 
 
 if __name__ == "__main__":
