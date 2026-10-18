@@ -133,8 +133,9 @@ SHIPPED = {
     "quality": {"version": "2",
                 "code": "sha256:0bac148ad9c53b2861fed840fe7d0d67f69c87a2a02e7a1c79e2b95b06579307",
                 "outside": {}},
-    "melody": {"version": "1",
-               "code": "sha256:b678b71cc9ab9e80fee833c32722bfea343bf44c418a6d5ec17556169235212d",
+    # Version 2: 2-cent bins, a level gate on voicing, and level_db.
+    "melody": {"version": "2",
+               "code": "sha256:01f55b00ca8fd0112841091c4fc3ffcdae7165e8c8303f2744415eb042d00f2c",
                "outside": {}},
     # colour reads the peaks' format and decode from waveform.py, not the
     # derived-media tool media.py, so an edit to that tool's routes or
