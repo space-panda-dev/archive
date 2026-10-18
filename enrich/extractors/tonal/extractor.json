@@ -1,8 +1,8 @@
 {
  "contract": "archive-extractor/1",
  "id": "tonal",
- "version": "1",
- "description": "Reference tuning and its drift (TuningFrequency on spectral peaks), key and scale (Key) and chords (ChordsDetection) from frames/hpcp, and sensory dissonance, by Essentia. Decodes again for spectral peaks, which the bank does not hold.",
+ "version": "2",
+ "description": "Reference tuning and its drift (TuningFrequency on spectral peaks), key and scale (Key) and chords (ChordsDetection) from frames/hpcp, and sensory dissonance, by Essentia. Decodes again and repeats frames' spectral peak picking, which the bank does not hold: about twice the spectral cost (ADR 0074).",
  "command": [
   "${python}",
   "tonal.py"
@@ -78,7 +78,8 @@
    "pcpSize": 12,
    "window_frames": 324,
    "hop_frames": 162,
-   "min_pitched": "0.5"
+   "min_pitched": "0.5",
+   "max_detune_cents": 40
   },
   "chords": {
    "windowSize": "2",
@@ -120,7 +121,7 @@
    "columns": 3,
    "grid": "tuning",
    "unit": "cents, 1, 1",
-   "description": "every window of about 20 s every 10 s: its tuning in cents near tuning_cents (0 when it has no pitched frame), the confidence of that tuning over its sounding frames, and its share of pitched frames"
+   "description": "every window of about 20 s every 10 s, centred midway between its first and last frame's centres (the last may be shorter): its tuning in cents near tuning_cents (0 when it has no pitched frame), the confidence of that tuning over its sounding frames, and its share of pitched frames"
   },
   "tuning_drift": {
    "kind": "spans",
@@ -132,40 +133,45 @@
    "unit": "cents",
    "description": "tenth to ninetieth percentile of tuning_drift's values; 0 for fewer than two windows"
   },
+  "detuned": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "true when tuning_cents is more than 40 cents from 440 Hz, where the 440 Hz profiles split each pitch class; key, scale, key_strength, keys, chords, and their rates are then empty or 0"
+  },
   "key": {
    "kind": "scalar",
    "unit": "1",
-   "description": "tonic of the pitched frames' mean profile, as Essentia names notes (A, Bb, B, C, C#, D, Eb, E, F, F#, G, Ab); empty when no frame is pitched"
+   "description": "tonic of the pitched frames' mean profile, as Essentia names notes (A, Bb, B, C, C#, D, Eb, E, F, F#, G, Ab); empty when no frame is pitched or detuned"
   },
   "scale": {
    "kind": "scalar",
    "unit": "1",
-   "description": "major or minor; empty when no frame is pitched"
+   "description": "major or minor; empty when no frame is pitched or detuned"
   },
   "key_strength": {
    "kind": "scalar",
    "unit": "1",
-   "description": "Key's strength; 0 when no frame is pitched"
+   "description": "Key's strength; 0 when no frame is pitched or detuned"
   },
   "keys": {
    "kind": "spans",
    "unit": "s",
-   "description": "windows of about 30 s every 15 s that are at least half pitched; label: key and scale; value: strength"
+   "description": "windows of about 30 s every 15 s that are at least half pitched; label: key and scale; value: strength; none when detuned"
   },
   "chords": {
    "kind": "spans",
    "unit": "s",
-   "description": "runs of one chord over pitched frames; label: Essentia's chord name; value: mean strength"
+   "description": "runs of one chord over pitched frames; label: Essentia's chord name; value: mean strength; none when detuned"
   },
   "chords_changes_rate": {
    "kind": "scalar",
    "unit": "1",
-   "description": "ChordsDescriptors' changes rate over the pitched frames; 0 when none"
+   "description": "ChordsDescriptors' changes rate over the pitched frames; 0 when none or detuned"
   },
   "chords_number_rate": {
    "kind": "scalar",
    "unit": "1",
-   "description": "ChordsDescriptors' number rate over the pitched frames; 0 when none"
+   "description": "ChordsDescriptors' number rate over the pitched frames; 0 when none or detuned"
   },
   "dissonance": {
    "kind": "series",
@@ -173,7 +179,7 @@
    "columns": 1,
    "grid": "frames",
    "unit": "1",
-   "description": "sensory dissonance of each frame's peaks within 40 dB of its loudest, 0 to 0.5; 0 for a frame with no peaks"
+   "description": "sensory dissonance of each frame's peaks within 40 dB of its loudest, 0 to 0.5; 0 for a frame below the -60 dBFS gate or with no peaks; talk and noise above the gate have a value, so mask with pitched for music"
   }
  }
 }

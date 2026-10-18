@@ -200,16 +200,44 @@ class Arithmetic(unittest.TestCase):
             for before, after in zip(spans, spans[1:]):
                 self.assertGreater(after[1], before[1])
 
+    def test_a_frame_stands_for_the_hop_centred_on_it(self) -> None:
+        hop = tonal.HOP / tonal.RATE
+        samples = 10 * tonal.HOP + 100  # 12 frames; the last centred 1,948 samples past the end
+        self.assertEqual(tonal.extent(3, 5, samples), (2.5 * hop, 4.5 * hop))
+        self.assertEqual(tonal.extent(0, 2, samples), (0.0, 1.5 * hop))  # nothing before sample 0
+        self.assertEqual(tonal.extent(10, 12, samples), (9.5 * hop, samples / tonal.RATE))  # nor past the end
+        self.assertEqual(tonal.extent(11, 12, samples), (samples / tonal.RATE, samples / tonal.RATE))
+
+    def test_the_tuning_grid_centres_a_row_on_its_frames(self) -> None:
+        grid = tonal.tuning_grid()
+        for row in (0, 1, 7):
+            first = row * tonal.TUNING["hop_frames"]
+            last = first + tonal.TUNING["window_frames"] - 1
+            centre = grid["first_centre"] + row * grid["hop"]
+            self.assertEqual(centre, (first + last) * tonal.HOP / 2)
+            if row:  # row 0's window is clipped to the audio's start
+                begin, end = tonal.extent(first, last + 1, 10 ** 9)
+                self.assertAlmostEqual(centre / tonal.RATE, (begin + end) / 2)
+            self.assertEqual(grid["frame"], (last + 1 - first) * tonal.HOP)
+
     def test_runs_merge_one_label_and_stop_at_a_gap(self) -> None:
         labels = ["C", "C", "F", "F", "F", "G", "G"]
         mask = [True, True, True, False, True, True, True]
-        spans = tonal.runs(labels, mask, [1.0, 0.5, 0.25, 9.0, 0.5, 1.0, 1.0])
+        samples = 6 * tonal.HOP
+        spans = tonal.runs(labels, mask, [1.0, 0.5, 0.25, 9.0, 0.5, 1.0, 1.0], samples)
+        at = lambda frame: tonal.extent(frame, frame + 1, 10 ** 9)[0]  # noqa: E731
         self.assertEqual([(s["label"], s["start"], s["end"], s["value"]) for s in spans],
-                         [("C", 0.0, tonal.seconds(2), 0.75), ("F", tonal.seconds(2), tonal.seconds(3), 0.25),
-                          ("F", tonal.seconds(4), tonal.seconds(5), 0.5),
-                          ("G", tonal.seconds(5), tonal.seconds(7), 1.0)])
-        self.assertEqual(tonal.runs([], [], []), [])
-        self.assertEqual(tonal.runs(["C"], [False], [1.0]), [])
+                         [("C", 0.0, at(2), 0.75), ("F", at(2), at(3), 0.25), ("F", at(4), at(5), 0.5),
+                          ("G", at(5), samples / tonal.RATE, 1.0)])
+        self.assertEqual(tonal.runs([], [], [], samples), [])
+        self.assertEqual(tonal.runs(["C"], [False], [1.0], samples), [])
+
+    def test_detuned_needs_a_tuning_beyond_the_limit(self) -> None:
+        limit = tonal.KEY["max_detune_cents"]
+        self.assertFalse(tonal.detuned({"tuning_cents": limit, "tuning_confidence": 0.9}))
+        self.assertTrue(tonal.detuned({"tuning_cents": limit + 1, "tuning_confidence": 0.9}))
+        self.assertTrue(tonal.detuned({"tuning_cents": -limit - 1, "tuning_confidence": 0.9}))
+        self.assertFalse(tonal.detuned({"tuning_cents": -limit - 1, "tuning_confidence": 0.0}))  # no tuning
 
     def test_spread_needs_two_windows(self) -> None:
         self.assertEqual(tonal.spread([]), 0.0)
@@ -278,13 +306,15 @@ class Tuning(unittest.TestCase):
         self.assertEqual(windows.shape, (len(tonal.windows(rows, 216, 108)), 3))
         listed = {round(span["start"], 6) for span in spans}
         for index, (cents, confidence, share) in enumerate(windows):
-            start = tonal.seconds(index * tonal.TUNING["hop_frames"])
+            start = tonal.extent(index * tonal.TUNING["hop_frames"], rows, 10 ** 9)[0]
             self.assertEqual(round(start, 6) in listed, share >= 0.5, (index, share))
             self.assertTrue(0 <= confidence <= 1 and 0 <= share <= 1)
         grid = found.grid("tuning_windows")
         self.assertEqual(grid, tonal.tuning_grid())
-        # Row 0 is centred on the middle of the first window.
-        self.assertEqual(grid["first_centre"] / grid["sample_rate"], tonal.seconds(108))
+        # The first window starts with the audio and the last ends with it,
+        # not half a hop before or one past the frames' nominal end.
+        self.assertEqual(spans[0]["start"], 0.0)
+        self.assertAlmostEqual(spans[-1]["end"], (len(first) + len(gap) + len(second)) / RATE, places=4)
 
         # The whole recording: the longer, drifting part spreads its evidence
         # over 40 cents, so the steady 25 cents sharp part decides the mode.
@@ -359,15 +389,55 @@ class Harmony(unittest.TestCase):
                 right = sum(span["end"] - span["start"] for span in spans if span["label"] in names)
                 self.assertGreater(total, 70)
                 self.assertGreater(right / total, 0.9)
-                # Chord changes fall near the two-second marks; ChordsDetection
-                # averages two seconds of profiles, so a change between chords
-                # sharing two notes (A minor to C) can come late.
+                # Chord changes fall near the two-second marks: on average
+                # within a hop (half a hop late would be a frame's centre
+                # taken for its start). ChordsDetection averages two seconds
+                # of profiles, so a change between chords sharing two notes
+                # (A minor to C) can come a few hops late.
                 changes = [span["start"] for span in spans[1:] if span["end"] - span["start"] > 1]
                 self.assertGreaterEqual(len(changes), 20)
-                for start in changes:
-                    self.assertLess(abs(start - round(start / CHORD_SECONDS) * CHORD_SECONDS), 0.5, start)
+                offsets = numpy.array([start - round(start / CHORD_SECONDS) * CHORD_SECONDS for start in changes])
+                self.assertLess(abs(float(offsets.mean())), tonal.SECONDS_PER_ROW, offsets)
+                self.assertLess(abs(float(numpy.median(offsets))), tonal.SECONDS_PER_ROW, offsets)
+                self.assertLess(float(numpy.abs(offsets).max()), 0.45, offsets)
+                self.assertFalse(found.scalar("detuned"))
                 self.assertGreater(found.scalar("chords_changes_rate"), 0)
                 self.assertGreater(found.scalar("chords_number_rate"), 0)
+
+    def test_a_detuned_recording_leaves_key_and_chords_empty(self) -> None:
+        """Near half a semitone from 440 Hz the profiles split each pitch
+        class: C major 46 cents sharp gives no key rather than A minor."""
+        directory = scratch(self)
+        for cents, is_detuned in ((36, False), (46, True), (-46, True)):
+            with self.subTest(cents=cents):
+                found = measured(self, directory, write(directory, f"detuned{cents}",
+                                                        progression(C_MAJOR, lambda t: cents, repeats=6)))
+                self.assertLess(abs(found.scalar("tuning_cents") - cents), 3)  # anchor: the tuning is found
+                self.assertIs(found.scalar("detuned"), is_detuned)
+                if is_detuned:
+                    self.assertEqual((found.scalar("key"), found.scalar("scale"), found.scalar("key_strength")),
+                                     ("", "", 0.0))
+                    self.assertEqual((found.items("keys"), found.items("chords")), ([], []))
+                    self.assertEqual((found.scalar("chords_changes_rate"), found.scalar("chords_number_rate")),
+                                     (0.0, 0.0))
+                    self.assertTrue(found.series("pitched").any())  # the tuning outputs stay
+                    self.assertGreaterEqual(len(found.items("tuning_drift")), 2)
+                else:
+                    self.assertEqual((found.scalar("key"), found.scalar("scale")), ("C", "major"))
+                    self.assertTrue(found.items("chords"))
+
+    def test_pitched_frames_with_empty_profiles_have_no_key(self) -> None:
+        es = tonal.cover.essentia_module()
+        hpcp = numpy.zeros((700, 12), dtype=numpy.float32)
+        pitched = numpy.ones(700, dtype=bool)
+        self.assertEqual(tonal.keys(es, hpcp, pitched, 700 * tonal.HOP),
+                         {"key": "", "scale": "", "key_strength": 0.0, "keys": []})
+        hpcp[:, [3, 7, 10]] = 1.0  # anchor: the same frames with a C major profile have a key in every window
+        found = tonal.keys(es, hpcp, pitched, 700 * tonal.HOP)
+        self.assertEqual((found["key"], len(found["keys"])), ("C", len(tonal.windows(700, 324, 162))))
+        hpcp[400:] = 0.0  # a window whose pitched frames are all empty is left out
+        found = tonal.keys(es, hpcp, pitched, 700 * tonal.HOP)
+        self.assertEqual(len(found["keys"]), len([w for w in tonal.windows(700, 324, 162) if w[0] < 400]))
 
     def test_the_key_reads_the_banks_profiles(self) -> None:
         """Key and chords come from frames/hpcp, not from a second analysis:
@@ -407,6 +477,20 @@ class Dissonance(unittest.TestCase):
         self.assertGreater(float(hiss.mean()), 0.4)
         self.assertEqual(found.grid("dissonance"), {"sample_rate": 22050, "hop": 2048, "frame": 4096,
                                                     "first_centre": 0})
+
+    def test_a_quiet_floor_below_the_gate_reads_zero(self) -> None:
+        """Room tone at about -70 dBFS is not silence, but it is below the
+        level gate, so it adds nothing to an average of dissonance."""
+        directory = scratch(self)
+        source = write(directory, "room", noise(10, 0.0003))
+        request = a_request(directory, source)
+        rms_db = numpy.fromfile(request["needs"]["frames/rms_db"]["path"], dtype="<f4")
+        inner = rms_db[5:-5]
+        # Anchor: the floor is quiet but not silent, and ungated it is rough.
+        self.assertTrue(((inner > -90) & (inner < tonal.GATE["rms_db_min"])).all(), inner)
+        with patch.dict(tonal.GATE, {"rms_db_min": -100}):
+            self.assertGreater(float(tonal.measure(request)["dissonance"][5:-5].mean()), 0.3)
+        self.assertFalse(tonal.measure(request)["dissonance"].any())
 
 
 @needs_ffmpeg
@@ -496,13 +580,33 @@ class Refusals(unittest.TestCase):
         self.request["needs"]["frames/rms_db"] = {**rms, "path": str(short), "shape": [rms["shape"][0] - 1, 1]}
         self.refused("rows and frames/rms_db")
 
+    def test_chords_of_another_length_are_refused(self) -> None:
+        class Short:
+            def ChordsDetection(self, **_settings: Any) -> Callable[[numpy.ndarray], tuple[list, list]]:
+                return lambda hpcp: (["C"] * (len(hpcp) - 1), [1.0] * (len(hpcp) - 1))
+        hpcp = numpy.ones((50, 12), dtype=numpy.float32)
+        with self.assertRaisesRegex(tonal.TonalError, "gave 49 chords for 50 frames"):
+            tonal.chords(Short(), hpcp, numpy.ones(50, dtype=bool), "C", "major", 50 * tonal.HOP)
+
+    def test_a_dissonance_that_is_not_finite_is_refused(self) -> None:
+        real = tonal.cover.essentia_module()
+
+        class NotFinite:
+            def __getattr__(self, name: str) -> Any:
+                if name == "Dissonance":
+                    return lambda: (lambda frequencies, magnitudes: float("nan"))
+                return getattr(real, name)
+        self.assertTrue(numpy.isfinite(tonal.measure(self.request)["dissonance"]).all())  # anchor
+        with patch.object(tonal.cover, "essentia_module", lambda: NotFinite()):
+            self.refused("Dissonance gave a value that is not finite")
+
     def test_windows_left_open_are_refused(self) -> None:
         tuning = tonal.Tuning(tonal.cover.essentia_module(), 300)
         empty = numpy.zeros(0, dtype=numpy.float32)
         for row in range(250):
             tuning.add(row, False, None, empty, empty)
         with self.assertRaisesRegex(tonal.TonalError, "never closed"):
-            tuning.result()
+            tuning.result(300 * tonal.HOP)
 
     def test_main_reports_a_failure_and_writes_nothing(self) -> None:
         err = io.StringIO()
