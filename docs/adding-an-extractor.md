@@ -16,7 +16,9 @@ The byte-level format is in [the feature bank format](feature-bank.md).
    accepts, the features it needs, its parameters, and each output's kind.
    Prefer reading `frames` series over decoding again: `"needs":
    ["frames/rms_db", "frames/hpcp"]` gives the program their paths, shapes,
-   and grid.
+   and grid. If it must decode again for something `frames` does not keep,
+   say so in the manifest's description (ADR 0074's consequences list
+   `tonal`, which repeats `frames`' peak picking, and what would remove it).
 2. **Write the program.** It receives the path of `request.json` as its last
    argument (and, for convenience, `ARCHIVE_EXTRACTOR_INPUT` and
    `ARCHIVE_EXTRACTOR_OUTPUT` in its environment). It writes each declared

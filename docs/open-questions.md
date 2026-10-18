@@ -277,6 +277,10 @@ unsupported rather than guess.
   - Should decoded audio at another rate (44.1 kHz for a separator) be a
     shared feature, so that extractors off the `frames` grid stop decoding
     again, at about 1.3 GB per four mono hours at 22,050 Hz?
+  - When should a `frames` version keep each frame's spectral peaks, or a
+    summary of them (a deviation histogram, dissonance), so that `tonal`
+    stops repeating `frames`' peak picking? ADR 0074 says: when a second
+    extractor needs them.
   - An entry belongs to one content. How is a feature of several contents
     (two recordings' cross-similarity) filed and keyed?
   - What deletes stale entries, whose keys no installed extractor gives: a

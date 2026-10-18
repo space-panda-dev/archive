@@ -112,6 +112,11 @@ SHIPPED = {
     "frames": {"version": "1",
                "code": "sha256:8d05ebb444442eb4b08a516df7f2d03f403c4ab56aef7a74aff16446592a3282",
                "outside": {"cover.py": "sha256:9170a3edb3dfbecfac99b2d17967f3ba3ae2449021427c805dc559d936c05c55"}},
+    "tonal": {"version": "2",
+              "code": "sha256:81bcd9c9a129dbe60a025a3e00cfad58dd6e61f336b248039bcf43fc02fd06a4",
+              "outside": {"cover.py": "sha256:9170a3edb3dfbecfac99b2d17967f3ba3ae2449021427c805dc559d936c05c55",
+                          "extractors/frames/frames.py":
+                              "sha256:acac662e87efbcafcebab714b858e8b42c287de7963156c7e2a14adfd860c565"}},
     "loudness-r128": {"version": "1",
                       "code": "sha256:37384ca259e5a38d61a4f09891b496bfeba339e5a10791aea2dc6b401aed0898",
                       "outside": {}},

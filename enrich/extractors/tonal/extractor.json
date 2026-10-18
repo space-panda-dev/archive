@@ -1,0 +1,185 @@
+{
+ "contract": "archive-extractor/1",
+ "id": "tonal",
+ "version": "2",
+ "description": "Reference tuning and its drift (TuningFrequency on spectral peaks), key and scale (Key) and chords (ChordsDetection) from frames/hpcp, and sensory dissonance, by Essentia. Decodes again and repeats frames' spectral peak picking, which the bank does not hold: about twice the spectral cost (ADR 0074).",
+ "command": [
+  "${python}",
+  "tonal.py"
+ ],
+ "accepts": [
+  "audio/*",
+  "video/*"
+ ],
+ "requires": [
+  "ffmpeg",
+  "essentia@2.1b6.dev1438",
+  "numpy"
+ ],
+ "needs": [
+  "frames/hpcp",
+  "frames/rms_db"
+ ],
+ "parameters": {
+  "essentia": "2.1b6.dev1438",
+  "decode_arguments": [
+   "-nostdin",
+   "-hide_banner",
+   "-nostats",
+   "-loglevel",
+   "error",
+   "-i",
+   "{input}",
+   "-map",
+   "0:a:0",
+   "-ac",
+   "1",
+   "-ar",
+   "22050",
+   "-c:a",
+   "pcm_s16le",
+   "-f",
+   "s16le",
+   "-"
+  ],
+  "sample_scale": 32768,
+  "analysis_rate": 22050,
+  "frame_size": 4096,
+  "hop_size": 2048,
+  "framing": "essentia-framegenerator-centred",
+  "windowing": {
+   "type": "blackmanharris62"
+  },
+  "spectral_peaks": {
+   "sampleRate": 22050,
+   "orderBy": "frequency",
+   "magnitudeThreshold": "0.00001",
+   "minFrequency": 40,
+   "maxFrequency": 5000,
+   "maxPeaks": 10000
+  },
+  "gate": {
+   "rms_db_min": -60
+  },
+  "pitched": {
+   "block_frames": 54,
+   "concentration_cents": 15,
+   "min_sounding": "0.5",
+   "min_concentration": "0.4"
+  },
+  "tuning": {
+   "resolution": 1,
+   "window_frames": 216,
+   "hop_frames": 108,
+   "min_pitched": "0.5"
+  },
+  "key": {
+   "profileType": "temperley",
+   "pcpSize": 12,
+   "window_frames": 324,
+   "hop_frames": 162,
+   "min_pitched": "0.5",
+   "max_detune_cents": 40
+  },
+  "chords": {
+   "windowSize": "2",
+   "hopSize": 2048,
+   "sampleRate": 22050
+  },
+  "dissonance": {
+   "maxPeaks": 100,
+   "relative_threshold": "0.01"
+  }
+ },
+ "outputs": {
+  "pitched": {
+   "kind": "series",
+   "dtype": "u8",
+   "columns": 1,
+   "grid": "frames",
+   "unit": "1",
+   "description": "1 where the frame sounds and its five-second block's spectral peaks agree on a tuning; 0 for silence, talk, and noise"
+  },
+  "tuning_frequency": {
+   "kind": "scalar",
+   "unit": "Hz",
+   "description": "the frequency of A4 the pitched frames are tuned to; 440.0 with confidence 0 when no frame is pitched"
+  },
+  "tuning_cents": {
+   "kind": "scalar",
+   "unit": "cents",
+   "description": "the tuning's distance from 440 Hz, in [-50, 50)"
+  },
+  "tuning_confidence": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "share of the sounding frames' peak magnitude within 15 cents of the tuning; 0 when no frame is pitched, about 0.31 for noise"
+  },
+  "tuning_windows": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 3,
+   "grid": "tuning",
+   "unit": "cents, 1, 1",
+   "description": "every window of about 20 s every 10 s, centred midway between its first and last frame's centres (the last may be shorter): its tuning in cents near tuning_cents (0 when it has no pitched frame), the confidence of that tuning over its sounding frames, and its share of pitched frames"
+  },
+  "tuning_drift": {
+   "kind": "spans",
+   "unit": "s",
+   "description": "the tuning windows that are at least half pitched; value: the window's tuning in cents from 440 Hz, near tuning_cents"
+  },
+  "drift_spread_cents": {
+   "kind": "scalar",
+   "unit": "cents",
+   "description": "tenth to ninetieth percentile of tuning_drift's values; 0 for fewer than two windows"
+  },
+  "detuned": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "true when tuning_cents is more than 40 cents from 440 Hz, where the 440 Hz profiles split each pitch class; key, scale, key_strength, keys, chords, and their rates are then empty or 0"
+  },
+  "key": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "tonic of the pitched frames' mean profile, as Essentia names notes (A, Bb, B, C, C#, D, Eb, E, F, F#, G, Ab); empty when no frame is pitched or detuned"
+  },
+  "scale": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "major or minor; empty when no frame is pitched or detuned"
+  },
+  "key_strength": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "Key's strength; 0 when no frame is pitched or detuned"
+  },
+  "keys": {
+   "kind": "spans",
+   "unit": "s",
+   "description": "windows of about 30 s every 15 s that are at least half pitched; label: key and scale; value: strength; none when detuned"
+  },
+  "chords": {
+   "kind": "spans",
+   "unit": "s",
+   "description": "runs of one chord over pitched frames; label: Essentia's chord name; value: mean strength; none when detuned"
+  },
+  "chords_changes_rate": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "ChordsDescriptors' changes rate over the pitched frames; 0 when none or detuned"
+  },
+  "chords_number_rate": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "ChordsDescriptors' number rate over the pitched frames; 0 when none or detuned"
+  },
+  "dissonance": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "frames",
+   "unit": "1",
+   "description": "sensory dissonance of each frame's peaks within 40 dB of its loudest, 0 to 0.5; 0 for a frame below the -60 dBFS gate or with no peaks; talk and noise above the gate have a value, so mask with pitched for music"
+  }
+ }
+}

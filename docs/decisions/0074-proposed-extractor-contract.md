@@ -144,11 +144,28 @@ runner does not care what an extractor is written in.
 
 - Adding an audio measure is a directory with a manifest and a program; no
   file in the runner changes unless a new output kind is needed.
-- "Decode once" holds for measures on the `frames` grid. An extractor on
-  another grid or rate (beats, key, momentary loudness, a separator at
-  44.1 kHz) decodes the content again, as `loudness-r128` does; the bank
-  has no decoded-audio feature, since 4 hours of mono 22,050 Hz audio is
-  about 1.3 GB as 32-bit floats, larger than every series together.
+- "Decode once" holds for measures on the `frames` grid that need only
+  what `frames` keeps. An extractor on another grid or rate (beats,
+  momentary loudness, a separator at 44.1 kHz) decodes the content again,
+  as `loudness-r128` does; the bank has no decoded-audio feature, since
+  4 hours of mono 22,050 Hz audio is about 1.3 GB as 32-bit floats, larger
+  than every series together.
+- So does an extractor on the `frames` grid that needs a per-frame
+  intermediate `frames` does not keep. `tonal` is the first: its tuning,
+  pitch gate, and dissonance need each frame's spectral peaks, a ragged list
+  that no output kind declares, so it decodes with `frames`' own decoder and
+  framing, repeats its windowing, spectrum, and peak picking, and checks
+  that its rows are `frames`' rows. That about doubles a recording's
+  spectral cost: on a 600 s synthetic recording, `tonal` took 0.58 s of
+  processor time beside `frames`' 0.73 s (both without ffmpeg's decode),
+  or about 3.5 s against 4.4 s a recording-hour. Removing it would take a new `frames` version (a new key for every
+  `frames` entry) with new outputs, such as each frame's 100-bin deviation
+  of peaks from the tempered grid (which would serve the tuning and the
+  pitch gate, at 400 bytes a row, about 15 MB a recording-hour, more than
+  all of `frames` today) and its dissonance. At that cost it is not worth
+  it for one reader; it becomes worth it when a second extractor needs the
+  same peaks. An extractor that repeats `frames`' work says so in its
+  manifest's description, so that the cost is visible where it is chosen.
 - A stem separator runs in its own environment, named by configuration, and
   its stems are `file` outputs that later extractors need like any feature.
 - The plugin and dependency-injection frameworks
