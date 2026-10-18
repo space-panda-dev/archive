@@ -26,11 +26,13 @@ proposes the contract its writers follow, and
 ## Proposed decision
 
 **A feature is a measurement of content, made for other tools to read.** It
-is one of five kinds: a *track* (rows of numbers on a time grid, such as a
+is one of five kinds: a *series* (rows of numbers on a time grid, such as a
 pitch-class profile every 93 ms), a *scalar*, a list of *events*, a list of
-*segments*, or a *file* (such as a separated stem). A feature is not a claim
-and is never admitted. It is named `<extractor>/<output>`, such as
-`frames/hpcp`.
+*spans* (time ranges, the word ADR 0066 uses), or a *file* (such as a
+separated stem). A feature is not a claim and is never admitted. It is named
+`<extractor>/<output>`, such as `frames/hpcp`. The kinds are not called
+tracks or segments: a track is already one source's spans in an audio
+selection (ADR 0048), and multi-file tracks are claims (ADR 0012).
 
 **The feature bank is regenerable.** It holds features made by extractors
 (ADR 0074) from content, and every one can be made again from the content
@@ -52,12 +54,25 @@ everywhere below it.
 parameters make a new key and a new entry; the old entry is never read again
 and may be deleted at any time. An entry is never rewritten.
 
+**The version stands for the code.** The key holds an extractor's version,
+not its code, so an edit that can change an output must come with a new
+version. A test pins a digest of each shipped extractor's files, and of the
+files it imports from outside its directory (`frames` imports `cover.py`),
+for each version, so an edit without a new version fails a test rather than
+serving old bits. Keying on that digest instead would make every comment
+edit discard hours of stem separation, would still miss imported code that a
+directory digest cannot see, and would tie a key to one checkout's bytes
+where a Spool worker's copy may differ only in what does not matter.
+
 **Software is recorded, not keyed.** A key must be known before anything
 runs, and the worker's library versions are not. Each entry records the
 software its extractor reports. An extractor whose output depends on an
 exact build pins that build in its parameters, so another build is another
 key: `frames` pins Essentia 2.1b6.dev1438, as ADR 0071 requires of the
-measure it shares.
+measure it shares. It does not pin `ffmpeg`, whose resampler decides the
+samples, so the entry's record of `ffmpeg` is the only one, and the entry
+may be deleted at any time; a claim's provenance must therefore not depend
+on it (below).
 
 **An entry is complete or absent.** It is a directory holding `entry.json`
 and its outputs' files, which appears by one rename after every output has
@@ -75,14 +90,23 @@ claim from features is an ordinary enrichment tool: the adapter proposes its
 derivation run and outputs to Door (ADR 0064). Bank entries are not archive
 objects, so the run's `used` references pin the Artifact whose content the
 features were made from, and its parameters record, for each feature read,
-the feature's name, its extractor's id and version, and its entry's key,
-which together with the content reproduce it. No tool proposes a claim from
-the bank yet, so no such run has been written.
+the feature's name, its extractor's id and version, and its entry's key.
+Key and content do not reproduce the bits on their own, because software is
+not keyed, so the run's `software` also lists the software every read entry
+recorded: the run is evidence and the entry is not, and information only
+the entry held would be lost with it (INV-4). `Entry.provenance` returns
+exactly these fields. No tool proposes a claim from the bank yet, so no such
+run has been written.
 
 **The bank is under the operator's custody, like derived media.** A
 separated vocal stem is the recording. Sending an entry anywhere the
 operator does not control is disclosure (ADR 0016), and nothing here sends
-one.
+one. Destroying content (ADR 0004) must also delete its directory in the
+bank, which holds every entry made from it, stems included, as it must
+delete its derived media (ADR 0069 has the same gap). Nothing does this
+yet; until something does, destroying content leaves a copy of it in the
+bank, and the operator deletes `sha256/<ab>/<cd>/<hex>/` by hand
+([open questions](../open-questions.md#interfaces-and-tooling)).
 
 ### Why a new noun
 
@@ -104,7 +128,7 @@ one.
 
 - `enrich/bank.py` holds the layout, the keys, the shapes, and a reader;
   `enrich/extract.py` fills the bank (ADR 0074). Both need only the standard
-  library; reading a track as an array needs numpy.
+  library; reading a series as an array needs numpy.
 - The first extractor, `frames`, writes pitch-class profiles that are the
   same bits as `cover.Analyser.features` on the whole recording, so a reader
   measures nothing again. `cover.py --bank` reads them for whole files.
@@ -112,10 +136,19 @@ one.
   the whole recording differs at its edges from one measured on the window
   alone, so reading windows from the bank changes the method and needs its
   own calibration (ADR 0071); that is a separate decision.
-- `frames` takes about 11 MB a recording-hour. On the development Mac it
-  measured a synthetic hour of 48 kHz stereo FLAC in 6.4 seconds, decoding
-  included, with about 590 MB resident; real recordings have not been
-  timed.
+- `frames` takes about 11 MB a recording-hour. It streams the decode and
+  writes its series a block of rows at a time, so it needs about 220 MB
+  resident whatever the length (217 MB for five minutes and 221 MB for an
+  hour, against 576 MB an hour and growing when it held the whole decode).
+  Its speed depends on the machine's load: a synthetic hour of 48 kHz stereo
+  FLAC took 6.4 seconds on an idle development Mac and 13 to 14 seconds on
+  the same Mac shared with other work, decoding included. Real recordings
+  have not been timed.
+- Two runners asked for the same entry make it once: the second waits on a
+  lock beside the entry and then reads it. On one machine this holds for
+  any number of runners; across machines sharing a bank it depends on the
+  file system's locks, and the rename still lets only the first entry
+  stand.
 - Stale entries accumulate until someone deletes them; nothing prunes the
   bank yet ([open questions](../open-questions.md#interfaces-and-tooling)).
 
@@ -125,7 +158,7 @@ one.
   regenerable measurement would become permanent evidence (as ADR 0069 found
   for peaks).
 - **One JSON file per recording, as the V2 system's caches were.** Frame
-  tracks in JSON are several times larger and slow to parse, and one file
+  series in JSON are several times larger and slow to parse, and one file
   for every measure makes each measure's version invalidate all the others.
 - **NumPy archives, HDF5, Parquet, or SQLite.** Each needs a library to read
   and ties readers to a language or a format version; raw little-endian

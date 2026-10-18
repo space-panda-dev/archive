@@ -16,9 +16,11 @@ was blocked, and 2 when the arguments are not understood.
 
 An extractor is a program in any language, named by its manifest and invoked
 with one argument, the path of a request JSON; it writes its outputs and a
-`result.json` into the directory the request names. The runner checks them
+`result.json` into the directory the request names. It runs in a process
+group of its own, which is stopped whole when it exits or times out. The runner checks them
 against the manifest, writes `entry.json`, and renames the directory into the
-bank, so an entry is complete or absent. A failure is recorded beside where
+bank, so an entry is complete or absent. A lock beside the entry makes two
+runners on one bank make it once. A failure is recorded beside where
 the entry would be and leaves the bank as it was.
 
 With `--digest`, the content is not hashed while every entry is present; the
@@ -34,10 +36,12 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import fcntl
 import json
 import mimetypes
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -54,6 +58,8 @@ import bank  # noqa: E402
 
 RUNNER = {"name": "archive-enrich-extract", "version": "1"}
 LOG_TAIL = 4000
+# After SIGTERM, how long an extractor's process group has before SIGKILL (as Spool's workers wait).
+KILL_GRACE = 5.0
 
 # Media types for common recorder and camera files that `mimetypes` may not know.
 _MEDIA_TYPES = {".flac": "audio/flac", ".wav": "audio/wav", ".mka": "audio/x-matroska", ".m4a": "audio/mp4",
@@ -80,6 +86,17 @@ def media_type_of(path: Path) -> str:
     return guessed
 
 
+def spool_capability(extractor: bank.Extractor) -> str:
+    """The Spool capability a worker would offer to run this extractor:
+    `archive-extractor.<id>@<version>`, which the manifest grammars keep
+    within Spool's (spool/spec/protocol.md: `name@version`, name
+    `[A-Za-z0-9._-]+`, version `[A-Za-z0-9.]+`, 128 characters at most)."""
+    capability = f"archive-extractor.{extractor.id}@{extractor.version}"
+    if not bank.SPOOL_CAPABILITY.fullmatch(capability) or len(capability) > 128:
+        raise bank.BankError(f"{extractor.id} {extractor.version} makes no Spool capability: {capability!r}")
+    return capability
+
+
 def resolve_command(extractor: bank.Extractor, programs: dict[str, str]) -> list[str]:
     """The extractor's command as an argument list: `${name}` is replaced by
     the configured program of that name, and a word naming a file in the
@@ -97,6 +114,58 @@ def resolve_command(extractor: bank.Extractor, programs: dict[str, str]) -> list
         else:
             words.append(word)
     return words
+
+
+def _signal_group(group: int, signal_number: int) -> None:
+    try:
+        os.killpg(group, signal_number)
+    except (ProcessLookupError, PermissionError):
+        pass  # the group is gone: nothing is left to stop
+
+
+def run_program(command: list[str], cwd: Path, environment: dict[str, str],
+                timeout: float | None) -> tuple[int | None, bytes]:
+    """Run an extractor in its own process group and return its exit status
+    (None when it ran past `timeout`) and the end of what it printed.
+
+    The whole group is stopped, not only the process started: an extractor
+    that is a shell script around ffmpeg or a stem separator has children of
+    its own. On a timeout the group is sent SIGTERM, then SIGKILL after
+    KILL_GRACE seconds. Whatever is left of the group when the extractor
+    exits is sent SIGKILL, so nothing it started writes into its output
+    directory while the runner checks it, or keeps a machine busy after the
+    runner has finished with it."""
+    process = subprocess.Popen(command, cwd=cwd, env=environment, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+    tail = bytearray()
+
+    def read() -> None:
+        assert process.stdout is not None
+        while chunk := process.stdout.read1(1 << 16):
+            tail.extend(chunk)
+            del tail[:-LOG_TAIL]
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    timed_out = False
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        _signal_group(process.pid, signal.SIGTERM)
+        try:
+            process.wait(timeout=KILL_GRACE)
+        except subprocess.TimeoutExpired:
+            _signal_group(process.pid, signal.SIGKILL)
+            process.wait()
+    finally:
+        # The group outlives its leader while any member lives, and its id is
+        # not reused until then, so this reaches exactly what the extractor left.
+        _signal_group(process.pid, signal.SIGKILL)
+        reader.join()
+        assert process.stdout is not None
+        process.stdout.close()
+    return (None if timed_out else process.returncode), bytes(tail)
 
 
 def _fsync_tree(directory: Path) -> None:
@@ -185,10 +254,28 @@ class Run:
     # -- running one extractor ---------------------------------------------
 
     def run_one(self, extractor_id: str, keys: dict[str, str]) -> dict[str, Any]:
-        extractor = self.catalog[extractor_id]
+        """Run one extractor, once per key across every runner on this bank:
+        a runner that finds another making the same entry waits for it."""
         key = keys[extractor_id]
         final = bank.entry_directory(self.root, self.content_digest(), extractor_id, key)
         self.verify_digest()
+        try:
+            final.parent.mkdir(parents=True, exist_ok=True)
+            lock = open(bank.lock_path(self.root, self.content_digest(), extractor_id, key), "a+b")
+        except OSError as exc:
+            return self.failed(extractor_id, key, f"{extractor_id} cannot lock its entry: {exc}", b"")
+        with lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                if bank.read_entry(final) is not None:
+                    return {"status": "hit", "key": key, "entry": str(final), "waited": True}
+            except bank.BankError as exc:
+                return self.failed(extractor_id, key, str(exc), b"")
+            return self.make(extractor_id, keys, final)
+
+    def make(self, extractor_id: str, keys: dict[str, str], final: Path) -> dict[str, Any]:
+        extractor = self.catalog[extractor_id]
+        key = keys[extractor_id]
         assert self.scratch is not None
         work = Path(tempfile.mkdtemp(prefix=f"{extractor_id}-", dir=self.scratch))
         output_dir = work / "out"
@@ -199,20 +286,17 @@ class Run:
             request = self.request(extractor_id, keys, output_dir)
             (work / "request.json").write_bytes(bank.canonical(request))
             command = resolve_command(extractor, self.programs) + [str(work / "request.json")]
+            environment = {**os.environ, "ARCHIVE_EXTRACTOR_REQUEST": str(work / "request.json"),
+                           "ARCHIVE_EXTRACTOR_INPUT": request["input"]["path"],
+                           "ARCHIVE_EXTRACTOR_OUTPUT": str(output_dir)}
             try:
-                environment = {**os.environ, "ARCHIVE_EXTRACTOR_REQUEST": str(work / "request.json"),
-                               "ARCHIVE_EXTRACTOR_INPUT": request["input"]["path"],
-                               "ARCHIVE_EXTRACTOR_OUTPUT": str(output_dir)}
-                completed = subprocess.run(command, cwd=work, env=environment, stdin=subprocess.DEVNULL,
-                                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=self.timeout)
-            except subprocess.TimeoutExpired as exc:
-                log = exc.output or b""
-                raise bank.BankError(f"{extractor_id} ran past {self.timeout} seconds") from None
+                returncode, log = run_program(command, work, environment, self.timeout)
             except OSError as exc:
                 raise bank.BankError(f"{extractor_id} could not start: {exc}") from exc
-            log = completed.stdout
-            if completed.returncode != 0:
-                raise bank.BankError(f"{extractor_id} exited {completed.returncode}")
+            if returncode is None:
+                raise bank.BankError(f"{extractor_id} ran past {self.timeout} seconds")
+            if returncode != 0:
+                raise bank.BankError(f"{extractor_id} exited {returncode}")
             checked = bank.check_result(output_dir, extractor)
             manifest = {"contract": bank.ENTRY_CONTRACT, "key": key,
                         "extractor": {"id": extractor.id, "version": extractor.version},
@@ -224,6 +308,7 @@ class Run:
             (output_dir / bank.RESULT).unlink()
             (output_dir / bank.ENTRY).write_bytes(json.dumps(manifest, indent=1, sort_keys=True).encode())
             # A feature can carry the recording (a stem): owner only, as derived media are.
+            # check_result refused any file with another link, so this changes no one else's file.
             for path in output_dir.iterdir():
                 path.chmod(0o600)
             output_dir.chmod(0o700)
@@ -240,21 +325,35 @@ class Run:
             return {"status": "ran", "key": key, "entry": str(final),
                     "seconds": round(time.monotonic() - clock, 3)}
         except (bank.BankError, OSError) as exc:
-            failure = {"extractor": {"id": extractor.id, "version": extractor.version}, "key": key,
-                       "content": self.content_digest(), "error": str(exc), "started_at": started,
-                       "ended_at": now(), "log": log[-LOG_TAIL:].decode("utf-8", "replace")}
-            self.record_failure(extractor_id, key, failure)
-            return {"status": "failed", "key": key, "error": str(exc), "log": failure["log"]}
+            return self.failed(extractor_id, key, str(exc), log, started)
         finally:
             shutil.rmtree(work, ignore_errors=True)
+
+    def failed(self, extractor_id: str, key: str, error: str, log: bytes,
+               started: str | None = None) -> dict[str, Any]:
+        """A failure, as the run reports it and as recorded beside the entry."""
+        extractor = self.catalog[extractor_id]
+        failure = {"extractor": {"id": extractor.id, "version": extractor.version}, "key": key,
+                   "content": self.content_digest(), "error": error, "started_at": started or now(),
+                   "ended_at": now(), "log": log[-LOG_TAIL:].decode("utf-8", "replace")}
+        answer = {"status": "failed", "key": key, "error": error, "log": failure["log"]}
+        try:
+            self.record_failure(extractor_id, key, failure)
+        except OSError as exc:
+            # The failure stands; only its operational record is missing.
+            answer["unrecorded"] = f"the failure could not be recorded: {exc}"
+        return answer
 
     def record_failure(self, extractor_id: str, key: str, failure: dict[str, Any]) -> None:
         """Operational: the last failure, replaced atomically. Never read as an entry."""
         path = bank.failure_path(self.root, self.content_digest(), extractor_id, key)
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}")
-        temporary.write_text(json.dumps(failure, indent=1, sort_keys=True))
-        os.replace(temporary, path)
+        try:
+            temporary.write_text(json.dumps(failure, indent=1, sort_keys=True))
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     # -- the whole graph ---------------------------------------------------
 
@@ -267,8 +366,15 @@ class Run:
                 outcome[extractor_id] = {"status": "skipped", "key": keys[extractor_id],
                                          "reason": unusable[extractor_id]}
                 continue
-            entry = bank.read_entry(bank.entry_directory(self.root, self.content_digest(), extractor_id,
-                                                         keys[extractor_id]))
+            try:
+                entry = bank.read_entry(bank.entry_directory(self.root, self.content_digest(), extractor_id,
+                                                             keys[extractor_id]))
+            except bank.BankError as exc:
+                # Damage blocks only what needs this entry. The bank is
+                # regenerable: deleting the damaged directory repairs it.
+                outcome[extractor_id] = {"status": "failed", "key": keys[extractor_id],
+                                         "error": f"{exc}; delete it and run again"}
+                continue
             if entry is not None:
                 outcome[extractor_id] = {"status": "hit", "key": keys[extractor_id], "entry": str(entry.path)}
             else:
@@ -278,7 +384,7 @@ class Run:
                 extractor = self.catalog[extractor_id]
                 outcome[extractor_id] = {
                     "status": "would_run", "key": keys[extractor_id],
-                    "task": {"capability": f"archive-extractor/{extractor.id}@{extractor.version}",
+                    "task": {"capability": spool_capability(extractor),
                              "requires": extractor.manifest.get("requires", []),
                              "after": [keys[s] for s in self.catalog.upstream(extractor_id)],
                              "parameters": self.catalog.parameters(extractor_id, self.parameters),
@@ -388,6 +494,7 @@ def main(argv: list[str] | None = None) -> int:
             if not separator or not bank.ID.fullmatch(name) or not value:
                 raise RunError(f"--program takes <name>=<path>, not {item!r}")
             programs[name] = value
+        catalog.check_overrides(config.get("parameters", {}), f"configuration {arguments.config}")
         targets = sorted(catalog.extractors) if arguments.extractor == "all" else [arguments.extractor]
         for target in targets:
             catalog[target]

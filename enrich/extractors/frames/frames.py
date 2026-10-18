@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The frames extractor: one decode, one pass, the base tracks (ADR 0074).
+"""The frames extractor: one decode, one pass, the base series (ADR 0074).
 
 It decodes the content's first audio stream once, as `cover.py` decodes a
 whole file (mono 16-bit PCM at 22,050 Hz, divided by 32,768), cuts it into
@@ -20,7 +20,9 @@ Essentia's frames of 4,096 samples every 2,048, and measures every frame once:
 
 Frame k is centred on analysis sample k x 2,048 and zero-padded outside the
 audio (Essentia's FrameGenerator with `startFromZero` false); n samples make
-ceil(n / 2,048) + 1 frames. At about 10.8 frames a second, the grid suits
+ceil(n / 2,048) + 1 frames. The decode is streamed and cut into the same
+frames a block at a time, and the series are written a block of rows at a
+time, so memory does not grow with the recording's length. At about 10.8 frames a second, the grid suits
 song-length and section-length questions, not note onsets.
 
 Invoked by the runner as `frames.py <request.json>`; the settings are fixed,
@@ -36,8 +38,9 @@ import math
 import platform
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable, Iterator
 
 ENRICH = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ENRICH))
@@ -52,7 +55,7 @@ HOP = cover.ANALYSIS["hop_size"]
 RMS_FLOOR_DB = -120
 MFCC = {"numberBands": 40, "numberCoefficients": 13, "highFrequencyBound": RATE // 2}
 ROLLOFF = "0.85"
-TRACKS = {"hpcp": 12, "rms_db": 1, "centroid": 1, "rolloff": 1, "flatness": 1, "flux": 1, "onset_hfc": 1,
+SERIES = {"hpcp": 12, "rms_db": 1, "centroid": 1, "rolloff": 1, "flatness": 1, "flux": 1, "onset_hfc": 1,
           "mfcc": MFCC["numberCoefficients"], "melbands": MFCC["numberBands"]}
 
 
@@ -77,22 +80,101 @@ def parameters() -> dict[str, Any]:
             "onset_method": "hfc", "mfcc": MFCC}
 
 
-def decode(path: str, ffmpeg: str = "ffmpeg") -> numpy.ndarray:
-    try:
-        completed = subprocess.run([ffmpeg, *decode_arguments(path)], stdin=subprocess.DEVNULL, capture_output=True)
-    except OSError as exc:
-        raise FramesError(f"ffmpeg could not run: {exc}") from exc
-    if completed.returncode != 0:
-        raise FramesError(f"ffmpeg could not decode {path}: "
-                          f"{completed.stderr.decode('utf-8', 'replace').strip()[:300]}")
-    samples = numpy.frombuffer(completed.stdout, dtype="<i2").astype(numpy.float32) / numpy.float32(32768)
-    if len(samples) == 0:
-        raise FramesError(f"{path} decodes to no samples")
-    return samples
+class Sink:
+    """The series files, written a block of rows at a time, so memory does
+    not grow with the recording."""
+
+    BLOCK = 4096
+
+    def __init__(self, directory: Path):
+        self.handles = {name: open(directory / f"{name}.f32", "wb") for name in SERIES}
+        self.block = {name: numpy.empty((self.BLOCK, columns), dtype="<f4") for name, columns in SERIES.items()}
+        self.filled = 0
+        self.rows = 0
+
+    def row(self) -> int:
+        """The index in the current block of the next row, flushing a full block."""
+        if self.filled == self.BLOCK:
+            self.flush()
+        self.filled += 1
+        self.rows += 1
+        return self.filled - 1
+
+    def flush(self) -> None:
+        for name, handle in self.handles.items():
+            handle.write(self.block[name][:self.filled].tobytes())
+        self.filled = 0
+
+    def close(self) -> None:
+        self.flush()
+        for handle in self.handles.values():
+            handle.close()
 
 
-def measure(audio: numpy.ndarray) -> dict[str, numpy.ndarray]:
-    """Every track, in one pass over the frames."""
+def decoded_blocks(path: str, ffmpeg: str = "ffmpeg", block_bytes: int = 1 << 20) -> Iterator[numpy.ndarray]:
+    """The first audio stream decoded as `cover.py` decodes a whole file,
+    as float32 blocks of samples divided by 32,768, in order."""
+    with tempfile.TemporaryFile() as errors:
+        try:
+            process = subprocess.Popen([ffmpeg, *decode_arguments(path)], stdin=subprocess.DEVNULL,
+                                       stdout=subprocess.PIPE, stderr=errors)
+        except OSError as exc:
+            raise FramesError(f"ffmpeg could not run: {exc}") from exc
+        assert process.stdout is not None
+        carry = b""
+        try:
+            while chunk := process.stdout.read(block_bytes):
+                chunk = carry + chunk
+                usable = len(chunk) - len(chunk) % 2
+                carry = chunk[usable:]
+                if usable:
+                    yield numpy.frombuffer(chunk[:usable], dtype="<i2").astype(numpy.float32) / numpy.float32(32768)
+        finally:
+            process.stdout.close()
+            returncode = process.wait()
+        if returncode != 0 or carry:
+            errors.seek(0)
+            raise FramesError(f"ffmpeg could not decode {path}: "
+                              f"{errors.read().decode('utf-8', 'replace').strip()[:300]}")
+
+
+def framed(blocks: Iterable[numpy.ndarray], frame: int = FRAME, hop: int = HOP) -> Iterator[numpy.ndarray]:
+    """Essentia's FrameGenerator frames (`startFromZero` false) of the
+    concatenated blocks, without holding them all: frame k is samples
+    [k * hop - frame / 2, k * hop + frame / 2), zero outside the audio, and
+    frames continue while their first sample is before the end, so n
+    samples make ceil(n / hop) + 1 frames when frame is 2 x hop.
+    `test_framing_is_frame_generators` holds it to Essentia's for many lengths."""
+    buffer = numpy.zeros(frame // 2, dtype=numpy.float32)  # the padding before sample 0
+    offset = 0  # the padded index of buffer[0]
+    k = 0
+    total = 0
+    for block in blocks:
+        total += len(block)
+        buffer = numpy.concatenate((buffer, block))
+        while k * hop + frame <= offset + len(buffer):
+            begin = k * hop - offset
+            yield buffer[begin:begin + frame]
+            k += 1
+        drop = k * hop - offset
+        if drop > 0:
+            buffer = buffer[drop:]
+            offset += drop
+    if total == 0:
+        return
+    # A frame starts at padded index k * hop, which is sample k * hop - frame / 2.
+    last = -(-(total + frame // 2) // hop) - 1
+    needed = last * hop + frame - offset
+    if needed > len(buffer):
+        buffer = numpy.concatenate((buffer, numpy.zeros(needed - len(buffer), dtype=numpy.float32)))
+    while k <= last:
+        begin = k * hop - offset
+        yield buffer[begin:begin + frame]
+        k += 1
+
+
+def measure(frames: Iterable[numpy.ndarray], sink: Sink) -> None:
+    """Every series, in one pass over the frames."""
     analyser = cover.Analyser()
     es = analyser.es
     rms = es.RMS()
@@ -102,27 +184,32 @@ def measure(audio: numpy.ndarray) -> dict[str, numpy.ndarray]:
     flux = es.Flux()
     onset = es.OnsetDetection(method="hfc", sampleRate=RATE)
     mfcc = es.MFCC(inputSize=FRAME // 2 + 1, sampleRate=RATE, **MFCC)
-    count = -(-len(audio) // HOP) + 1
-    tracks = {name: numpy.empty((count, columns), dtype=numpy.float32) for name, columns in TRACKS.items()}
     no_phase = numpy.zeros(FRAME // 2 + 1, dtype=numpy.float32)
-    index = 0
-    for frame in es.FrameGenerator(audio, frameSize=FRAME, hopSize=HOP):
-        if index == count:
-            raise FramesError(f"{len(audio)} samples made more than the {count} frames the grid allows")
+    block = sink.block
+    for frame in frames:
+        index = sink.row()
         spectrum = analyser.spectrum(analyser.windowing(frame))
-        tracks["hpcp"][index] = analyser.hpcp(*analyser.peaks(spectrum))
+        block["hpcp"][index] = analyser.hpcp(*analyser.peaks(spectrum))
         level = float(rms(frame))
-        tracks["rms_db"][index] = max(20 * math.log10(level), RMS_FLOOR_DB) if level > 0 else RMS_FLOOR_DB
-        tracks["centroid"][index] = centroid(spectrum)
-        tracks["rolloff"][index] = rolloff(spectrum)
-        tracks["flatness"][index] = flatness(spectrum)
-        tracks["flux"][index] = flux(spectrum)
-        tracks["onset_hfc"][index] = onset(spectrum, no_phase)
-        tracks["melbands"][index], tracks["mfcc"][index] = mfcc(spectrum)
-        index += 1
-    if index != count:
-        raise FramesError(f"{len(audio)} samples made {index} frames, not the {count} the grid says")
-    return tracks
+        block["rms_db"][index] = max(20 * math.log10(level), RMS_FLOOR_DB) if level > 0 else RMS_FLOOR_DB
+        block["centroid"][index] = centroid(spectrum)
+        block["rolloff"][index] = rolloff(spectrum)
+        block["flatness"][index] = flatness(spectrum)
+        block["flux"][index] = flux(spectrum)
+        block["onset_hfc"][index] = onset(spectrum, no_phase)
+        block["melbands"][index], block["mfcc"][index] = mfcc(spectrum)
+
+
+class Counted:
+    """Blocks passed through, counting their samples."""
+
+    def __init__(self, blocks: Iterable[numpy.ndarray]):
+        self.blocks, self.samples = blocks, 0
+
+    def __iter__(self) -> Iterator[numpy.ndarray]:
+        for block in self.blocks:
+            self.samples += len(block)
+            yield block
 
 
 def ffmpeg_version(ffmpeg: str = "ffmpeg") -> str:
@@ -139,17 +226,24 @@ def main(argv: list[str]) -> int:
         if request.get("parameters") != parameters():
             raise FramesError("frames 1 has fixed settings; the request names others")
         output = Path(request["output_dir"])
-        audio = decode(request["input"]["path"])
-        tracks = measure(audio)
-        for name, values in tracks.items():
-            values.astype("<f4").tofile(output / f"{name}.f32")
+        audio = Counted(decoded_blocks(request["input"]["path"]))
+        sink = Sink(output)
+        try:
+            measure(framed(audio), sink)
+        finally:
+            sink.close()
+        if audio.samples == 0:
+            raise FramesError(f"{request['input']['path']} decodes to no samples")
+        count = -(-audio.samples // HOP) + 1
+        if sink.rows != count:
+            raise FramesError(f"{audio.samples} samples made {sink.rows} frames, not the {count} the grid says")
         software = [{"name": "ffmpeg", "version": ffmpeg_version()},
                     {"name": "essentia", "version": importlib.metadata.version("essentia")},
                     {"name": "numpy", "version": numpy.__version__},
                     {"name": "python", "version": platform.python_version()}]
-        outputs: dict[str, Any] = {name: {"shape": list(values.shape)} for name, values in tracks.items()}
-        outputs["samples"] = {"value": len(audio)}
-        outputs["seconds"] = {"value": len(audio) / RATE}
+        outputs: dict[str, Any] = {name: {"shape": [sink.rows, columns]} for name, columns in SERIES.items()}
+        outputs["samples"] = {"value": audio.samples}
+        outputs["seconds"] = {"value": audio.samples / RATE}
         result = {"contract": "archive-extractor-result/1", "software": software,
                   "grids": {"frames": {"sample_rate": RATE, "hop": HOP, "frame": FRAME, "first_centre": 0}},
                   "outputs": outputs}

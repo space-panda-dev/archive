@@ -9,7 +9,7 @@ adapter like any other enrichment result.
 
 The format is specified in docs/feature-bank.md so that a program in another
 language can read and write it. This module needs only the standard library,
-so the runner can run anywhere; reading a track as an array imports numpy.
+so the runner can run anywhere; reading a series as an array imports numpy.
 
 An entry lives at `sha256/<ab>/<cd>/<hex>/bank/<extractor>/<key hex>/` under
 a bank root, beside ADR 0069's derived media of the same content. It holds
@@ -25,6 +25,7 @@ import json
 import math
 import os
 import re
+import stat
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,18 +45,23 @@ ENTRY = "entry.json"
 RESULT = "result.json"
 
 ID = re.compile(r"[a-z][a-z0-9-]{0,62}")
-VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
+# Spool's version grammar ([A-Za-z0-9.]+), short enough that
+# `archive-extractor.<id>@<version>` stays within its 128 characters.
+VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9.]{0,39}")
 OUTPUT = re.compile(r"[a-z][a-z0-9_]{0,62}")
 FEATURE = re.compile(r"([a-z][a-z0-9-]{0,62})/([a-z][a-z0-9_]{0,62})")
 MEDIA_TYPE = re.compile(r"(\*|[a-z0-9][a-z0-9.+-]*)/(\*|[a-z0-9][a-z0-9.+-]*)")
 PROGRAM = re.compile(r"\$\{([a-z][a-z0-9-]{0,62})\}")
 SUFFIX = re.compile(r"\.[a-z0-9]{1,10}")
 KEY = re.compile(r"sha256:[0-9a-f]{64}")
+SPOOL_CAPABILITY = re.compile(r"[A-Za-z0-9._-]+@[A-Za-z0-9.]+")
+# The integers every JSON reader holds exactly (an IEEE double's), as RFC 8785 requires.
+MAX_INTEGER = 2 ** 53 - 1
 
-# Little-endian element types of a track, and their sizes in bytes.
+# Little-endian element types of a series, and their sizes in bytes.
 DTYPES = {"f32": 4, "f64": 8, "i16": 2, "i32": 4, "i64": 8, "u8": 1}
 _ARRAY_CODES = {"f32": "f", "f64": "d"}  # the float types, checked for finite values
-KINDS = ("track", "scalar", "events", "segments", "file")
+KINDS = ("series", "scalar", "events", "spans", "file")
 MAX_SOFTWARE = 32
 
 
@@ -67,9 +73,10 @@ class BankError(Exception):
 # -- canonical JSON and digests ---------------------------------------------
 
 def canonical(value: Any) -> bytes:
-    """Canonical JSON: sorted keys, no spaces, UTF-8. Parameters hold no
-    non-integer numbers (see `check_parameters`), so every language encodes
-    them to the same bytes."""
+    """Canonical JSON: sorted keys, no spaces, UTF-8. For values that
+    `check_parameters` accepts (integers within 2^53, ASCII object keys, no
+    lone surrogates) these are exactly RFC 8785's bytes, so a program in any
+    language with an RFC 8785 encoder computes the same keys."""
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
                       allow_nan=False).encode("utf-8")
 
@@ -89,8 +96,21 @@ def file_digest(path: Path) -> str:
 
 def check_parameters(value: Any, where: str = "parameters") -> None:
     """Parameters are JSON whose numbers are integers: a fraction is written
-    as decimal text, as a derivation run's parameters are (ADR 0064)."""
-    if isinstance(value, bool) or value is None or isinstance(value, (int, str)):
+    as decimal text, as a derivation run's parameters are (ADR 0064).
+    Integers stay within +-(2^53 - 1), object keys are ASCII, and text holds
+    no lone surrogates, so their canonical JSON is RFC 8785's in any language
+    (docs/feature-bank.md)."""
+    if isinstance(value, bool) or value is None:
+        return
+    if isinstance(value, int):
+        if abs(value) > MAX_INTEGER:
+            raise BankError(f"{where} is {value}, beyond +-(2^53 - 1); write it as decimal text")
+        return
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            raise BankError(f"{where} holds a lone surrogate, which is not text") from None
         return
     if isinstance(value, float):
         raise BankError(f"{where} is the number {value!r}; write a non-integer as decimal text")
@@ -100,6 +120,8 @@ def check_parameters(value: Any, where: str = "parameters") -> None:
         return
     if isinstance(value, dict):
         for key, item in value.items():
+            if not isinstance(key, str) or not key.isascii():
+                raise BankError(f"{where} has the key {key!r}; object keys are ASCII text")
             check_parameters(item, f"{where}.{key}")
         return
     raise BankError(f"{where} is not JSON")
@@ -132,13 +154,34 @@ def failure_path(root: Path, content: str, extractor_id: str, key: str) -> Path:
     return directory.with_name(directory.name + ".failed.json")
 
 
+def lock_path(root: Path, content: str, extractor_id: str, key: str) -> Path:
+    """The empty file a runner locks while it makes this entry (operational),
+    so two runners on one bank never pay for the same extractor twice."""
+    directory = entry_directory(root, content, extractor_id, key)
+    return directory.with_name(directory.name + ".lock")
+
+
+def code_digest(directory: Path) -> str:
+    """The digest of an extractor's files: every regular file under its
+    directory, by relative path, except Python's byte-code caches. Not part
+    of any key; the tests pin it per shipped version, so an edit that is not
+    a new version fails a test instead of serving stale entries."""
+    files = {}
+    for path in sorted(Path(directory).rglob("*")):
+        relative = path.relative_to(directory)
+        if "__pycache__" in relative.parts or not path.is_file():
+            continue
+        files[relative.as_posix()] = file_digest(path)
+    return digest_of(canonical(files))
+
+
 def output_file(name: str, declared: Mapping[str, Any]) -> str | None:
     """The file name an output's data has in an entry, or None for a scalar,
     whose value is in the manifest."""
     kind = declared["kind"]
-    if kind == "track":
+    if kind == "series":
         return f"{name}.{declared['dtype']}"
-    if kind in ("events", "segments"):
+    if kind in ("events", "spans"):
         return f"{name}.json"
     if kind == "file":
         return name + declared["suffix"]
@@ -189,15 +232,15 @@ def check_output_declaration(where: str, name: str, declared: Any) -> None:
     kind = declared.get("kind")
     _require(kind in KINDS, f"{where}: output {name} has kind {kind!r}, not one of {', '.join(KINDS)}")
     allowed = {"kind", "unit", "description"}
-    if kind == "track":
+    if kind == "series":
         allowed |= {"dtype", "columns", "grid"}
-        _require(declared.get("dtype") in DTYPES, f"{where}: track {name} dtype must be one of {sorted(DTYPES)}")
+        _require(declared.get("dtype") in DTYPES, f"{where}: series {name} dtype must be one of {sorted(DTYPES)}")
         columns = declared.get("columns")
         _require(isinstance(columns, int) and not isinstance(columns, bool) and columns >= 1,
-                 f"{where}: track {name} needs a positive integer `columns`")
+                 f"{where}: series {name} needs a positive integer `columns`")
         grid = declared.get("grid")
         _require(grid is None or (isinstance(grid, str) and OUTPUT.fullmatch(grid) is not None),
-                 f"{where}: track {name} grid {grid!r}")
+                 f"{where}: series {name} grid {grid!r}")
     if kind == "file":
         allowed |= {"media_type", "suffix"}
         _require(isinstance(declared.get("media_type"), str) and MEDIA_TYPE.fullmatch(declared["media_type"])
@@ -329,6 +372,20 @@ class Catalog:
                                         self.parameters(extractor_id, parameters), content, needs)
         return keys
 
+    def check_overrides(self, overrides: Mapping[str, Any], where: str = "parameters") -> None:
+        """Configured parameters must name an extractor here and only the
+        fields its manifest declares: a misspelt name would otherwise be
+        ignored, and the bank would serve the defaults' entries."""
+        for extractor_id, fields in overrides.items():
+            if extractor_id not in self.extractors:
+                raise BankError(f"{where} sets parameters for {extractor_id!r}, which is not an extractor here; "
+                                f"known: {', '.join(sorted(self.extractors))}")
+            if not isinstance(fields, dict):
+                raise BankError(f"{where}: {extractor_id}'s parameters must be an object")
+            unknown = set(fields) - set(self[extractor_id].manifest.get("parameters", {}))
+            if unknown:
+                raise BankError(f"{where} sets {extractor_id} parameters it does not declare: {sorted(unknown)}")
+
     def parameters(self, extractor_id: str,
                    overrides: Mapping[str, Mapping[str, Any]] | None = None) -> dict[str, Any]:
         merged = {**self[extractor_id].manifest.get("parameters", {}), **((overrides or {}).get(extractor_id, {}))}
@@ -377,30 +434,32 @@ def check_events(value: Any, where: str) -> None:
         previous = event["time"]
 
 
-def check_segments(value: Any, where: str) -> None:
-    """Segments: a list of `{"start", "end", "value"?, "label"?}`, start <= end."""
-    _require(isinstance(value, list), f"{where}: segments must be a list")
-    for index, segment in enumerate(value):
-        _require(isinstance(segment, dict) and {"start", "end"} <= set(segment)
-                 and set(segment) <= {"start", "end", "value", "label"},
-                 f"{where}[{index}]: a segment is {{start, end, value?, label?}}")
-        _require(_finite_number(segment["start"]) and _finite_number(segment["end"])
-                 and segment["start"] <= segment["end"], f"{where}[{index}]: start and end")
-        _require("value" not in segment or _finite_number(segment["value"]), f"{where}[{index}]: value")
-        _require("label" not in segment or isinstance(segment["label"], str), f"{where}[{index}]: label")
+def check_spans(value: Any, where: str) -> None:
+    """Spans: a list of `{"start", "end", "value"?, "label"?}`, start <= end."""
+    _require(isinstance(value, list), f"{where}: spans must be a list")
+    for index, span in enumerate(value):
+        _require(isinstance(span, dict) and {"start", "end"} <= set(span)
+                 and set(span) <= {"start", "end", "value", "label"},
+                 f"{where}[{index}]: a span is {{start, end, value?, label?}}")
+        _require(_finite_number(span["start"]) and _finite_number(span["end"])
+                 and span["start"] <= span["end"], f"{where}[{index}]: start and end")
+        _require("value" not in span or _finite_number(span["value"]), f"{where}[{index}]: value")
+        _require("label" not in span or isinstance(span["label"], str), f"{where}[{index}]: label")
 
 
-def _check_track_values(path: Path, dtype: str, where: str) -> None:
+def _check_series_values(path: Path, dtype: str, where: str) -> None:
+    """Refuse a floating-point series holding NaN or an infinity. A sum is
+    finite only if every term is, so a block is scanned value by value only
+    when its sum is not (which finite values far from zero can also cause)."""
     code = _ARRAY_CODES.get(dtype)
     if code is None:
         return
-    values = array.array(code)
     with open(path, "rb") as handle:
         while block := handle.read(1 << 22):
             values = array.array(code, block)
             if sys.byteorder != "little":
                 values.byteswap()
-            if not all(math.isfinite(v) for v in values):
+            if not math.isfinite(sum(values)) and not all(math.isfinite(v) for v in values):
                 raise BankError(f"{where}: holds a value that is not finite")
 
 
@@ -408,6 +467,14 @@ def check_result(directory: Path, extractor: Extractor) -> dict[str, Any]:
     """What an extractor left in its output directory, checked against its
     manifest. Returns the outputs as an entry describes them."""
     where = f"{extractor.id} result"
+    # Every file first: nothing is read, hashed, or later chmod-ed through a
+    # link. A hard link shares its inode with a file outside the entry
+    # (perhaps the archive's content, which enrichment never changes).
+    present = {path.name for path in directory.iterdir()}
+    for name in present:
+        status = os.lstat(directory / name)
+        _require(stat.S_ISREG(status.st_mode), f"{where}: {name} is not a plain file")
+        _require(status.st_nlink == 1, f"{where}: {name} is a hard link ({status.st_nlink} names); write a copy")
     try:
         result = json.loads((directory / RESULT).read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -435,20 +502,20 @@ def check_result(directory: Path, extractor: Extractor) -> dict[str, Any]:
             path = directory / file_name
             _require(path.is_file() and not path.is_symlink(), f"{where}: output {name} has no file {file_name}")
             entry["file"] = file_name
-        if kind == "track":
-            _require(set(out) == {"shape"}, f"{where}: track {name} reports exactly its shape")
+        if kind == "series":
+            _require(set(out) == {"shape"}, f"{where}: series {name} reports exactly its shape")
             shape = out["shape"]
             _require(isinstance(shape, list) and len(shape) == 2 and all(isinstance(n, int) and n >= 0
                                                                          for n in shape)
                      and shape[1] == declared["columns"],
-                     f"{where}: track {name} shape {shape!r} is not [rows, {declared['columns']}]")
+                     f"{where}: series {name} shape {shape!r} is not [rows, {declared['columns']}]")
             size = shape[0] * shape[1] * DTYPES[declared["dtype"]]
             actual = (directory / file_name).stat().st_size  # type: ignore[operator]
-            _require(actual == size, f"{where}: track {name} is {actual} bytes; its shape needs {size}")
+            _require(actual == size, f"{where}: series {name} is {actual} bytes; its shape needs {size}")
             if declared.get("grid") is not None:
-                _require(declared["grid"] in grids, f"{where}: track {name} names grid {declared['grid']}, "
+                _require(declared["grid"] in grids, f"{where}: series {name} names grid {declared['grid']}, "
                                                     "which the result does not describe")
-            _check_track_values(directory / file_name, declared["dtype"], f"{where}: track {name}")  # type: ignore
+            _check_series_values(directory / file_name, declared["dtype"], f"{where}: series {name}")  # type: ignore
             entry["shape"] = shape
         elif kind == "scalar":
             _require(set(out) == {"value"}, f"{where}: scalar {name} reports exactly its value")
@@ -458,24 +525,20 @@ def check_result(directory: Path, extractor: Extractor) -> dict[str, Any]:
             entry["value"] = value
         else:
             _require(out == {}, f"{where}: {kind} {name} reports nothing but its file")
-            if kind in ("events", "segments"):
+            if kind in ("events", "spans"):
                 try:
                     value = json.loads((directory / file_name).read_text(encoding="utf-8"))  # type: ignore
                 except (OSError, ValueError) as exc:
                     raise BankError(f"{where}: {kind} {name} is unreadable: {exc}") from exc
-                (check_events if kind == "events" else check_segments)(value, f"{where}: {name}")
+                (check_events if kind == "events" else check_spans)(value, f"{where}: {name}")
             else:
                 _require((directory / file_name).stat().st_size > 0, f"{where}: file {name} is empty")  # type: ignore
         if file_name is not None:
             entry["bytes"] = (directory / file_name).stat().st_size
             entry["sha256"] = file_digest(directory / file_name)
         described[name] = entry
-    present = {path.name for path in directory.iterdir()}
     extra = present - expected_files
     _require(not extra, f"{where}: undeclared files {sorted(extra)}")
-    for name in present:
-        _require((directory / name).is_file() and not (directory / name).is_symlink(),
-                 f"{where}: {name} is not a plain file")
     return {"software": software, "grids": grids, "outputs": described}
 
 
@@ -515,12 +578,12 @@ class Entry:
             raise BankError(f"{self.manifest['extractor']['id']} has no output {name}")
         return self.manifest["outputs"][name]
 
-    def track(self, name: str) -> Any:
-        """A track as a read-only numpy array of shape [rows, columns]."""
+    def series(self, name: str) -> Any:
+        """A series as a read-only numpy array of shape [rows, columns]."""
         import numpy
         output = self.output(name)
-        if output["kind"] != "track":
-            raise BankError(f"{name} is a {output['kind']}, not a track")
+        if output["kind"] != "series":
+            raise BankError(f"{name} is a {output['kind']}, not a series")
         dtype = numpy.dtype("<" + {"f32": "f4", "f64": "f8", "i16": "i2", "i32": "i4", "i64": "i8",
                                    "u8": "u1"}[output["dtype"]])
         values = numpy.fromfile(self.path / output["file"], dtype=dtype)
@@ -541,10 +604,10 @@ class Entry:
         return output["value"]
 
     def items(self, name: str) -> list[dict[str, Any]]:
-        """Events or segments."""
+        """Events or spans."""
         output = self.output(name)
-        if output["kind"] not in ("events", "segments"):
-            raise BankError(f"{name} is a {output['kind']}, not events or segments")
+        if output["kind"] not in ("events", "spans"):
+            raise BankError(f"{name} is a {output['kind']}, not events or spans")
         return json.loads((self.path / output["file"]).read_text(encoding="utf-8"))
 
     def file(self, name: str) -> Path:
@@ -552,6 +615,16 @@ class Entry:
         if output["kind"] != "file":
             raise BankError(f"{name} is a {output['kind']}, not a file")
         return self.path / output["file"]
+
+    def provenance(self, name: str) -> dict[str, Any]:
+        """What a derivation run that read this output must record (ADR 0073):
+        the feature, the method that made it, the entry's key, and the
+        software the entry recorded. The software is copied because the entry
+        is regenerable and may be deleted; the run is evidence and is not."""
+        self.output(name)
+        extractor = self.manifest["extractor"]
+        return {"feature": f"{extractor['id']}/{name}", "extractor": dict(extractor),
+                "entry": self.manifest["key"], "software": [dict(item) for item in self.manifest["software"]]}
 
 
 def read_entry(directory: Path) -> Entry | None:

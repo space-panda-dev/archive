@@ -16,13 +16,30 @@ All JSON is UTF-8. All binary numbers are little-endian. Digests are written
 
 ## Canonical JSON
 
-Keys and parameter digests are computed over **canonical JSON**: object keys
-sorted by code point, no whitespace, strings as JSON escapes them with
-non-ASCII characters written as themselves, and no number that is not an
-integer. Parameters therefore write a fraction as decimal text (`"0.85"`), as
-a derivation run's parameters do ([ADR 0064](decisions/0064-derivation-runs.md)).
-In Python this is `json.dumps(value, sort_keys=True, separators=(",", ":"),
-ensure_ascii=False).encode("utf-8")`.
+Keys and parameter digests are computed over **canonical JSON**, which is
+the JSON Canonicalization Scheme of [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785)
+applied to values limited so that every language's encoder agrees:
+
+- numbers are integers from -(2^53 - 1) to 2^53 - 1, written in decimal
+  without a plus sign, an exponent, or a fraction; a fraction is decimal
+  text (`"0.85"`), as a derivation run's parameters are
+  ([ADR 0064](decisions/0064-derivation-runs.md));
+- object keys are ASCII, so sorting them by UTF-16 code unit (RFC 8785) and
+  by code point are the same order;
+- text is UTF-8 with no lone surrogates. Exactly these characters are
+  escaped: `"` as `\"`, `\` as `\\`, U+0008, U+0009, U+000A, U+000C, and
+  U+000D as `\b`, `\t`, `\n`, `\f`, and `\r`, and the other characters
+  below U+0020 as `\u` and four lower-case hexadecimal digits. Every other
+  character, including `/`, `<`, `>`, `&`, U+2028, and U+2029, is written as
+  itself (Go's `encoding/json` escapes some of these by default; turn that
+  off);
+- no whitespace between tokens.
+
+The runner refuses parameters outside these limits. In Python this is
+`json.dumps(value, sort_keys=True, separators=(",", ":"),
+ensure_ascii=False).encode("utf-8")`;
+`test_parameters_are_limited_to_what_every_language_encodes_alike` in
+[`enrich/test_bank.py`](../enrich/test_bank.py) shows the escaping.
 
 ## The key
 
@@ -49,6 +66,7 @@ in [`enrich/test_bank.py`](../enrich/test_bank.py) writes one key out in full.
 <root>/sha256/<ab>/<cd>/<hex>/bank/<extractor id>/<key hex>/entry.json
 <root>/sha256/<ab>/<cd>/<hex>/bank/<extractor id>/<key hex>/<output files>
 <root>/sha256/<ab>/<cd>/<hex>/bank/<extractor id>/<key hex>.failed.json
+<root>/sha256/<ab>/<cd>/<hex>/bank/<extractor id>/<key hex>.lock
 <root>/tmp/
 ```
 
@@ -72,10 +90,16 @@ Entries are readable by their owner only (files `0600`, directories
 `<key hex>.failed.json` records the last failure to make that entry
 (operational state: the extractor, key, content, error, times, and the end of
 its log). It is never read as an entry, and the next success removes it.
-`tmp/` holds work in progress and may be emptied when no writer runs.
+`<key hex>.lock` is an empty file a writer holds an exclusive `flock` on
+while it makes that entry; a second writer waits for it, then finds the
+entry and runs nothing (operational; it may be deleted when no writer
+runs). `tmp/` holds work in progress and may be emptied when no writer runs.
 
 Entries are never rewritten. Old entries whose keys no installed extractor
 gives are stale; any entry, or the whole root, may be deleted at any time.
+Every entry of a content is under its `sha256/<ab>/<cd>/<hex>/` directory,
+which must be deleted when that content is destroyed
+([ADR 0004](decisions/0004-deletion.md)); a stem is the recording.
 
 ## `entry.json`
 
@@ -98,28 +122,35 @@ gives are stale; any entry, or the whole root, may be deleted at any time.
 Every field is present. `key` must equal the key computed from `extractor`,
 `parameters`, `content`, and `needs`; a reader refuses an entry where it does
 not. `software` is what the extractor reported, at most 32 pairs. Times are
-UTC.
+UTC. A derivation run that reads an entry copies its `software` into the
+run's own, with the feature, the extractor's id and version, and the key
+([ADR 0073](decisions/0073-proposed-feature-bank.md)), because the entry may
+be deleted and the run may not lose what it held.
 
 Each member of `outputs` repeats the manifest's declaration of that output
 (without its description) and adds:
 
 | Kind | Added fields | File |
 |---|---|---|
-| `track` | `shape`: `[rows, columns]` | `<name>.<dtype>`: rows x columns elements, row-major |
+| `series` | `shape`: `[rows, columns]` | `<name>.<dtype>`: rows x columns elements, row-major |
 | `scalar` | `value`: a finite number, text, or a boolean | none |
 | `events` | none | `<name>.json`: `[{"time", "value"?, "label"?}, ...]`, times non-decreasing |
-| `segments` | none | `<name>.json`: `[{"start", "end", "value"?, "label"?}, ...]`, start <= end |
+| `spans` | none | `<name>.json`: `[{"start", "end", "value"?, "label"?}, ...]`, start <= end |
 | `file` | none | `<name><suffix>`, of the declared `media_type` |
 
 Every output with a file also has `file` (its name), `bytes`, and `sha256`.
-A track's `dtype` is one of `f32`, `f64`, `i16`, `i32`, `i64`, `u8`, all
-little-endian; floating-point tracks hold only finite values. Times in events
-and segments are seconds from the start of the content's first audio or
-video stream unless the output's `unit` says otherwise.
+A series' `dtype` is one of `f32`, `f64`, `i16`, `i32`, `i64`, `u8`, all
+little-endian; floating-point series hold only finite values. Times in
+events and spans, and a grid's sample 0, are measured from the first decoded
+sample of the stream the extractor read (for `frames`, the first audio
+stream), unless the output's `unit` says otherwise. A stream's start offset
+in its container is not recorded: a reader that relates two streams of one
+file, such as a video's frames to its audio's `frames` series, adds the
+streams' start times (from `ffprobe`) itself.
 
 ### Grids
 
-A track that names a `grid` has its time base in `grids`:
+A series that names a `grid` has its time base in `grids`:
 
 ```json
 "grids": {"frames": {"sample_rate": 22050, "hop": 2048, "frame": 4096, "first_centre": 0}}
@@ -149,8 +180,9 @@ audio, and `n` decoded samples make `ceil(n / 2048) + 1` rows.
 
 `contract`, `id`, `version`, `command`, `accepts`, and `outputs` are
 required; nothing else is allowed. `version` matches
-`[A-Za-z0-9][A-Za-z0-9._-]{0,99}`. Output names match `[a-z][a-z0-9_]{0,62}`.
-A track declares `dtype`, `columns`, and optionally `grid`; a file declares
+`[A-Za-z0-9][A-Za-z0-9.]{0,39}`, so that `archive-extractor.<id>@<version>`
+is a Spool capability. Output names match `[a-z][a-z0-9_]{0,62}`.
+A series declares `dtype`, `columns`, and optionally `grid`; a file declares
 `media_type` and `suffix` (such as `.flac`); any output may have `unit` and
 `description`. `accepts` holds media type patterns, `type/subtype` with `*`
 for either part.
@@ -171,7 +203,7 @@ the scratch directory as its working directory:
  "key": "sha256:...",
  "parameters": {...},
  "input": {"path": "/abs/take.flac", "digest": "sha256:...", "media_type": "audio/flac"},
- "needs": {"frames/centroid": {"kind": "track", "dtype": "f32", "columns": 1, "unit": "Hz",
+ "needs": {"frames/centroid": {"kind": "series", "dtype": "f32", "columns": 1, "unit": "Hz",
                                "shape": [4019, 1], "file": "centroid.f32", "bytes": 16076,
                                "sha256": "sha256:...", "path": "/abs/bank/.../centroid.f32",
                                "entry": "sha256:<key of the frames entry>",
@@ -197,7 +229,9 @@ and exits 0:
  "outputs": {"hpcp": {"shape": [4019, 12]}, "seconds": {"value": 373.0}, "beats": {}, "vocals": {}}}
 ```
 
-`outputs` has exactly the declared outputs: a track gives only its `shape`,
+`outputs` has exactly the declared outputs: a series gives only its `shape`,
 a scalar only its `value`, and every other kind an empty object. The
-directory must hold nothing but `result.json` and the declared files. The
-runner replaces `result.json` with `entry.json` when it files the entry.
+directory must hold nothing but `result.json` and the declared files, each
+a regular file with one link: a symbolic or hard link is refused, since the
+runner makes every file owner-only and a hard link would change the linked
+file (perhaps the content itself). The runner replaces `result.json` with `entry.json` when it files the entry.

@@ -14,7 +14,7 @@ The byte-level format is in [the feature bank format](feature-bank.md).
    (or a directory of your own, passed with `--extractors`) holding
    `extractor.json`: the id, a version, the command, the media types it
    accepts, the features it needs, its parameters, and each output's kind.
-   Prefer reading `frames` tracks over decoding again: `"needs":
+   Prefer reading `frames` series over decoding again: `"needs":
    ["frames/rms_db", "frames/hpcp"]` gives the program their paths, shapes,
    and grid.
 2. **Write the program.** It receives the path of `request.json` as its last
@@ -22,7 +22,12 @@ The byte-level format is in [the feature bank format](feature-bank.md).
    `ARCHIVE_EXTRACTOR_OUTPUT` in its environment). It writes each declared
    output's file and `result.json` into the output directory, and exits 0.
    It refuses parameters it does not implement rather than measuring with
-   others. What it prints goes to the failure log, nowhere else.
+   others. What it prints goes to the failure log, nowhere else. It runs in
+   a process group of its own, and when it exits or runs past `--timeout`
+   the runner stops the whole group, so children it starts (an `ffmpeg`, a
+   separator) end with it. Every output is a new file: a hard link to the
+   input, or to anything else, is refused, since the runner makes outputs
+   owner-only and would change the linked file too.
 3. **Name its interpreter, if it needs one.** A command word `${name}` is a
    program the operator configures: `--program name=/path` or
    `{"programs": {"name": "/path"}}` in the file given to `--config`. A stem
@@ -32,12 +37,20 @@ The byte-level format is in [the feature bank format](feature-bank.md).
    with process launch replaced by a call that raises
    ([`enrich/test_bank.py`](../enrich/test_bank.py) does this for the example
    below).
-5. **Change its version whenever its outputs change.** A new version is a new
-   key, so the old entries are never read again; nothing needs deleting.
+5. **Change its version whenever its outputs can change.** A new version is
+   a new key, so the old entries are never read again; nothing needs
+   deleting. The key holds the version, not the code, so an edit without a
+   new version would serve the old entries' bits. For a shipped extractor,
+   `test_a_shipped_extractor_changes_only_with_its_version` pins a digest of
+   its files (and of any file it imports from outside its directory) per
+   version: add yours to `SHIPPED` in `enrich/test_bank.py`, and when the
+   test fails, bump the version or, if no output can change, record the new
+   digest. A version is letters, digits, and dots, at most 40 characters,
+   so that it is also a Spool capability's version.
 
 Feature names are `<extractor>/<output>`. Keep outputs on an existing grid
-where you can: a track on the `frames` grid lines up row for row with every
-other `frames` track.
+where you can: a series on the `frames` grid lines up row for row with every
+other `frames` series.
 
 ## A worked example in shell
 
@@ -135,7 +148,8 @@ stems.
 ## Other media
 
 An extractor for photographs accepts `image/*`; for video, `video/*`. Both
-use the same manifest, request, result, and bank. Scalars, events, segments,
-and files need no grid. A track's grid is a time base in integer samples, so
-spatial grids and fractional video frame rates cannot be declared yet
-([open questions](open-questions.md#interfaces-and-tooling)).
+use the same manifest, request, result, and bank. Scalars, events, spans,
+and files need no grid. A series' grid is a time base in integer samples; a
+fractional frame rate fits it (29.97 frames a second is `sample_rate` 30000
+and `hop` 1001). Spatial grids and regions of an image cannot be declared
+yet ([open questions](open-questions.md#interfaces-and-tooling)).

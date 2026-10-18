@@ -48,14 +48,37 @@ class Manifest(unittest.TestCase):
         extractor = bank.Catalog.load()["frames"]
         self.assertEqual(extractor.manifest["parameters"], frames.parameters())
         self.assertEqual(extractor.manifest["parameters"]["essentia"], cover.ESSENTIA_BUILD)
-        tracks = {name for name, out in extractor.outputs.items() if out["kind"] == "track"}
-        self.assertEqual(tracks, set(frames.TRACKS))
-        for name, columns in frames.TRACKS.items():
+        series = {name for name, out in extractor.outputs.items() if out["kind"] == "series"}
+        self.assertEqual(series, set(frames.SERIES))
+        for name, columns in frames.SERIES.items():
             self.assertEqual(extractor.outputs[name]["columns"], columns)
             self.assertEqual(extractor.outputs[name]["grid"], "frames")
         # The HPCP settings are cover's, so changing cover's changes the key.
         for field in ("analysis_rate", "frame_size", "hop_size", "windowing", "spectral_peaks", "hpcp"):
             self.assertEqual(frames.parameters()[field], cover.ANALYSIS[field])
+
+
+@needs_essentia
+class Framing(unittest.TestCase):
+    def test_framing_is_frame_generators(self) -> None:
+        """The streamed frames are Essentia's FrameGenerator's, for lengths
+        around the hop and the frame and for blocks that split frames."""
+        es = cover.essentia_module()
+        generator = numpy.random.default_rng(7)
+        for length in (1, 2047, 2048, 2049, 4095, 4096, 4097, 6143, 6144, 6145, 50001):
+            audio = generator.uniform(-1, 1, length).astype(numpy.float32)
+            expected = [numpy.array(frame) for frame in es.FrameGenerator(audio, frameSize=frames.FRAME,
+                                                                          hopSize=frames.HOP)]
+            self.assertEqual(len(expected), math.ceil(length / frames.HOP) + 1)
+            for block in (1000, 2048, 3000, 100000):
+                with self.subTest(length=length, block=block):
+                    blocks = [audio[i:i + block] for i in range(0, length, block)]
+                    found = list(frames.framed(blocks))
+                    self.assertEqual(len(found), len(expected))
+                    for mine, theirs in zip(found, expected):
+                        self.assertEqual(mine.dtype, numpy.float32)
+                        self.assertEqual(mine.tobytes(), theirs.tobytes())
+        self.assertEqual(list(frames.framed([])), [])
 
 
 @needs_ffmpeg
@@ -74,7 +97,7 @@ class Frames(unittest.TestCase):
                 code, answer = run_frames(directory, source)
                 self.assertEqual(code, 0, answer)
                 entry = bank.Bank(directory / "bank").entry(bank.file_digest(source), "frames")
-                stored = entry.track("hpcp")
+                stored = entry.series("hpcp")
                 total = 16 * rate  # eight one-second chords, twice
                 fresh = cover.Analyser().features(cover.load([cover.Piece(source, 0, total, rate)])).profiles
                 # Anchor: the profiles say something, so equality is not two empty arrays.
@@ -97,18 +120,18 @@ class Frames(unittest.TestCase):
         self.assertEqual(samples, 3 * frames.RATE)
         self.assertAlmostEqual(entry.scalar("seconds"), 3.0)
         rows = math.ceil(samples / frames.HOP) + 1
-        for name, columns in frames.TRACKS.items():
-            self.assertEqual(entry.track(name).shape, (rows, columns), name)
+        for name, columns in frames.SERIES.items():
+            self.assertEqual(entry.series(name).shape, (rows, columns), name)
             self.assertEqual(entry.grid(name), {"sample_rate": 22050, "hop": 2048, "frame": 4096,
                                                 "first_centre": 0})
         middle = slice(3, rows - 3)  # frames whose window lies inside the audio
         # A sine of amplitude 0.5 has an RMS of 0.5 / sqrt 2, about -9.03 dBFS.
-        self.assertTrue(numpy.allclose(entry.track("rms_db")[middle], 20 * math.log10(0.5 / math.sqrt(2)),
+        self.assertTrue(numpy.allclose(entry.series("rms_db")[middle], 20 * math.log10(0.5 / math.sqrt(2)),
                                        atol=0.05))
-        centroid = entry.track("centroid")[middle]
+        centroid = entry.series("centroid")[middle]
         # Near the tone; quantisation noise across the spectrum pulls it up a little.
         self.assertTrue(numpy.all(numpy.abs(centroid - 440) < 100), centroid.ravel()[:5])
-        hpcp = entry.track("hpcp")[middle]
+        hpcp = entry.series("hpcp")[middle]
         self.assertEqual(int(hpcp.mean(axis=0).argmax()), 0)  # A is HPCP's first bin
         self.assertEqual(entry.manifest["software"][1], {"name": "essentia", "version": cover.ESSENTIA_BUILD})
 
@@ -118,9 +141,9 @@ class Frames(unittest.TestCase):
         code, answer = run_frames(directory, source)
         self.assertEqual(code, 0, answer)
         entry = bank.Bank(directory / "bank").entry(bank.file_digest(source), "frames")
-        self.assertTrue(numpy.all(entry.track("rms_db") == frames.RMS_FLOOR_DB))
-        for name in frames.TRACKS:
-            self.assertTrue(numpy.isfinite(entry.track(name)).all(), name)
+        self.assertTrue(numpy.all(entry.series("rms_db") == frames.RMS_FLOOR_DB))
+        for name in frames.SERIES:
+            self.assertTrue(numpy.isfinite(entry.series(name)).all(), name)
 
     def test_audio_with_no_samples_fails(self) -> None:
         directory = scratch(self)

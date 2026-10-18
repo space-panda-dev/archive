@@ -122,6 +122,8 @@ meaningful happened.
 **Feature**: a measurement of content that an enrichment tool makes for other
 tools to read, such as a pitch-class profile every 93 ms or a separated stem;
 named `<extractor>/<output>`. A feature is not a claim and is never admitted.
+It is one of five kinds: a *series* (rows of numbers on a time grid), a
+*scalar*, *events*, *spans* (time ranges), or a *file*.
 **Feature bank**: the regenerable store of features, filed by content digest
 and keyed by everything that decides them; tools *read* it. **Extractor**: a
 program in any language, with a manifest, that *extracts* features into the

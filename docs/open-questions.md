@@ -255,13 +255,28 @@ unsupported rather than guess.
   - A key holds no software versions, so a bank filled on another machine with
     another `ffmpeg` or another build of a library may hold other bits under
     the same key. Should a reader refuse entries whose recorded software
-    differs from its own, or should a key include a fingerprint of it?
-  - Spool's results are JSON. How does a directory of binary outputs (tracks,
+    differs from its own, or should a key include a fingerprint of it? (A
+    claim made from features keeps the software either way: its run copies
+    each read entry's `software`.)
+  - Spool's results are JSON. How does a directory of binary outputs (series,
     stems) return from a worker: Spool result attachments, a worker writing to
     a shared bank, or something else? And how is the disclosure of content
     to a worker recorded before the put (the Spool adapter question above)?
-  - A grid is a time base in integer samples. How are spatial grids (images)
-    and fractional frame rates (video at 30000/1001) declared?
+    Either way a worker-side shim must turn Spool's payload on standard
+    input into a request file and attachments into the paths it names.
+  - A grid is a time base in integer samples, which covers video's
+    fractional frame rates. How are spatial grids and regions of an image
+    declared, since spans are one-dimensional?
+  - Should an entry record its stream's start offset in the container, so
+    that a reader relating a video's frames to its audio features need not
+    probe the file again?
+  - Destroying content (ADR 0004) must delete its directory in the bank and
+    in the derived-media root (ADR 0069), stems included. Is that a step of
+    the destroy transition, a pruning command run after it, or a check in
+    every reader against World's destroyed digests?
+  - Should decoded audio at another rate (44.1 kHz for a separator) be a
+    shared feature, so that extractors off the `frames` grid stop decoding
+    again, at about 1.3 GB per four mono hours at 22,050 Hz?
   - An entry belongs to one content. How is a feature of several contents
     (two recordings' cross-similarity) filed and keyed?
   - What deletes stale entries, whose keys no installed extractor gives: a
@@ -271,7 +286,7 @@ unsupported rather than guess.
     extractor's id and version, and its entry key; the first such tool
     settles the shape.
   - May the window search read windows' pitch-class profiles from the
-    whole-recording `frames/hpcp` track? Their edge frames differ from a
+    whole-recording `frames/hpcp` series? Their edge frames differ from a
     window measured alone, so it is another method needing its own
     calibration ([ADR 0071](decisions/0071-essentia-cover-similarity.md)).
 - Where does `enrich.mk`-style mechanism end and derivation policy begin, once

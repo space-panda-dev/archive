@@ -534,7 +534,7 @@ def banked_profiles(root: Path, path: str) -> numpy.ndarray | None:
     import bank
     try:
         found = bank.Bank(root).feature(bank.file_digest(Path(path)), "frames/hpcp")
-        return None if found is None else found[0].track(found[1])
+        return None if found is None else found[0].series(found[1])
     except (bank.BankError, OSError) as exc:
         raise CoverError(f"the feature bank at {root} cannot answer for {path}: {exc}") from exc
 

@@ -29,10 +29,20 @@ from support import needs_ffmpeg
 # One extractor program for every test extractor: it writes one output of
 # each kind, and its `mode` parameter chooses how it misbehaves.
 PROGRAM = r'''
-import json, math, os, struct, sys, time
+import json, math, os, struct, subprocess, sys, time
 request = json.load(open(sys.argv[1]))
 mode = request["parameters"].get("mode", "ok")
 out = request["output_dir"]
+if mode in ("grandchild", "linger"):
+    # A child of its own, as a shell script around ffmpeg has; "linger"
+    # leaves it running after a successful exit.
+    child = subprocess.Popen(["/bin/sh", "-c", "sleep 60"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    with open(os.environ["BANK_TEST_PIDS"], "a") as handle:
+        handle.write("%d\n" % child.pid)
+    if mode == "grandchild":
+        time.sleep(30)
+if mode == "slow":
+    time.sleep(1)
 log = os.environ.get("BANK_TEST_LOG")
 if log:
     with open(log, "a") as handle:
@@ -57,11 +67,14 @@ if mode == "short":
 with open(os.path.join(out, "x.f32"), "wb") as handle:
     handle.write(data)
 events = [{"time": 0.5}, {"time": 0.25}] if mode == "badevents" else [{"time": 0.25, "label": "a"}, {"time": 0.5}]
-segments = [{"start": 2, "end": 1}] if mode == "badsegments" else [{"start": 0, "end": 1.5, "value": 2}]
+spans = [{"start": 2, "end": 1}] if mode == "badspans" else [{"start": 0, "end": 1.5, "value": 2}]
 json.dump(events, open(os.path.join(out, "e.json"), "w"))
-json.dump(segments, open(os.path.join(out, "s.json"), "w"))
-with open(os.path.join(out, "f.txt"), "w") as handle:
-    handle.write(json.dumps(sorted(request["needs"])))
+json.dump(spans, open(os.path.join(out, "s.json"), "w"))
+if mode == "hardlink":
+    os.link(request["input"]["path"], os.path.join(out, "f.txt"))
+else:
+    with open(os.path.join(out, "f.txt"), "w") as handle:
+        handle.write(json.dumps(sorted(request["needs"])))
 if mode == "extra":
     open(os.path.join(out, "stray.bin"), "w").write("x")
 shape = [rows, 3] if mode == "columns" else [rows, 2]
@@ -72,10 +85,10 @@ if mode != "noresult":
     json.dump(result, open(os.path.join(out, "result.json"), "w"))
 '''
 
-OUTPUTS = {"x": {"kind": "track", "dtype": "f32", "columns": 2, "grid": "g", "unit": "1"},
+OUTPUTS = {"x": {"kind": "series", "dtype": "f32", "columns": 2, "grid": "g", "unit": "1"},
            "y": {"kind": "scalar", "unit": "1"},
            "e": {"kind": "events", "unit": "s"},
-           "s": {"kind": "segments", "unit": "s"},
+           "s": {"kind": "spans", "unit": "s"},
            "f": {"kind": "file", "media_type": "application/json", "suffix": ".txt"}}
 
 
@@ -84,6 +97,46 @@ def manifest(extractor_id: str, needs: tuple[str, ...] = (), version: str = "1",
     return {"contract": "archive-extractor/1", "id": extractor_id, "version": version,
             "command": ["${python}", "program.py"], "accepts": list(accepts), "needs": list(needs),
             "parameters": {"mode": mode}, "outputs": OUTPUTS}
+
+
+# Spool's capability grammar, from spool/spec/protocol.md ("Tasks"): name@version,
+# name [A-Za-z0-9._-]+, version [A-Za-z0-9.]+, 1 to 128 characters in all.
+SPOOL_CAPABILITY = r"[A-Za-z0-9._-]+@[A-Za-z0-9.]+"
+
+# The code of each shipped extractor version, and of what it imports from
+# outside its directory. A test fails when the code changes and the version
+# does not: bump the version if the outputs' bits or meaning can change
+# (a new key; old entries are never read again), or else record the new
+# digest here. Nothing else catches an edit that keeps the key.
+SHIPPED = {
+    "frames": {"version": "1",
+               "code": "sha256:8d05ebb444442eb4b08a516df7f2d03f403c4ab56aef7a74aff16446592a3282",
+               "outside": {"cover.py": "sha256:9170a3edb3dfbecfac99b2d17967f3ba3ae2449021427c805dc559d936c05c55"}},
+    "loudness-r128": {"version": "1",
+                      "code": "sha256:37384ca259e5a38d61a4f09891b496bfeba339e5a10791aea2dc6b401aed0898",
+                      "outside": {}},
+}
+
+
+def alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def gone_soon(pid: int, seconds: float = 5.0) -> bool:
+    """Whether the process has ended (and been reaped) within a few seconds."""
+    import time
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if not alive(pid):
+            return True
+        time.sleep(0.05)
+    return False
 
 
 class Fixture:
@@ -100,7 +153,8 @@ class Fixture:
         self.content.write_bytes(b"RIFF not really audio, but the test extractors do not decode it")
         self.digest = bank.file_digest(self.content)
         self.log = self.dir / "runs.log"
-        patcher = patch.dict(os.environ, {"BANK_TEST_LOG": str(self.log)})
+        self.pids = self.dir / "pids"
+        patcher = patch.dict(os.environ, {"BANK_TEST_LOG": str(self.log), "BANK_TEST_PIDS": str(self.pids)})
         patcher.start()
         test.addCleanup(patcher.stop)
 
@@ -214,12 +268,12 @@ class Cache(unittest.TestCase):
         def bomb(*_args, **_kwargs):
             raise AssertionError("a cache hit ran or hashed something")
         # Anchor: on a miss, the same bombs go off.
-        with patch.object(extract.subprocess, "run", bomb), patch.object(bank, "file_digest", bomb):
+        with patch.object(extract.subprocess, "Popen", bomb), patch.object(bank, "file_digest", bomb):
             with self.assertRaisesRegex(AssertionError, "cache hit"):
                 f.run("b", digest=True)
         self.assertEqual(f.run("b", digest=True)[0], 0)
         before = sorted(p.stat().st_mtime_ns for p in f.entries())
-        with patch.object(extract.subprocess, "run", bomb), patch.object(bank, "file_digest", bomb):
+        with patch.object(extract.subprocess, "Popen", bomb), patch.object(bank, "file_digest", bomb):
             code, answer = f.run("b", digest=True)
         self.assertEqual(code, 0, answer)
         self.assertEqual(f.statuses(answer), {"a": "hit", "b": "hit"})
@@ -248,14 +302,47 @@ class Cache(unittest.TestCase):
         f.add("b", needs=("a/x",))
         self.assertEqual(f.run()[0], 0)
         config = f.dir / "config.json"
-        config.write_text(json.dumps({"parameters": {"a": {"mode": "ok", "extra": "1"}}}))
+        config.write_text(json.dumps({"parameters": {"a": {"mode": "also ok"}}}))
         code, answer = f.run("all", "--config", str(config))
         self.assertEqual(code, 0, answer)
         self.assertEqual(f.statuses(answer), {"a": "ran", "b": "ran"})
         keys_default = bank.Catalog.load([f.extractors]).keys(f.digest, ["b"])
-        keys_other = bank.Catalog.load([f.extractors]).keys(f.digest, ["b"], {"a": {"extra": "1"}})
+        keys_other = bank.Catalog.load([f.extractors]).keys(f.digest, ["b"], {"a": {"mode": "also ok"}})
         self.assertNotEqual(keys_default["a"], keys_other["a"])
         self.assertNotEqual(keys_default["b"], keys_other["b"])
+
+    def test_a_misspelt_override_is_refused_not_ignored(self) -> None:
+        f = Fixture(self)
+        f.add("a")
+        config = f.dir / "config.json"
+        for overrides, reason in (({"b": {"mode": "x"}}, "not an extractor here"),
+                                  ({"a": {"mdoe": "x"}}, "does not declare")):
+            with self.subTest(overrides=overrides):
+                config.write_text(json.dumps({"parameters": overrides}))
+                code, answer = f.run("all", "--config", str(config))
+                self.assertEqual(code, 1)
+                self.assertIn(reason, answer["detail"])
+                with self.assertRaisesRegex(bank.BankError, reason):
+                    bank.Catalog.load([f.extractors]).check_overrides(overrides)
+        self.assertEqual(f.runs(), [])
+
+    def test_two_runners_make_one_entry_once(self) -> None:
+        f = Fixture(self)
+        f.add("a", mode="slow")
+        command = [sys.executable, str(Path(extract.__file__)), "run", "a", "--content", str(f.content),
+                   "--bank", str(f.bank), "--extractors", str(f.extractors)]
+        runners = [subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                   for _ in range(2)]
+        answers = []
+        for runner in runners:
+            out, err = runner.communicate(timeout=60)
+            self.assertEqual(runner.returncode, 0, err)
+            answers.append(json.loads(out)["extractors"]["a"])
+        # Anchor: both runners started before either finished, or the second simply hit.
+        self.assertEqual(sorted(a["status"] for a in answers), ["hit", "ran"], answers)
+        self.assertTrue([a for a in answers if a["status"] == "hit"][0].get("waited"), answers)
+        self.assertEqual(f.runs(), ["a"])
+        self.assertEqual(len(f.entries()), 1)
 
     def test_a_key_is_the_digest_of_its_canonical_description(self) -> None:
         """The key another language must compute, written out."""
@@ -268,6 +355,18 @@ class Cache(unittest.TestCase):
                          bank.digest_of(described.encode()))
         with self.assertRaisesRegex(bank.BankError, "decimal text"):
             bank.check_parameters({"threshold": 0.5})
+
+    def test_parameters_are_limited_to_what_every_language_encodes_alike(self) -> None:
+        """Within these limits the canonical JSON is RFC 8785's."""
+        bank.check_parameters({"n": 2 ** 53 - 1, "m": -(2 ** 53 - 1), "text": "caf\u00e9 \u2028 <&>"})
+        for value, reason in (({"n": 2 ** 53}, "2\\^53"), ({"caf\u00e9": 1}, "ASCII"),
+                              ({"t": "\ud800"}, "lone surrogate"), ({1: 1}, "ASCII")):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(bank.BankError, reason):
+                    bank.check_parameters(value)
+        # Non-ASCII text, U+2028, and <&> are written as themselves, as RFC 8785 writes them.
+        self.assertEqual(bank.canonical({"b": "\u2028<&>\u00e9", "a": "\n\x01"}),
+                         '{"a":"\\n\\u0001","b":"\u2028<&>\u00e9"}'.encode("utf-8"))
 
 
 class Failure(unittest.TestCase):
@@ -298,7 +397,7 @@ class Failure(unittest.TestCase):
     def test_each_malformed_result_is_refused_and_leaves_no_entry(self) -> None:
         reasons = {"nan": "not finite", "short": "bytes; its shape needs", "extra": "undeclared files",
                    "noresult": "wrote no result.json", "badevents": "non-decreasing",
-                   "badsegments": "start and end", "columns": "is not [rows, 2]"}
+                   "badspans": "start and end", "columns": "is not [rows, 2]"}
         for mode, reason in reasons.items():
             with self.subTest(mode=mode):
                 f = Fixture(self)
@@ -318,6 +417,56 @@ class Failure(unittest.TestCase):
         self.assertIn("ran past", answer["extractors"]["a"]["error"])
         self.assertEqual(f.entries(), [])
         self.assertEqual(list((f.bank / "tmp").iterdir()), [])
+
+    def test_a_timeout_stops_the_extractors_children_too(self) -> None:
+        f = Fixture(self)
+        f.add("a", mode="grandchild")
+        code, answer = f.run("a", "--timeout", "2")
+        self.assertEqual(code, 1)
+        self.assertIn("ran past", answer["extractors"]["a"]["error"])
+        pids = [int(line) for line in f.pids.read_text().split()]
+        self.assertEqual(len(pids), 1)  # anchor: the extractor did start a child
+        self.assertTrue(gone_soon(pids[0]), f"child {pids[0]} outlived its extractor's timeout")
+        self.assertEqual(list((f.bank / "tmp").iterdir()), [])
+
+    def test_what_an_extractor_leaves_running_is_stopped(self) -> None:
+        f = Fixture(self)
+        f.add("a", mode="linger")
+        code, answer = f.run("a")
+        self.assertEqual(code, 0, answer)
+        pids = [int(line) for line in f.pids.read_text().split()]
+        self.assertEqual(len(pids), 1)
+        self.assertTrue(gone_soon(pids[0]), f"child {pids[0]} kept running after its extractor exited")
+
+    def test_a_hard_link_to_the_input_is_refused_and_the_input_is_unchanged(self) -> None:
+        f = Fixture(self)
+        f.add("a", mode="hardlink")
+        f.content.chmod(0o444)  # as git-annex leaves content
+        self.addCleanup(f.content.chmod, 0o644)
+        code, answer = f.run()
+        self.assertEqual(code, 1)
+        self.assertIn("hard link", answer["extractors"]["a"]["error"])
+        self.assertEqual(f.content.stat().st_mode & 0o777, 0o444)
+        self.assertEqual(f.content.stat().st_nlink, 1)
+        self.assertEqual(f.entries(), [])
+
+    def test_a_failure_that_cannot_be_recorded_is_still_reported(self) -> None:
+        f = Fixture(self)
+        f.add("a", mode="fail")
+        f.add("b")
+
+        def no_replace(*_args):
+            raise OSError("read-only file system")
+        with patch.object(extract.os, "replace", no_replace):
+            code, answer = f.run()
+        self.assertEqual(code, 1)
+        self.assertEqual(f.statuses(answer), {"a": "failed", "b": "ran"})
+        self.assertIn("exited 1", answer["extractors"]["a"]["error"])
+        self.assertIn("read-only file system", answer["extractors"]["a"]["unrecorded"])
+        key = answer["extractors"]["a"]["key"]
+        record = bank.failure_path(f.bank, f.digest, "a", key)
+        self.assertFalse(record.exists())
+        self.assertEqual([p.name for p in record.parent.iterdir() if p.name.startswith(".")], [])
 
     def test_an_interrupted_install_leaves_the_bank_as_it_was(self) -> None:
         f = Fixture(self)
@@ -377,7 +526,7 @@ class Reading(unittest.TestCase):
         f.add("a")
         self.assertEqual(f.run()[0], 0)
         entry = f.reader().entry(f.digest, "a")
-        x = entry.track("x")
+        x = entry.series("x")
         self.assertEqual(x.shape, (3, 2))
         self.assertEqual(x.dtype.str, "<f4")
         self.assertEqual(x.tolist(), [[0, 1], [2, 3], [4, 5]])
@@ -389,8 +538,8 @@ class Reading(unittest.TestCase):
         self.assertEqual(entry.output("f")["sha256"], bank.file_digest(entry.file("f")))
         self.assertEqual(entry.path.stat().st_mode & 0o777, 0o700)
         self.assertEqual({p.stat().st_mode & 0o777 for p in entry.path.iterdir()}, {0o600})
-        with self.assertRaisesRegex(bank.BankError, "not a track"):
-            entry.track("y")
+        with self.assertRaisesRegex(bank.BankError, "not a series"):
+            entry.series("y")
 
     def test_absent_is_none_and_damage_is_an_error(self) -> None:
         f = Fixture(self)
@@ -404,10 +553,54 @@ class Reading(unittest.TestCase):
         (path / "entry.json").unlink()
         with self.assertRaisesRegex(bank.BankError, "without entry.json"):
             f.reader().entry(f.digest, "a")
-        # The runner refuses to call damage a miss, too.
+
+    def test_damage_fails_only_what_needs_it(self) -> None:
+        f = Fixture(self)
+        f.add("a")
+        f.add("b", needs=("a/x",))
+        f.add("c")
+        self.assertEqual(f.run("a")[0], 0)
+        path = f.reader().entry(f.digest, "a").path
+        (path / "entry.json").unlink()
+        # The runner refuses to call damage a miss, and spares what does not need it.
         code, answer = f.run()
         self.assertEqual(code, 1)
-        self.assertIn("without entry.json", answer["detail"])
+        self.assertEqual(f.statuses(answer), {"a": "failed", "b": "blocked", "c": "ran"})
+        self.assertIn("without entry.json", answer["extractors"]["a"]["error"])
+        self.assertIn("delete it", answer["extractors"]["a"]["error"])
+        # The bank is regenerable: deleting the damage repairs it.
+        shutil.rmtree(path)
+        code, answer = f.run()
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(f.statuses(answer), {"a": "ran", "b": "ran", "c": "hit"})
+
+    def test_a_run_that_read_features_keeps_their_software(self) -> None:
+        f = Fixture(self)
+        f.add("a")
+        self.assertEqual(f.run()[0], 0)
+        entry = f.reader().entry(f.digest, "a")
+        provenance = entry.provenance("x")
+        self.assertEqual(provenance, {"feature": "a/x", "extractor": {"id": "a", "version": "1"},
+                                      "entry": entry.manifest["key"],
+                                      "software": [{"name": "test", "version": "1"}]})
+        # A copy: deleting the entry, as the bank allows, leaves it whole.
+        shutil.rmtree(entry.path)
+        self.assertEqual(provenance["software"], [{"name": "test", "version": "1"}])
+        with self.assertRaisesRegex(bank.BankError, "no output"):
+            entry.provenance("nothing")
+
+    def test_a_large_finite_series_is_accepted_and_any_nan_refused(self) -> None:
+        directory = Path(tempfile.mkdtemp(prefix="bank-values-"))
+        self.addCleanup(shutil.rmtree, directory, True)
+        path = directory / "x.f64"
+        import struct
+        # Their sum overflows, so the values are each checked.
+        path.write_bytes(struct.pack("<3d", 1e308, 1e308, 1.0))
+        bank._check_series_values(path, "f64", "x")
+        for bad in (float("nan"), float("inf")):
+            path.write_bytes(struct.pack("<3d", 1e308, 1e308, bad))
+            with self.assertRaisesRegex(bank.BankError, "not finite"):
+                bank._check_series_values(path, "f64", "x")
 
     def test_an_entry_whose_key_does_not_match_is_refused(self) -> None:
         f = Fixture(self)
@@ -422,6 +615,44 @@ class Reading(unittest.TestCase):
 
 
 class Manifests(unittest.TestCase):
+    def test_every_extractor_is_a_spool_capability(self) -> None:
+        import re
+        extremes = manifest("a" + "b" * 62, version="1" + ".9" * 19 + "9")
+        catalog = list(bank.Catalog.load().extractors.values()) + [bank.Extractor(Path("."), extremes)]
+        self.assertEqual(len(extremes["id"]), 63)
+        self.assertEqual(len(extremes["version"]), 40)
+        bank.check_manifest(extremes, "extremes")
+        for extractor in catalog:
+            with self.subTest(extractor=extractor.id):
+                capability = extract.spool_capability(extractor)
+                self.assertTrue(re.fullmatch(SPOOL_CAPABILITY, capability), capability)
+                self.assertLessEqual(len(capability), 128)
+        for version in ("1_0", "1-rc", "1" * 41):
+            with self.subTest(version=version):
+                with self.assertRaisesRegex(bank.BankError, "version"):
+                    bank.check_manifest(manifest("a", version=version), version)
+
+    def test_a_shipped_extractor_changes_only_with_its_version(self) -> None:
+        catalog = bank.Catalog.load()
+        enrich = Path(bank.__file__).resolve().parent
+        self.assertEqual(set(catalog.extractors), set(SHIPPED))
+        for extractor in catalog.extractors.values():
+            with self.subTest(extractor=extractor.id):
+                pinned = SHIPPED[extractor.id]
+                found = {"version": extractor.version, "code": bank.code_digest(extractor.directory),
+                         "outside": {name: bank.file_digest(enrich / name) for name in pinned["outside"]}}
+                self.assertEqual(found, pinned, "the code changed: bump the version, or record the digests")
+
+    def test_a_code_digest_sees_every_file_but_byte_code(self) -> None:
+        f = Fixture(self)
+        directory = f.add("a")
+        before = bank.code_digest(directory)
+        (directory / "__pycache__").mkdir()
+        (directory / "__pycache__" / "program.cpython-314.pyc").write_bytes(b"x")
+        self.assertEqual(bank.code_digest(directory), before)
+        (directory / "helper.sh").write_text("true\n")
+        self.assertNotEqual(bank.code_digest(directory), before)
+
     def test_the_shipped_extractors_load_and_their_programs_exist(self) -> None:
         catalog = bank.Catalog.load()
         self.assertIn("frames", catalog.extractors)
@@ -444,7 +675,7 @@ class Manifests(unittest.TestCase):
                "unknown field": {**good, "colour": "blue"},
                "bad id": {**good, "id": "A"},
                "no outputs": {**good, "outputs": {}},
-               "track without columns": {**good, "outputs": {"x": {"kind": "track", "dtype": "f32"}}},
+               "series without columns": {**good, "outputs": {"x": {"kind": "series", "dtype": "f32"}}},
                "unknown kind": {**good, "outputs": {"x": {"kind": "video"}}},
                "file without suffix": {**good, "outputs": {"x": {"kind": "file", "media_type": "audio/flac"}}},
                "wrong contract": {**good, "contract": "archive-extractor/2"},
@@ -474,7 +705,7 @@ class ShellExtractor(unittest.TestCase):
         # A 440 Hz sine at ffmpeg's default amplitude (1/8) reads about -21 LUFS.
         self.assertTrue(-25 < value < -15, value)
         self.assertEqual(entry.manifest["software"][0]["name"], "ffmpeg")
-        with patch.object(extract.subprocess, "run", side_effect=AssertionError("ran")):
+        with patch.object(extract.subprocess, "Popen", side_effect=AssertionError("ran")):
             out = io.StringIO()
             with redirect_stdout(out):
                 self.assertEqual(extract.main(argv), 0)
@@ -503,7 +734,7 @@ class ShellExtractor(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         task = json.loads(completed.stdout)["extractors"]["loudness-r128"]
         self.assertEqual(task["status"], "would_run")
-        self.assertEqual(task["task"]["capability"], "archive-extractor/loudness-r128@1")
+        self.assertEqual(task["task"]["capability"], "archive-extractor.loudness-r128@1")
         self.assertFalse((directory / "b").exists())
 
 

@@ -2,7 +2,7 @@
  "contract": "archive-extractor/1",
  "id": "frames",
  "version": "1",
- "description": "One decode and one pass over Essentia frames (4096, hop 2048, 22050 Hz): the base tracks other extractors read.",
+ "description": "One decode and one pass over Essentia frames (4096, hop 2048, 22050 Hz): the base series other extractors read.",
  "command": [
   "${python}",
   "frames.py"
@@ -67,7 +67,7 @@
  },
  "outputs": {
   "hpcp": {
-   "kind": "track",
+   "kind": "series",
    "dtype": "f32",
    "columns": 12,
    "grid": "frames",
@@ -75,7 +75,7 @@
    "description": "pitch-class profile, identical to cover.Analyser.features"
   },
   "rms_db": {
-   "kind": "track",
+   "kind": "series",
    "dtype": "f32",
    "columns": 1,
    "grid": "frames",
@@ -83,7 +83,7 @@
    "description": "frame RMS, unwindowed, floored at -120"
   },
   "centroid": {
-   "kind": "track",
+   "kind": "series",
    "dtype": "f32",
    "columns": 1,
    "grid": "frames",
@@ -91,7 +91,7 @@
    "description": "spectral centroid"
   },
   "rolloff": {
-   "kind": "track",
+   "kind": "series",
    "dtype": "f32",
    "columns": 1,
    "grid": "frames",
@@ -99,7 +99,7 @@
    "description": "85 % spectral roll-off"
   },
   "flatness": {
-   "kind": "track",
+   "kind": "series",
    "dtype": "f32",
    "columns": 1,
    "grid": "frames",
@@ -107,7 +107,7 @@
    "description": "spectral flatness"
   },
   "flux": {
-   "kind": "track",
+   "kind": "series",
    "dtype": "f32",
    "columns": 1,
    "grid": "frames",
@@ -115,7 +115,7 @@
    "description": "L2 spectral flux from the previous frame"
   },
   "onset_hfc": {
-   "kind": "track",
+   "kind": "series",
    "dtype": "f32",
    "columns": 1,
    "grid": "frames",
@@ -123,7 +123,7 @@
    "description": "high-frequency-content onset detection function"
   },
   "mfcc": {
-   "kind": "track",
+   "kind": "series",
    "dtype": "f32",
    "columns": 13,
    "grid": "frames",
@@ -131,7 +131,7 @@
    "description": "13 MFCCs"
   },
   "melbands": {
-   "kind": "track",
+   "kind": "series",
    "dtype": "f32",
    "columns": 40,
    "grid": "frames",

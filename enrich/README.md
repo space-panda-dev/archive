@@ -561,7 +561,7 @@ it needs, runs only what is missing, checks every output against the
 manifest, and renames a complete entry into place. It prints each extractor's
 `hit`, `ran`, `failed`, `blocked`, or `skipped` and exits 0 only when none
 failed or was blocked. `bank.py` reads entries back
-(`bank.Bank(root).entry(digest, "frames").track("hpcp")`), and
+(`bank.Bank(root).entry(digest, "frames").series("hpcp")`), and
 `cover.py --bank <dir>` reads whole files' pitch-class profiles from it.
 
 | Extractor | Language | Writes |
