@@ -16,7 +16,10 @@ The measure is the V2 system's, with its calibrated thresholds:
    `CoverSongSimilarity` with the serra09 alignment and the asymmetric
    distance, in both directions. The distance is the smaller one. The
    cross-similarity is Essentia's, reproduced bit for bit in NumPy; its dot
-   products are summed once and serve both directions.
+   products are summed once and serve both directions. The alignment is
+   Essentia's recurrence ported to NumPy (`serra09`), which answers
+   Essentia's scores and distances to the bit at a fraction of the cost;
+   `alignment` says where in the matrix the best alignment lies.
 4. The score is that distance rounded half to even to four places. Lower is
    closer.
 
@@ -415,8 +418,106 @@ def cross_similarities(a: numpy.ndarray, b: numpy.ndarray) -> tuple[numpy.ndarra
     return forward.matrix, cross_similarity(b, a)
 
 
+# -- the alignment -----------------------------------------------------------
+#
+# Essentia's `CoverSongSimilarity` with the serra09 alignment and the
+# asymmetric distance (coversongsimilarity.cpp), in NumPy, checked against
+# the pinned build by test_cover.Alignment.
+# A cell of the score matrix outside the first two rows and columns is the
+# best of the cells at (i-1, j-1), (i-2, j-1) and (i-1, j-2), plus one where
+# the binary matrix matches, or less the disruption penalty, floored at zero,
+# where it does not. Essentia's onset and extension penalties are both 0.5,
+# its defaults, which the method keeps, so the penalty does not depend on the
+# matrix. Every score is a multiple of 0.5, which float32 holds exactly, so
+# the scores are Essentia's to the bit in any order of evaluation.
+_DISRUPTION = numpy.float32(0.5)
+
+
+def _turned(rows: int, columns: int) -> bool:
+    """Whether the recurrence is cheaper over the transposed matrix. No cell
+    depends on its own row, so each row is one vector step, and the set of
+    cells a cell depends on is its own transpose, so the transposed matrix's
+    scores are the transposed scores. A step costs about as much as copying
+    a thousand transposed cells (measured on Apple silicon), so a matrix much
+    taller than it is wide runs turned."""
+    return (rows - columns) * 1000 > rows * columns
+
+
+def serra09(matrix: numpy.ndarray) -> tuple[numpy.ndarray, float]:
+    """Essentia's answer for a binary cross-similarity matrix whose rows are
+    the query and columns the reference: the score matrix, and the square
+    root of the number of columns over its highest score, as float32. With
+    no match anywhere the highest score is zero, and the distance is positive
+    infinity, as Essentia's is. A matrix that is empty or not binary is
+    refused, as Essentia refuses it."""
+    matrix = numpy.asarray(matrix, dtype=numpy.float32)
+    if matrix.ndim != 2 or matrix.size == 0:
+        raise CoverError(f"the cross-similarity matrix is empty or not a matrix ({matrix.shape})")
+    # Every non-zero cell is a one: no NaN, no other value.
+    if numpy.count_nonzero(matrix) != numpy.count_nonzero(matrix == 1):
+        raise CoverError("the cross-similarity matrix is not binary")
+    rows, columns = matrix.shape
+    turned = _turned(rows, columns)
+    # One where it matches, minus the penalty where it does not.
+    gain = numpy.multiply(matrix.T if turned else matrix, 1 + _DISRUPTION, order="C")
+    gain -= _DISRUPTION
+    scores = numpy.zeros(gain.shape, numpy.float32)
+    zero = numpy.float32(0)
+    for i in range(2, len(scores)):
+        cell = scores[i, 2:]
+        numpy.maximum(scores[i - 1, 1:-1], scores[i - 2, 1:-1], out=cell)
+        numpy.maximum(cell, scores[i - 1, :-2], out=cell)
+        cell += gain[i, 2:]
+        # A match is at least one, so only a disruption is floored.
+        numpy.maximum(cell, zero, out=cell)
+    if turned:
+        scores = scores.T
+    best = float(scores.max())
+    # Essentia divides the double square root of the column count by the
+    # float32 best score in double, and stores the quotient as float32.
+    distance = float(numpy.float32(math.sqrt(columns) / best)) if best > 0 else math.inf
+    return scores, distance
+
+
+@dataclass(frozen=True)
+class Alignment:
+    """The best local alignment in a score matrix, as (row, column) cells:
+    the match it starts at and the cell it ends at, and its score. Row r of a
+    cross-similarity matrix is the query's stacked profiles r to r + 8, and
+    column c the reference's."""
+    start: tuple[int, int]
+    end: tuple[int, int]
+    score: float
+
+
+def alignment(scores: numpy.ndarray) -> Alignment | None:
+    """Where the alignment that Essentia's distance divides by lies in
+    `serra09`'s score matrix, or None when nothing matched. It ends at the
+    first cell, in row order, holding the highest score, the one Essentia
+    finds; it starts where tracing back from there reaches a match that
+    follows no score. Tracing back steps to a predecessor holding the score
+    the cell was made from, preferring (i-1, j-1), then (i-2, j-1), then
+    (i-1, j-2). Essentia keeps no path, so where two predecessors tie, the
+    start is this order's choice among equally good ones."""
+    end = numpy.unravel_index(int(numpy.argmax(scores)), scores.shape)
+    score = float(scores[end])
+    if score <= 0:
+        return None
+    i, j = int(end[0]), int(end[1])
+    while True:
+        here = float(scores[i, j])
+        steps = ((i - 1, j - 1), (i - 2, j - 1), (i - 1, j - 2))
+        before = [float(scores[cell]) for cell in steps]
+        best = max(before)
+        if best == 0 and here == 1:
+            break
+        i, j = steps[before.index(best)]
+    return Alignment((i, j), (int(end[0]), int(end[1])), score)
+
+
 class Analyser:
-    """Essentia's algorithms, configured once with the method's settings."""
+    """Essentia's algorithms, configured once with the method's settings,
+    and the cross-similarity's and the alignment's ports."""
 
     def __init__(self) -> None:
         es = essentia_module()
@@ -425,7 +526,6 @@ class Analyser:
         self.spectrum = es.Spectrum()
         self.peaks = es.SpectralPeaks(**_options(ANALYSIS["spectral_peaks"]))
         self.hpcp = es.HPCP(**_options(ANALYSIS["hpcp"]))
-        self.cover = es.CoverSongSimilarity(**_options(ANALYSIS["cover_song_similarity"]))
 
     def features(self, audio: numpy.ndarray) -> Features:
         frames = [self.hpcp(*self.peaks(self.spectrum(self.windowing(frame))))
@@ -447,6 +547,11 @@ class Analyser:
         _, ab = self.cover(forward)
         _, ba = self.cover(backward)
         return min(float(ab), float(ba))
+
+    def cover(self, matrix: numpy.ndarray) -> tuple[numpy.ndarray, float]:
+        """Essentia's `CoverSongSimilarity` answer, its score matrix and
+        distance, from `serra09`."""
+        return serra09(matrix)
 
 
 def transposition_invariant_similarity(a: Sequence[float], b: Sequence[float]) -> float:

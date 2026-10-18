@@ -37,6 +37,7 @@ def essentia_cross(a: numpy.ndarray, b: numpy.ndarray) -> numpy.ndarray:
     return cover.essentia_module().ChromaCrossSimilarity(**options)(a, b)
 
 
+ANALYSIS_COVER = {"distanceType": "asymmetric", "alignmentType": "serra09"}
 RATE = 1000  # samples per second in the search tests: two seconds is 2,000 samples
 
 
@@ -569,6 +570,125 @@ class ReverseDirection(unittest.TestCase):
         if ESSENTIA:
             self.assertTrue(numpy.array_equal(ab, essentia_cross(a, b)))
             self.assertTrue(numpy.array_equal(ba, essentia_cross(b, a)))
+
+
+@needs_essentia
+@needs_ffmpeg
+class Alignment(unittest.TestCase):
+    """The NumPy serra09 against Essentia's own CoverSongSimilarity, on
+    matrices the real Analyser makes from written audio."""
+
+    def setUp(self) -> None:
+        tmp = support.scratch(self, "align-")
+        rate = 48000
+        # A short query, and a longer recording holding the same tune in
+        # another key between two other tunes: unequal lengths both ways.
+        tunes = {"query": support.tune_samples(support.TUNE, rate, transpose=3, repeats=2, seed=1),
+                 "window": numpy.concatenate([support.tune_samples(support.OTHER_TUNE, rate, repeats=2, seed=4),
+                                              support.tune_samples(support.TUNE, rate, repeats=2, seed=5),
+                                              support.tune_samples(support.OTHER_TUNE, rate, repeats=2, seed=6)]),
+                 "other": support.tune_samples(support.OTHER_TUNE, rate, seed=3)}
+        self.analyser = cover.Analyser()
+        self.profiles = {name: self.analyser.features(cover.load([cover.Piece(
+            support.write_wav(tmp / f"{name}.wav", samples, rate), 0, len(samples), rate)])).profiles
+            for name, samples in tunes.items()}
+        self.essentia = self.analyser.es.CoverSongSimilarity(**cover._options(ANALYSIS_COVER))
+
+    def matrices(self) -> list[numpy.ndarray]:
+        return [self.analyser.cross(self.profiles[a], self.profiles[b])
+                for a, b in (("query", "window"), ("window", "query"), ("query", "other"), ("other", "window"))]
+
+    def assertEssentias(self, matrix: numpy.ndarray) -> float:
+        expected_scores, expected = self.essentia(matrix)
+        scores, distance = cover.serra09(matrix)
+        self.assertEqual(scores.dtype, numpy.float32)
+        self.assertTrue(numpy.array_equal(scores, expected_scores), matrix.shape)
+        # The same float32, to the bit, or the same infinity.
+        self.assertEqual(numpy.float32(distance).tobytes(), numpy.float32(expected).tobytes(), matrix.shape)
+        return distance
+
+    def test_the_method_keeps_the_settings_the_port_implements(self) -> None:
+        self.assertEqual(cover.ANALYSIS["cover_song_similarity"], ANALYSIS_COVER)
+        for penalty in ("disOnset", "disExtension"):
+            self.assertEqual(self.essentia.paramValue(penalty), float(cover._DISRUPTION))
+
+    def test_scores_and_distance_are_essentias_on_real_matrices(self) -> None:
+        matrices = self.matrices()
+        distances = [self.assertEssentias(matrix) for matrix in matrices]
+        # Anchor: unequal lengths, both ways round, both through the
+        # transposed path and not, and finite distances that differ.
+        self.assertEqual({cover._turned(*matrix.shape) for matrix in matrices}, {True, False})
+        self.assertTrue(all(matrix.shape[0] != matrix.shape[1] for matrix in matrices))
+        self.assertTrue(all(math.isfinite(distance) for distance in distances))
+        self.assertEqual(len(set(distances)), len(distances))
+
+    def test_matrices_smaller_than_the_recurrences_reach_are_essentias(self) -> None:
+        matrix = self.matrices()[0]
+        # Cut from where a match lies past the first two rows and columns.
+        rows, columns = numpy.argwhere(matrix[2:, 2:] == 1)[0]
+        corner = matrix[rows:rows + 5, columns:columns + 5]
+        answers = {(height, width): self.assertEssentias(numpy.ascontiguousarray(corner[:height, :width]))
+                   for height in range(1, 6) for width in range(1, 6)}
+        # Fewer than three rows or columns leave nothing to score.
+        for (height, width), distance in answers.items():
+            self.assertEqual(cover.unaligned(distance), min(height, width) < 3 or not corner[2:height, 2:width].any())
+        # Anchor: some of them align.
+        self.assertTrue(any(math.isfinite(distance) for distance in answers.values()))
+
+    def test_nothing_matching_is_essentias_infinity(self) -> None:
+        empty = numpy.zeros_like(self.matrices()[0])
+        self.assertEqual(self.assertEssentias(empty), math.inf)
+        self.assertIsNone(cover.alignment(cover.serra09(empty)[0]))
+
+    def test_essentias_cover_song_similarity_is_never_called(self) -> None:
+        def bomb(*_, **__):
+            raise AssertionError("Essentia's CoverSongSimilarity was used")
+        with patch.object(self.analyser.es, "CoverSongSimilarity", bomb):
+            # Anchor: the bomb is live where the Analyser would find it.
+            with self.assertRaises(AssertionError):
+                cover.essentia_module().CoverSongSimilarity()
+            analyser = cover.Analyser()
+            distance = analyser.distance(self.profiles["query"], self.profiles["window"])
+        self.assertTrue(math.isfinite(distance))
+        _, expected_ab = self.essentia(self.analyser.cross(self.profiles["query"], self.profiles["window"]))
+        _, expected_ba = self.essentia(self.analyser.cross(self.profiles["window"], self.profiles["query"]))
+        self.assertEqual(distance, min(float(expected_ab), float(expected_ba)))
+
+    def test_a_matrix_that_is_empty_or_not_binary_is_refused(self) -> None:
+        matrix = self.matrices()[0]
+        with self.assertRaisesRegex(cover.CoverError, "empty"):
+            cover.serra09(matrix[:0])
+        with self.assertRaisesRegex(cover.CoverError, "empty"):
+            cover.serra09(matrix[0])
+        for value in (0.5, 2, -1, math.nan):
+            spoiled = matrix.copy()
+            spoiled[3, 4] = value
+            with self.assertRaisesRegex(cover.CoverError, "not binary"):
+                cover.serra09(spoiled)
+        # Anchor: the unspoiled matrix is accepted.
+        cover.serra09(matrix)
+
+    def test_the_alignment_ends_where_essentias_best_score_is_and_starts_at_a_match(self) -> None:
+        for matrix in self.matrices():
+            scores, _ = cover.serra09(matrix)
+            found = cover.alignment(scores)
+            expected_scores, _ = self.essentia(matrix)
+            end = numpy.unravel_index(int(numpy.argmax(expected_scores)), expected_scores.shape)
+            self.assertEqual(found.end, (int(end[0]), int(end[1])))
+            self.assertEqual(found.score, float(numpy.max(expected_scores)))
+            # It starts at a match that follows nothing, before its end.
+            self.assertEqual(matrix[found.start], 1)
+            self.assertEqual(scores[found.start], 1)
+            self.assertLess(found.start, found.end)
+            self.assertLessEqual(found.start[1], found.end[1])
+            # The rectangle it spans holds its whole score on its own: two
+            # empty rows and columns before it, as the recurrence needs.
+            rows, columns = found.start[0] - 2, found.start[1] - 2
+            alone = numpy.zeros((found.end[0] - rows + 1, found.end[1] - columns + 1), numpy.float32)
+            alone[2:, 2:] = matrix[found.start[0]:found.end[0] + 1, found.start[1]:found.end[1] + 1]
+            self.assertEqual(float(cover.serra09(alone)[0].max()), found.score)
+            # Anchor: a real alignment, longer than one match.
+            self.assertGreater(found.score, 1)
 
 
 if __name__ == "__main__":
