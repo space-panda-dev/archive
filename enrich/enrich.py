@@ -7,7 +7,7 @@
     enrich match --archive <dir> (--selection | --occurrence) <object id> --limit <decimal>
                  [--staging <annex>] [--dry-run]
     enrich match-windows --archive <dir> --suggestions <object id> [--jobs <n>]
-                 [--staging <annex>] [--dry-run]
+                 [--staging <annex>] [--dry-run | --regenerate]
 
 The command reads the archive only through `archive export`, runs the tool on
 locally present content, and proposes the run and its claims to `door admit`
@@ -488,7 +488,7 @@ def run_match_windows(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
                                   software=software, started_at=started, ended_at=started, used=used, outputs=(),
                                   parameters=settings)
     previous = reader.equivalent_run(candidate)
-    if previous is not None:
+    if previous is not None and not args.regenerate:
         return 0, {"status": "unchanged", **answer, "run": pin_of(previous)}
 
     source_path = content_path(reader.root, source)
@@ -522,16 +522,33 @@ def run_match_windows(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         answer["skipped"].append({"occurrence": occurrence_id,
                                   "reason": "too short for the quarter-rate distance"})
     report = []
+    works_by_occurrence = {key: sorted(value) for key, value in works_of.items()}
+    quarter_limit = Decimal(cover.SEARCH["suggestion_distance"])
+
+    def within(distances: list[cover.Distance], limit: Decimal) -> list[dict[str, str]]:
+        return [{"work": work, "occurrence": d.corpus_id, "distance": str(d.value)}
+                for work, d in windows.works_within(distances, works_by_occurrence, limit)]
+
     for number, decision in enumerate(found["decisions"]):
         window = {"start_sample": decision.window[0], "end_sample": decision.window[1]}
         scale = cover.EXACT_SCALE if decision.path == "exact" else cover.QUARTER_RATE_SCALE
+        limit = Decimal(cover.SEARCH["exact_suggestion_distance"]) if decision.path == "exact" else quarter_limit
+        # Every Work within the limit is kept here, in the run's answer; only
+        # the closest is claimed (ADR 0072, amendment of 2026-10-18).
         entry: dict[str, Any] = {
             "window": window, "path": decision.path, "scale": scale,
             "closest": [{"occurrence": d.corpus_id, "distance": str(d.value)} for d in decision.distances[:5]],
+            "within": within(decision.distances, limit), "work_margin": decision.work_margin,
             "unaligned": len(decision.unaligned), "proposed": None}
         if decision.path == "exact":
+            # The near tie's comparisons: the quarter-rate view that sent it
+            # to the exact distance, and what the exact distance compared.
+            ranked = windows.per_work(decision.quarter_rate, works_by_occurrence)
             entry["quarter_rate_closest"] = [{"occurrence": d.corpus_id, "distance": str(d.value)}
                                              for d in decision.quarter_rate[:5]]
+            entry["quarter_rate_within"] = within(decision.quarter_rate, quarter_limit)
+            entry["quarter_rate_margin"] = ranked[1][0] - ranked[0][0] if len(ranked) > 1 else None
+            entry["compared_exactly"] = decision.compared_exactly
         report.append(entry)
         if not decision.suggested:
             continue
@@ -554,6 +571,11 @@ def run_match_windows(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
                    "hits": found["hits"], "regions": len(found["regions"]), "windows": report})
     if not outputs:
         return NOTHING_PROPOSED, {"status": "nothing_proposed", **answer}
+    if args.regenerate:
+        # The answer again, for a run that may already be recorded: proposed
+        # to nobody, and the same as that run's when nothing it pins changed.
+        return 0, {"status": "regenerated", **answer,
+                   "run": None if previous is None else pin_of(previous)}
     run_result = adapter.RunResult(agent=cover.AGENT, method_id=cover.METHOD_ID, method_version=cover.METHOD_VERSION,
                                    software=software, started_at=started, ended_at=ended, used=used,
                                    outputs=tuple(outputs), parameters=settings)
@@ -598,6 +620,9 @@ def main(argv: list[str] | None = None) -> int:
                                                         "propose work_match version 3 claims")
     windows.add_argument("--suggestions", required=True, help="a span_suggestions version 1 object identifier")
     windows.add_argument("--jobs", type=int, default=1, help="processes measuring and searching (default 1)")
+    windows.add_argument("--regenerate", action="store_true",
+                         help="search even when an equivalent run is recorded, and print the answer with every "
+                              "Work within the limit; propose nothing")
     common(windows)
     args = parser.parse_args(argv)
     if args.command == "match-windows" and args.jobs < 1:

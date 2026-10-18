@@ -329,7 +329,7 @@ are deterministic.
 
 ```sh
 enrich/enrich.py match-windows --archive <dir> --suggestions <object id> [--jobs <n>]
-                 [--staging <annex>] [--dry-run]
+                 [--staging <annex>] [--dry-run | --regenerate]
 ```
 
 Searches the whole recording behind one `archive.claim/span_suggestions`
@@ -341,10 +341,26 @@ amendments of 2026-10-18 propose; the operator has not yet accepted them). All c
 
 It prints one JSON object. The object holds every kept window with its
 closest occurrences, the path that decided it, and whether it was proposed,
-and the number of hits and regions behind them. The exit status is the same as
-for `enrich match`:
+and the number of hits and regions behind them. For each window it also keeps
+what is not claimed:
 
-- 0 when matches were committed, predicted, or already recorded;
+- `within`: every Work whose closest occurrence is within the deciding path's
+  limit (0.118, or 0.08 for a confirmed near tie), closest first, with that
+  occurrence and its score. The claimed Work is first; the others are never
+  claimed;
+- `work_margin`: how far the second Work is behind the first on that path;
+- for a near tie, `quarter_rate_within` and `quarter_rate_margin`, the
+  quarter-rate comparison that sent it to the exact distance, and
+  `compared_exactly`, the occurrences the exact distance compared.
+
+This answer is regenerable output of the run, not evidence. `capture import`
+keeps each window in its report. `--regenerate` searches again even when an
+equivalent run is recorded and prints the same answer, with status
+`regenerated` and that run's pin, proposing nothing.
+
+The exit status is the same as for `enrich match`:
+
+- 0 when matches were committed, predicted, already recorded, or regenerated;
 - 3 when no window was suggested, the corpus is empty, or no corpus occurrence
   is long enough (`nothing_proposed`, with the reason);
 - 1 on any failure;
@@ -404,7 +420,8 @@ The capture import runs it last.
 
   The payload adds `sample_rate` and `window`. Its score and scale are those of
   the deciding path: the quarter-rate scale, or Essentia's for a confirmed
-  near tie. Other Works within the distance are not claimed.
+  near tie. Other Works within the distance are not claimed; the answer keeps
+  them, as above.
 - **The run** reads the suggestions, their source and stream, and everything
   `enrich match` reads for the corpus. Its software is ffprobe, ffmpeg, the
   libav libraries, Essentia, numpy, the BLAS library numpy uses, and how that

@@ -232,7 +232,8 @@ its session never enter any of these steps.
   claim for every Work within the distance. Different Works' quarter-rate
   scores sit close together. At the 101 windows that the quarter-rate distance
   alone suggested, 58 further Works fell within 0.118, and none of those
-  suggestions was judged. Near ties go to the exact distance instead.
+  suggestions was judged. Near ties go to the exact distance instead. The
+  other Works are kept, not claimed (see the consequences).
 
 **What was measured** on the calibration workset. In each cell, the lenient
 count comes first and the strict one second.
@@ -310,6 +311,19 @@ the second row's, it leaves out measuring the recordings whole, about
 - A near tie's exact comparisons are the expensive part in memory as well as
   time: on the workset, a 1.55-hour recording with 3 near ties peaked at about
   2.3 GB resident, against about 0.8 GB without them.
+- **Every other Work within the limit is kept, not claimed.** The operator
+  asked on 2026-10-18 that they not be thrown away, and that they not become
+  claims nobody will judge. The command's answer lists, for each kept window,
+  every Work whose closest occurrence is within the deciding path's limit,
+  closest first, with that occurrence and its score; the claimed Work is first.
+  For a near tie it also lists the Works within 0.118 on the quarter-rate
+  distance, the quarter-rate margin that sent it to the exact distance, and the
+  occurrences compared exactly. `capture import` keeps these windows in its
+  report. The answer is regenerable output of the run, not evidence: the run
+  pins the inputs, software, and parameters, and `enrich match-windows
+  --regenerate` searches again under an equivalent recorded run and prints the
+  same answer, proposing nothing. Promoting any of it to a claim is an
+  admission through Door, and needs a decision.
 - Hits and regions are computed but not recorded. Only the command's answer
   counts them. Alignment paths and each occurrence's presence along the
   recording, which the prototype kept, are not computed. Whether any of them

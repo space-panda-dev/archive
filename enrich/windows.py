@@ -424,6 +424,20 @@ def per_work(distances: list[cover.Distance], works_of: dict[str, Sequence[str]]
     return sorted((v, w) for w, v in best.items())
 
 
+def works_within(distances: list[cover.Distance], works_of: dict[str, Sequence[str]], limit: Decimal
+                 ) -> list[tuple[str, cover.Distance]]:
+    """Every Work whose closest occurrence on one path scores at or below
+    `limit`, with that occurrence's distance, in `per_work`'s order. For a
+    suggested window the first is the Work it claims; the rest are kept in
+    the command's answer and never claimed (ADR 0072, amendment of
+    2026-10-18)."""
+    closest: dict[str, cover.Distance] = {}
+    for d in distances:
+        for work in works_of[d.corpus_id]:
+            closest.setdefault(work, d)
+    return [(work, closest[work]) for _, work in per_work(distances, works_of) if closest[work].value <= limit]
+
+
 def decide(window: tuple[int, int], candidates: set[str], recording: Recording, quarter: cover.QuarterRate,
            means: dict[str, tuple[float, ...]], works_of: dict[str, Sequence[str]], window_features: WindowFeatures,
            exact: ExactDistances, search: dict[str, Any] | None = None) -> Decision:

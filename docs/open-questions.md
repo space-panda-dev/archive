@@ -199,7 +199,8 @@ unsupported rather than guess.
   unmeasured
   ([ADR 0071](decisions/0071-essentia-cover-similarity.md)).
 - Should a window match name more than its closest Work? Each suggested window
-  claims one Work; other Works within the distance were never judged
+  claims one Work; the other Works within the distance are kept in the run's
+  regenerable answer, not claimed, and none of them has been judged
   ([ADR 0072](decisions/0072-windowed-work-matches.md)).
 - Should the whole-recording search record more than its claims: hits,
   alignment paths, or each corpus occurrence's presence along the recording?

@@ -337,6 +337,10 @@ class Search(unittest.TestCase):
         self.assertTrue(p.suggested)
         self.assertEqual(p.work, windows.per_work(p.distances, self.s.works_of)[0][1])
         self.assertTrue(all(self.s.works_of[k] == [p.work] for k in p.corpus))
+        # The others are kept, after the claimed Work, for the run's answer.
+        kept = windows.works_within(p.distances, self.s.works_of, Decimal("0.5"))
+        self.assertEqual(kept[0][0], p.work)
+        self.assertEqual({work for work, _ in kept}, within)
 
     def test_the_exact_distance_never_runs_when_the_margin_is_clear(self) -> None:
         # Bombs: neither a fresh measurement nor an exact distance may run.

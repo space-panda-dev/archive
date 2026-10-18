@@ -483,6 +483,11 @@ class MatchWindowsNearTie(MatchWindowsCommand):
         self.assertNotIn([self.q], decoded)
         # Anchor: Works X and Z tie on the quarter-rate scale.
         self.assertEqual(tie["quarter_rate_closest"][0]["distance"], tie["quarter_rate_closest"][1]["distance"])
+        # The comparisons behind the near tie are kept in the answer.
+        works = {self.pin("work-x")["object_id"], self.pin("work-z")["object_id"]}
+        self.assertEqual({w["work"] for w in tie["quarter_rate_within"]}, works)
+        self.assertLess(tie["quarter_rate_margin"], float(cover.SEARCH["near_tie_margin"]))
+        self.assertIn(self.pin("z1-occurrence")["object_id"], tie["compared_exactly"])
         by_work = self.claims(answer)
         [tie_claim] = [c for c in by_work.values() if c["payload"]["window"] == tie["window"]]
         self.assertEqual(tie_claim["payload"]["scale"], "archive-enrich/essentia-serra09/smaller-asymmetric-distance")
@@ -490,6 +495,52 @@ class MatchWindowsNearTie(MatchWindowsCommand):
         self.assertLessEqual(Decimal(tie_claim["payload"]["score"]), Decimal("0.08"))
         [other] = [c for c in by_work.values() if c is not tie_claim]
         self.assertEqual(other["payload"]["scale"], cover.QUARTER_RATE_SCALE)
+
+    def test_a_second_work_within_the_limit_is_kept_in_the_answer_and_never_claimed(self) -> None:
+        # No margin, so no near tie: the quarter-rate distance decides P's
+        # window alone, with Works X and Z both close.
+        with patch.dict(cover.SEARCH, near_tie_margin="0"):
+            code, answer = self.enrich_here()
+        self.assertEqual((code, answer["status"]), (0, "committed"), answer)
+        [tie] = [w for w in answer["windows"] if w["window"] == {"start_sample": self.p[0], "end_sample": self.p[1]}]
+        self.assertEqual(tie["path"], "quarter_rate")
+        work_x, work_z = self.pin("work-x")["object_id"], self.pin("work-z")["object_id"]
+        x_keys = {self.pin(k)["object_id"] for k in ("x1-occurrence", "x2-occurrence")}
+        z_key = self.pin("z1-occurrence")["object_id"]
+        # Anchor: both Works were within the limit, by the occurrences the
+        # window was compared with, before anything decides which is kept.
+        limit = Decimal(cover.SEARCH["suggestion_distance"])
+        close = {o["occurrence"] for o in tie["closest"] if Decimal(o["distance"]) <= limit}
+        self.assertTrue(close & x_keys, tie["closest"])
+        self.assertIn(z_key, close, tie["closest"])
+
+        claimed = [c for c in self.claims(answer).values() if c["payload"]["window"] == tie["window"]]
+        self.assertEqual(len(claimed), 1, claimed)
+        [claimed_work] = [r["id"] for r in claimed[0]["refs"] if r["role"] == "work"]
+        self.assertEqual(claimed_work, tie["proposed"]["work"]["object_id"])
+        [kept] = {work_x, work_z} - {claimed_work}
+        # The other Work is kept in the answer, after the claimed one, with
+        # its closest occurrence's score.
+        self.assertEqual([w["work"] for w in tie["within"]], [claimed_work, kept])
+        self.assertEqual(tie["within"][0]["distance"], tie["proposed"]["score"])
+        self.assertLessEqual(Decimal(tie["within"][1]["distance"]), limit)
+        self.assertGreaterEqual(tie["work_margin"], 0)
+        # Every claim the run made is one window's closest Work.
+        self.assertEqual(len(answer["outputs"]), sum(1 for w in answer["windows"] if w["proposed"]))
+        # The capture import keeps the answer's windows, and counts the claims.
+        from capture import capture
+        report = capture.match_report(answer)
+        self.assertEqual(report["proposed"], len(answer["outputs"]))
+        self.assertEqual(report["windows"], answer["windows"])
+        # It is regenerable: the recorded run's answer, searched again,
+        # proposing nothing.
+        head = support.head(self.root)
+        with patch.dict(cover.SEARCH, near_tie_margin="0"):
+            code, again = self.enrich_here("--regenerate")
+        self.assertEqual((code, again["status"]), (0, "regenerated"), again)
+        self.assertEqual(again["run"], answer["run"])  # anchor: the run was recorded
+        self.assertEqual(again["windows"], answer["windows"])
+        self.assertEqual(support.head(self.root), head)
 
     def test_the_calibration_split_measures_the_near_tie_where_the_audio_is(self) -> None:
         head = support.head(self.root)

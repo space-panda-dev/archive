@@ -32,7 +32,10 @@ again from the content. So are the window matcher's profiles
 holds a recording's whole-recording profiles in memory only, and the
 calibration harness's workset and measured-windows files are measured again
 from the audio. Both are derived from the operator's recordings, so they stay
-outside this repository.
+outside this repository. So is the window matcher's answer: the Works within
+the limit that a window does not claim, and a near tie's comparisons, which
+`capture import` keeps in its report and `enrich match-windows --regenerate`
+recomputes for a recorded run without proposing anything.
 
 Regenerable means rebuildable in principle, not cheaply: rebuilding World may
 take days and need outside data. Regenerable state never changes through Door
