@@ -529,7 +529,9 @@ across machines:
 - A near tie needs its window decoded afresh, which a workset cannot do. In
   that case `search` reports the window as needing measurement. `measure-windows`,
   run where the audio is, measures every window the results ask for. A second
-  `search` with `--windows` then decides them.
+  `search` with `--windows` then decides them. That second round repeats the
+  search of each recording with a near tie: on the calibration workset, about
+  1,020 CPU-seconds on an Apple M2 for 9 recordings.
   The windows file names the workset it was measured for, and `search`
   refuses one measured for another.
 - `judge` refuses a recording without a result or with two, any result that

@@ -240,8 +240,13 @@ on the CPU, and possibly on its thread count. So:
 - a run with other software, by that record, is another run.
 
 The tests check that one and two processes give the same bits on one machine,
-with these pins. That the same record means the same answer on another machine
-is assumed, not measured. On one Apple silicon machine, Accelerate gave the
+with these pins. On real recordings, the calibration workset was searched on
+an Apple M2 with Accelerate and on a Haswell ThinkPad with OpenBLAS, at the
+margin of 0.01475: the kept windows, hits, decisions, and judged counts were
+identical. 22,176 of the 22,177 quarter-rate distances were bit-equal; the
+other differed by 2.4 × 10⁻⁴, at rank 5, and changed no decision. All 552
+exact distances were bit-equal. That is two machines and one workset, not
+every library and kernel. On one Apple silicon machine, Accelerate gave the
 same bits on one thread and on its default.
 
 **The V2 thresholds describe only the exact scale.** The false-positive rate of

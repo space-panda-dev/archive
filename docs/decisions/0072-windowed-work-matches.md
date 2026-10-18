@@ -287,15 +287,15 @@ and 36 unaccepted became 35 under the strict one.
   1, and this search's windows gave 6 with the quarter-rate distance alone. On
   this search's windows 0.118 is stable only with the margin: alone, the folds
   chose 0.100 in 14 of 17; with the margin, they chose 0.118 in 15 of 17.
-- **The third row is a replay.** Its 10 near-tie windows took their exact
-  decisions from a run that decided the same windows exactly, on slices of the
-  whole-recording profiles; the repository's matcher, given slices for those
-  windows, decides them identically. Confirmation on freshly decoded audio, as
-  proposed here, has not yet run on the workset. A slice differs from a fresh
-  measurement by 0.0034 at the median, and 2 of the 10 near ties sit about
-  that close to the exact limit: one at 0.0790, suggested, and one at 0.0839,
-  not. Fresh decoding could flip either, so the third row's 3 and 0 wrong
-  suggestions hold for slices only.
+- **Near ties were confirmed on freshly decoded audio.** The calibration of
+  2026-10-18 measured every near-tie window afresh where the audio is and
+  decided it with the repository's matcher. At the margin of 0.01475, 543 of
+  the 551 exact distances differed from a replay on slices of the
+  whole-recording profiles, by up to 0.0047, and no suggestion flipped: the
+  two near ties closest to the exact limit went from 0.0790 to 0.0791, still
+  suggested, and from 0.0839 to 0.0828, still not. The rerun at 0.02 decided
+  all 11 near ties on fresh audio, and its counts are the third row's: the
+  wrong suggestions, 2 and 0, hold on fresh audio.
 - **There is a ceiling.** Only 77 of the 98 occurrences have a corpus
   occurrence outside their own session. No search can suggest the other 21.
 - **More suggestions are unaccepted:** 23, against 8 today. On the earlier
@@ -316,7 +316,13 @@ and 36 unaccepted became 35 under the strict one.
 - Accepting a new occurrence changes a run's inputs, so the next run searches
   the whole recording again. There is no incremental path.
 - The calibration harness measures each recording whole and splits its work
-  per recording, not per run. Its workset (about 1.9 MB per recording-hour of
+  per recording, not per run. Its second round searches every recording with
+  a near tie again, to decide the near ties on the freshly measured windows:
+  on the workset at 0.02, 9 recordings, about 1,020 CPU-seconds on the Mac
+  (their first round's time) on top of the exact comparisons; at 0.01475, 8
+  recordings took about 1,785 CPU-seconds on the ThinkPad. `enrich
+  match-windows` has no such repeat, because it decodes a near tie's window
+  in the same process. Its workset (about 1.9 MB per recording-hour of
   profiles, and the corpus's) and its file of freshly measured windows are
   regenerable: both are measured again from the audio. `enrich match-windows`
   keeps the whole-recording profiles in memory only.
