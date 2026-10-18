@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib.metadata
 import math
 import os
+import tempfile
 import unittest
 from decimal import Decimal
 from pathlib import Path
@@ -29,6 +30,12 @@ except cover.CoverError:
 if os.environ.get("ARCHIVE_REQUIRE_ESSENTIA") and not ESSENTIA:
     raise RuntimeError("ARCHIVE_REQUIRE_ESSENTIA is set but the pinned Essentia build is not importable")
 needs_essentia = unittest.skipUnless(ESSENTIA, "the pinned Essentia build is needed (enrich/requirements-match.txt)")
+
+def essentia_cross(a: numpy.ndarray, b: numpy.ndarray) -> numpy.ndarray:
+    """Essentia's own ChromaCrossSimilarity, as the method configures it."""
+    options = cover._options(cover.ANALYSIS["chroma_cross_similarity"])
+    return cover.essentia_module().ChromaCrossSimilarity(**options)(a, b)
+
 
 RATE = 1000  # samples per second in the search tests: two seconds is 2,000 samples
 
@@ -275,18 +282,21 @@ class Measure(unittest.TestCase):
         self.assertTrue(numpy.array_equal(query.profiles, again.profiles))
         # Both directions are aligned, and the smaller distance kept,
         # whichever direction gives it.
-        calls = []
-        real = analyser.cross
-
-        def cross(a, b):
-            calls.append((a is query.profiles, b is query.profiles))
-            return real(a, b)
+        aligned = []
         for answers, expected in (((0.3, 0.2), 0.2), ((0.1, 0.4), 0.1)):
             replies = iter(answers)
-            with patch.object(analyser, "cross", cross), \
-                    patch.object(analyser, "cover", lambda matrix: (matrix, next(replies))):
+
+            def cover_(matrix):
+                aligned.append(matrix)
+                return matrix, next(replies)
+            with patch.object(analyser, "cover", cover_):
                 self.assertEqual(analyser.distance(query.profiles, same.profiles), expected)
-        self.assertEqual(calls, [(True, False), (False, True)] * 2)
+        forward = essentia_cross(query.profiles, same.profiles)
+        backward = essentia_cross(same.profiles, query.profiles)
+        # Anchor: the two directions are different matrices.
+        self.assertFalse(numpy.array_equal(forward, backward))
+        for got, wanted in zip(aligned, [forward, backward] * 2, strict=True):
+            self.assertTrue(numpy.array_equal(got, wanted))
 
     def test_parallel_comparison_answers_exactly_what_one_process_does(self) -> None:
         corpus = {"same": (self.same,), "other": (self.other,)}
@@ -328,6 +338,212 @@ class Measure(unittest.TestCase):
                                                 "same": (self.same,)})
         self.assertIsInstance(measured["short"], cover.TooShort)
         self.assertEqual(sorted(comparer.corpus), ["same"])
+
+
+def _bomb(*_, **__):
+    raise AssertionError("must not be called")
+
+
+@needs_essentia
+@needs_ffmpeg
+class CrossSimilarity(unittest.TestCase):
+    """The NumPy cross-similarity against Essentia's, on profiles the real
+    Analyser measures from audio Python's own writer wrote."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.analyser = cover.Analyser()
+        cls.profiles = {}
+        with tempfile.TemporaryDirectory(prefix="cover-cross-") as directory:
+            for name, notes, options in (("query", support.TUNE, {"transpose": 3, "seed": 1}),
+                                         ("same", support.TUNE, {"seed": 2, "repeats": 4}),
+                                         ("other", support.OTHER_TUNE, {"seed": 3, "repeats": 2})):
+                samples = support.tune_samples(notes, 48000, **options)
+                path = support.write_wav(Path(directory) / f"{name}.wav", samples, 48000)
+                piece = cover.Piece(path, 0, len(samples), 48000)
+                cls.profiles[name] = cls.analyser.features(cover.load([piece])).profiles
+
+    def assert_essentias(self, a: numpy.ndarray, b: numpy.ndarray) -> None:
+        wanted = essentia_cross(a, b), essentia_cross(b, a)
+        got = cover.cross_similarity(a, b), *cover.cross_similarities(a, b)
+        for matrix, expected in zip(got, (wanted[0], *wanted), strict=True):
+            self.assertEqual((matrix.dtype, matrix.shape), (expected.dtype, expected.shape))
+            self.assertTrue(numpy.array_equal(matrix, expected))
+
+    def test_the_matrices_are_essentias_bit_for_bit(self) -> None:
+        query, same, other = (self.profiles[name] for name in ("query", "same", "other"))
+        # Anchor: three lengths, a transposed key, and matrices with both
+        # values in them.
+        self.assertEqual(len({len(query), len(same), len(other)}), 3)
+        self.assertNotEqual(cover.transposition_index(query, same), 0)
+        self.assertNotEqual(cover.transposition_index(query, other), cover.transposition_index(same, other))
+        matrix = essentia_cross(query, same)
+        self.assertTrue(0 < matrix.sum() < matrix.size)
+        for a, b in ((query, same), (query, other), (same, other), (same, same)):
+            with self.subTest(frames=(len(a), len(b))):
+                self.assert_essentias(a, b)
+
+    def test_the_reverse_direction_is_the_transpose_and_essentia_is_never_called(self) -> None:
+        query, same = self.profiles["query"], self.profiles["same"]
+        forward, backward = essentia_cross(query, same), essentia_cross(same, query)
+        expected = self.analyser.distance(query, same)
+        measured = []
+        real = cover._forward
+
+        def forward_(a, b):
+            measured.append((a.shape, b.shape))
+            return real(a, b)
+        with patch.object(cover.essentia_module(), "ChromaCrossSimilarity", _bomb), \
+                patch.object(cover, "cross_similarity", _bomb), patch.object(cover, "_forward", forward_):
+            ab, ba = cover.cross_similarities(query, same)
+            self.assertEqual(self.analyser.distance(query, same), expected)
+        self.assertEqual(measured, [(query.shape, same.shape)] * 2)
+        self.assertTrue(numpy.array_equal(ab, forward))
+        self.assertTrue(numpy.array_equal(ba, backward))
+        self.assertTrue(ba.flags["C_CONTIGUOUS"])
+
+    def test_nine_frames_are_refused_as_essentia_refuses_them_and_ten_are_left_to_it(self) -> None:
+        same, other = self.profiles["same"], self.profiles["other"]
+        with self.assertRaises(RuntimeError):
+            essentia_cross(same[:9], other)
+        for a, b in ((same[:9], other), (other, same[:9]), (same[:0], other)):
+            with self.assertRaises(cover.TooShort):
+                cover.cross_similarity(a, b)
+            with self.assertRaises(cover.TooShort):
+                cover.cross_similarities(a, b)
+        # Ten frames are one stack, and a row or column of one distance,
+        # whose percentile Essentia reads from past the end of the row.
+        ten = self.analyser.features(numpy.full(18432, 0.1, numpy.float32)).profiles
+        self.assertEqual(len(ten), 10)
+        for a, b in ((same[:10], other), (other, same[:10]), (ten, same)):
+            calls = []
+            real = cover._essentia_cross
+
+            def essentia(x, y):
+                calls.append((len(x), len(y)))
+                return real(x, y)
+            with patch.object(cover, "_essentia_cross", essentia):
+                self.assert_essentias(a, b)
+            self.assertEqual(sorted(calls), sorted([(len(a), len(b)), (len(a), len(b)), (len(b), len(a))]))
+
+    def test_a_distance_that_is_not_a_number_is_left_to_essentia(self) -> None:
+        # A nearly identical stack can make x.x - 2 x.y + y.y negative.
+        same = self.profiles["same"]
+        nudged = same.copy()
+        nudged[::3, 4] = numpy.nextafter(nudged[::3, 4], numpy.float32(2))
+        a, b = cover._profiles(same), cover._profiles(nudged)
+        stacks_a, stacks_b = cover._stacks(a), cover._stacks(numpy.roll(b, cover.transposition_index(a, b), axis=1))
+        distances = cover._matrix(cover._ordered_dot(stacks_a, stacks_a),
+                                  cover._ordered_dot(stacks_a[:, None], stacks_b[None, :]),
+                                  cover._ordered_dot(stacks_b, stacks_b))
+        self.assertTrue(numpy.isnan(distances).any())
+        with patch.object(cover, "_binarise", _bomb):
+            self.assert_essentias(same, nudged)
+
+    def test_a_percentile_at_a_whole_index_is_zero_as_in_essentia(self) -> None:
+        # 201 distances put the 9.5th percentile at index 19 exactly, where
+        # Essentia's interpolation answers 0: no cell but an exact match.
+        long = numpy.concatenate([self.profiles["same"]] * 2)[:210]
+        matrix = cover.cross_similarity(long, self.profiles["other"])
+        self.assertEqual(matrix.shape[0], 201)
+        self.assertEqual(matrix.sum(), 0)
+        # Anchor: one frame fewer and the column percentiles are not zero.
+        self.assertGreater(cover.cross_similarity(long[:209], self.profiles["other"]).sum(), 0)
+        self.assert_essentias(long, self.profiles["other"])
+        self.assert_essentias(long[:209], self.profiles["other"])
+
+    def test_a_dot_product_near_a_rounding_boundary_is_summed_in_essentias_order(self) -> None:
+        # One stack whose squares are 1, then 2^-24 less a little, then 36
+        # of 0.77 of a unit in the last place of 1: added in Essentia's
+        # order, each of those rounds up and the float32 sum is 1 + 2^-23;
+        # summed exactly it is just under the midpoint and rounds to 1. The
+        # stack is compared with itself, at a percentile index that is whole,
+        # so only a distance of exactly 0 is a 1.
+        profiles = numpy.zeros((210, 12), numpy.float32)
+        at = 100
+        profiles[at, :2] = 1, 2.0 ** -13 * (2 - 2.0 ** -23)
+        small = 1.75 * 2.0 ** -27
+        profiles[at, 2:] = profiles[at + 1] = profiles[at + 2] = small
+        profiles[at + 3, :2] = small
+        stack = cover._stacks(profiles)[at]
+        dots, unsure = cover._cross_dots(profiles, profiles)
+        # Anchor: the per-frame sum and Essentia's order disagree here.
+        self.assertTrue(unsure[at, at])
+        self.assertNotEqual(numpy.float32(dots[at, at]), cover._ordered_dot(stack, stack))
+        matrix = cover.cross_similarity(profiles, profiles)
+        self.assertEqual(matrix[at, at], 1)
+        self.assert_essentias(profiles, profiles)
+
+    def test_profiles_essentia_would_not_measure_from_audio_are_refused(self) -> None:
+        same = self.profiles["same"]
+        for bad in (-same, numpy.where(same > 0.5, numpy.nan, same), same[:, :11]):
+            with self.assertRaises(cover.CoverError):
+                cover.cross_similarity(bad, same)
+
+
+class ReverseDirection(unittest.TestCase):
+    """The reverse direction is measured on its own wherever its bits could
+    differ from the transpose. Each case is built so a sum in double rounds
+    differently in the other direction's order: 1, four of 2^-54, and 2^-24
+    sum to 1 + 2^-24, which rounds to 1 in float32, when 1 comes first, and
+    to 1 + 2^-23 when it comes last."""
+
+    @staticmethod
+    def profiles(frame: list[float], at: int, frames: int = 30) -> numpy.ndarray:
+        array = numpy.zeros((frames, 12), numpy.float32)
+        array[at] = frame
+        return array
+
+    def assert_measured_on_its_own(self, a: numpy.ndarray, b: numpy.ndarray) -> None:
+        calls = []
+        real = cover.cross_similarity
+
+        def cross(x, y):
+            calls.append((x is b, y is a))
+            return real(x, y)
+        with patch.object(cover, "cross_similarity", cross):
+            _, backward = cover.cross_similarities(a, b)
+        self.assertEqual(calls, [(True, True)])
+        if ESSENTIA:
+            self.assertTrue(numpy.array_equal(cover.cross_similarity(a, b), essentia_cross(a, b)))
+            self.assertTrue(numpy.array_equal(backward, essentia_cross(b, a)))
+
+    def test_when_the_transposition_indices_do_not_undo_each_other(self) -> None:
+        # a's mean chroma has bins 0 and 3, b's bin 1: a ties at shifts 2
+        # and 11 and takes 2, b ties at 1 and 10 and takes 1, not 10.
+        rng = numpy.random.default_rng(5)
+        a = numpy.zeros((30, 12), numpy.float32)
+        a[:, 0] = a[:, 3] = rng.integers(1, 8, 30) / 8
+        b = numpy.zeros((30, 12), numpy.float32)
+        b[:, 1] = rng.integers(1, 8, 30) / 8
+        self.assertEqual((cover.transposition_index(a, b), cover.transposition_index(b, a)), (2, 1))
+        self.assert_measured_on_its_own(a, b)
+
+    def test_when_rotating_a_stack_changes_its_norm(self) -> None:
+        small, tiny = 2.0 ** -12, 2.0 ** -27
+        a = self.profiles([1.0] + [0.0] * 11, 12)
+        b = self.profiles([tiny] * 4 + [0.0] * 6 + [small, 1.0], 15)
+        self.assertEqual((cover.transposition_index(a, b), cover.transposition_index(b, a)), (1, 11))
+        stack = cover._stacks(b)[10]
+        turned = cover._stacks(numpy.roll(b, 1, axis=1))[10]
+        self.assertNotEqual(cover._ordered_dot(stack, stack), cover._ordered_dot(turned, turned))
+        self.assert_measured_on_its_own(a, b)
+
+    def test_when_a_cross_dot_product_rounds_otherwise_in_the_other_order(self) -> None:
+        a = self.profiles([1.0] * 6 + [0.0] * 6, 12)
+        b = self.profiles([2.0 ** -54] * 4 + [2.0 ** -24] + [0.0] * 6 + [1.0], 15)
+        self.assertEqual((cover.transposition_index(a, b), cover.transposition_index(b, a)), (1, 11))
+        forward = cover._forward(cover._profiles(a), cover._profiles(b))
+        assert forward is not None
+        rows, columns = forward.unsure
+        # Anchor: the norms are the same bits both ways; only the cross
+        # dot products differ.
+        stacks_b, turned_a = cover._stacks(b), cover._stacks(numpy.roll(a, 11, axis=1))
+        self.assertTrue(numpy.array_equal(cover._ordered_dot(stacks_b, stacks_b), forward.reference_norms))
+        self.assertTrue(numpy.array_equal(cover._ordered_dot(turned_a, turned_a), forward.query_norms))
+        self.assertFalse(numpy.array_equal(cover._ordered_dot(stacks_b[columns], turned_a[rows]),
+                                           forward.cross[rows, columns]))
+        self.assert_measured_on_its_own(a, b)
 
 
 if __name__ == "__main__":
