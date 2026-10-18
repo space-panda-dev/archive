@@ -54,6 +54,17 @@ everywhere below it.
 parameters make a new key and a new entry; the old entry is never read again
 and may be deleted at any time. An entry is never rewritten.
 
+**Derived media are not copied into the bank.** An extractor whose output
+follows a kind of derived media (ADR 0069), as the `colour` extractor gives
+one colour per pixel of the `peaks` kind, names that kind and its version in
+its parameters, so a new method for the kind is a new key, and writes only
+its own outputs. A reader takes the derived media from where ADR 0069 puts
+them. Two regenerable copies of one file would be two stores to keep equal
+and two to delete when content is destroyed. A request cannot name derived
+media as an input, so such an extractor may decode the content again to learn
+the kind's grid, into a temporary file it deletes: repeated work, not a
+stored copy ([open questions](../open-questions.md#interfaces-and-tooling)).
+
 **The version stands for the code.** The key holds an extractor's version,
 not its code, so an edit that can change an output must come with a new
 version. A test pins a digest of each shipped extractor's files, and of the

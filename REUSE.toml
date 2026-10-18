@@ -12,6 +12,6 @@ SPDX-FileCopyrightText = "The Archive contributors"
 SPDX-License-Identifier = "AGPL-3.0-or-later"
 
 [[annotations]]
-path = ["*.md", "docs/**", "spec/**", "world/*.md", "relay/*.md", "enrich/*.md", "capture/*.md", "world/examples/**", "world/tests/fixtures/**", "door/test/fixtures/**", "door/service.schema.json", "relay/openapi.json", "world/projection/**", "enrich/extractors/*/extractor.json", "fixture/*.md", "fixture/plan.json", "fixture/content/**"]
+path = ["*.md", "docs/**", "spec/**", "world/*.md", "relay/*.md", "enrich/*.md", "capture/*.md", "world/examples/**", "world/tests/fixtures/**", "door/test/fixtures/**", "door/service.schema.json", "relay/openapi.json", "world/projection/**", "enrich/extractors/*/extractor.json", "enrich/extractors/*/*.md", "fixture/*.md", "fixture/plan.json", "fixture/content/**"]
 SPDX-FileCopyrightText = "The Archive contributors"
 SPDX-License-Identifier = "CC0-1.0"
