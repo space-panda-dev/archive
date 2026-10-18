@@ -196,11 +196,15 @@ is applied by whoever reads both the melody and the tuning.
   what it measures (one channel's defects, the stereo image, everything
   above 11,025 Hz, single-sample steps and flat tops), and it reads only
   `frames/samples` from the bank, so its window series keep the `frames`
-  rows. On 48 kHz stereo its second decode runs at about 16 times real time
-  on one core of an otherwise idle machine and about 9 times on a shared
-  one (load average near 13), where `frames` ran at about 150: 15 to 30
-  core-minutes for a four-hour recording, the detectors' frame loop and
-  not the decode being the cost, so it grows with the sample rate.
+  rows. Version 2 ran Essentia's detectors on every frame, about 16 times
+  real time on 48 kHz stereo on one core of an otherwise idle machine and
+  9 on a shared one, the frame loop and not the decode being the cost.
+  Version 3 weighs each event against the transients around it and runs
+  the detectors only on frames that could hold one it would keep (and
+  `GapsDetector` only near silence): on a mastered 44.1 kHz stereo album
+  of 69 minutes it took 80 s where version 2 took 289 (52 against 14 times
+  real time), and on the three-minute recording below 42 times with load
+  average near 6. It still grows with the sample rate and the channels.
 - What each shipped extractor decodes: `frames` the first audio stream
   at 22,050 Hz mono, once; `structure` nothing; `tonal` the same again
   (above); `rhythm` and `melody` 44,100 Hz mono, which their algorithms
@@ -211,8 +215,10 @@ is applied by whoever reads both the melody and the tuning.
   development Mac (load average 13 to 15), one at a time, each took, in
   times real time: `structure` about 600, `loudness-r128` 450, `colour`
   140, `frames` 83, `tonal` 78, `rhythm` 36, `melody` 16, and `quality`
-  9; about 43 seconds in all, or roughly 14 minutes a recording-hour, of
-  which `quality` and `melody` are three quarters
+  9 (version 2; version 3 runs at about 42, measured with the others at
+  load average 6: `melody` 24, `rhythm` 52, `frames` 130); about 43
+  seconds in all, or roughly 14 minutes a recording-hour, of which
+  `quality` and `melody` were three quarters
   ([`enrich/test_extractors.py`](../../enrich/test_extractors.py) measures
   it). `stems` there ran a stand-in for the model, so its time says
   nothing about Demucs. Real recordings have not been timed together.

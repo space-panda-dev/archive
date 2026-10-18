@@ -130,8 +130,8 @@ SHIPPED = {
                               "probe.py": "sha256:6be7514d1671f50e43a07646fe6aa2a54cf4d35a44e608d6a27f58d8d9732384"}},
     # Version 2: the detectors' frames scale with the sample rate, and
     # quantisation-level bursts are dropped.
-    "quality": {"version": "2",
-                "code": "sha256:0bac148ad9c53b2861fed840fe7d0d67f69c87a2a02e7a1c79e2b95b06579307",
+    "quality": {"version": "3",
+                "code": "sha256:dc8993705d90f0f80ff09d2ee7ca64091fdb5f957f400dd2f785d5cd153e0267",
                 "outside": {}},
     "melody": {"version": "1",
                "code": "sha256:b678b71cc9ab9e80fee833c32722bfea343bf44c418a6d5ec17556169235212d",

@@ -1,8 +1,8 @@
 {
  "contract": "archive-extractor/1",
  "id": "quality",
- "version": "2",
- "description": "How well a recording was captured, from one more decode at the stream's own rate with every channel: EBU R 128 loudness, loudness range, and true peak; clipping, clicks, discontinuities, dropouts, noise bursts, and hum with their times; DC offset, stereo correlation, noise floor, and effective bandwidth.",
+ "version": "3",
+ "description": "How well a recording was captured, from one more decode at the stream's own rate with every channel: EBU R 128 loudness, loudness range, and true peak; clipping at full scale and overs above it; clicks, discontinuities, dropouts, and noise bursts that stand out from the transients around them; mains hum; DC offset, stereo correlation, noise floor, and effective bandwidth.",
  "command": [
   "${python}",
   "quality.py"
@@ -54,18 +54,31 @@
   "detector_frame": 512,
   "detector_hop": 256,
   "detector_reference_rate": 48000,
-  "saturation": {
-   "energyThreshold": "-1",
-   "differentialThreshold": "0.001",
-   "minimumDuration": "0.005"
+  "clipping": {
+   "level_db": "-0.01",
+   "minimum_samples": 3,
+   "flat_step": "0.000030517578125"
   },
   "clipping_merge_seconds": "0.05",
+  "overs": {
+   "oversampling": 4,
+   "half_taps": 16,
+   "kaiser_beta": "8",
+   "level_db": 0,
+   "merge_seconds": "0.05"
+  },
+  "context": {
+   "block_seconds": "0.05",
+   "seconds": 1,
+   "percentile": 90
+  },
   "clicks": {
    "order": 12,
    "detectionThreshold": "30",
    "powerEstimationThreshold": 10,
    "silenceThreshold": -50
   },
+  "click_ratio": 16,
   "discontinuities": {
    "order": 3,
    "kernelSize": 7,
@@ -75,6 +88,7 @@
    "silenceThreshold": -50
   },
   "discontinuity_floor": "0.05",
+  "discontinuity_ratio": 20,
   "noise_bursts": {
    "threshold": 8,
    "alpha": "0.9",
@@ -82,6 +96,7 @@
   },
   "noise_burst_merge_seconds": "0.01",
   "noise_burst_floor": "0.001",
+  "noise_burst_ratio": 30,
   "gaps": {
    "frameSize": 2048,
    "hopSize": 1024,
@@ -95,22 +110,20 @@
    "attackTime": "0.05",
    "releaseTime": "0.05"
   },
+  "gap_margin_seconds": "0.25",
   "hum": {
-   "Q0": "0.1",
-   "Q1": "0.55",
-   "detectionThreshold": "5",
-   "frameSize": "0.4",
-   "hopSize": "0.2",
-   "minimumFrequency": "22.5",
-   "maximumFrequency": "400",
-   "minimumDuration": "2",
-   "numberHarmonics": 1,
-   "timeContinuity": "10",
-   "timeWindow": "10"
+   "mains": [
+    50,
+    60
+   ],
+   "maximum_frequency": 400,
+   "window_seconds": 8,
+   "hop_seconds": 4,
+   "tolerance": "0.002",
+   "neighbourhood": "0.15",
+   "prominence_db": 15,
+   "quiet_db": 20
   },
-  "hum_salience_floor": "0.1",
-  "hum_chunk_seconds": 120,
-  "hum_overlap_seconds": 20,
   "hum_minimum_seconds": 20,
   "stereo": {
    "silenceThreshold": -70,
@@ -184,7 +197,7 @@
   "clipped_seconds": {
    "kind": "scalar",
    "unit": "s",
-   "description": "time inside saturated regions, summed over channels (Essentia SaturationDetector)"
+   "description": "time inside clipped runs (see clipping), summed over channels"
   },
   "dc_offset": {
    "kind": "scalar",
@@ -234,17 +247,22 @@
   "clipping": {
    "kind": "spans",
    "unit": "s",
-   "description": "saturated regions closer than 50 ms joined, per channel; value: seconds saturated inside; label: the channel, from 1"
+   "description": "flat tops at full scale: runs of at least 3 samples of one channel at or above -0.01 dBFS whose neighbours differ by at most one 16-bit step, closer than 50 ms joined, per channel; value: seconds clipped inside; label: the channel, from 1. A limiter's ceiling below full scale is not clipping"
+  },
+  "overs": {
+   "kind": "spans",
+   "unit": "s",
+   "description": "where the signal between samples, 4x oversampled (a 32-tap Kaiser-windowed sinc per point), or a sample itself reaches 0 dBTP, per channel, closer than 50 ms joined: what a converter or a lossy encoder clips; value: the largest level inside, in dBTP; label: the channel"
   },
   "clicks": {
    "kind": "events",
    "unit": "s",
-   "description": "impulsive noise (Essentia ClickDetector) per channel; value: the largest sample-to-sample step, in full scale; label: the channel"
+   "description": "impulsive noise (Essentia ClickDetector) per channel whose sample-to-sample step exceeds 16 times its context: the 90th percentile of the largest steps of the 50 ms blocks within 1 s either side, its own block and their neighbours left out; value: that step, in full scale; label: the channel"
   },
   "discontinuities": {
    "kind": "events",
    "unit": "s",
-   "description": "jumps in the waveform (Essentia DiscontinuityDetector) with prediction error at least 0.05; value: that error, in full scale; label: the channel"
+   "description": "jumps in the waveform (Essentia DiscontinuityDetector) with prediction error at least 0.05 whose second difference exceeds 20 times its context: the 90th percentile of the largest second differences of the 50 ms blocks within 1 s either side, its own block and their neighbours left out; value: the prediction error, in full scale; label: the channel"
   },
   "gaps": {
    "kind": "spans",
@@ -254,12 +272,12 @@
   "noise_bursts": {
    "kind": "spans",
    "unit": "s",
-   "description": "noise bursts (Essentia NoiseBurstDetector) whose second difference reaches 0.001 of full scale, within 10 ms joined, per channel; value: the largest second difference, in full scale; label: the channel"
+   "description": "noise bursts (Essentia NoiseBurstDetector) whose second difference reaches 0.001 of full scale and exceeds 30 times its context (as for discontinuities), within 10 ms joined, per channel; value: the largest second difference, in full scale; label: the channel"
   },
   "hum": {
    "kind": "spans",
    "unit": "s",
-   "description": "steady low tones, 22.5 to 400 Hz, salience at least 0.1 (Essentia HumDetector on the channels' mean): mains hum, but a held musical note in that range is reported alike, and frequencies read about 1% low, so this is uncalibrated on music and not evidence of hum by itself; value: the frequency in Hz; times trail the tone by up to the 10 s analysis window"
+   "description": "mains hum: a narrow peak within 0.2% of 50 or 60 Hz or a harmonic of either up to 400 Hz, 15 dB above its neighbourhood, in 8 s windows of the channels' mean every 4 s, with its series' first or second harmonic, for at least 20 s and through a quiet passage when the recording has one; value: the peak's median frequency in Hz; times are the windows' bounds"
   }
  }
 }
