@@ -195,15 +195,26 @@ scale. **Uncertain tone**: a pitch class the asserter is unsure of: exactly
 one of a group sounds, or one or none may. **Voicing**: a stack's actual
 notes, with their octaves. **Computed name**: a Harte string or lead-sheet
 symbol derived from a stack; a view, never the claim. The source's own symbol
-is the reading's **text**, kept verbatim.
+is the reading's **text**, kept verbatim. **Held end**: a span end the
+asserter did not hear or read but inferred, holding a chord until the next
+change by a stated rule; weaker evidence than an asserted end. **Chord
+sequence**: chords in the order a document or a person gives them, with no
+times, about a Work or a document rather than a recording; each **sequence
+entry** is located by line and word, never by the lyric's text. A
+**correction** is a claim that names the claims it corrects; they stay, and
+the resolved view shows the correction first where they overlap.
 
-**Meter layer**: one counting of the music as a sequence of bars. Several
-layers over the same samples are polymeter or cross-rhythm, and none is
-primary. **Bar**: a span of samples with a numerator and denominator, and
-optionally its **beat grouping** (2+2+3) and the samples of its counted
-beats. **Metric modulation**: an explicit link between adjacent bars saying
-which note value before equals which after, with their ratio. **Tempo** is
-derived from bars and beats, never stored.
+**Meter layer**: one counting of the music, as a sequence of bars or, in a
+**beat-only layer**, as beats alone with no time signature. Several layers
+over the same samples are polymeter or cross-rhythm, and none is primary. A
+**felt layer** is a feel heard over a written one (a triplet feel in 4/4).
+**Bar**: a span of samples with a numerator and denominator, and optionally
+its **beat grouping** (2+2+3) and the samples of its counted beats. **Metric
+modulation**: an explicit link between adjacent bars saying which note value
+before lasts as long as which after, so that the tempo changes by their
+ratio. **Regrouping**: a link between adjacent bars where every note value
+keeps its length and the felt pulse moves (quarter to dotted quarter, the
+eighth unchanged). **Tempo** is derived from bars and beats, never stored.
 
 **Document**: an outside source's admitted bytes (a transcription file, a
 saved chart) that a claim pins to say where its readings came from. A

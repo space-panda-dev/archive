@@ -8,13 +8,14 @@ immutable generation built from one snapshot and projection version.
 
 ## Chords and meter
 
-[`harmony.py`](harmony.py) holds the rules of the two contracts of
+[`harmony.py`](harmony.py) holds the rules of the three contracts of
 [ADR 0077](../docs/decisions/0077-chord-stacks-and-meter.md),
-`archive.claim/chord_stacks` and `archive.claim/meter_layers`, the names
+`archive.claim/chord_stacks`, `archive.claim/chord_sequence`, and
+`archive.claim/meter_layers`, the names
 computed from a chord stack (Harte strings and lead-sheet symbols), the
 tempo derived from bars, and lossy JAMS views. It needs only the standard
 library. No specification release installs the contracts yet, so World does
-not project them and Door admits neither. Its tests run alone:
+not project them and Door admits none of them. Its tests run alone:
 
 ```sh
 python3 -m unittest world.tests.test_harmony
