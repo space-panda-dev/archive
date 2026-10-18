@@ -53,6 +53,7 @@
   "level_floor_db": -120,
   "detector_frame": 512,
   "detector_hop": 256,
+  "detector_reference_rate": 48000,
   "saturation": {
    "energyThreshold": "-1",
    "differentialThreshold": "0.001",
@@ -80,6 +81,7 @@
    "silenceThreshold": -50
   },
   "noise_burst_merge_seconds": "0.01",
+  "noise_burst_floor": "0.001",
   "gaps": {
    "frameSize": 2048,
    "hopSize": 1024,
@@ -252,12 +254,12 @@
   "noise_bursts": {
    "kind": "spans",
    "unit": "s",
-   "description": "noise bursts (Essentia NoiseBurstDetector) within 10 ms joined, per channel; value: the largest second difference, in full scale; label: the channel"
+   "description": "noise bursts (Essentia NoiseBurstDetector) whose second difference reaches 0.001 of full scale, within 10 ms joined, per channel; value: the largest second difference, in full scale; label: the channel"
   },
   "hum": {
    "kind": "spans",
    "unit": "s",
-   "description": "steady low tones, 22.5 to 400 Hz, salience at least 0.1 (Essentia HumDetector on the channels' mean); value: the frequency in Hz; times trail the tone by up to the 10 s analysis window"
+   "description": "steady low tones, 22.5 to 400 Hz, salience at least 0.1 (Essentia HumDetector on the channels' mean): mains hum, but a held musical note in that range is reported alike, and frequencies read about 1% low, so this is uncalibrated on music and not evidence of hum by itself; value: the frequency in Hz; times trail the tone by up to the 10 s analysis window"
   }
  }
 }

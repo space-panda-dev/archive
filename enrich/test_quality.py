@@ -133,6 +133,46 @@ class Bandwidth(unittest.TestCase):
     def test_no_power_is_no_bandwidth(self) -> None:
         self.assertEqual(quality.effective_bandwidth(numpy.zeros(2049), 44100, 4096), 0.0)
 
+    def test_a_spectrum_too_short_to_search_is_refused_not_full_band(self) -> None:
+        self.assertEqual(quality.effective_bandwidth(self.spectrum(None, rate=8000), 8000, 4096), 4000.0)  # anchor
+        with self.assertRaisesRegex(quality.QualityError, "too short"):
+            quality.effective_bandwidth(self.spectrum(None, rate=4000), 4000, 4096)
+
+
+class DetectorFrames(unittest.TestCase):
+    def test_the_frame_keeps_its_duration_at_higher_rates(self) -> None:
+        found = {rate: quality.detector_frame(rate) for rate in (8000, 22050, 44100, 48000, 64000, 88200, 96000,
+                                                                 176400, 192000)}
+        self.assertEqual(found, {8000: (512, 256), 22050: (512, 256), 44100: (512, 256), 48000: (512, 256),
+                                 64000: (512, 256), 88200: (1024, 512), 96000: (1024, 512),
+                                 176400: (2048, 1024), 192000: (2048, 1024)})
+
+    @needs_essentia
+    def test_a_burst_below_the_floor_is_quantisation_and_dropped(self) -> None:
+        # A -40 dBFS tone in 16 bits at 96 kHz, in the 512-sample frames the
+        # settings were chosen with at 48 kHz: the detector itself reports
+        # bursts that are a step or two of quantisation.
+        es = quality.essentia_module()
+        rate = 96000
+        quiet = numpy.round(tone(1, 440, 0.01, rate) * 32768).astype(numpy.float32) / 32768
+        detector = es.NoiseBurstDetector(**quality._settings(quality.PARAMETERS["noise_bursts"]))
+        channel = quality.Channel(es, rate)
+        raw = 0
+        for start in range(0, len(quiet) - 512, 256):
+            frame = numpy.ascontiguousarray(quiet[start:start + 512])
+            raw += len(detector(frame))
+            channel.detect(frame, start)
+        self.assertGreater(raw, 10)  # anchor: the detector does report them
+        self.assertEqual(channel.bursts, [])
+        # A real burst in the same passage is kept.
+        loud = quiet.copy()
+        loud[48000:48200] += noise(200 / rate, 0.05, 3, rate).astype(numpy.float32)
+        channel = quality.Channel(es, rate)
+        for start in range(0, len(loud) - 512, 256):
+            channel.detect(numpy.ascontiguousarray(loud[start:start + 512]), start)
+        self.assertTrue(channel.bursts)
+        self.assertTrue(all(47900 <= start and end <= 48300 for start, end, _ in channel.bursts), channel.bursts)
+
 
 class Summary(unittest.TestCase):
     """ffmpeg's R 128 summary, as ffmpeg prints it."""
@@ -190,10 +230,18 @@ class Failures(unittest.TestCase):
             list(quality.Decoder(str(text), 48000, 2, ffmpeg=str(directory / "no-ffmpeg")))
 
     def test_frames_samples_must_be_a_positive_count(self) -> None:
-        for value in (0, -3, 1.5, "10", None):
+        for value in (0, -3, 1.5, "10", None, True, False):
             with self.subTest(value=value):
                 with self.assertRaisesRegex(quality.QualityError, "positive count"):
                     quality.frames_rows({"needs": {"frames/samples": {"value": value}}})
+
+    def test_an_ffmpeg_that_names_no_version_is_unknown(self) -> None:
+        directory = scratch(self)
+        program = directory / "ffmpeg"
+        program.write_text("#!/bin/sh\necho 'a build that says something else'\n")
+        program.chmod(0o755)
+        self.assertEqual(quality.ffmpeg_version(str(program)), "unknown")
+        self.assertNotEqual(quality.ffmpeg_version(support.FFMPEG or "ffmpeg"), "unknown")  # anchor
 
     @needs_essentia
     def test_a_frames_entry_of_other_audio_is_refused(self) -> None:
@@ -202,6 +250,9 @@ class Failures(unittest.TestCase):
         (directory / "out").mkdir()
         request = {"output_dir": str(directory / "out"), "input": {"path": str(audio)},
                    "needs": {"frames/samples": {"value": 3 * 22050}}}
+        with self.assertRaisesRegex(quality.QualityError, "other audio"):
+            quality.run(request, quality.essentia_module())
+        request["needs"]["frames/samples"]["value"] = 2 * 22050 + 2049  # a hop and a sample more
         with self.assertRaisesRegex(quality.QualityError, "other audio"):
             quality.run(request, quality.essentia_module())
         request["needs"]["frames/samples"]["value"] = 2 * 22050  # the anchor: the right count is accepted
@@ -315,18 +366,26 @@ class Measures(unittest.TestCase):
 
     def test_each_defect_is_found_where_it_is_and_in_its_channel(self) -> None:
         directory = scratch(self)
+        for rate in (44100, 48000, 96000):
+            with self.subTest(rate=rate):
+                self.defects_are_found(directory, rate)
+
+    def defects_are_found(self, directory: Path, rate: int) -> None:
         seconds = 8
-        left = tone(seconds, 440, 0.3)
-        right = tone(seconds, 440, 0.3, phase=0.7)
-        clip = slice(2 * RATE, 3 * RATE)
+        left = tone(seconds, 440, 0.3, rate)
+        right = tone(seconds, 440, 0.3, rate, phase=0.7)
+        quiet = slice(round(0.3 * rate), round(1.95 * rate))
+        left[quiet] *= 0.01 / 0.3  # a quiet passage, -43 dBFS, where 16 bits' steps show
+        right[quiet] *= 0.02 / 0.3
+        clip = slice(2 * rate, 3 * rate)
         left[clip] = numpy.clip(4 * left[clip], -1.0, 1.0)  # flat tops at full scale, left only
-        click = round(4.5 * RATE)
+        click = round(4.5 * rate)
         left[click] += 0.6  # one sample, left only
-        jump = 6 * RATE
-        right[jump:] = tone(seconds, 440, 0.3, phase=2.7)[jump:]  # a jump in phase, right only
-        gap = slice(round(7.0 * RATE), round(7.1 * RATE))
+        jump = 6 * rate
+        right[jump:] = tone(seconds, 440, 0.3, rate, phase=2.7)[jump:]  # a jump in phase, right only
+        gap = slice(round(7.0 * rate), round(7.1 * rate))
         left[gap] = right[gap] = 0  # a dropout in both
-        audio = encode(directory / "defects.wav", numpy.stack([left, right], axis=1))
+        audio = encode(directory / f"defects-{rate}.wav", numpy.stack([left, right], axis=1), rate)
         entry = measured(self, directory, audio)
 
         clipping = entry.items("clipping")
@@ -355,7 +414,7 @@ class Measures(unittest.TestCase):
         bursts = entry.items("noise_bursts")
         self.assertTrue(any(span["start"] - 0.005 <= 4.5 <= span["end"] + 0.005 and span["label"] == "1"
                             for span in bursts), bursts)
-        # Nothing is reported in a stretch with no defect.
+        # Nothing is reported in a stretch with no defect, quiet or not.
         for name in ("clipping", "clicks", "discontinuities", "gaps", "noise_bursts"):
             for item in entry.items(name):
                 self.assertFalse(0.5 < item.get("time", item.get("start")) < 1.9, (name, item))
@@ -387,6 +446,16 @@ class Measures(unittest.TestCase):
         self.assertEqual(len(spans), 1, spans)
         self.assertLess(spans[0]["start"], 15)
         self.assertGreater(spans[0]["end"], 70)
+
+    def test_a_held_note_is_reported_as_a_steady_tone(self) -> None:
+        # What the hum description warns of: the detector cannot tell a
+        # held note from mains hum, and reads it about 1% low.
+        hum = quality.Hum(quality.essentia_module(), 8000)
+        hum.feed(tone(40, 220, 0.3, 8000).astype(numpy.float32))
+        self.assertTrue(hum.finish())
+        spans = hum.spans(40.0)
+        self.assertEqual(len(spans), 1, spans)
+        self.assertTrue(212 < spans[0]["value"] < 220, spans)
 
     def test_a_short_recording_says_hum_was_not_examined(self) -> None:
         directory = scratch(self)
@@ -470,6 +539,29 @@ class Measures(unittest.TestCase):
                 # The windows' peaks are the tone's wherever a window lies inside the audio.
                 peak = entry.series("peak_db")[2:-2, 0]
                 self.assertTrue(numpy.allclose(peak, 20 * math.log10(0.3), atol=0.1), peak)
+
+    def test_the_series_rows_are_the_frames_rows_in_time(self) -> None:
+        # One sample in silence, 7 samples after 2 s: only the windows that
+        # hold it have a peak, and they are the rows frames gives a level.
+        directory = scratch(self)
+        for rate in (22050, 44100, 48000, 96000):
+            with self.subTest(rate=rate):
+                samples = numpy.zeros((4 * rate, 2))
+                where = 2 * rate + 7
+                samples[where] = 0.9
+                audio = encode(directory / f"i{rate}.wav", samples, rate)
+                entry = measured(self, directory, audio)
+                frames = bank.Bank(directory / "bank").entry(bank.file_digest(audio), "frames")
+                window = round(4096 * rate / 22050)
+                expected = [k for k in range(entry.series("peak_db").shape[0])
+                            if 0 <= where - (round(k * 2048 * rate / 22050) - window // 2) < window]
+                self.assertEqual(len(expected), 2, expected)  # anchor: two windows, not the first ones
+                self.assertGreater(expected[0], 5)
+                peaked = numpy.nonzero(entry.series("peak_db")[:, 0] > -100)[0].tolist()
+                self.assertEqual(peaked, expected)
+                self.assertEqual(numpy.nonzero(frames.series("rms_db")[:, 0] > -100)[0].tolist(), expected)
+                correlated = numpy.nonzero(entry.series("correlation")[:, 0] != 0)[0].tolist()
+                self.assertEqual(correlated, expected)
 
     def test_block_size_does_not_change_any_output(self) -> None:
         directory = scratch(self)

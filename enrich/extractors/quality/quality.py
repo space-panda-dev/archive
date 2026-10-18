@@ -25,8 +25,10 @@ about 30 times real time per channel here, where the filter costs the decode
 almost nothing; `loudness-r128` measures with the same filter, so the two
 integrated values agree.
 
-The rest are Essentia's standard algorithms on each channel, in frames of
-512 samples every 256 (2,048 every 1,024 for gaps) at the stream's own rate:
+The rest are Essentia's standard algorithms on each channel, at the stream's
+own rate, in frames of 512 samples every 256 at 48 kHz (about 10.7 ms), as
+long in time at higher rates (see `detector_frame`), and 2,048 every 1,024
+for gaps:
 `SaturationDetector` (clipping), `ClickDetector`, `DiscontinuityDetector`,
 `GapsDetector` (dropouts), and `NoiseBurstDetector`; `HumDetector` on the
 channels' mean in overlapping chunks; and `FalseStereoDetector` on the first
@@ -72,6 +74,7 @@ PARAMETERS: dict[str, Any] = {
     "level_floor_db": FLOOR_DB,
     "detector_frame": 512,
     "detector_hop": 256,
+    "detector_reference_rate": 48000,
     "saturation": {"energyThreshold": "-1", "differentialThreshold": "0.001", "minimumDuration": "0.005"},
     "clipping_merge_seconds": "0.05",
     "clicks": {"order": 12, "detectionThreshold": "30", "powerEstimationThreshold": 10, "silenceThreshold": -50},
@@ -80,6 +83,7 @@ PARAMETERS: dict[str, Any] = {
     "discontinuity_floor": "0.05",
     "noise_bursts": {"threshold": 8, "alpha": "0.9", "silenceThreshold": -50},
     "noise_burst_merge_seconds": "0.01",
+    "noise_burst_floor": "0.001",
     "gaps": {"frameSize": 2048, "hopSize": 1024, "silenceThreshold": "-50", "prepowerThreshold": "-30",
              "minimumTime": "10", "maximumTime": "3500", "prepowerTime": "40", "postpowerTime": "40",
              "kernelSize": 11, "attackTime": "0.05", "releaseTime": "0.05"},
@@ -231,7 +235,9 @@ def effective_bandwidth(power: numpy.ndarray, rate: int, frame: int) -> float:
     below exceeds both the level the same distance above and everything
     higher by the drop, and the bandwidth is where the level crosses half
     way down that edge. With no edge it is the Nyquist frequency; with no
-    power at all, 0."""
+    power at all, 0. Below about 4.4 kHz the spectrum is too short to hold
+    an edge and its margins, and the rate is refused: Nyquist would claim a
+    full band nobody looked at."""
     if not numpy.any(power > 0):
         return 0.0
     p = PARAMETERS
@@ -244,7 +250,7 @@ def effective_bandwidth(power: numpy.ndarray, rate: int, frame: int) -> float:
     margin = max(1, round(1000 / per_bin))
     top = len(median) - max(1, round(200 / per_bin))
     if top - margin <= margin:
-        return rate / 2
+        raise QualityError(f"at {rate} Hz the spectrum is too short to look for a bandwidth edge")
     # The loudest level at or above each bin, up to just below the Nyquist frequency.
     above = numpy.maximum.accumulate(median[:top][::-1])[::-1]
     drop = p["bandwidth_drop_db"]
@@ -257,12 +263,29 @@ def effective_bandwidth(power: numpy.ndarray, rate: int, frame: int) -> float:
     return rate / 2
 
 
+def detector_frame(rate: int) -> tuple[int, int]:
+    """The detectors' frame and hop at a sample rate.
+
+    The settings were chosen at 48 kHz. At twice the rate a frame of the same
+    samples is half as long and a tone's second difference a quarter as
+    large, so quantisation noise dominates a quiet passage and
+    NoiseBurstDetector, whose threshold follows each frame's own spread,
+    reports it as bursts (about 15 a second in a -40 dBFS tone at 96 kHz in
+    16 bits). The frame is scaled by the power of two nearest to the rate
+    over `detector_reference_rate`, never below 1, so it keeps about the
+    duration it was chosen at: 1,024 at 88.2 and 96 kHz, 2,048 at 176.4 and
+    192 kHz, 512 at 48 kHz and below."""
+    p = PARAMETERS
+    scale = 2 ** max(0, round(math.log2(rate / p["detector_reference_rate"])))
+    return p["detector_frame"] * scale, p["detector_hop"] * scale
+
+
 class Channel:
     """Essentia's frame detectors on one channel, fed frames in order."""
 
     def __init__(self, es: Any, rate: int):
         p = PARAMETERS
-        frame, hop = p["detector_frame"], p["detector_hop"]
+        frame, hop = detector_frame(rate)
         self.rate = rate
         self.saturation = es.SaturationDetector(frameSize=frame, hopSize=hop, sampleRate=rate,
                                                 **_settings(p["saturation"]))
@@ -280,6 +303,7 @@ class Channel:
         self.gap_spans: list[tuple[float, float]] = []
         self.burst_tolerance = round(float(p["noise_burst_merge_seconds"]) * rate)
         self.discontinuity_floor = float(p["discontinuity_floor"])
+        self.burst_floor = float(p["noise_burst_floor"])
 
     def detect(self, frame: numpy.ndarray, start: int) -> None:
         """One detector frame, beginning at sample `start`."""
@@ -300,6 +324,11 @@ class Channel:
             for index in indexes.astype(int):
                 where = start + index
                 peak = float(second[min(max(index - 1, 0), len(second) - 1)])
+                # A burst smaller than this is quantisation, not noise: a
+                # 16-bit sample's step is 3e-5, and in a quiet passage the
+                # detector's own threshold falls to a few steps.
+                if peak < self.burst_floor:
+                    continue
                 last = self.bursts[-1] if self.bursts else None
                 if last is not None and last[0] - self.burst_tolerance <= where <= last[1] + self.burst_tolerance:
                     last[0], last[1], last[2] = min(last[0], where), max(last[1], where), max(last[2], peak)
@@ -313,7 +342,12 @@ class Channel:
 
 class Hum:
     """Essentia's HumDetector on the channels' mean, in chunks that overlap,
-    so that memory is bounded; a tone found in two chunks is joined."""
+    so that memory is bounded; a tone found in two chunks is joined.
+
+    The detector finds any steady low tone: a chord held for ten minutes is
+    reported as three "hum" spans at its notes, each about 1% below the
+    note. So a span is a steady tone, not evidence of hum, until the
+    detector is calibrated on music."""
 
     def __init__(self, es: Any, rate: int):
         p = PARAMETERS
@@ -328,6 +362,10 @@ class Hum:
         self.offset = 0  # the sample where the pending audio starts
         self.analysed_to = 0  # the sample up to which audio has been examined
         self.tones: list[tuple[float, float, float]] = []
+        # A tone is reported only once it has lasted the detector's 10 s
+        # `timeWindow`, so below `hum_minimum_seconds`, twice that, the
+        # detector could see at most the last seconds of one; such a
+        # recording is not examined, and `hum_examined` says so.
         # One detector, reset before each chunk: a new one per chunk leaves
         # memory behind (about 1 MB a chunk in Essentia 2.1b6.dev1438), and
         # its peak grows with the chunk (about 280 MB at 120 s of 48 kHz).
@@ -387,7 +425,7 @@ class Measure:
     def __init__(self, es: Any, rate: int, channels: int, rows: int):
         p = PARAMETERS
         self.es, self.rate, self.channels, self.rows = es, rate, channels, rows
-        self.frame, self.hop = p["detector_frame"], p["detector_hop"]
+        self.frame, self.hop = detector_frame(rate)
         self.detectors = [Channel(es, rate) for _ in range(channels)]
         self.gap_frame, self.gap_hop = self.detectors[0].gap_frame, self.detectors[0].gap_hop
         self.hum = Hum(es, rate)
@@ -568,12 +606,15 @@ SERIES = ("correlation", "peak_db")
 def frames_rows(request: dict[str, Any]) -> int:
     """The rows of the frames grid, from the `frames/samples` the request passes on."""
     samples = request["needs"]["frames/samples"]["value"]
-    if not isinstance(samples, int) or samples <= 0:
+    if type(samples) is not int or samples <= 0:  # bool is an int to isinstance
         raise QualityError(f"frames/samples is {samples!r}, not a positive count")
     return -(-samples // GRID["hop"]) + 1
 
 
 def ffmpeg_version(ffmpeg: str = "ffmpeg") -> str:
+    """The version ffmpeg names on its first line, or "unknown" when that line
+    is not "ffmpeg version <v>": provenance says so rather than guess, and a
+    build that prints something else still decodes."""
     first = subprocess.run([ffmpeg, "-version"], capture_output=True, text=True).stdout.split("\n", 1)[0].split()
     return first[2] if len(first) > 2 and first[:2] == ["ffmpeg", "version"] else "unknown"
 
@@ -591,7 +632,11 @@ def run(request: dict[str, Any], es: Any, block_frames: int = 1 << 16) -> dict[s
         raise QualityError(f"{path} decodes to no samples")
     expected = measure.total * GRID["sample_rate"] / rate
     samples = request["needs"]["frames/samples"]["value"]
-    if abs(expected - samples) > max(64, 0.001 * samples):
+    # Both decodes are of the same stream, so the counts differ only by what
+    # resampling rounds: under a sample for MP3, AAC, Opus, and FLAC an hour
+    # long. A hop, the grid's own step, refuses another recording without
+    # refusing a resampler's rounding.
+    if abs(expected - samples) > GRID["hop"]:
         raise QualityError(f"{measure.total} samples at {rate} Hz are not the {samples} frames decoded at "
                            f"{GRID['sample_rate']} Hz: the frames entry is of other audio")
     values = measure.finish()

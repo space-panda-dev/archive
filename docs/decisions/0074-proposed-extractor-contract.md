@@ -154,8 +154,11 @@ runner does not care what an extractor is written in.
   what it measures (one channel's defects, the stereo image, everything
   above 11,025 Hz, single-sample steps and flat tops), and it reads only
   `frames/samples` from the bank, so its window series keep the `frames`
-  rows. Its second decode runs at about 16 times real time on one core, the
-  detectors' frame loop and not the decode being the cost.
+  rows. On 48 kHz stereo its second decode runs at about 16 times real time
+  on one core of an otherwise idle machine and about 9 times on a shared
+  one (load average near 13), where `frames` ran at about 150: 15 to 30
+  core-minutes for a four-hour recording, the detectors' frame loop and
+  not the decode being the cost, so it grows with the sample rate.
 - A stem separator runs in its own environment, named by configuration, and
   its stems are `file` outputs that later extractors need like any feature.
 - The plugin and dependency-injection frameworks
