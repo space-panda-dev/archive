@@ -1,20 +1,25 @@
-"""`enrich match-windows` end to end: a scratch archive built through the real
-Door, span suggestions proposed by the real adapter, matches admitted by the
-real Door, and the claims read back (ADRs 0071, 0072)."""
+"""`enrich match-windows` and the calibration harness end to end: a scratch
+archive built through the real Door, span suggestions proposed by the real
+adapter, matches admitted by the real Door, and the claims read back (ADRs
+0071, 0072, amended 2026-10-18)."""
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import subprocess
 import sys
 import unittest
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 
 import adapter
 import cover
 import enrich
 import support
+import windows
 from support import needs_door
 from test_cover import needs_essentia
 from test_match_cli import link, occurrence, selection, work
@@ -26,6 +31,10 @@ sys.path.insert(0, str(HERE.parent))
 RATE = 44100
 PARTS = [{"id": "archive.claim/session_parts", "version": "1"}]
 TEST_AGENT = "pkg:generic/archive-enrich-test@0.1.0"
+
+
+def _bomb(*_, **__):
+    raise AssertionError("must not be called")
 
 
 def session(key: str) -> dict:
@@ -46,7 +55,10 @@ class MatchWindowsCommand(unittest.TestCase):
     progression Q. Work X has P twice, in two keys; Work Y has Q, and a
     selection too short to align. Work X also has an occurrence cut from the
     recording itself and one from its session's other microphone: neither
-    may be its own evidence."""
+    may be its own evidence. With NEAR_TIE, Work Z has P once more, so P's
+    window is a near tie between Works X and Z."""
+
+    NEAR_TIE = False
 
     def setUp(self) -> None:
         self.tmp = support.scratch(self, "enrich-windows-")
@@ -67,35 +79,41 @@ class MatchWindowsCommand(unittest.TestCase):
         x2 = support.write_wav(self.tmp / "x2.wav", x2_samples, RATE)
         y1_samples = support.progression_samples(support.OTHER_PROGRESSION, 48000, seed=5)
         y1 = support.write_wav(self.tmp / "y1.wav", y1_samples, 48000)
+        z1_samples = support.progression_samples(support.PROGRESSION, RATE, transpose=5, seed=6)
+        z1 = support.write_wav(self.tmp / "z1.wav", z1_samples, RATE)
         p_start, p_end = second, second + len(p_up)
         q_start = p_end + len(talk)
         q_end = q_start + len(q)
+        self.p, self.q = (p_start, p_end), (q_start, q_end)
         half_p, half_q = (p_start + p_end) // 2, (q_start + q_end) // 2
         self.spans = [(0, p_start, "quiet"), (p_start, half_p, "music"), (half_p, p_end, "music"),
                       (p_end, q_start, "talk"), (q_start, half_q, "music"), (half_q, q_end, "unknown"),
                       (q_end, len(recording), "quiet")]
+        names = ["x1", "x2", "y1", "short", "self", "mic"] + (["z1"] if self.NEAR_TIE else [])
         steps = (
             {"name": "works and session", "command": "admit", "records": [
-                work("work-x", "Test Work X"), work("work-y", "Test Work Y"), session("session")]},
+                work("work-x", "Test Work X"), work("work-y", "Test Work Y"), work("work-z", "Test Work Z"),
+                session("session")]},
             {"name": "parts", "command": "admit", "records": [
                 parts("parts-lr", "session", ["query"]), parts("parts-mic", "session", ["mic"])]},
             {"name": "selections", "command": "admit", "records": [
                 selection("x1-selection", "x1", [(0, len(x1_samples))], 48000),
                 selection("x2-selection", "x2", [(0, len(x2_samples))], RATE),
                 selection("y1-selection", "y1", [(0, len(y1_samples))], 48000),
+                selection("z1-selection", "z1", [(0, len(z1_samples))], RATE),
                 selection("short-selection", "y1", [(0, 4800)], 48000),
                 selection("self-selection", "query", [(p_start, p_end)], RATE),
                 selection("mic-selection", "mic", [(p_start, p_end)], RATE)]},
             {"name": "occurrences", "command": "admit", "records": [
-                occurrence(f"{name}-occurrence", f"{name}-selection")
-                for name in ("x1", "x2", "y1", "short", "self", "mic")]},
+                occurrence(f"{name}-occurrence", f"{name}-selection") for name in names]},
             {"name": "links", "command": "admit", "records": [
                 link("link-x1", "x1-occurrence", "work-x"), link("link-x2", "x2-occurrence", "work-x"),
                 link("link-y1", "y1-occurrence", "work-y"), link("link-short", "short-occurrence", "work-y"),
-                link("link-self", "self-occurrence", "work-x"), link("link-mic", "mic-occurrence", "work-x")]},
+                link("link-self", "self-occurrence", "work-x"), link("link-mic", "mic-occurrence", "work-x"),
+                *([link("link-z1", "z1-occurrence", "work-z")] if self.NEAR_TIE else [])]},
         )
-        self.root, manifest = support.build_archive(self, {"query": query, "mic": mic, "x1": x1, "x2": x2, "y1": y1},
-                                                    steps)
+        self.root, manifest = support.build_archive(
+            self, {"query": query, "mic": mic, "x1": x1, "x2": x2, "y1": y1, "z1": z1}, steps)
         self.objects = manifest["objects"]
         self.staging = self.tmp / "staging"
         self.suggestions = self.suggest(self.spans)
@@ -129,14 +147,27 @@ class MatchWindowsCommand(unittest.TestCase):
         [output] = admission.outputs
         return output
 
+    def arguments(self, *extra: str, suggestions: str | None = None, ffmpeg: str | None = None,
+                  root: Path | None = None) -> list[str]:
+        return ["match-windows", "--archive", str(root or self.root),
+                "--suggestions", suggestions or self.suggestions["object_id"], "--staging", str(self.staging),
+                "--door", support.DOOR, "--archive-command", support.ARCHIVE, "--ffmpeg", ffmpeg or support.FFMPEG,
+                "--ffprobe", support.FFPROBE, *extra]
+
     def enrich(self, *extra: str, suggestions: str | None = None, ffmpeg: str | None = None,
                root: Path | None = None) -> tuple[int, dict]:
-        completed = subprocess.run(
-            [sys.executable, str(HERE / "enrich.py"), "match-windows", "--archive", str(root or self.root),
-             "--suggestions", suggestions or self.suggestions["object_id"], "--staging", str(self.staging),
-             "--door", support.DOOR, "--archive-command", support.ARCHIVE, "--ffmpeg", ffmpeg or support.FFMPEG,
-             "--ffprobe", support.FFPROBE, *extra], capture_output=True, text=True, env=self.env)
+        completed = subprocess.run([sys.executable, str(HERE / "enrich.py"),
+                                    *self.arguments(*extra, suggestions=suggestions, ffmpeg=ffmpeg, root=root)],
+                                   capture_output=True, text=True, env=self.env)
         return completed.returncode, json.loads(completed.stdout or completed.stderr)
+
+    def enrich_here(self, *extra: str) -> tuple[int, dict]:
+        """The command run in this process, through the real dispatcher, so
+        that what it calls can be watched."""
+        out, err = io.StringIO(), io.StringIO()
+        with patch.dict("os.environ", self.env), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = enrich.main(self.arguments(*extra))
+        return code, json.loads(out.getvalue() or err.getvalue())
 
     def show(self, selector: str) -> dict:
         shown = subprocess.run([support.ARCHIVE, "show", selector], cwd=self.root, capture_output=True, text=True,
@@ -151,46 +182,62 @@ class MatchWindowsCommand(unittest.TestCase):
     def pins(self, *keys: str) -> list[tuple[str, str]]:
         return sorted((self.pin(k)["object_id"], self.pin(k)["revision_id"]) for k in keys)
 
-    def test_each_run_proposes_its_work_with_the_window_of_its_best_step(self) -> None:
-        before = support.head(self.root)
-        code, answer = self.enrich()
-        self.assertEqual((code, answer["status"]), (0, "committed"), answer)
-        self.assertNotEqual(support.head(self.root), before)
-        # Two runs: the talk and the quiet spans end them.
-        self.assertEqual([run["spans"] for run in answer["runs"]], [[1, 2], [4, 5]])
+    def calibrate(self, *arguments: str) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, str(HERE / "calibrate_windows.py"), *arguments],
+                              capture_output=True, text=True, env=self.env)
+
+    def archive_arguments(self) -> list[str]:
+        return ["--archive", str(self.root), "--archive-command", support.ARCHIVE, "--ffmpeg", support.FFMPEG,
+                "--ffprobe", support.FFPROBE, "--source", self.pin("query")["object_id"]]
+
+    def claims(self, answer: dict) -> dict[str, dict]:
+        """The committed claims, by Work."""
         by_work = {}
         for output in answer["outputs"]:
             record = self.show(output["object_id"])
             [work_ref] = [r for r in record["refs"] if r["role"] == "work"]
+            self.assertNotIn(work_ref["id"], by_work)
             by_work[work_ref["id"]] = record
+        return by_work
+
+
+class MatchWindowsClaims(MatchWindowsCommand):
+    def test_each_song_is_claimed_once_for_its_closest_work_in_whole_spans(self) -> None:
+        before = support.head(self.root)
+        code, answer = self.enrich()
+        self.assertEqual((code, answer["status"]), (0, "committed"), answer)
+        self.assertNotEqual(support.head(self.root), before)
+        self.assertEqual(len(answer["windows"]), 2)
+        by_work = self.claims(answer)
         self.assertEqual(sorted(by_work), sorted([self.pin("work-x")["object_id"], self.pin("work-y")["object_id"]]))
+        edges = {edge for start, end, _ in self.spans for edge in (start, end)}
 
         x = by_work[self.pin("work-x")["object_id"]]
-        [x_run] = [run for run in answer["runs"] if run["spans"] == [1, 2]]
-        [proposed] = x_run["proposed"]
+        [x_window] = [w for w in answer["windows"] if w["window"]["start_sample"] < self.p[1]]
         self.assertEqual(x["agent"], cover.AGENT)
         self.assertEqual(x["contracts"][0]["id"], "archive.claim/work_match")
         self.assertEqual(x["contracts"][0]["version"], "3")
-        self.assertEqual(x["payload"], {"method": {"id": cover.METHOD_ID, "version": cover.METHOD_VERSION},
-                                        "score": proposed["score"], "scale": cover.SCALE,
+        self.assertEqual(x_window["path"], "quarter_rate")
+        self.assertEqual(x["payload"], {"method": {"id": "archive-enrich/whole-recording-serra09", "version": "1"},
+                                        "score": x_window["proposed"]["score"],
+                                        "scale": "archive-enrich/whole-recording-serra09/quarter-rate-distance",
                                         "direction": "lower_is_closer", "sample_rate": RATE,
-                                        "window": x_run["window"]})
-        self.assertLessEqual(Decimal(proposed["score"]), Decimal(cover.SEARCH["suggestion_distance"]))
-        # The window is whole suggested spans: here, the whole run.
-        self.assertIn(x_run["window"], [{"start_sample": self.spans[1][0], "end_sample": self.spans[1][1]},
-                                        {"start_sample": self.spans[1][0], "end_sample": self.spans[2][1]}])
+                                        "window": x_window["window"]})
+        self.assertLessEqual(Decimal(x_window["proposed"]["score"]), Decimal("0.118"))
+        # The window is whole suggested spans around P.
+        self.assertIn(x["payload"]["window"]["start_sample"], edges)
+        self.assertIn(x["payload"]["window"]["end_sample"], edges)
+        self.assertEqual(x["payload"]["window"], {"start_sample": self.p[0], "end_sample": self.p[1]})
         refs = {(r["role"], r["id"], r["revision_id"]) for r in x["refs"]}
         self.assertIn(("suggestions", self.suggestions["object_id"], self.suggestions["revision_id"]), refs)
         self.assertIn(("work", self.pin("work-x")["object_id"], self.pin("work-x")["revision_id"]), refs)
-        corpus = sorted((r["id"], r["revision_id"]) for r in x["refs"] if r["role"] == "corpus")
-        # Work X's corpus is what was compared at the window: never the
+        # Work X's corpus is its occurrences that aligned: never the
         # recording itself or its other microphone.
-        self.assertTrue(set(corpus) <= set(self.pins("x1-occurrence", "x2-occurrence")), corpus)
-        self.assertTrue(corpus)
+        corpus = sorted((r["id"], r["revision_id"]) for r in x["refs"] if r["role"] == "corpus")
+        self.assertEqual(corpus, self.pins("x1-occurrence", "x2-occurrence"))
 
         y = by_work[self.pin("work-y")["object_id"]]
-        [y_run] = [run for run in answer["runs"] if run["spans"] == [4, 5]]
-        self.assertEqual(y["payload"]["window"], y_run["window"])
+        self.assertEqual(y["payload"]["window"], {"start_sample": self.q[0], "end_sample": self.q[1]})
         self.assertEqual([(r["id"], r["revision_id"]) for r in y["refs"] if r["role"] == "corpus"],
                          self.pins("y1-occurrence"))
 
@@ -207,9 +254,11 @@ class MatchWindowsCommand(unittest.TestCase):
         [run_ref] = [r for r in x["refs"] if r["role"] == "run"]
         run = self.show(run_ref["id"])
         self.assertEqual(run["payload"]["method"], {"id": cover.METHOD_ID, "version": cover.METHOD_VERSION})
-        self.assertEqual(run["payload"]["software"][-2:],
+        blas_name, blas_version = cover.blas()
+        self.assertEqual(run["payload"]["software"][-3:],
                          [{"name": "essentia", "version": cover.ESSENTIA_BUILD},
-                          {"name": "numpy", "version": __import__("numpy").__version__}])
+                          {"name": "numpy", "version": __import__("numpy").__version__},
+                          {"name": blas_name, "version": blas_version}])
         used = {(r["id"], r["revision_id"]) for r in run["refs"] if r["role"] == "used"}
         for key in ("query", "x1", "x2", "y1", "x1-occurrence", "x2-occurrence", "y1-occurrence", "short-occurrence",
                     "link-x1", "link-y1", "work-x", "work-y"):
@@ -224,11 +273,39 @@ class MatchWindowsCommand(unittest.TestCase):
             SELECT ?p ?o WHERE {{ GRAPH ?g {{ <{match_uri}> ?p ?o . }} }}""").data["results"]["bindings"]
         values = {row["o"]["value"] for row in rows}
         self.assertIn(_record_uri(archive_id, self.suggestions["revision_id"]).value, values)
-        # The window is a node of its own: start, end, and rate.
         rows = world_query(projection, f"""
             SELECT ?o WHERE {{ GRAPH ?g {{ <{match_uri}:window> ?p ?o . }} }}""").data["results"]["bindings"]
-        self.assertEqual(sorted(int(row["o"]["value"]) for row in rows),
-                         sorted([x_run["window"]["start_sample"], x_run["window"]["end_sample"], RATE]))
+        self.assertEqual(sorted(int(row["o"]["value"]) for row in rows), sorted([*self.p, RATE]))
+
+    def test_the_dispatcher_reaches_the_whole_recording_search_and_never_the_excluded(self) -> None:
+        excluded = {self.pin("self-occurrence")["object_id"], self.pin("mic-occurrence")["object_id"]}
+        searched, seen = [], set()
+        real_search, real_candidates = windows.search_recording, windows.candidates_of
+        real_distances, real_exact = cover.QuarterRate.distances, cover.Analyser.distance
+
+        def search(*args, **kwargs):
+            searched.append(sorted(args[2]))
+            self.assertFalse(excluded & set(args[2]))
+            return real_search(*args, **kwargs)
+
+        def candidates(recording, stacks, frames, key, reference, search=None):
+            seen.add(key)
+            self.assertNotIn(key, excluded)
+            return real_candidates(recording, stacks, frames, key, reference, search)
+
+        def distances(quarter, query, keys):
+            seen.update(keys)
+            self.assertFalse(excluded & set(keys))
+            return real_distances(quarter, query, keys)
+        with patch.object(windows, "search_recording", search), patch.object(windows, "candidates_of", candidates), \
+                patch.object(cover.QuarterRate, "distances", distances), patch.object(cover.Analyser, "distance", _bomb):
+            code, answer = self.enrich_here("--dry-run")
+        self.assertEqual((code, answer["status"]), (0, "predicted"), answer)
+        self.assertEqual(len(searched), 1)
+        # Anchor: the allowed occurrences were all reached, so the bomb could have gone off.
+        allowed = {self.pin(k)["object_id"] for k in ("x1-occurrence", "x2-occurrence", "y1-occurrence")}
+        self.assertEqual(seen, allowed)
+        self.assertEqual(set(searched[0]), allowed)
 
     def test_a_rerun_on_unchanged_inputs_writes_and_decodes_nothing(self) -> None:
         code, first = self.enrich()
@@ -256,17 +333,26 @@ class MatchWindowsCommand(unittest.TestCase):
         code, two = self.enrich("--dry-run", "--jobs", "2")
         self.assertEqual((code, two["status"]), (0, "predicted"), two)
         self.assertEqual(support.head(self.root), head)
-        self.assertEqual(one["runs"], two["runs"])
-        self.assertTrue(any(run["proposed"] for run in one["runs"]))
+        self.assertEqual(one["windows"], two["windows"])
+        self.assertTrue(any(w["proposed"] for w in one["windows"]))
 
-    def test_nothing_within_the_distance_proposes_nothing(self) -> None:
-        # Only the talk and quiet are runs' neighbours now: P and Q are both
-        # classed talk, so no run exists.
+    def test_a_window_crosses_a_talk_span_inside_a_song(self) -> None:
+        a, b = self.p[0] + 10 * RATE, self.p[0] + 13 * RATE
+        crossing = self.suggest([self.spans[0], (self.p[0], a, "music"), (a, b, "talk"), (b, self.p[1], "music"),
+                                 *self.spans[3:]])
+        code, answer = self.enrich("--dry-run", suggestions=crossing["object_id"])
+        self.assertEqual((code, answer["status"]), (0, "predicted"), answer)
+        [p] = [w for w in answer["windows"] if w["window"]["start_sample"] < self.p[1]]
+        self.assertEqual(p["window"], {"start_sample": self.p[0], "end_sample": self.p[1]})
+        self.assertTrue(p["proposed"])
+
+    def test_no_music_spans_proposes_nothing(self) -> None:
         talkative = self.suggest([(s, e, "talk" if c in ("music", "unknown") else c) for s, e, c in self.spans])
         head = support.head(self.root)
         code, answer = self.enrich(suggestions=talkative["object_id"])
         self.assertEqual((code, answer["status"]), (3, "nothing_proposed"), answer)
-        self.assertEqual(answer["runs"], [])
+        self.assertEqual(answer["windows"], [])
+        self.assertGreater(answer["hits"], 0)  # anchor: the songs were heard
         self.assertEqual(support.head(self.root), head)
 
     def test_an_empty_corpus_proposes_nothing_and_says_why(self) -> None:
@@ -292,84 +378,150 @@ class MatchWindowsCommand(unittest.TestCase):
         self.assertIn("could not be measured", answer["detail"])
         self.assertEqual(support.head(self.root), head)
 
-
-    def test_calibration_judges_each_best_window_against_what_was_accepted(self) -> None:
+    def test_calibration_judges_each_kept_window_against_what_was_accepted(self) -> None:
         head = support.head(self.root)
         out = self.tmp / "calibration.json"
-        completed = subprocess.run(
-            [sys.executable, str(HERE / "calibrate_windows.py"), "--archive", str(self.root), "--archive-command",
-             support.ARCHIVE, "--ffmpeg", support.FFMPEG, "--ffprobe", support.FFPROBE,
-             "--source", self.pin("query")["object_id"], "--out", str(out)],
-            capture_output=True, text=True, env=self.env)
+        completed = self.calibrate(*self.archive_arguments(), "--out", str(out))
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(support.head(self.root), head)
         report = json.loads(out.read_text())
-        [source] = report["sources"]
-        self.assertEqual(source["spans"], "archive")
-        # P is accepted on the recording itself as Work X; Q is not accepted.
-        judgments = {tuple(w["closest_works"]): w["judgment"] for w in source["windows"]}
-        self.assertEqual(judgments, {(self.pin("work-x")["object_id"],): "correct",
-                                     (self.pin("work-y")["object_id"],): "unaccepted"})
-        [accepted] = source["accepted"]
-        self.assertEqual(accepted["occurrence"], self.pin("self-occurrence")["object_id"])
-        self.assertTrue(accepted["reached"])
-        self.assertTrue(accepted["suggested"])
+        for rule in ("lenient", "strict"):
+            [source] = report[rule]["sources"]
+            # P is accepted on the recording itself as Work X; Q is not accepted.
+            judgments = {tuple(w["closest_works"]): w["judgment"] for w in source["windows"]}
+            self.assertEqual(judgments, {(self.pin("work-x")["object_id"],): "correct",
+                                         (self.pin("work-y")["object_id"],): "unaccepted"})
+            [accepted] = source["accepted"]
+            self.assertEqual(accepted["occurrence"], self.pin("self-occurrence")["object_id"])
+            self.assertTrue(accepted["reached"])
+            self.assertTrue(accepted["suggested"])
         summary = json.loads(completed.stdout)
-        self.assertEqual((summary["suggested_correct"], summary["suggested_wrong"], summary["accepted_suggested"]),
-                         (1, 0, 1))
+        self.assertEqual({rule: (s["suggested_correct"], s["suggested_wrong"], s["suggested_unaccepted"],
+                                 s["accepted_suggested"]) for rule, s in summary.items()},
+                         {"lenient": (1, 0, 1, 1), "strict": (1, 0, 1, 1)})
         # The recording's own occurrence and its other microphone's are not
         # its corpus: four of six accepted occurrences remain, one too short.
-        self.assertEqual(source["corpus"], 3)
+        self.assertEqual(report["corpus_sizes"], {self.pin("query")["object_id"]: 3})
         self.assertEqual(list(report["unmeasured"]), [self.pin("short-occurrence")["object_id"]])
+        self.assertEqual(report["software"], [[list(s) for s in cover.software()]])
 
-        # Split across machines: measured once here, each run searched from
-        # the workset alone, then judged. The report is the same.
-        def calibrate(*arguments: str) -> subprocess.CompletedProcess:
-            return subprocess.run([sys.executable, str(HERE / "calibrate_windows.py"), *arguments],
-                                  capture_output=True, text=True, env=self.env)
-
+        # Split across machines: measured once here, each recording searched
+        # from the workset alone, then judged. The report is the same.
         workset = self.tmp / "workset"
-        measured = calibrate("measure", "--archive", str(self.root), "--archive-command", support.ARCHIVE,
-                             "--ffmpeg", support.FFMPEG, "--ffprobe", support.FFPROBE, "--jobs", "2",
-                             "--source", self.pin("query")["object_id"], "--workset", str(workset))
+        measured = self.calibrate("measure", *self.archive_arguments(), "--jobs", "2", "--workset", str(workset))
         self.assertEqual(measured.returncode, 0, measured.stderr)
         plan = json.loads(measured.stdout)
-        self.assertEqual(len(plan["runs"]), 2)
+        self.assertEqual(plan["sources"], [0])
         self.assertEqual(support.head(self.root), head)
-        lines = []
-        for source_index, run_index in plan["runs"]:
-            searched = calibrate("search", "--workset", str(workset), "--digest", plan["digest"],
-                                 "--source-index", str(source_index), "--run-index", str(run_index))
-            self.assertEqual(searched.returncode, 0, searched.stderr)
-            lines.append(searched.stdout.strip())
+        searched = self.calibrate("search", "--workset", str(workset), "--digest", plan["digest"],
+                                  "--source-index", "0")
+        self.assertEqual(searched.returncode, 0, searched.stderr)
+        self.assertEqual(json.loads(searched.stdout)["needs_exact"], [])
         results = self.tmp / "results.jsonl"
-        results.write_text("\n".join(reversed(lines)) + "\n")
+        results.write_text(searched.stdout)
         split_out = self.tmp / "split.json"
-        judged = calibrate("judge", "--workset", str(workset), "--results", str(results), "--out", str(split_out))
+        judged = self.calibrate("judge", "--workset", str(workset), "--results", str(results), "--out", str(split_out))
         self.assertEqual(judged.returncode, 0, judged.stderr)
         self.assertEqual(json.loads(split_out.read_text()), report)
-        # A run without a result, or a workset that is not the one named, is refused.
-        results.write_text(lines[0] + "\n")
-        judged = calibrate("judge", "--workset", str(workset), "--results", str(results))
+
+        # A recording without a result, twice, a workset that is not the one
+        # named, a changed file, and a per-window workset are refused.
+        results.write_text("")
+        judged = self.calibrate("judge", "--workset", str(workset), "--results", str(results))
         self.assertEqual(judged.returncode, 1)
-        self.assertIn("1 runs have no result", judged.stderr)
-        searched = calibrate("search", "--workset", str(workset), "--digest", "sha256:" + "0" * 64,
-                             "--source-index", "0", "--run-index", "0")
+        self.assertIn("1 recordings have no result", judged.stderr)
+        results.write_text(searched.stdout * 2)
+        judged = self.calibrate("judge", "--workset", str(workset), "--results", str(results))
+        self.assertIn("more than one result", judged.stderr)
+        searched = self.calibrate("search", "--workset", str(workset), "--digest", "sha256:" + "0" * 64,
+                                  "--source-index", "0")
         self.assertEqual(searched.returncode, 1)
         self.assertIn("is not workset", searched.stderr)
-        with (workset / "corpus.npz").open("ab") as handle:
+        with (workset / "recording-0.npz").open("ab") as handle:
             handle.write(b"x")
-        searched = calibrate("search", "--workset", str(workset), "--digest", plan["digest"],
-                             "--source-index", "0", "--run-index", "0")
+        searched = self.calibrate("search", "--workset", str(workset), "--digest", plan["digest"],
+                                  "--source-index", "0")
         self.assertEqual(searched.returncode, 1)
         self.assertIn("is not the file its manifest names", searched.stderr)
+        manifest = json.loads((workset / "manifest.json").read_text())
+        del manifest["format"]
+        (workset / "manifest.json").write_text(json.dumps(manifest))
+        judged = self.calibrate("judge", "--workset", str(workset), "--results", str(results))
+        self.assertEqual(judged.returncode, 1)
+        self.assertIn("is not a whole-recording/1 workset", judged.stderr)
 
-        refused = subprocess.run(
-            [sys.executable, str(HERE / "calibrate_windows.py"), "--archive", str(self.root), "--archive-command",
-             support.ARCHIVE, "--source", self.pin("work-x")["object_id"]], capture_output=True, text=True,
-            env=self.env)
+        refused = self.calibrate("--archive", str(self.root), "--archive-command", support.ARCHIVE,
+                                 "--source", self.pin("work-x")["object_id"])
         self.assertEqual(refused.returncode, 1)
         self.assertIn("no accepted occurrence is cut from", refused.stderr)
+
+
+class MatchWindowsNearTie(MatchWindowsCommand):
+    NEAR_TIE = True
+
+    def test_a_near_tie_is_decided_by_the_exact_distance_on_fresh_audio(self) -> None:
+        decoded = []
+        real_features = cover.Comparer.features
+
+        def features(comparer, pieces):
+            decoded.append([(p.start_sample, p.end_sample) for p in pieces])
+            return real_features(comparer, pieces)
+        with patch.object(cover.Comparer, "features", features):
+            code, answer = self.enrich_here()
+        self.assertEqual((code, answer["status"]), (0, "committed"), answer)
+        by_path = {w["path"]: w for w in answer["windows"]}
+        self.assertEqual(sorted(by_path), ["exact", "quarter_rate"])
+        tie = by_path["exact"]
+        self.assertEqual(tie["window"], {"start_sample": self.p[0], "end_sample": self.p[1]})
+        # The window, and nothing else, was decoded afresh (the corpus is
+        # measured before the recording).
+        self.assertEqual(decoded[-1], [self.p])
+        self.assertNotIn([self.q], decoded)
+        # Anchor: Works X and Z tie on the quarter-rate scale.
+        self.assertEqual(tie["quarter_rate_closest"][0]["distance"], tie["quarter_rate_closest"][1]["distance"])
+        by_work = self.claims(answer)
+        [tie_claim] = [c for c in by_work.values() if c["payload"]["window"] == tie["window"]]
+        self.assertEqual(tie_claim["payload"]["scale"], "archive-enrich/essentia-serra09/smaller-asymmetric-distance")
+        self.assertEqual(tie_claim["payload"]["method"], {"id": cover.METHOD_ID, "version": cover.METHOD_VERSION})
+        self.assertLessEqual(Decimal(tie_claim["payload"]["score"]), Decimal("0.08"))
+        [other] = [c for c in by_work.values() if c is not tie_claim]
+        self.assertEqual(other["payload"]["scale"], cover.QUARTER_RATE_SCALE)
+
+    def test_the_calibration_split_measures_the_near_tie_where_the_audio_is(self) -> None:
+        head = support.head(self.root)
+        out = self.tmp / "calibration.json"
+        completed = self.calibrate(*self.archive_arguments(), "--out", str(out))
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        report = json.loads(out.read_text())
+        workset = self.tmp / "workset"
+        measured = self.calibrate("measure", *self.archive_arguments(), "--workset", str(workset))
+        self.assertEqual(measured.returncode, 0, measured.stderr)
+        plan = json.loads(measured.stdout)
+        first = self.calibrate("search", "--workset", str(workset), "--digest", plan["digest"], "--source-index", "0")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(json.loads(first.stdout)["needs_exact"], [list(self.p)])
+        results = self.tmp / "results.jsonl"
+        results.write_text(first.stdout)
+        judged = self.calibrate("judge", "--workset", str(workset), "--results", str(results))
+        self.assertEqual(judged.returncode, 1)
+        self.assertIn("still needs 1 windows measured afresh", judged.stderr)
+        fresh = self.tmp / "fresh.npz"
+        windowed = self.calibrate("measure-windows", "--archive", str(self.root), "--archive-command", support.ARCHIVE,
+                                  "--ffmpeg", support.FFMPEG, "--ffprobe", support.FFPROBE, "--workset", str(workset),
+                                  "--results", str(results), "--out", str(fresh))
+        self.assertEqual(windowed.returncode, 0, windowed.stderr)
+        self.assertEqual(json.loads(windowed.stdout)["measured"], 1)
+        second = self.calibrate("search", "--workset", str(workset), "--source-index", "0", "--windows", str(fresh))
+        self.assertEqual(second.returncode, 0, second.stderr)
+        decided = json.loads(second.stdout)
+        self.assertEqual(decided["needs_exact"], [])
+        self.assertEqual([d["path"] for d in decided["kept"]], ["exact", "quarter_rate"])
+        results.write_text(second.stdout)
+        split_out = self.tmp / "split.json"
+        judged = self.calibrate("judge", "--workset", str(workset), "--results", str(results), "--out", str(split_out))
+        self.assertEqual(judged.returncode, 0, judged.stderr)
+        self.assertEqual(json.loads(split_out.read_text()), report)
+        self.assertEqual(support.head(self.root), head)
 
 
 class SessionArtifacts(unittest.TestCase):

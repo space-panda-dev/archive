@@ -436,6 +436,7 @@ def run_match(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
 
 def run_match_windows(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     import cover  # Essentia and numpy are needed by this command only
+    import windows
 
     env = environment()
     reader = reader_of(args, env)
@@ -491,8 +492,11 @@ def run_match_windows(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         return 0, {"status": "unchanged", **answer, "run": pin_of(previous)}
 
     source_path = content_path(reader.root, source)
-    limit = Decimal(cover.SEARCH["suggestion_distance"])
-    runs, outputs = [], []
+    if stream["payload"].get("sample_rate") != rate:
+        raise CommandError(f"the suggestions are in samples at {rate} Hz, but their stream claim states "
+                           f"{stream['payload'].get('sample_rate')} Hz")
+    sample_count = stream["payload"]["sample_count"]
+    outputs = []
     try:
         with cover.Comparer(args.jobs, args.ffmpeg, args.ffprobe) as comparer:
             for occurrence_id, measured in comparer.measure_corpus(corpus_pieces).items():
@@ -503,51 +507,51 @@ def run_match_windows(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
             if not comparer.corpus:
                 return NOTHING_PROPOSED, {"status": "nothing_proposed", **answer,
                                           "detail": "no corpus occurrence is long enough to compare"}
+            recording = windows.Recording(cover.measure_whole(source_path, rate, sample_count, args.ffmpeg,
+                                                              args.ffprobe, analyser=comparer.analyser), rate)
 
             def window_features(start: int, end: int) -> cover.Features:
                 return comparer.features([cover.Piece(source_path, start, end, rate)])
 
-            for number, run in enumerate(cover.runs_of(spans, cover.SEARCH["run_classes"])):
-                result = cover.search_run(run, spans, rate, window_features, comparer.corpus, comparer.distances)
-                best = result.pop("best")
-                result["proposed"] = []
-                runs.append(result)
-                if best is None:
-                    continue
-                result["window"], result["margin"] = best["window"], best["margin"]
-                result["unaligned"] = len(best["unaligned"])
-                result["closest"] = [{"occurrence": d.corpus_id, "distance": str(d.value)}
-                                     for d in best["distances"][:5]]
-                # Each Work's closest compared occurrence, and every one of
-                # its occurrences compared at the best window.
-                closest: dict[str, Any] = {}
-                compared: dict[str, list[str]] = {}
-                for distance in best["distances"]:
-                    for work_id in works_of[distance.corpus_id]:
-                        compared.setdefault(work_id, []).append(distance.corpus_id)
-                        if work_id not in closest:
-                            closest[work_id] = distance.value
-                for work_id in sorted(closest):
-                    if closest[work_id] > limit:
-                        continue
-                    work = works[work_id]["work"]
-                    corpus = tuple(adapter.Pin("corpus", works[work_id]["occurrences"][o]["object_id"],
-                                               works[work_id]["occurrences"][o]["revision_id"])
-                                   for o in sorted(compared[work_id]))
-                    result["proposed"].append({"work": pin_of(work), "score": str(closest[work_id])})
-                    outputs.append(adapter.Output(
-                        contract=WINDOW_MATCH_CONTRACT,
-                        name=f"window-{number}-work-" + work_id.removeprefix("urn:uuid:"),
-                        payload={"method": {"id": cover.METHOD_ID, "version": cover.METHOD_VERSION},
-                                 "score": str(closest[work_id]), "scale": cover.SCALE, "direction": cover.DIRECTION,
-                                 "sample_rate": rate, "window": best["window"]},
-                        refs=(adapter.Pin("suggestions", suggestions["object_id"], suggestions["revision_id"]),
-                              adapter.Pin("work", work["object_id"], work["revision_id"]), *corpus),
-                        parameters_role="parameters"))
+            found = windows.search_recording(recording, spans, comparer.corpus,
+                                             {key: sorted(value) for key, value in works_of.items()},
+                                             window_features, comparer.distances, args.jobs)
     except cover.CoverError as exc:
         raise CommandError(str(exc)) from exc
+    for occurrence_id in found["too_short"]:
+        answer["skipped"].append({"occurrence": occurrence_id,
+                                  "reason": "too short for the quarter-rate distance"})
+    report = []
+    for number, decision in enumerate(found["decisions"]):
+        window = {"start_sample": decision.window[0], "end_sample": decision.window[1]}
+        scale = cover.EXACT_SCALE if decision.path == "exact" else cover.QUARTER_RATE_SCALE
+        entry: dict[str, Any] = {
+            "window": window, "path": decision.path, "scale": scale,
+            "closest": [{"occurrence": d.corpus_id, "distance": str(d.value)} for d in decision.distances[:5]],
+            "unaligned": len(decision.unaligned), "proposed": None}
+        if decision.path == "exact":
+            entry["quarter_rate_closest"] = [{"occurrence": d.corpus_id, "distance": str(d.value)}
+                                             for d in decision.quarter_rate[:5]]
+        report.append(entry)
+        if not decision.suggested:
+            continue
+        work = works[decision.work]["work"]
+        occurrences = works[decision.work]["occurrences"]
+        score = str(next(d.value for d in decision.distances if d.corpus_id in decision.corpus))
+        entry["proposed"] = {"work": pin_of(work), "score": score}
+        outputs.append(adapter.Output(
+            contract=WINDOW_MATCH_CONTRACT, name=f"window-{number}-work-" + decision.work.removeprefix("urn:uuid:"),
+            payload={"method": {"id": cover.METHOD_ID, "version": cover.METHOD_VERSION}, "score": score,
+                     "scale": scale, "direction": cover.DIRECTION, "sample_rate": rate, "window": window},
+            refs=(adapter.Pin("suggestions", suggestions["object_id"], suggestions["revision_id"]),
+                  adapter.Pin("work", work["object_id"], work["revision_id"]),
+                  *(adapter.Pin("corpus", occurrences[o]["object_id"], occurrences[o]["revision_id"])
+                    for o in decision.corpus)),
+            parameters_role="parameters"))
     ended = adapter.now()
-    answer.update({"suggestion_distance": cover.SEARCH["suggestion_distance"], "runs": runs})
+    answer.update({"suggestion_distances": {"quarter_rate": cover.SEARCH["suggestion_distance"],
+                                            "exact": cover.SEARCH["exact_suggestion_distance"]},
+                   "hits": found["hits"], "regions": len(found["regions"]), "windows": report})
     if not outputs:
         return NOTHING_PROPOSED, {"status": "nothing_proposed", **answer}
     run_result = adapter.RunResult(agent=cover.AGENT, method_id=cover.METHOD_ID, method_version=cover.METHOD_VERSION,
@@ -589,11 +593,11 @@ def main(argv: list[str] | None = None) -> int:
     match.add_argument("--limit", required=True,
                        help="decimal text: a Work's best score is proposed only when at or below it")
     common(match)
-    windows = commands.add_parser("match-windows", help="grow windows over a recording's suggested spans, compare "
-                                                        "them with the occurrences linked to each Work, and propose "
-                                                        "work_match version 3 claims")
+    windows = commands.add_parser("match-windows", help="search a whole recording for the Works of the occurrences "
+                                                        "linked to them, in windows of its suggested spans, and "
+                                                        "propose work_match version 3 claims")
     windows.add_argument("--suggestions", required=True, help="a span_suggestions version 1 object identifier")
-    windows.add_argument("--jobs", type=int, default=1, help="processes measuring and comparing audio (default 1)")
+    windows.add_argument("--jobs", type=int, default=1, help="processes measuring and searching (default 1)")
     common(windows)
     args = parser.parse_args(argv)
     if args.command == "match-windows" and args.jobs < 1:
