@@ -1,8 +1,8 @@
 {
  "contract": "archive-extractor/1",
  "id": "chords",
- "version": "1",
- "description": "A chord per half beat on rhythm's beat grid, from tonal's tuning-referenced treble and bass profiles: template scores over a vocabulary of eighteen qualities, a bass-root bonus, slash bass notes, and a Viterbi path that pays for every change; with the two runner-up chords of each span. NumPy only; decodes nothing.",
+ "version": "2",
+ "description": "A chord per half beat on rhythm's beat grid, from tonal's tuning-referenced treble and bass profiles: template scores over a vocabulary of eighteen qualities, a bass-root bonus, slash bass notes, and a Viterbi path that pays for every change; with the two runner-up chords of each span. NumPy only; decodes nothing. Version 2 prices the six-note m11 above the five-note chords, as at the same price it held through diatonic movement.",
  "command": [
   "${python}",
   "chords.py"
@@ -200,7 +200,7 @@
     "3": "0",
     "4": "0.04",
     "5": "0.12",
-    "6": "0.12"
+    "6": "0.15"
    },
    "quality_penalty": {
     "sus2": "0.05",

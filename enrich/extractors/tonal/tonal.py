@@ -8,7 +8,7 @@ recording again for each frame's spectral peaks, and measures:
 
 - `pitched`: which frames carry pitched sound (below), on the `frames` grid,
   so that every other output, and any reader, can leave out silence, talk,
-  and noise the same way;
+  noise, and mains hum the same way;
 - `tuning_windows`: the tuning in overlapping windows of about twenty
   seconds, every row with its confidence and its share of pitched frames,
   and `tuning_drift`: the windows that are at least half pitched, as spans
@@ -20,7 +20,9 @@ recording again for each frame's spectral peaks, and measures:
 - `tuning_frequency`, `tuning_cents`, `tuning_confidence`: the recording's
   reference tuning, the confidence-weighted median of the confident windows
   (below), as the frequency of A4 in Hz and its distance from 440 Hz in
-  cents, folded into [-50, 50);
+  cents, folded into [-50, 50), and `tuning_window_count`, how many windows
+  it was taken from: `tuning_confidence` is measured over every sounding
+  frame, so it does not show that a tuning rests on two windows of six;
 - `detuned`, `detuned_spans`: whether the recording, and which windows of
   it, sit more than `max_detune_cents` (40) from 440 Hz, where a profile
   referenced to 440 Hz, as `frames/hpcp` is, splits each pitch class over
@@ -33,12 +35,14 @@ recording again for each frame's spectral peaks, and measures:
   pitch class, weighted by a squared cosine of their distance, not
   normalised, so loud and quiet frames keep their difference; a frame below
   the level gate is 0. The `chords` extractor reads them;
-- `key`, `scale`, `mode`, `scale_notes`, `key_strength`, `key_margin`: the
-  key of the pitched frames (below), and `keys`: the same in windows of
-  about thirty seconds that are at least half pitched, as spans labelled
-  like "F dorian" whose value is the strength; `key_regions` lays those
-  windows end to end (each keeps the stretch nearer its centre than its
-  neighbours'), merging neighbours with one label, as a timeline;
+- `collection`, `collection_margin`, `key`, `mode`, `scale`, `scale_notes`,
+  `key_strength`, `key_margin`, `tonic_margin`, `tonic_named`: the note
+  collection of the pitched frames and, when one leads, its tonic and mode
+  (below); `keys`: the same in windows of about thirty seconds that are at
+  least half pitched; and `key_regions`, a timeline of the note collections
+  with the tonic named where it leads. A span is labelled with the tonic and
+  mode ("F dorian") where the tonic leads and with the collection ("Eb major
+  scale") where it does not, and valued by its tonic margin;
 - `dissonance`: `Dissonance` (sensory roughness) of every frame that
   passes the level gate, on the `frames` grid; a frame below it reads 0, as
   silence does, so a quiet room's noise is not averaged in. Talk and noise
@@ -54,10 +58,12 @@ many frames as `frames` did, so its series line up row for row. It decodes
 twice: the first pass finds the pitched frames, the tuning, and the
 dissonance; the second folds each frame's peaks onto the tuning the first
 found. Holding the peaks between the passes instead would cost about 200 MB
-for a three-hour rehearsal (some 210 peaks a frame); decoding again costs
-about 1.5 s for six minutes of music. That is three times `frames`'
-spectral cost: the exception to "decode once" that ADR 0074 records, with
-what would remove it. `frames/hpcp` is not read: the profiles here are
+for a three-hour rehearsal (some 210 peaks a frame). On three tracks of the
+album below, timed one after the other on a shared machine, `tonal` took
+1.5 to 1.65 times `frames`' processor time, each with its process start and
+its decodes (2.2 to 2.7 s for `frames`, 3.4 to 4.0 s for `tonal`): the
+exception to "decode once" that ADR 0074 records, with what would remove
+it. `frames/hpcp` is not read: the profiles here are
 referenced to the measured tuning, which `frames` cannot know.
 
 Tuning. Every peak within `relative_db` (40 dB) of its frame's loudest and
@@ -83,19 +89,39 @@ masters eight read exactly that, where these windows read from -6 to +23
 cents with confidence 0.4 to 0.8.
 
 Pitched frames. The frames are taken in blocks of about five seconds; a
-block is pitched when at least half of it sounds (passes the level gate)
-and its sounding frames, each frame's histogram scaled to sum to one so
-that every frame has one vote, concentrate about some tuning at least
+block is pitched when at least half of it sounds (passes the level gate) and
+its sounding frames, each frame's histogram scaled to sum to one so that
+every frame has one vote, concentrate about some tuning at least
 `min_concentration` (0.4); a frame is pitched when it sounds and its block
 is pitched. On synthetic sound music concentrates 0.66 to 1.0 even under
 noise or drums, and noise, talk, drums alone, and a gliding tone 0.32 to
-0.36. On the masters, restricting the histogram to the loud peaks below
-2 kHz raised the pitched share of three dense tracks from 0.24-0.41 to
+0.36. On the masters, restricting the histogram to the loud peaks below 2
+kHz raised the pitched share of three dense tracks from 0.24-0.41 to
 0.64-0.82; noise and talk stay flat either way. Without the equal votes a
-few loud, in-tune frames of music carried a block of talk past the
-threshold (six music frames among 54 read 0.41); with them it takes about
-eight, so up to about four seconds of talk beside music can still be
-marked pitched, as in version 2: the decision is a block's.
+few loud, in-tune frames of music carried a block of talk past the threshold
+(six music frames among 54 read 0.41); with them it takes about eight, so up
+to about four seconds of talk beside music can still be marked pitched, as
+in version 2: the decision is a block's.
+
+Mains hum is left out first. Its harmonics sit on one offset from the grid
+(60 Hz's 49 cents, 50 Hz's 35), and in the gaps between syllables of quiet
+talk they are a frame's loudest peaks, so a block of talk over hum agreed on
+a tuning: in a synthetic rehearsal (talk at 0.03, hum at 0.003 and three
+harmonics above it, a room floor) version 3 marked all of five minutes of
+talk pitched over 60 Hz and 80 % over 50 Hz, read the windows over it at the
+hum's offset, and gave the recording the key of B-flat or G major; with no
+hum the talk was not pitched at all. So a block's mains (`mains_lines`) are
+those of 50 and 60 Hz with at least two of their first three harmonics among
+the loud peaks, within 1.5 Hz, of at least half its sounding frames, and
+every peak within 1.5 Hz of any of their harmonics below 2 kHz is left out
+of the block's histograms and of its frames' profiles. Only the first three
+harmonics are asked for, because music tuned 35 cents sharp puts every G and
+its partials on 50 Hz's harmonics (G4 is then 400 Hz), and music about
+49 cents off puts every B on 60 Hz's. What still passes for hum is a low G
+or B held through half a block at that tuning, or a held low note near 50 or
+60 Hz: on the eighteen masters above, three blocks, each the short last
+block of a track under a held bass note, and no other; the tuning there
+moved by under 0.01 cent.
 
 The profiles. Each frame's tuning is the confident windows' tunings,
 interpolated between their centres (and held beyond the first and last),
@@ -126,8 +152,36 @@ music in F dorian, which has Eb major's notes and F's tonic. On the album
 above, the new tonic agreed with 15 of 38 published key claims (Spotify's,
 ChordU's, Ultimate Guitar's, and the keys of note-for-note transcriptions)
 where version 2's agreed with 11; the claims agree with each other on the
-tonic in 11 of 31 pairs. That is evidence about this album only; `keys` is a
-window-by-window description, not a claim of modulation.
+tonic in 11 of 31 pairs. That is evidence about this album only.
+
+The modes of one collection share their notes and differ only in which
+note the music leans on, and that lean is often slight: a progression of
+Cmaj7, Am7, Dm7, G7, Fmaj7, and E7 read A aeolian, F lydian, or C ionian
+as its level and tuning changed, every one by a margin under 0.015, and in
+version 3 its thirty-second windows made four regions in four modes on
+one set of notes. So each reading reports how far it leads:
+`collection_margin` over the best reading on other notes, and
+`tonic_margin` over the best reading with another tonic (for F dorian
+usually Eb ionian, its own notes). The tonic is named (`tonic_named`) when
+`tonic_margin` is at least `min_tonic_margin` (0.03); below it, `key`,
+`mode`, and `scale` are the best guess among modes that share the notes and
+`collection` is what to read. The threshold sits between that progression
+(0.010 to 0.014) and synthetic music with a plain tonic (a C major
+progression with its roots in the bass 0.040, an F dorian vamp 0.090). On
+the album the tonic was named on 11 of 18 tracks; there it agreed with 10
+of 22 published key claims, and where it was not named with 5 of 16: the
+claims are noisy (they agree with each other on 11 of 31 pairs), so this
+supports the threshold only weakly.
+
+`keys` is a window-by-window description, not a claim of modulation.
+`key_regions` is the timeline: the windows' collections are decoded on a
+path that pays `region_switch` (0.1) for each change (`collection_path`),
+so a change must lead by more than that over the windows it holds, the
+windows are laid end to end (each keeps the stretch nearer its centre than
+its neighbours'), runs of one collection merge, and each region's tonic is
+found from its own pitched frames among that collection's modes and named
+as above. On the album the regions went from 143 in version 3 (up to 16 a
+track, through modes of one collection) to 50 (at most 6).
 
 Times are seconds from the first decoded sample. Each frame stands for the
 hop centred on its own centre, so a span of frames k0..k1 runs from half a
@@ -163,6 +217,8 @@ PEAKS = {"sampleRate": RATE, "orderBy": "frequency", "magnitudeThreshold": "0.00
          "maxFrequency": 5000, "maxPeaks": 10000}
 GATE = {"rms_db_min": -60}
 HISTOGRAM = {"relative_db": 40, "max_frequency": 2000}
+HUM = {"mains_hz": [50, 60], "lines": [1, 2, 3], "tolerance_hz": "1.5", "min_presence": "0.5", "min_lines": 2,
+       "max_frequency": 2000}
 PITCHED = {"block_frames": 54, "concentration_cents": 15, "min_sounding": "0.5", "min_concentration": "0.4",
            "votes": "one-per-sounding-frame"}
 TUNING = {"estimator": "histogram-peak", "window_frames": 216, "hop_frames": 108, "min_pitched": "0.5",
@@ -171,7 +227,8 @@ CHROMA = {"treble_hz": [100, 5000], "bass_hz": [40, 250], "relative_db": 60, "we
           "width_semitones": 1, "reference": "local-tuning"}
 KEY = {"weights": {"tonic": "5", "fifth": "4.5", "third": "4.25", "scale": "3.75", "outside": "2"},
        "bass_weight": "0.5", "collections": ["diatonic", "harmonic minor", "melodic minor"],
-       "collection_penalty": "0.02", "window_frames": 324, "hop_frames": 162, "min_pitched": "0.5"}
+       "collection_penalty": "0.02", "min_tonic_margin": "0.03", "window_frames": 324, "hop_frames": 162,
+       "min_pitched": "0.5", "regions": "viterbi-over-collections", "region_switch": "0.1"}
 DISSONANCE = {"maxPeaks": 100, "relative_threshold": "0.01"}
 TUNING_COLUMNS = ("cents", "confidence", "pitched_share")
 
@@ -192,8 +249,8 @@ def parameters() -> dict[str, Any]:
     return {"essentia": cover.ESSENTIA_BUILD, "decode_arguments": frames.decode_arguments("{input}"),
             "sample_scale": 32768, "analysis_rate": RATE, "frame_size": FRAME, "hop_size": HOP,
             "framing": "essentia-framegenerator-centred", "windowing": cover.ANALYSIS["windowing"],
-            "spectral_peaks": PEAKS, "gate": GATE, "histogram": HISTOGRAM, "pitched": PITCHED, "tuning": TUNING,
-            "chroma": CHROMA, "key": KEY, "dissonance": DISSONANCE}
+            "spectral_peaks": PEAKS, "gate": GATE, "histogram": HISTOGRAM, "hum": HUM, "pitched": PITCHED,
+            "tuning": TUNING, "chroma": CHROMA, "key": KEY, "dissonance": DISSONANCE}
 
 
 def tuning_grid() -> dict[str, int]:
@@ -231,6 +288,48 @@ def histogram_peaks(frequencies: numpy.ndarray, magnitudes: numpy.ndarray) -> tu
         return frequencies, magnitudes
     keep = (magnitudes >= magnitudes.max() * 10.0 ** (-HISTOGRAM["relative_db"] / 20.0)) \
         & (frequencies < HISTOGRAM["max_frequency"])
+    return frequencies[keep], magnitudes[keep]
+
+
+def mains_lines(peaks: Sequence[tuple[numpy.ndarray, numpy.ndarray]]) -> list[int]:
+    """The mains frequencies (of `mains_hz`) whose hum runs through these
+    frames: those with at least `min_lines` of their first harmonics
+    (`lines`: the mains frequency itself, twice, and three times it) each
+    found, within `tolerance_hz`, among the loud peaks below 2 kHz
+    (`histogram_peaks`) of at least `min_presence` of the frames. None for no
+    frames. Only the lowest harmonics are asked for because music tuned
+    about 35 cents sharp puts every G and its partials on 50 Hz's harmonics
+    (G2 at 100 Hz, G4 at 400), and about 49 cents from 440 Hz every B on
+    60 Hz's: higher harmonics found in half the frames would take a song in
+    G at that tuning for hum. Music holds 50 or 60 Hz and its octave
+    through half a block only on a pedal low G or B at that tuning."""
+    if not peaks:
+        return []
+    found = []
+    tolerance = float(HUM["tolerance_hz"])
+    loud = [histogram_peaks(frequencies, magnitudes)[0] for frequencies, magnitudes in peaks]
+    for mains in HUM["mains_hz"]:
+        lines = 0
+        for harmonic in (mains * k for k in HUM["lines"]):
+            present = sum(1 for frequencies in loud
+                          if len(frequencies) and float(numpy.abs(frequencies - harmonic).min()) <= tolerance)
+            lines += present >= float(HUM["min_presence"]) * len(peaks)
+        if lines >= HUM["min_lines"]:
+            found.append(int(mains))
+    return found
+
+
+def without_mains(frequencies: numpy.ndarray, magnitudes: numpy.ndarray,
+                  mains: Sequence[int]) -> tuple[numpy.ndarray, numpy.ndarray]:
+    """The peaks less those within `tolerance_hz` of a harmonic of any of
+    `mains` below `max_frequency`."""
+    if not len(mains) or not len(frequencies):
+        return frequencies, magnitudes
+    keep = numpy.ones(len(frequencies), dtype=bool)
+    tolerance = float(HUM["tolerance_hz"])
+    for line in mains:
+        nearest = numpy.maximum(numpy.round(frequencies / line), 1.0) * line
+        keep &= ~((numpy.abs(frequencies - nearest) <= tolerance) & (nearest < HUM["max_frequency"]))
     return frequencies[keep], magnitudes[keep]
 
 
@@ -391,9 +490,15 @@ def frame_tuning(rows: int, centres: Sequence[float], cents: Sequence[float], re
 
 # -- the key ------------------------------------------------------------------
 
-def _key_candidates() -> tuple[list[tuple[int, str, tuple[int, ...]]], numpy.ndarray, numpy.ndarray]:
-    """Every (tonic bin, mode, collection bins from the tonic up), its
-    template, and its penalty."""
+def collection_name(kind: str, root: int) -> str:
+    """A collection's name: a diatonic one by its ionian tonic ("Eb major
+    scale"), the others by their own ("C harmonic minor scale")."""
+    return f"{NOTES[root]} {'major' if kind == 'diatonic' else kind} scale"
+
+
+def _key_candidates() -> tuple[list[tuple[int, str, tuple[int, ...], str]], numpy.ndarray, numpy.ndarray]:
+    """Every (tonic bin, mode, collection bins from the tonic up, collection
+    name), its template, and its penalty."""
     weights = {name: float(value) for name, value in KEY["weights"].items()}
     candidates, templates, penalties = [], [], []
     for name, intervals in COLLECTIONS.items():
@@ -409,13 +514,18 @@ def _key_candidates() -> tuple[list[tuple[int, str, tuple[int, ...]]], numpy.nda
                 template[(tonic + third) % 12] = weights["third"]
                 fifth = 7 if 7 in steps else 6  # locrian's fifth is diminished
                 template[(tonic + fifth) % 12] = weights["fifth"]
-                candidates.append((tonic, mode, tuple((tonic + step) % 12 for step in steps)))
+                root = (tonic - intervals[degree]) % 12  # the collection's first note: ionian's tonic
+                candidates.append((tonic, mode, tuple((tonic + step) % 12 for step in steps),
+                                   collection_name(name, root)))
                 templates.append(template)
                 penalties.append(0.0 if name == "diatonic" else float(KEY["collection_penalty"]))
     return candidates, numpy.array(templates), numpy.array(penalties)
 
 
 KEY_CANDIDATES, KEY_TEMPLATES, KEY_PENALTIES = _key_candidates()
+KEY_TONICS = numpy.array([tonic for tonic, _, _, _ in KEY_CANDIDATES])
+KEY_COLLECTIONS = numpy.array([collection for _, _, _, collection in KEY_CANDIDATES])
+COLLECTION_NAMES = list(dict.fromkeys(KEY_COLLECTIONS.tolist()))
 
 
 def key_profile(chroma: numpy.ndarray, bass: numpy.ndarray) -> numpy.ndarray:
@@ -433,41 +543,100 @@ def key_profile(chroma: numpy.ndarray, bass: numpy.ndarray) -> numpy.ndarray:
     return profile
 
 
-def key_of(profile: numpy.ndarray) -> dict[str, Any] | None:
-    """The best tonic and mode for a profile, or None for a profile with no
-    weight or no contrast."""
+def key_scores(profile: numpy.ndarray) -> numpy.ndarray | None:
+    """Every candidate's correlation with the profile, less its penalty; None
+    for a profile with no weight or no contrast."""
     if profile.sum() <= 0 or numpy.ptp(profile) <= 0:
         return None
     centred = profile - profile.mean()
     templates = KEY_TEMPLATES - KEY_TEMPLATES.mean(axis=1, keepdims=True)
-    scores = templates @ centred / (numpy.linalg.norm(templates, axis=1) * numpy.linalg.norm(centred)) - KEY_PENALTIES
+    return templates @ centred / (numpy.linalg.norm(templates, axis=1) * numpy.linalg.norm(centred)) - KEY_PENALTIES
+
+
+def collection_path(scores: numpy.ndarray, switch: float) -> list[int]:
+    """The collection (an index of COLLECTION_NAMES) of each row of
+    candidate scores on the path that maximises each row's best score in its
+    collection, less `switch` for every change: a change of collection must
+    lead by more than `switch` summed over the windows it holds."""
+    if not len(scores):
+        return []
+    emission = numpy.stack([scores[:, KEY_COLLECTIONS == name].max(axis=1) for name in COLLECTION_NAMES], axis=1)
+    back = numpy.zeros(emission.shape, dtype=numpy.int64)
+    total = emission[0].copy()
+    for row in range(1, len(emission)):
+        best = int(numpy.argmax(total))
+        jump = total[best] - switch
+        back[row] = numpy.where(jump > total, best, numpy.arange(emission.shape[1]))
+        total = numpy.maximum(total, jump) + emission[row]
+    path = [int(numpy.argmax(total))]
+    for row in range(len(emission) - 1, 0, -1):
+        path.append(int(back[row, path[-1]]))
+    return path[::-1]
+
+
+def key_of(profile: numpy.ndarray, collection: str | None = None) -> dict[str, Any] | None:
+    """The best tonic and mode for a profile, its note collection, and how
+    far each leads: `key_margin` over the runner-up of any kind,
+    `tonic_margin` over the best reading with another tonic (in F dorian's
+    case, Eb ionian, on the same notes), and `collection_margin` over the
+    best reading on other notes. With `collection`, the best tonic and mode
+    of that collection's notes. None for a profile with no weight or no
+    contrast."""
+    scores = key_scores(profile)
+    if scores is None:
+        return None
     order = numpy.argsort(-scores, kind="stable")
-    tonic, mode, collection = KEY_CANDIDATES[int(order[0])]
+    if collection is not None:
+        order = numpy.concatenate([order[KEY_COLLECTIONS[order] == collection],
+                                   order[KEY_COLLECTIONS[order] != collection]])
+    best = int(order[0])
+    tonic, mode, collection, name = KEY_CANDIDATES[best]
+    tonic_margin = float(scores[best] - scores[KEY_TONICS != tonic].max())
     return {"key": NOTES[tonic], "mode": mode, "scale": "major" if mode in MAJOR_MODES else "minor",
-            "scale_notes": " ".join(NOTES[note] for note in collection), "key_strength": float(scores[order[0]]),
-            "key_margin": float(scores[order[0]] - scores[order[1]])}
+            "scale_notes": " ".join(NOTES[note] for note in collection), "key_strength": float(scores[best]),
+            "key_margin": float(scores[best] - scores[order[1]]), "collection": name,
+            "collection_margin": float(scores[best] - scores[KEY_COLLECTIONS != name].max()),
+            "tonic_margin": tonic_margin, "tonic_named": tonic_margin >= float(KEY["min_tonic_margin"])}
 
 
-NO_KEY = {"key": "", "mode": "", "scale": "", "scale_notes": "", "key_strength": 0.0, "key_margin": 0.0}
+NO_KEY = {"key": "", "mode": "", "scale": "", "scale_notes": "", "key_strength": 0.0, "key_margin": 0.0,
+          "collection": "", "collection_margin": 0.0, "tonic_margin": 0.0, "tonic_named": False}
+
+
+def key_label(found: dict[str, Any]) -> str:
+    """A span's label: the tonic and mode when the tonic is named, the note
+    collection when it is not."""
+    return f"{found['key']} {found['mode']}" if found["tonic_named"] else found["collection"]
 
 
 def keys(chroma: numpy.ndarray, bass: numpy.ndarray, pitched: numpy.ndarray, samples: int) -> dict[str, Any]:
-    """The recording's key and each window's, from the pitched frames."""
+    """The recording's key, each window's, and the regions: the windows'
+    collections laid end to end, each region keyed again from its own frames."""
     found = key_of(key_profile(chroma[pitched], bass[pitched])) if pitched.any() else None
     outputs: dict[str, Any] = dict(found or NO_KEY)
-    spans = []
+    spans, scored = [], []
     for start, end in windows(len(chroma), KEY["window_frames"], KEY["hop_frames"]):
         mask = pitched[start:end]
         if mask.sum() < float(KEY["min_pitched"]) * (end - start):
             continue
-        window = key_of(key_profile(chroma[start:end][mask], bass[start:end][mask]))
+        profile = key_profile(chroma[start:end][mask], bass[start:end][mask])
+        window = key_of(profile)
         if window is None:
             continue
         begin, finish = extent(start, end, samples)
-        spans.append({"start": begin, "end": finish, "label": f"{window['key']} {window['mode']}",
-                      "value": window["key_strength"]})
+        spans.append({"start": begin, "end": finish, "label": key_label(window), "value": window["tonic_margin"]})
+        scored.append(key_scores(profile))
     outputs["keys"] = spans
-    outputs["key_regions"] = regions(spans)
+    path = collection_path(numpy.array(scored), float(KEY["region_switch"]))
+    laid = regions([{**span, "label": COLLECTION_NAMES[index], "value": 0.0} for span, index in zip(spans, path)])
+    found_regions = []
+    for region in laid:
+        first = max(int(numpy.floor(region["start"] / SECONDS_PER_ROW + 0.5)), 0)
+        stop = min(int(numpy.ceil(region["end"] / SECONDS_PER_ROW + 0.5)), len(chroma))
+        mask = pitched[first:stop]
+        within = key_of(key_profile(chroma[first:stop][mask], bass[first:stop][mask]), region["label"])
+        found_regions.append({**region, "label": key_label(within), "value": within["tonic_margin"]})
+    outputs["key_regions"] = found_regions
     return outputs
 
 
@@ -559,6 +728,7 @@ class Tuning:
         detuned_spans = [dict(span) for span in drift if abs(span["value"]) > limit]
         anchors = [((window["start"] + window["end"] - 1) / 2, near(window["cents"], cents)) for window in confident]
         return ({"tuning_frequency": frequency_of(cents), "tuning_cents": cents, "tuning_confidence": confidence,
+                 "tuning_window_count": len(confident),
                  "tuning_drift": drift, "drift_spread_cents": spread([span["value"] for span in drift]),
                  "detuned": confidence > 0 and abs(cents) > limit, "detuned_spans": detuned_spans}, rows, anchors)
 
@@ -583,32 +753,42 @@ def need(request: dict[str, Any], feature: str, columns: int) -> numpy.ndarray:
 
 
 class Blocks:
-    """Frames held a block at a time, until it is known whether the block is
-    pitched, then handed to the tuning in order."""
+    """Frames held a block at a time, until it is known which mains hum runs
+    through the block and whether it is pitched, then handed to the tuning
+    in order. `hum` keeps, per frame, the mains found in its block (a bit
+    for each of `mains_hz`), for the profiles to leave out too."""
 
-    def __init__(self, tuning: Tuning, sounding: numpy.ndarray, pitched: numpy.ndarray):
-        self.tuning, self.sounding, self.pitched = tuning, sounding, pitched
-        self.held: list[tuple[int, numpy.ndarray | None]] = []
+    def __init__(self, tuning: Tuning, sounding: numpy.ndarray, pitched: numpy.ndarray, hum: numpy.ndarray):
+        self.tuning, self.sounding, self.pitched, self.hum = tuning, sounding, pitched, hum
+        self.held: list[tuple[int, tuple[numpy.ndarray, numpy.ndarray] | None]] = []
 
     def add(self, row: int, frequencies: numpy.ndarray, magnitudes: numpy.ndarray) -> None:
-        histogram = deviation_histogram(*histogram_peaks(frequencies, magnitudes)) if self.sounding[row] else None
-        self.held.append((row, histogram))
+        self.held.append((row, (frequencies, magnitudes) if self.sounding[row] else None))
         if len(self.held) == PITCHED["block_frames"]:
             self.flush()
 
     def flush(self) -> None:
         if not self.held:
             return
-        histograms = [histogram for _, histogram in self.held if histogram is not None]
-        enough = len(histograms) >= float(PITCHED["min_sounding"]) * len(self.held)
+        mains = mains_lines([peaks for _, peaks in self.held if peaks is not None])
+        held = [(row, None if peaks is None else
+                 deviation_histogram(*histogram_peaks(*without_mains(*peaks, mains)))) for row, peaks in self.held]
+        histograms = [histogram for _, histogram in held if histogram is not None]
+        enough = len(histograms) >= float(PITCHED["min_sounding"]) * len(held)
         votes = [histogram / histogram.sum() for histogram in histograms if histogram.sum() > 0]
         is_pitched = enough and bool(votes) and best_concentration(numpy.sum(votes, axis=0),
                                                                    PITCHED["concentration_cents"]) \
             >= float(PITCHED["min_concentration"])
-        for row, histogram in self.held:
+        bits = sum(1 << HUM["mains_hz"].index(line) for line in mains)
+        for row, histogram in held:
             self.pitched[row] = is_pitched and histogram is not None
+            self.hum[row] = bits
             self.tuning.add(row, bool(self.pitched[row]), histogram)
         self.held = []
+
+
+def mains_of(bits: int) -> list[int]:
+    return [line for index, line in enumerate(HUM["mains_hz"]) if bits >> index & 1]
 
 
 def measure(request: dict[str, Any], decode: Callable[[], Iterable[numpy.ndarray]] | None = None) -> dict[str, Any]:
@@ -632,7 +812,8 @@ def measure(request: dict[str, Any], decode: Callable[[], Iterable[numpy.ndarray
     dissonance = es.Dissonance()
     tuning = Tuning(rows)
     pitched = numpy.zeros(rows, dtype=bool)
-    held = Blocks(tuning, sounding, pitched)
+    hum = numpy.zeros(rows, dtype=numpy.uint8)
+    held = Blocks(tuning, sounding, pitched, hum)
     roughness = numpy.zeros(rows, dtype="<f4")
     audio = decoded()
     row = 0
@@ -659,7 +840,8 @@ def measure(request: dict[str, Any], decode: Callable[[], Iterable[numpy.ndarray
     row = 0
     for frame in frames.framed(again):
         if row < rows and sounding[row]:
-            frequencies, magnitudes = profile_peaks(*peaks(spectrum(windowing(frame))))
+            frequencies, magnitudes = profile_peaks(*without_mains(*peaks(spectrum(windowing(frame))),
+                                                                   mains_of(int(hum[row]))))
             chroma[row] = profile(frequencies, magnitudes, float(local[row]), CHROMA["treble_hz"])
             bass[row] = profile(frequencies, magnitudes, float(local[row]), CHROMA["bass_hz"])
         row += 1
@@ -677,8 +859,9 @@ def measure(request: dict[str, Any], decode: Callable[[], Iterable[numpy.ndarray
     return outputs
 
 
-SCALARS = ("tuning_frequency", "tuning_cents", "tuning_confidence", "drift_spread_cents", "detuned", "key", "scale",
-           "mode", "scale_notes", "key_strength", "key_margin")
+SCALARS = ("tuning_frequency", "tuning_cents", "tuning_confidence", "tuning_window_count", "drift_spread_cents",
+           "detuned", "key", "scale", "mode", "scale_notes", "key_strength", "key_margin", "collection",
+           "collection_margin", "tonic_margin", "tonic_named")
 SPANS = ("tuning_drift", "detuned_spans", "keys", "key_regions")
 SERIES = {"pitched": "u8", "tuning_windows": "f32", "dissonance": "f32", "chroma": "f32", "bass_chroma": "f32"}
 
@@ -690,7 +873,7 @@ def main(argv: list[str]) -> int:
     try:
         request = json.loads(Path(argv[0]).read_text(encoding="utf-8"))
         if request.get("parameters") != parameters():
-            raise TonalError("tonal 3 has fixed settings; the request names others")
+            raise TonalError("tonal 4 has fixed settings; the request names others")
         output = Path(request["output_dir"])
         measured = measure(request)
         result_outputs: dict[str, Any] = {name: {"value": measured[name]} for name in SCALARS}

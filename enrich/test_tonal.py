@@ -87,6 +87,21 @@ def talk(seconds: float, seed: int = 4) -> numpy.ndarray:
                                                                                                    * 4 * t))
 
 
+def hum(seconds: float, mains: int, amplitude: float = 0.003) -> numpy.ndarray:
+    """Mains hum: the mains frequency and its next three harmonics, falling
+    as 1/k."""
+    t = numpy.arange(int(seconds * RATE)) / RATE
+    return amplitude * sum(numpy.sin(2 * numpy.pi * mains * k * t) / k for k in (1, 2, 3, 4))
+
+
+def gappy_talk(seconds: float, seed: int = 5) -> numpy.ndarray:
+    """Quiet talk with silent gaps between its syllables: white noise at
+    0.03 whose level falls to nothing four times a second."""
+    t = numpy.arange(int(seconds * RATE)) / RATE
+    return 0.03 * numpy.random.default_rng(seed).standard_normal(len(t)) * (0.5 + 0.5 * numpy.sin(2 * numpy.pi
+                                                                                                   * 4 * t)) ** 2
+
+
 def scratch(test: unittest.TestCase) -> Path:
     directory = Path(tempfile.mkdtemp(prefix="bank-tonal-"))
     test.addCleanup(shutil.rmtree, directory, True)
@@ -212,6 +227,43 @@ class Arithmetic(unittest.TestCase):
         self.assertEqual(kept_m.tolist(), [1.0, 0.5, numpy.float32(0.2)])
         empty = numpy.zeros(0, dtype=numpy.float32)
         self.assertEqual(len(tonal.histogram_peaks(empty, empty)[0]), 0)
+
+    def test_mains_hum_is_found_where_two_harmonics_run_through_half_the_frames(self) -> None:
+        f32 = lambda *values: numpy.array(values, dtype=numpy.float32)  # noqa: E731
+        hum_frame = (f32(60.4, 119.2, 200.0, 440.0), f32(1.0, 1.0, 1.0, 1.0))
+        talk_frame = (f32(300.0, 517.0), f32(1.0, 1.0))
+        self.assertEqual(tonal.mains_lines([hum_frame, hum_frame, talk_frame]), [60])
+        self.assertEqual(tonal.mains_lines([hum_frame, talk_frame, talk_frame]), [])  # in a third of them
+        # One harmonic is a note, not hum; 50 Hz's harmonics are found the same way.
+        one = (f32(60.0, 440.0), f32(1.0, 1.0))
+        self.assertEqual(tonal.mains_lines([one, one]), [])
+        # A G in music tuned 35 cents sharp sits on 50 Hz's fourth and eighth
+        # harmonics (G4 400 Hz and its octave): not the lowest, so not hum.
+        g_sharp = (f32(200.1, 400.2, 800.4, 600.3), f32(1.0, 1.0, 1.0, 1.0))
+        self.assertEqual(tonal.mains_lines([g_sharp, g_sharp]), [])
+        fifty = (f32(50.9, 99.0, 150.0), f32(1.0, 1.0, 1.0))
+        self.assertEqual(tonal.mains_lines([fifty]), [50])
+        # A line more than 40 dB below the frame's loudest peak is not counted.
+        quiet = (f32(60.0, 120.0, 440.0), f32(0.001, 0.001, 1.0))
+        self.assertEqual(tonal.mains_lines([quiet]), [])
+        # No frames, or frames without peaks, find nothing.
+        empty = (f32(), f32())
+        self.assertEqual(tonal.mains_lines([]), [])
+        self.assertEqual(tonal.mains_lines([empty, empty]), [])
+
+    def test_hum_is_left_out_near_its_harmonics_only(self) -> None:
+        frequencies = numpy.array([58.0, 61.4, 119.0, 123.47, 440.0, 1980.5, 2040.0], dtype=numpy.float32)
+        magnitudes = numpy.arange(1, 8, dtype=numpy.float32)
+        kept_f, kept_m = tonal.without_mains(frequencies, magnitudes, [60])
+        # 61.4 and 119 are within 1.5 Hz of a harmonic; 58.0 is not; B2 (123.47) and A4 stay;
+        # 1980.5 is a harmonic below 2 kHz; 2040 is above it and stays.
+        self.assertEqual(kept_f.tolist(), [58.0, numpy.float32(123.47), 440.0, 2040.0])
+        self.assertEqual(kept_m.tolist(), [1.0, 4.0, 5.0, 7.0])
+        self.assertIs(tonal.without_mains(frequencies, magnitudes, [])[0], frequencies)
+        empty = numpy.zeros(0, dtype=numpy.float32)
+        self.assertEqual(len(tonal.without_mains(empty, empty, [50, 60])[0]), 0)
+        self.assertEqual(tonal.mains_of(3), [50, 60])
+        self.assertEqual(tonal.mains_of(0), [])
 
     def test_concentration_goes_round_the_circle(self) -> None:
         histogram = numpy.zeros(tonal.BINS)
@@ -344,16 +396,24 @@ class Key(unittest.TestCase):
 
     def test_every_mode_of_three_collections_is_a_candidate(self) -> None:
         self.assertEqual(len(tonal.KEY_CANDIDATES), 12 * 7 + 12 + 12)
-        self.assertEqual(len({(tonic, mode) for tonic, mode, _ in tonal.KEY_CANDIDATES}), len(tonal.KEY_CANDIDATES))
-        for (tonic, mode, collection), template in zip(tonal.KEY_CANDIDATES, tonal.KEY_TEMPLATES):
+        self.assertEqual(len({(tonic, mode) for tonic, mode, _, _ in tonal.KEY_CANDIDATES}),
+                         len(tonal.KEY_CANDIDATES))
+        for (tonic, mode, collection, _), template in zip(tonal.KEY_CANDIDATES, tonal.KEY_TEMPLATES):
             self.assertEqual(collection[0], tonic)
             self.assertEqual(len(set(collection)), 7)
             self.assertEqual(int(numpy.argmax(template)), tonic)
             self.assertEqual(sorted(numpy.flatnonzero(template > 2.0)), sorted(collection))
         # The diatonic modes of one tonic are seven collections; of one collection, seven tonics.
-        dorian = next(c for t, m, c in tonal.KEY_CANDIDATES if (t, m) == (8, "dorian"))
-        ionian = next(c for t, m, c in tonal.KEY_CANDIDATES if (t, m) == (6, "ionian"))
-        self.assertEqual(set(dorian), set(ionian))  # F dorian holds Eb major's notes
+        dorian = next((c, n) for t, m, c, n in tonal.KEY_CANDIDATES if (t, m) == (8, "dorian"))
+        ionian = next((c, n) for t, m, c, n in tonal.KEY_CANDIDATES if (t, m) == (6, "ionian"))
+        self.assertEqual(set(dorian[0]), set(ionian[0]))  # F dorian holds Eb major's notes
+        self.assertEqual((dorian[1], ionian[1]), ("Eb major scale", "Eb major scale"))
+        # Every collection is named once, by its notes: 12 diatonic, 12 of each minor.
+        self.assertEqual(len(tonal.COLLECTION_NAMES), 36)
+        for name in tonal.COLLECTION_NAMES:
+            notes = {frozenset(c) for _, _, c, n in tonal.KEY_CANDIDATES if n == name}
+            self.assertEqual(len(notes), 1, name)
+        self.assertIn("A harmonic minor scale", tonal.COLLECTION_NAMES)
 
     def test_the_tonic_decides_between_modes_of_one_collection(self) -> None:
         # Eb major's notes: Eb F G Ab Bb C D (bins 6 8 10 11 1 3 5).
@@ -366,6 +426,47 @@ class Key(unittest.TestCase):
         self.assertEqual((tonal.key_of(on_eb)["key"], tonal.key_of(on_eb)["mode"]), ("Eb", "ionian"))
         self.assertGreater(found["key_margin"], 0)
         self.assertLessEqual(found["key_strength"], 1.0)
+        self.assertEqual(found["collection"], "Eb major scale")
+        self.assertTrue(found["tonic_named"])
+        self.assertGreaterEqual(found["tonic_margin"], float(tonal.KEY["min_tonic_margin"]))
+        self.assertGreater(found["collection_margin"], 0)
+
+    def test_a_tonic_no_note_leans_towards_is_not_named(self) -> None:
+        """Eb major's notes, none leaning: a best tonic and mode come out, but
+        no tonic leads by the margin, so the label is the collection."""
+        flat = tonal.key_of(self.profile({6: 1.0, 8: 1.0, 10: 1.0, 11: 1.0, 1: 1.0, 3: 1.0, 5: 1.0}))
+        self.assertEqual(flat["collection"], "Eb major scale")
+        self.assertLess(flat["tonic_margin"], float(tonal.KEY["min_tonic_margin"]))
+        self.assertFalse(flat["tonic_named"])
+        self.assertEqual(tonal.key_label(flat), "Eb major scale")
+        # Anchor: leaning on F names it.
+        leaning = tonal.key_of(self.profile({6: 1.0, 8: 3.0, 10: 1.0, 11: 2.2, 1: 1.0, 3: 2.5, 5: 1.0}))
+        self.assertEqual(tonal.key_label(leaning), "F dorian")
+        # Asked for a collection, the best tonic of its notes, even where another wins.
+        within = tonal.key_of(self.profile({6: 1.0, 8: 3.0, 10: 1.0, 11: 2.2, 1: 1.0, 3: 2.5, 5: 1.0}),
+                              "Ab major scale")
+        self.assertEqual(within["collection"], "Ab major scale")
+        self.assertIsNone(tonal.key_of(numpy.zeros(12), "Ab major scale"))
+
+    def test_the_collection_path_pays_for_each_change(self) -> None:
+        names = tonal.COLLECTION_NAMES
+        c_major, g_major = names.index("C major scale"), names.index("G major scale")
+
+        def rows(leads: list[tuple[int, float]]) -> numpy.ndarray:
+            out = numpy.full((len(leads), len(tonal.KEY_CANDIDATES)), 0.4)
+            for row, (collection, lead) in enumerate(leads):
+                out[row, tonal.KEY_COLLECTIONS == names[collection]] = lead
+            return out
+        switch = float(tonal.KEY["region_switch"])
+        # One window leaning to G by less than the switch stays in C ...
+        brief = rows([(c_major, 0.5), (c_major, 0.5), (g_major, 0.5 + switch / 2), (c_major, 0.5)])
+        self.assertEqual(tonal.collection_path(brief, switch), [c_major] * 4)
+        # ... and three windows leaning by more change it.
+        held = rows([(c_major, 0.7), (g_major, 0.6), (g_major, 0.6), (g_major, 0.6)])
+        self.assertEqual(tonal.collection_path(held, switch), [c_major] + [g_major] * 3)
+        # Anchor: with no price, the brief lean is followed.
+        self.assertEqual(tonal.collection_path(brief, 0.0)[2], g_major)
+        self.assertEqual(tonal.collection_path(numpy.zeros((0, len(tonal.KEY_CANDIDATES))), switch), [])
 
     def test_a_raised_seventh_reads_harmonic_minor(self) -> None:
         # A harmonic minor: A B C D E F G# (bins 0 2 3 5 7 8 11).
@@ -464,6 +565,7 @@ class Tuning(unittest.TestCase):
         # confident windows, so the drifting part's middle, not either end.
         confident = [(c, w) for c, w, s in windows if s >= 0.5 and w >= 0.4]
         self.assertGreaterEqual(len(confident), 13)  # anchor: nearly every listed window is confident
+        self.assertEqual(found.scalar("tuning_window_count"), len(confident))
         expected = tonal.weighted_median([c for c, _ in confident], [w for _, w in confident])
         self.assertAlmostEqual(found.scalar("tuning_cents"), expected, delta=0.01)
         self.assertTrue(-10 < found.scalar("tuning_cents") < 25)
@@ -530,6 +632,36 @@ class Tuning(unittest.TestCase):
                         estimate = old(frequencies, magnitudes)
                     self.assertEqual(round(float(estimate[1])), -23)
 
+    def test_mains_hum_under_talk_neither_pitches_it_nor_moves_the_tuning(self) -> None:
+        """A rehearsal: quiet talk with gaps over a room floor and mains hum,
+        then a C major progression. In the gaps the hum's harmonics are the
+        loudest peaks, all on one offset from the grid (60 Hz's 49 cents,
+        50 Hz's 35), so a block of talk would agree on a tuning. Without the
+        hum left out it did: the talk was pitched and the tuning windows over
+        it read the hum's offset."""
+        directory = scratch(self)
+        rng = numpy.random.default_rng(3)
+        music = progression(C_MAJOR, lambda t: 0, repeats=6, bass=C_BASS)
+        for mains in (60, 50):
+            with self.subTest(mains=mains):
+                room = numpy.concatenate([gappy_talk(60), music])
+                samples = room + hum(len(room) / RATE, mains) + 0.002 * rng.standard_normal(len(room))
+                source = write(directory, f"hum{mains}", samples)
+                found = measured(self, directory, source)
+                pitched = found.series("pitched")[:, 0]
+                row = lambda t: int(t / tonal.SECONDS_PER_ROW)  # noqa: E731
+                self.assertFalse(pitched[:row(55)].any())
+                self.assertTrue(pitched[row(65):len(pitched) - 30].all())
+                self.assertLess(abs(found.scalar("tuning_cents")), 3)
+                self.assertEqual((found.scalar("key"), found.scalar("mode")), ("C", "ionian"))
+                self.assertEqual([span["start"] >= 50 for span in found.items("tuning_drift")],
+                                 [True] * len(found.items("tuning_drift")))
+                # Anchor: with the hum left in, the talk is pitched.
+                request = a_request(directory, source)
+                with patch.dict(tonal.HUM, {"min_lines": 99}):
+                    unfiltered = tonal.measure(request)
+                self.assertGreater(float(unfiltered["pitched"][:row(55), 0].mean()), 0.5)
+
     def test_silence_and_noise_measure_no_tuning(self) -> None:
         directory = scratch(self)
         for name, samples in (("silence", numpy.zeros(30 * RATE)), ("noise", noise(40, 0.1)),
@@ -540,6 +672,7 @@ class Tuning(unittest.TestCase):
                 self.assertEqual(found.scalar("tuning_frequency"), 440.0)
                 self.assertEqual(found.scalar("tuning_cents"), 0.0)
                 self.assertEqual(found.scalar("tuning_confidence"), 0.0)
+                self.assertEqual(found.scalar("tuning_window_count"), 0)
                 self.assertEqual(found.items("tuning_drift"), [])
                 self.assertEqual(found.scalar("drift_spread_cents"), 0.0)
                 for scalar, empty in tonal.NO_KEY.items():
@@ -565,9 +698,13 @@ class Harmony(unittest.TestCase):
                 self.assertEqual(found.scalar("scale_notes"), notes)
                 self.assertGreater(found.scalar("key_strength"), 0.7)
                 self.assertGreater(found.scalar("key_margin"), 0)
+                self.assertEqual(found.scalar("collection"), f"{key} major scale")
+                self.assertTrue(found.scalar("tonic_named"))
                 windows = found.items("keys")
                 self.assertGreaterEqual(len(windows), 3)
-                self.assertEqual({span["label"] for span in windows}, {f"{key} ionian"})
+                # A window names the tonic, or only the notes when it cannot tell.
+                self.assertIn(f"{key} ionian", {span["label"] for span in windows})
+                self.assertLessEqual({span["label"] for span in windows}, {f"{key} ionian", f"{key} major scale"})
                 regions = found.items("key_regions")
                 self.assertEqual([(r["start"], r["label"]) for r in regions], [(0.0, f"{key} ionian")])
                 self.assertEqual(regions[0]["end"], windows[-1]["end"])
@@ -583,7 +720,9 @@ class Harmony(unittest.TestCase):
                                                                                bass=bass)))
         self.assertEqual((found.scalar("key"), found.scalar("mode"), found.scalar("scale")), ("F", "dorian", "minor"))
         self.assertEqual(found.scalar("scale_notes"), "F G Ab Bb C D Eb")
+        self.assertEqual((found.scalar("collection"), found.scalar("tonic_named")), ("Eb major scale", True))
         self.assertEqual({span["label"] for span in found.items("keys")}, {"F dorian"})
+        self.assertEqual([span["label"] for span in found.items("key_regions")], ["F dorian"])
 
     def test_a_recording_near_half_a_semitone_keeps_its_profiles_and_key(self) -> None:
         """Near half a semitone from 440 Hz a profile referenced to 440 Hz
@@ -613,6 +752,35 @@ class Harmony(unittest.TestCase):
                 self.assertLess(abs(share - in_tune), 0.01)
                 if cents == 46:  # anchor: there, the profile on 440 Hz loses its notes
                     self.assertLess(hpcp_share, hpcp_in_tune - 0.05)
+
+    def test_regions_follow_the_notes_and_name_a_tonic_only_when_it_leads(self) -> None:
+        """C major's notes throughout, the weight moving between C, A, and F
+        window by window: the windows disagree on the tonic, the notes do not,
+        so there is one region, labelled by its notes. Then G major's notes
+        for long enough: a second region."""
+        rows = 1620  # nine key windows
+        chroma = numpy.zeros((rows, 12))
+        chroma[:, [3, 5, 7, 8, 10, 0, 2]] = 1.0
+        leaning = {3: (3, 10, 7), 0: (0, 7, 3), 8: (8, 3, 0)}  # C, A, F: tonic, fifth, third
+        for index, note in enumerate((3, 0, 8, 3, 0)):  # a window's length each
+            tonic, fifth, third = leaning[note]
+            chroma[index * 324:(index + 1) * 324, [tonic, fifth, third]] = [3.0, 2.5, 2.2]
+        bass = numpy.zeros((rows, 12))
+        pitched = numpy.ones(rows, dtype=bool)
+        found = tonal.keys(chroma, bass, pitched, rows * tonal.HOP)
+        labels = {span["label"] for span in found["keys"]}
+        self.assertGreaterEqual(len(labels), 2, labels)  # anchor: the windows do disagree
+        self.assertEqual([region["label"] for region in found["key_regions"]], ["C major scale"])
+        self.assertEqual(found["collection"], "C major scale")
+        chroma[810:, 8] = 0.0  # F out ...
+        chroma[810:, 9] = 1.0  # ... F# in: G major's notes for the second half
+        found = tonal.keys(chroma, bass, pitched, rows * tonal.HOP)
+        regions = found["key_regions"]
+        self.assertEqual(len(regions), 2, regions)
+        self.assertEqual(tonal.key_of(tonal.key_profile(chroma[1000:], bass[1000:]))["collection"], "G major scale")
+        self.assertEqual([region["label"] for region in regions], ["C major scale", "G major scale"])
+        self.assertLess(regions[0]["value"], float(tonal.KEY["min_tonic_margin"]))  # the value is the tonic margin
+        self.assertEqual((regions[0]["start"], regions[-1]["end"]), (0.0, found["keys"][-1]["end"]))
 
     def test_pitched_frames_with_empty_profiles_have_no_key(self) -> None:
         chroma = numpy.zeros((700, 12))

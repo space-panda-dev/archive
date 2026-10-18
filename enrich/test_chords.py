@@ -242,6 +242,53 @@ class Arithmetic(unittest.TestCase):
         out = chords.decide(treble, bass, numpy.ones(8, dtype=bool), edges, numpy.ones(8, dtype=bool))
         self.assertEqual([c["label"] for c in out["chords"]], ["C"])
 
+    def test_a_six_note_chord_does_not_hold_through_a_diatonic_mix(self) -> None:
+        """G, C, Em, and D a second each, over a mix in which every note of G
+        major sounds (melody, passing notes, reverb) and the chord's own notes
+        only half as loud again. Eleventh chords hold six of a scale's seven
+        notes, so at a five-note price Am11 or Em11 held the whole mix, as it
+        held 34 and 44 s of one track of the album through the movement the
+        references show."""
+        names = {note: index for index, note in enumerate(chords.NOTES)}
+        scale = [names[note] for note in ("G", "A", "B", "C", "D", "E", "F#")]
+        progression = [("G", "B", "D"), ("C", "E", "G"), ("E", "G", "B"), ("D", "F#", "A")]
+        rng = numpy.random.default_rng(0)
+        treble, bass, roots = [], [], []
+        for notes in progression * 6:
+            for _ in range(4):  # four half beats of a quarter second
+                level = numpy.zeros(12)
+                level[scale] = 1.0
+                level[[names[note] for note in notes]] += 0.5
+                low = numpy.zeros(12)
+                low[scale] = 0.3
+                low[names[notes[0]]] += 1.0
+                treble.append((level * rng.uniform(0.7, 1.3, 12)) ** 2)  # profiles hold energy
+                bass.append(low ** 2)
+                roots.append(names[notes[0]])
+        treble, bass = numpy.array(treble), numpy.array(bass)
+        edges = numpy.arange(len(treble) + 1) * 0.25
+        everywhere = numpy.ones(len(treble), dtype=bool)
+
+        def labels() -> list[str]:
+            return [c["label"] for c in chords.decide(treble, bass, everywhere, edges, everywhere)["chords"]]
+
+        def eleventh_share() -> float:
+            spans = chords.decide(treble, bass, everywhere, edges, everywhere)["chords"]
+            return sum(c["end"] - c["start"] for c in spans if "m11" in c["label"]) / float(edges[-1])
+        found = labels()
+        self.assertFalse([label for label in found if "m11" in label], found)
+        self.assertGreaterEqual(len(found), 12, found)
+        spans = chords.decide(treble, bass, everywhere, edges, everywhere)["chords"]
+        right = sum(1 for c in spans for row in range(round(c["start"] / 0.25), round(c["end"] / 0.25))
+                    if chords.LABEL.match(c["label"]).group(1) == chords.NOTES[roots[row]])
+        self.assertGreater(right / len(roots), 0.6)
+        # Anchor: at the five-note price the eleventh holds it all.
+        with patch.dict(chords.SCORE["notes_penalty"], {"6": "0.12"}):
+            with patch.multiple(chords, **dict(zip(("TEMPLATES", "CHORDS", "PENALTIES"), chords.templates()))):
+                held, share = labels(), eleventh_share()
+        self.assertLessEqual(len(held), 4, held)
+        self.assertGreater(share, 0.5, held)
+
     def test_check_refuses_what_the_outputs_must_not_be(self) -> None:
         good = {"chords": [{"start": 0.0, "end": 1.0, "label": "C", "value": 0.9},
                            {"start": 1.0, "end": 2.0, "label": "N"}],

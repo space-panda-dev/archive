@@ -49,15 +49,28 @@ vocabulary is a twelve-bin template, 1 on its notes, scaled to unit length.
 A chord's score is the cosine of the stretch's profile with its template,
 plus `bass_root` (0.15) times the share of the stretch's bass that is the
 chord's root, minus a penalty for the notes it needs (none for three, 0.04
-for four, 0.12 for five or six, as a richer template fits any profile
+for four, 0.12 for five, 0.15 for six, as a richer template fits any profile
 better) and, for sus2 and sus4, 0.05 more: a bare fifth's third harmonic is
 the ninth above its root, so without it a fifth reads as sus2 (on the album
 above sus2 and sus4 took 30 % of the chord time, and 9 % with it, with no
 reference agreeing less). The vocabulary is maj, m, 7, maj7, m7, m7b5, dim,
-dim7, aug, sus2, sus4, 6, m6, add9, and the extended 9, m9, maj9, and m11,
-which this music uses throughout; on transcriptions of four of the tracks
-the extended chords raised the share of the transcribed notes the chord
-holds from 0.77 to 0.81 with fewer wrong notes, not more.
+dim7, aug, sus2, sus4, 6, m6, add9, and the extended 9, m9, maj9, and m11.
+
+The six-note m11 holds six of a scale's seven notes, so in a dense mix,
+where every note of the scale sounds, it fits nearly any stretch: at the
+five-note price (version 1) it took 13 % of the album's chord time, held Am11
+for 34 and 44 s of one track through the G, C, Em, and D the references
+show there, and its root agreed with ChordU's on that track on 12 % of the
+time, where `tonal` 2's triads agreed on 42 %. At 0.15 it takes 2 % and holds
+at most 11 s. The price was chosen on this album from 0.12, 0.15, 0.17, and
+leaving m11 out, so the numbers below are in-sample: at 0.17 or without m11,
+agreement with ChordU was the same (46 %) but the root agreed less with the
+chord names of the one transcription that has them (47 % against 49 %),
+whose Gm7 and Gm9 then read as Bbmaj7 or Bbadd9. With weaker contrast (the
+chord's own notes a fifth louder than the scale rather than half) any wide
+template still holds through a fast progression: the path's price for a
+change is paid per change, and nothing here sets the chord apart from the
+scale it sits in. The extended 9, m9, and maj9 take under 1 % of the time.
 
 The slash. The bass line is decoded on a path of its own, through the
 twelve notes and "none", a stretch's score for a note being its share of the
@@ -73,14 +86,23 @@ these weights the bass's root drowned the seventh of a clean Cmaj7
 album named roots after the bass a little more often (57 % of transcribed
 beats against 54 %) while holding fewer of the transcribed notes.
 
-Measured on that album against the references (ChordU's automatic
-timelines, Ultimate Guitar charts, and Guitar Pro transcriptions aligned to
-the recordings), the spans' median length went from 0.46 s to 1.3 s, about
-the charts' one chord per one to one and a half seconds, and returns within
-1.5 s from 30 % to 2 %; the root agreed with the transcriptions on 52 % of
-beats where `tonal` 2's agreed on 38 %, and the chord held 79 % of the
-transcribed notes where `tonal` 2's triads held 60 %. Chord recognition on a
-dense mix stays approximate: the candidates are part of the answer.
+Measured on that album against the references (ChordU's automatic timelines
+on the ten tracks where their timing holds, Ultimate Guitar charts, and
+Guitar Pro transcriptions of four tracks aligned to the recordings), the
+spans' median length went from 0.46 s to 1.3 s, about the charts' one chord
+per one to one and a half seconds, and returns within 1.5 s from 30 % to
+2 %. The root agreed with ChordU's on 46 % of the time where `tonal` 2's
+agreed on 40 %, but not on every track: on four of the ten it agreed less
+(one of them by 23 points, above). Only one transcription names its chords;
+against those names the root agreed on 49 % of half beats, `tonal` 2's on
+45 %, and two people's charts of that song agree with each other on about
+65 %. All four transcriptions give the notes, and on half their beats one or
+two notes sound (a bass line), so the root agreement over all their beats
+(51 %, against `tonal` 2's 38 %) largely measures the bass-root bonus; on
+the beats where three or more notes sound it was 53 % against 39 %, and the
+chord held 70 % of the transcribed notes against 53 %. The settings were
+chosen on these same tracks. Chord recognition on a dense mix stays
+approximate: the candidates are part of the answer.
 
 Times are seconds from the first decoded sample of the recording, the time
 base `rhythm` and `frames` share; spans end at the decoded audio's end.
@@ -109,7 +131,7 @@ VOCABULARY = [["", [0, 4, 7]], ["m", [0, 3, 7]], ["7", [0, 4, 7, 10]], ["maj7", 
 GRID = {"beats": "rhythm/beats", "per_beat": 2, "gap_beats": "1.5", "without_beats_seconds": "0.5",
         "min_pitched": "0.5"}
 SCORE = {"compression": "square-root", "bass_weight": "0.25", "bass_root": "0.15",
-         "notes_penalty": {"3": "0", "4": "0.04", "5": "0.12", "6": "0.12"},
+         "notes_penalty": {"3": "0", "4": "0.04", "5": "0.12", "6": "0.15"},
          "quality_penalty": {"sus2": "0.05", "sus4": "0.05"}}
 DECODE = {"method": "viterbi", "switch": "0.4", "bass_switch": "1.5", "label": "best-over-span"}
 SLASH = {"min_bass_share": "0.4"}
@@ -400,7 +422,7 @@ def main(argv: list[str]) -> int:
     try:
         request = json.loads(Path(argv[0]).read_text(encoding="utf-8"))
         if request.get("parameters") != parameters():
-            raise ChordsError("chords 1 has fixed settings; the request names others")
+            raise ChordsError("chords 2 has fixed settings; the request names others")
         output = Path(request["output_dir"])
         measured = measure(request)
         result_outputs: dict[str, Any] = {name: {"value": measured[name]} for name in SCALARS}

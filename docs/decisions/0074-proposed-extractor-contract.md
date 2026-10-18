@@ -128,7 +128,7 @@ runner does not care what an extractor is written in. Eight more measure
 from Essentia's standard algorithms or from what is already in the bank:
 `rhythm` (beats, tempo, onsets, and how far onsets sit off the beat),
 `tonal` (tuning and its drift, pitch-class profiles referenced to the
-tuning, key and mode, dissonance), `chords` (a chord per half beat from
+tuning, note collection, key and mode, dissonance), `chords` (a chord per half beat from
 `tonal`'s profiles on `rhythm`'s beats, without decoding), `melody` (the
 mix's predominant melody with MELODIA), `structure` (playing, tuning,
 count-ins, false starts, endings, sections, and loops, from `frames` and
@@ -182,15 +182,17 @@ is applied by whoever reads both the melody and the tuning.
   tuning need each frame's spectral peaks, a ragged list that no output
   kind declares, so it decodes with `frames`' own decoder and framing,
   repeats its windowing, spectrum, and peak picking, and checks that its
-  rows are `frames`' rows. Version 3 does that twice, once to find the
+  rows are `frames`' rows. Versions 3 and 4 do that twice, once to find the
   tuning and once to fold the peaks onto it, because holding the peaks
   between the passes would grow with the recording (some 200 MB for three
   hours). Version 2, with one pass, took about as long as `frames` (on a
   600 s synthetic recording 0.58 s of processor time beside `frames`'
   0.73 s, both without ffmpeg's decode, or about 3.5 s against 4.4 s a
-  recording-hour); on an album of eighteen masters version 3 still takes
-  about as long as `frames` (1.02 times its time, where version 2 took
-  1.01), the second pass paid for by dropping Essentia's `TuningFrequency`,
+  recording-hour). Version 4 (version 3 with mains hum left out) took 1.5
+  to 1.65 times `frames`' processor time on three tracks of an album of
+  masters, each timed with its process start and its decodes, one after
+  the other on a shared machine (3.4 to 4.0 s against 2.2 to 2.7 s): the
+  second pass is partly paid for by dropping Essentia's `TuningFrequency`,
   which version 2 ran once for every open window on every pitched frame.
   Removing the repetition would take a new `frames` version (a new key for
   every `frames` entry) with new outputs, such as each frame's 100-bin
