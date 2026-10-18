@@ -1,15 +1,15 @@
 {
  "contract": "archive-extractor/1",
  "id": "colour",
- "version": "2",
- "description": "A colour-coded waveform: one colour for each pixel of the derived-media peaks (ADR 0069, which stay derived media and are not copied here), from the frames series (hue from spectral centroid or pitch-class profile, lightness from RMS level), a palette describing the mapping, and a PNG preview of the whole recording.",
+ "version": "3",
+ "description": "A colour-coded waveform: one colour for each pixel of the derived-media peaks (ADR 0069, which stay derived media and are not copied here), from the frames series (hue from the spectral centroid between limits enrich/hue_range.py can set from a set of recordings, or from the pitch-class profile, lightness from RMS level), a palette describing the mapping, and a PNG preview of the whole recording.",
  "command": ["${python}", "colour.py"],
  "accepts": ["audio/*", "video/*"],
  "requires": ["ffmpeg", "ffprobe", "numpy"],
  "needs": ["frames/centroid", "frames/hpcp", "frames/rms_db"],
  "parameters": {
   "peaks": "peaks-1",
-  "hue": {"source": "centroid", "low_hz": 100, "high_hz": 8000, "low_hue": 0, "high_hue": 240},
+  "hue": {"source": "centroid", "low_hz": 500, "high_hz": 4000, "low_hue": 0, "high_hue": 240},
   "saturation": "0.85",
   "lightness": {"source": "rms_db", "reference": "full-scale", "floor_db": -60, "ceiling_db": 0, "darkest": "0.15", "lightest": "0.6"},
   "interpolation": "linear",

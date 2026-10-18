@@ -34,6 +34,7 @@ from test_cover import needs_essentia
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "extractors" / "colour"))
 import colour  # noqa: E402
+import hue_range  # noqa: E402
 
 RATE = 44100
 
@@ -183,7 +184,9 @@ class Mapping(unittest.TestCase):
 
     def test_centroid_hue_is_log_frequency_held_at_the_limits(self) -> None:
         hue = colour.parameters()["hue"]
-        found = colour.centroid_hue(numpy.array([0.0, 50, 100, math.sqrt(100 * 8000), 8000, 11025]), hue)
+        low, high = hue["low_hz"], hue["high_hz"]
+        self.assertEqual((low, high), (500, 4000))  # version 3's default for mastered music
+        found = colour.centroid_hue(numpy.array([0.0, low / 2, low, math.sqrt(low * high), high, 11025]), hue)
         self.assertTrue(numpy.allclose(found, [0, 0, 0, 120, 240, 240]))
 
     def test_chroma_hue_follows_the_strongest_pitch_class(self) -> None:
@@ -270,6 +273,11 @@ class Palette(unittest.TestCase):
         self.assertEqual(centroid["frames"], self.GRID)  # the grid's name is not a grid field
         self.assertEqual(centroid["peaks"]["kind"], "peaks-1")
         self.assertEqual(chroma["hue"]["stops"][4]["value"], "C#")
+        # A range narrower than the fixed stops' octaves gets five stops, evenly in log frequency.
+        narrow = self.written({**colour.parameters()["hue"], "low_hz": 1100, "high_hz": 1900})
+        colour.check_palette(narrow)
+        self.assertEqual([s["value"] for s in narrow["hue"]["stops"]], [1100, 1261, 1446, 1657, 1900])
+        self.assertEqual([round(s["hue"]) for s in narrow["hue"]["stops"]], [0, 60, 120, 180, 240])
 
     def test_any_other_shape_is_refused(self) -> None:
         good = self.written()
@@ -319,6 +327,72 @@ class Palette(unittest.TestCase):
             with self.subTest(name):
                 with self.assertRaises(colour.ColourError):
                     colour.check_palette(value)
+
+
+@needs_ffmpeg
+@needs_essentia
+class HueRange(unittest.TestCase):
+    """Hue limits from a set of recordings' own centroids, read from the
+    entries the real `frames` writer filed."""
+
+    def recordings(self, directory: Path) -> list[Path]:
+        made = []
+        for name, samples in (("dark", numpy.concatenate([sine(300, 3, 0.4), sine(600, 2, 0.4)])),
+                              ("bright", numpy.concatenate([bright_noise(2, 0.4), sine(1200, 3, 0.4)])),
+                              ("quiet", numpy.zeros(3 * RATE))):
+            made.append(support.write_wav(directory / f"{name}.wav", samples, RATE))
+        return made
+
+    def test_the_limits_are_the_percentiles_of_the_sets_frames_and_spread_the_hues(self) -> None:
+        directory = scratch(self)
+        dark, bright, quiet = self.recordings(directory)
+        for audio in (dark, bright, quiet):
+            self.assertEqual(run(directory, audio, target="frames")[0], 0)
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = hue_range.main(["--bank", str(directory / "bank"), str(dark), str(bright), str(quiet)])
+        self.assertEqual(code, 0, err.getvalue())
+        config = json.loads(out.getvalue())
+        hue = config["parameters"]["colour"]["hue"]
+        # The oracle: the frames entries' own series, every frame at or above -60 dBFS.
+        reader = bank.Bank(directory / "bank")
+        pooled = []
+        for audio in (dark, bright, quiet):
+            frames = reader.entry(bank.file_digest(audio), "frames")
+            pooled.append(frames.series("centroid")[frames.series("rms_db")[:, 0] >= -60, 0])
+        self.assertEqual(len(pooled[2]), 0)  # anchor: silence adds no frame
+        low, high = numpy.percentile(numpy.concatenate(pooled).astype(numpy.float64), [5, 95])
+        self.assertEqual((hue["low_hz"], hue["high_hz"]), (math.floor(low), math.ceil(high)))
+        self.assertNotEqual((hue["low_hz"], hue["high_hz"]), tuple(colour.DEFAULT_HUE_HZ))
+        self.assertEqual(json.loads(err.getvalue())["frames"], sum(len(p) for p in pooled))
+
+        path = directory / "colour.json"
+        path.write_text(out.getvalue())
+        self.assertEqual(run(directory, dark, "--config", str(path))[0], 0)
+        self.assertEqual(run(directory, bright, "--config", str(path))[0], 0)
+        found = [entry(directory, audio, config["parameters"]["colour"]) for audio in (dark, bright)]
+        self.assertEqual(found[0].manifest["parameters"]["hue"], hue)
+        hues = numpy.concatenate([hues_and_lightness(f.series("colour"))[0] for f in found])
+        # Their own limits put the set's frames across the hues, red to blue.
+        self.assertLess(float(numpy.percentile(hues, 3)), 15)
+        self.assertGreater(float(numpy.percentile(hues, 97)), 225)
+
+    def test_missing_frames_silence_and_reversed_percentiles_are_refused(self) -> None:
+        directory = scratch(self)
+        dark, _, quiet = self.recordings(directory)
+        cases = {"no frames entry": ([str(dark)], "run frames on it first"),
+                 "nothing above the level": ([str(quiet)], "no frame"),
+                 "reversed percentiles": (["--low-percentile", "95", "--high-percentile", "5", str(dark)],
+                                          "percentiles must rise")}
+        for name, (argv, message) in cases.items():
+            with self.subTest(name):
+                if name != "no frames entry":
+                    for audio in (dark, quiet):
+                        self.assertEqual(run(directory, audio, target="frames")[0], 0)
+                err = io.StringIO()
+                with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                    self.assertEqual(hue_range.main(["--bank", str(directory / "bank"), *argv]), 1)
+                self.assertIn(message, err.getvalue())
 
 
 class Software(unittest.TestCase):
@@ -420,8 +494,7 @@ class Colour(unittest.TestCase):
                                               "sample_rate": RATE, "samples_per_pixel": 441, "pixels": 800,
                                               "channels": 2})
         self.assertEqual(described["frames"], bank.Bank(directory / "bank").entry(digest, "frames").grid("hpcp"))
-        self.assertEqual([s["value"] for s in described["hue"]["stops"]],
-                         [100, 125, 250, 500, 1000, 2000, 4000, 8000])
+        self.assertEqual([s["value"] for s in described["hue"]["stops"]], [500, 1000, 2000, 4000])
         self.assertEqual((described["lightness"]["floor_db"], described["lightness"]["ceiling_db"]), (-60, 0))
 
         width, height = colour.parameters()["preview"]["width"], colour.parameters()["preview"]["height"]
