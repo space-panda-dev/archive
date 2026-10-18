@@ -128,8 +128,8 @@ It is one of five kinds: a *series* (rows of numbers on a time grid), a
 and keyed by everything that decides them; tools *read* it. **Extractor**: a
 program in any language, with a manifest, that *extracts* features into the
 bank under the extractor contract. (Proposed:
-[ADR 0073](decisions/0073-proposed-feature-bank.md),
-[ADR 0074](decisions/0074-proposed-extractor-contract.md).)
+[ADR 0073](decisions/0073-feature-bank.md),
+[ADR 0074](decisions/0074-extractor-contract.md).)
 
 ## Deletion
 

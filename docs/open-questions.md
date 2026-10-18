@@ -271,8 +271,8 @@ unsupported rather than guess.
   transfer or publication?
 - Where does program configuration live, and in what format?
 - The feature bank and the extractor contract
-  ([proposed ADR 0073](decisions/0073-proposed-feature-bank.md),
-  [proposed ADR 0074](decisions/0074-proposed-extractor-contract.md)) leave
+  ([ADR 0073](decisions/0073-feature-bank.md),
+  [ADR 0074](decisions/0074-extractor-contract.md)) leave
   these open:
   - Should waveform peaks and listening copies become extractors in the same
     per-content directory, and how would the relay then name them
@@ -312,7 +312,7 @@ unsupported rather than guess.
   - An entry belongs to one content. How is a feature of several contents
     (two recordings' cross-similarity) filed and keyed?
   - A stem is measured as content of its own
-    ([proposed ADR 0075](decisions/0075-proposed-stems-as-content.md)), so
+    ([ADR 0075](decisions/0075-stems-as-content.md)), so
     an extractor run on it cannot also need a feature of the recording it
     came from (a vocal line's level against the mix's `frames`). Should
     `needs` be able to name the source content's features, and how would the

@@ -133,10 +133,10 @@ from `enrich/derived.py` and never serves an original's bytes.
 `enrich/extract.py` is like it: it proposes nothing and never reads or
 writes an archive. It runs extractors, programs in any language that declare
 what they read and write in a manifest
-([proposed ADR 0074](decisions/0074-proposed-extractor-contract.md)), and
+([ADR 0074](decisions/0074-extractor-contract.md)), and
 files their features in the feature bank, regenerable state laid out beside
 derived media by content digest
-([proposed ADR 0073](decisions/0073-proposed-feature-bank.md),
+([ADR 0073](decisions/0073-feature-bank.md),
 [format](feature-bank.md), [adding an extractor](adding-an-extractor.md)).
 It needs only the standard library; each extractor brings its own
 environment, named by configuration. Its graph is the few extractors one

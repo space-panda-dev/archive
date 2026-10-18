@@ -1,6 +1,6 @@
-# 0073. Proposed: a feature bank holds regenerable features, keyed by content and method
+# 0073. A feature bank holds regenerable features, keyed by content and method
 
-Status: proposed
+Status: accepted (proposed and accepted by the operator on 2026-10-18)
 
 Every enrichment tool decodes its own audio. The span detector decodes a
 stream to measure levels and chroma, the window matcher decodes each window
@@ -19,7 +19,7 @@ written in. The window matcher's next experiment also needs whole-recording
 pitch-class profiles that a reader can trust to be the bits a fresh analysis
 would make.
 
-This record proposes the bank and its keys. [ADR 0074](0074-proposed-extractor-contract.md)
+This record proposes the bank and its keys. [ADR 0074](0074-extractor-contract.md)
 proposes the contract its writers follow, and
 [the feature bank format](../feature-bank.md) specifies the bytes.
 

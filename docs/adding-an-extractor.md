@@ -1,8 +1,8 @@
 # Adding an extractor
 
 An extractor writes features into the feature bank
-([ADR 0073](decisions/0073-proposed-feature-bank.md)) under the extractor
-contract ([ADR 0074](decisions/0074-proposed-extractor-contract.md)). It is a
+([ADR 0073](decisions/0073-feature-bank.md)) under the extractor
+contract ([ADR 0074](decisions/0074-extractor-contract.md)). It is a
 directory with a manifest and a program in any language. Adding one changes
 no other file: the runner finds it, orders it after what it needs, runs it
 only when its entry is missing, and checks what it writes before filing it.
@@ -158,7 +158,7 @@ Any extractor measures a stem without change: `extract.py run frames
 --content take.flac --from stems/vocals` makes the stems if they are missing,
 then runs `frames` with the vocal stem as its input and the stem's own
 digest as its content, filing the entry with the recording's
-([ADR 0075](decisions/0075-proposed-stems-as-content.md)). A separator
+([ADR 0075](decisions/0075-stems-as-content.md)). A separator
 version that makes other bits makes other content, measured again; one that
 makes the same bits keeps every measure. Declare `"needs": ["stems/vocals"]`
 only for a measure that is about stems as such, such as one comparing two

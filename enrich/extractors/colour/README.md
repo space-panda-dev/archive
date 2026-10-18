@@ -14,7 +14,7 @@ from the relay (`/media/<digest>/peaks`) and tints pixel `k` with row `k` of
 | `preview` | file, `image/png` | the whole recording, RGBA, transparent behind the waveform |
 
 The peaks are not an output. They are derived media, and the bank holds no
-copy of them ([ADR 0073](../../../docs/decisions/0073-proposed-feature-bank.md),
+copy of them ([ADR 0073](../../../docs/decisions/0073-feature-bank.md),
 "Derived media are not copied into the bank"). The program still decodes the
 content at its own rate with the same decoder (`enrich/waveform.py`), into a
 temporary file it deletes, because it needs the number of pixels and every

@@ -1,8 +1,8 @@
-# 0074. Proposed: an extractor is any program with a manifest, run by request
+# 0074. An extractor is any program with a manifest, run by request
 
-Status: proposed
+Status: accepted (proposed and accepted by the operator on 2026-10-18)
 
-The feature bank ([ADR 0073](0073-proposed-feature-bank.md)) needs writers,
+The feature bank ([ADR 0073](0073-feature-bank.md)) needs writers,
 and the operator wants adding one to be easy and independent of language:
 Essentia's algorithms are Python, a stem separator runs in its own
 environment with PyTorch, and a measure may be a shell script around
@@ -135,7 +135,7 @@ mix's predominant melody with MELODIA), `structure` (playing, tuning,
 count-ins, false starts, endings, sections, and loops, from `frames` and
 `rhythm` without decoding), `quality` (how well the recording was captured),
 `colour` (a colour-coded waveform's data), and `stems` (Demucs, in an
-environment of its own; [ADR 0075](0075-proposed-stems-as-content.md)).
+environment of its own; [ADR 0075](0075-stems-as-content.md)).
 Every shipped extractor's version, needs, and outputs are listed in one
 place, [the shipped extractors](../feature-bank.md#the-shipped-extractors)
 in the format, which a test holds to the manifests, with what each version

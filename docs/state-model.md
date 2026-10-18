@@ -28,7 +28,7 @@ databases, the "current" projection, views, caches, thumbnails, World's store,
 the derived-media root of waveform peaks and listening copies
 ([ADR 0069](decisions/0069-derived-media.md)), which `enrich/media.py` makes
 again from the content, and the feature bank
-([proposed ADR 0073](decisions/0073-proposed-feature-bank.md)), whose
+([ADR 0073](decisions/0073-feature-bank.md)), whose
 extractors make every entry again from the content. A record of an
 extractor's failure beside the bank's entries is operational. So are the
 window matcher's profiles
