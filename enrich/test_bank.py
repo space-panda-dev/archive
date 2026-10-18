@@ -93,10 +93,13 @@ OUTPUTS = {"x": {"kind": "series", "dtype": "f32", "columns": 2, "grid": "g", "u
 
 
 def manifest(extractor_id: str, needs: tuple[str, ...] = (), version: str = "1", mode: str = "ok",
-             accepts: tuple[str, ...] = ("audio/*",)) -> dict:
-    return {"contract": "archive-extractor/1", "id": extractor_id, "version": version,
-            "command": ["${python}", "program.py"], "accepts": list(accepts), "needs": list(needs),
-            "parameters": {"mode": mode}, "outputs": OUTPUTS}
+             accepts: tuple[str, ...] = ("audio/*",), optional: tuple[str, ...] = ()) -> dict:
+    found = {"contract": "archive-extractor/1", "id": extractor_id, "version": version,
+             "command": ["${python}", "program.py"], "accepts": list(accepts), "needs": list(needs),
+             "parameters": {"mode": mode}, "outputs": OUTPUTS}
+    if optional:
+        found["optional"] = list(optional)
+    return found
 
 
 # Spool's capability grammar, from spool/spec/protocol.md ("Tasks"): name@version,
@@ -115,6 +118,9 @@ SHIPPED = {
     "loudness-r128": {"version": "1",
                       "code": "sha256:37384ca259e5a38d61a4f09891b496bfeba339e5a10791aea2dc6b401aed0898",
                       "outside": {}},
+    "melody": {"version": "1",
+               "code": "sha256:b72a146bda340a07a8d98906bc2769fe133832c1f3778c37adcfef25ffd6dc13",
+               "outside": {}},
 }
 
 
@@ -257,6 +263,69 @@ class Graph(unittest.TestCase):
         self.assertEqual(f.statuses(answer), {"after": "skipped", "pictures": "skipped", "sound": "ran"})
         self.assertIn("pictures", answer["extractors"]["after"]["reason"])
         self.assertEqual(f.runs(), ["sound"])
+
+
+class OptionalNeeds(unittest.TestCase):
+    def test_an_optional_need_is_read_when_its_extractor_is_here(self) -> None:
+        f = Fixture(self)
+        f.add("a")
+        f.add("b", optional=("a/x", "absent/x"))
+        code, answer = f.run("b")
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(f.runs(), ["a", "b"])
+        entry = f.reader().entry(f.digest, "b")
+        self.assertEqual(json.loads(entry.file("f").read_text()), ["a/x"])
+        keys = f.reader().catalog.keys(f.digest, ["b"])
+        self.assertEqual(entry.manifest["needs"], {"a/x": keys["a"]})
+
+    def test_without_its_extractor_an_optional_need_is_dropped_and_keyed_as_absent(self) -> None:
+        f = Fixture(self)
+        f.add("b", optional=("a/x",))
+        code, answer = f.run("b")
+        self.assertEqual(code, 0, answer)
+        entry = f.reader().entry(f.digest, "b")
+        self.assertEqual(entry.manifest["needs"], {})
+        self.assertEqual(json.loads(entry.file("f").read_text()), [])
+        self.assertEqual(entry.manifest["key"], bank.key_of("b", "1", {"mode": "ok"}, f.digest, {}))
+        # Installing the extractor makes it a need, under another key; the old entry is not read.
+        f.add("a")
+        self.assertNotEqual(f.reader().catalog.keys(f.digest, ["b"])["b"], entry.manifest["key"])
+        self.assertIsNone(f.reader().entry(f.digest, "b"))
+        self.assertEqual(f.statuses(f.run("b")[1]), {"a": "ran", "b": "ran"})
+
+    def test_a_failed_optional_need_blocks_rather_than_being_skipped(self) -> None:
+        f = Fixture(self)
+        f.add("a", mode="fail")
+        f.add("b", optional=("a/x",))
+        code, answer = f.run("b")
+        self.assertEqual(code, 1)
+        self.assertEqual(f.statuses(answer), {"a": "failed", "b": "blocked"})
+
+    def test_an_optional_need_misspelt_or_also_required_is_refused(self) -> None:
+        f = Fixture(self)
+        f.add("a")
+        f.add("b", optional=("a/nothing",))
+        with self.assertRaisesRegex(bank.BankError, "declares no output nothing"):
+            bank.Catalog.load([f.extractors])
+        g = Fixture(self)
+        g.add("a")
+        g.add("b", needs=("a/x",), optional=("a/x",))
+        with self.assertRaisesRegex(bank.BankError, "not also needs"):
+            bank.Catalog.load([g.extractors])
+        h = Fixture(self)
+        h.add("a", optional=("b/x",))
+        h.add("b", optional=("a/x",))
+        with self.assertRaisesRegex(bank.BankError, "cycle"):
+            bank.Catalog.load([h.extractors])
+
+    def test_a_dry_run_waits_for_an_optional_need(self) -> None:
+        f = Fixture(self)
+        f.add("a")
+        f.add("b", optional=("a/x",))
+        code, answer = f.run("b", "--dry-run")
+        self.assertEqual(code, 0, answer)
+        keys = f.reader().catalog.keys(f.digest, ["b"])
+        self.assertEqual(answer["extractors"]["b"]["task"]["after"], [keys["a"]])
 
 
 class Cache(unittest.TestCase):

@@ -206,7 +206,14 @@ class Extractor:
 
     @property
     def needs(self) -> list[str]:
+        """The features it cannot run without."""
         return list(self.manifest.get("needs", []))
+
+    @property
+    def optional(self) -> list[str]:
+        """The features it reads when the catalog has an extractor that
+        writes them, and does without otherwise."""
+        return list(self.manifest.get("optional", []))
 
     @property
     def outputs(self) -> dict[str, dict[str, Any]]:
@@ -257,8 +264,8 @@ def check_manifest(manifest: Any, where: str) -> dict[str, Any]:
     """An extractor manifest, refused unless it is exactly the contract's shape."""
     _require(isinstance(manifest, dict), f"{where}: not a JSON object")
     _require(manifest.get("contract") == EXTRACTOR_CONTRACT, f"{where}: contract must be {EXTRACTOR_CONTRACT}")
-    known = {"contract", "id", "version", "description", "command", "accepts", "requires", "needs", "parameters",
-             "outputs"}
+    known = {"contract", "id", "version", "description", "command", "accepts", "requires", "needs", "optional",
+             "parameters", "outputs"}
     extra = set(manifest) - known
     _require(not extra, f"{where}: unknown fields {sorted(extra)}")
     _require(isinstance(manifest.get("id"), str) and ID.fullmatch(manifest["id"]) is not None,
@@ -278,6 +285,10 @@ def check_manifest(manifest: Any, where: str) -> dict[str, Any]:
     needs = manifest.get("needs", [])
     _require(isinstance(needs, list) and all(isinstance(n, str) and FEATURE.fullmatch(n) for n in needs)
              and len(set(needs)) == len(needs), f"{where}: needs must list distinct features <extractor>/<output>")
+    optional = manifest.get("optional", [])
+    _require(isinstance(optional, list) and all(isinstance(n, str) and FEATURE.fullmatch(n) for n in optional)
+             and len(set(optional)) == len(optional) and not set(optional) & set(needs),
+             f"{where}: optional must list distinct features <extractor>/<output> that are not also needs")
     _require(isinstance(manifest.get("parameters", {}), dict), f"{where}: parameters must be an object")
     check_parameters(manifest.get("parameters", {}), f"{where}: parameters")
     outputs = manifest.get("outputs")
@@ -294,7 +305,13 @@ def check_manifest(manifest: Any, where: str) -> dict[str, Any]:
 class Catalog:
     """The extractors found in some directories, each in its own
     subdirectory with an `extractor.json`. Every need must name an output
-    some extractor here declares, and needs may not form a cycle."""
+    some extractor here declares, and needs may not form a cycle.
+
+    An optional need is a need when an extractor with its id is here, and is
+    dropped when none is, so what an extractor reads, and so its key, is
+    decided by the catalog and never by what one run happened to find. An
+    optional need naming an extractor that is here but an output it does not
+    declare is refused, as a misspelling would otherwise be ignored."""
 
     def __init__(self, extractors: Iterable[Extractor]):
         self.extractors: dict[str, Extractor] = {}
@@ -303,11 +320,21 @@ class Catalog:
                 raise BankError(f"two extractors are called {extractor.id}: "
                                 f"{self.extractors[extractor.id].directory} and {extractor.directory}")
             self.extractors[extractor.id] = extractor
+        self.resolved: dict[str, list[str]] = {}
         for extractor in self.extractors.values():
             for need in extractor.needs:
                 source, output = FEATURE.fullmatch(need).groups()  # type: ignore[union-attr]
                 if source not in self.extractors or output not in self.extractors[source].outputs:
                     raise BankError(f"{extractor.id} needs {need}, which no extractor here declares")
+            present = []
+            for need in extractor.optional:
+                source, output = FEATURE.fullmatch(need).groups()  # type: ignore[union-attr]
+                if source not in self.extractors:
+                    continue
+                if output not in self.extractors[source].outputs:
+                    raise BankError(f"{extractor.id} may read {need}, but {source} declares no output {output}")
+                present.append(need)
+            self.resolved[extractor.id] = extractor.needs + present
         for extractor_id in self.extractors:
             self.order([extractor_id])
 
@@ -330,10 +357,16 @@ class Catalog:
             raise BankError(f"no extractor called {extractor_id}; known: {', '.join(sorted(self.extractors))}")
         return self.extractors[extractor_id]
 
+    def needs(self, extractor_id: str) -> list[str]:
+        """What this extractor reads from this catalog: its needs, then each
+        optional need whose extractor is here."""
+        self[extractor_id]
+        return list(self.resolved[extractor_id])
+
     def upstream(self, extractor_id: str) -> list[str]:
         """The extractors whose outputs this one needs, in need order, once each."""
         seen: list[str] = []
-        for need in self[extractor_id].needs:
+        for need in self.needs(extractor_id):
             source = need.split("/", 1)[0]
             if source not in seen:
                 seen.append(source)
@@ -367,7 +400,7 @@ class Catalog:
         keys: dict[str, str] = {}
         for extractor_id in self.order(targets):
             extractor = self[extractor_id]
-            needs = {need: keys[need.split("/", 1)[0]] for need in extractor.needs}
+            needs = {need: keys[need.split("/", 1)[0]] for need in self.needs(extractor_id)}
             keys[extractor_id] = key_of(extractor.id, extractor.version,
                                         self.parameters(extractor_id, parameters), content, needs)
         return keys

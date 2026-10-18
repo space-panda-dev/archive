@@ -56,8 +56,9 @@ An entry's key is `sha256:` and the SHA-256 of the canonical JSON of:
 
 `parameters` are the extractor's declared parameters with the operator's
 configured values replacing them field by field. `needs` has one member for
-every feature the extractor's manifest needs, so the keys are computed
-upstream first. The test `test_a_key_is_the_digest_of_its_canonical_description`
+every feature the extractor's manifest needs, and one for each of its
+`optional` features whose extractor is in the catalog, so the keys are
+computed upstream first. The test `test_a_key_is_the_digest_of_its_canonical_description`
 in [`enrich/test_bank.py`](../enrich/test_bank.py) writes one key out in full.
 
 ## Layout
@@ -179,7 +180,12 @@ audio, and `n` decoded samples make `ceil(n / 2048) + 1` rows.
 ```
 
 `contract`, `id`, `version`, `command`, `accepts`, and `outputs` are
-required; nothing else is allowed. `version` matches
+required; `description`, `requires`, `needs`, `optional`, and `parameters`
+may be given; nothing else is allowed. `optional` lists features, none of
+them also in `needs`, that the extractor reads when the catalog has an
+extractor with that id (which must then declare the output) and does
+without otherwise; a present optional feature is a need in every respect,
+in the order, the key, the request, and the entry's `needs`. `version` matches
 `[A-Za-z0-9][A-Za-z0-9.]{0,39}`, so that `archive-extractor.<id>@<version>`
 is a Spool capability. Output names match `[a-z][a-z0-9_]{0,62}`.
 A series declares `dtype`, `columns`, and optionally `grid`; a file declares
