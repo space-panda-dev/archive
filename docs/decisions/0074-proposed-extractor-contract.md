@@ -149,6 +149,13 @@ runner does not care what an extractor is written in.
   44.1 kHz) decodes the content again, as `loudness-r128` does; the bank
   has no decoded-audio feature, since 4 hours of mono 22,050 Hz audio is
   about 1.3 GB as 32-bit floats, larger than every series together.
+  `quality` is the measured case: it decodes again at the stream's own rate
+  with every channel, because downmixing and resampling to 22,050 Hz remove
+  what it measures (one channel's defects, the stereo image, everything
+  above 11,025 Hz, single-sample steps and flat tops), and it reads only
+  `frames/samples` from the bank, so its window series keep the `frames`
+  rows. Its second decode runs at about 16 times real time on one core, the
+  detectors' frame loop and not the decode being the cost.
 - A stem separator runs in its own environment, named by configuration, and
   its stems are `file` outputs that later extractors need like any feature.
 - The plugin and dependency-injection frameworks

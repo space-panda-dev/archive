@@ -1,0 +1,263 @@
+{
+ "contract": "archive-extractor/1",
+ "id": "quality",
+ "version": "1",
+ "description": "How well a recording was captured, from one more decode at the stream's own rate with every channel: EBU R 128 loudness, loudness range, and true peak; clipping, clicks, discontinuities, dropouts, noise bursts, and hum with their times; DC offset, stereo correlation, noise floor, and effective bandwidth.",
+ "command": [
+  "${python}",
+  "quality.py"
+ ],
+ "accepts": [
+  "audio/*",
+  "video/*"
+ ],
+ "requires": [
+  "ffmpeg",
+  "ffprobe",
+  "essentia@2.1b6.dev1438",
+  "numpy"
+ ],
+ "needs": [
+  "frames/samples"
+ ],
+ "parameters": {
+  "decoder": "ffmpeg",
+  "decode_arguments": [
+   "-nostdin",
+   "-hide_banner",
+   "-nostats",
+   "-loglevel",
+   "info",
+   "-i",
+   "{input}",
+   "-filter_complex",
+   "[0:a:0]asplit=2[pcm][meter];[meter]ebur128=peak=true:framelog=quiet[metered]",
+   "-map",
+   "[pcm]",
+   "-ac",
+   "{channels}",
+   "-ar",
+   "{sample_rate}",
+   "-c:a",
+   "pcm_f32le",
+   "-f",
+   "f32le",
+   "pipe:1",
+   "-map",
+   "[metered]",
+   "-f",
+   "null",
+   "-"
+  ],
+  "essentia": "2.1b6.dev1438",
+  "level_floor_db": -120,
+  "detector_frame": 512,
+  "detector_hop": 256,
+  "saturation": {
+   "energyThreshold": "-1",
+   "differentialThreshold": "0.001",
+   "minimumDuration": "0.005"
+  },
+  "clipping_merge_seconds": "0.05",
+  "clicks": {
+   "order": 12,
+   "detectionThreshold": "30",
+   "powerEstimationThreshold": 10,
+   "silenceThreshold": -50
+  },
+  "discontinuities": {
+   "order": 3,
+   "kernelSize": 7,
+   "detectionThreshold": "8",
+   "energyThreshold": "-60",
+   "subFrameSize": 32,
+   "silenceThreshold": -50
+  },
+  "discontinuity_floor": "0.05",
+  "noise_bursts": {
+   "threshold": 8,
+   "alpha": "0.9",
+   "silenceThreshold": -50
+  },
+  "noise_burst_merge_seconds": "0.01",
+  "gaps": {
+   "frameSize": 2048,
+   "hopSize": 1024,
+   "silenceThreshold": "-50",
+   "prepowerThreshold": "-30",
+   "minimumTime": "10",
+   "maximumTime": "3500",
+   "prepowerTime": "40",
+   "postpowerTime": "40",
+   "kernelSize": 11,
+   "attackTime": "0.05",
+   "releaseTime": "0.05"
+  },
+  "hum": {
+   "Q0": "0.1",
+   "Q1": "0.55",
+   "detectionThreshold": "5",
+   "frameSize": "0.4",
+   "hopSize": "0.2",
+   "minimumFrequency": "22.5",
+   "maximumFrequency": "400",
+   "minimumDuration": "2",
+   "numberHarmonics": 1,
+   "timeContinuity": "10",
+   "timeWindow": "10"
+  },
+  "hum_salience_floor": "0.1",
+  "hum_chunk_seconds": 120,
+  "hum_overlap_seconds": 20,
+  "hum_minimum_seconds": 20,
+  "stereo": {
+   "silenceThreshold": -70,
+   "correlationThreshold": "0.9995"
+  },
+  "noise_floor_percentile": 10,
+  "signal_percentile": 95,
+  "spectrum_frame": 4096,
+  "bandwidth_drop_db": 20,
+  "bandwidth_median_hz": 500,
+  "bandwidth_edge_hz": 300,
+  "band_limited_below": "0.85"
+ },
+ "outputs": {
+  "correlation": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "frames",
+   "unit": "1",
+   "description": "Pearson correlation of the first two channels in each frames window (Essentia FalseStereoDetector); 1 for a single channel compared with itself, 0 where either channel is below -70 dBFS"
+  },
+  "peak_db": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "frames",
+   "unit": "dBFS",
+   "description": "largest sample magnitude of any channel in each frames window, floored at -120"
+  },
+  "sample_rate": {
+   "kind": "scalar",
+   "unit": "Hz",
+   "description": "the stream's own sample rate, at which everything else here is measured"
+  },
+  "channels": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "channel count"
+  },
+  "seconds": {
+   "kind": "scalar",
+   "unit": "s",
+   "description": "decoded length at the stream's own rate"
+  },
+  "integrated": {
+   "kind": "scalar",
+   "unit": "LUFS",
+   "description": "EBU R 128 integrated loudness (ffmpeg ebur128); -70.0 is the gate's floor, silence"
+  },
+  "loudness_range": {
+   "kind": "scalar",
+   "unit": "LU",
+   "description": "EBU R 128 loudness range (EBU Tech 3342)"
+  },
+  "true_peak": {
+   "kind": "scalar",
+   "unit": "dBTP",
+   "description": "true peak, 4x oversampled (ITU-R BS.1770-4, ffmpeg ebur128), floored at -120"
+  },
+  "sample_peak": {
+   "kind": "scalar",
+   "unit": "dBFS",
+   "description": "largest sample magnitude of any channel, floored at -120"
+  },
+  "full_scale_samples": {
+   "kind": "scalar",
+   "unit": "samples",
+   "description": "samples, counted per channel, at or beyond 32767/32768 of full scale"
+  },
+  "clipped_seconds": {
+   "kind": "scalar",
+   "unit": "s",
+   "description": "time inside saturated regions, summed over channels (Essentia SaturationDetector)"
+  },
+  "dc_offset": {
+   "kind": "scalar",
+   "unit": "FS",
+   "description": "the mean sample value of the channel whose mean is farthest from zero, as a fraction of full scale"
+  },
+  "whole_correlation": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "Pearson correlation of the first two channels over the whole recording; 1 for a single channel"
+  },
+  "anti_phase": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "fraction of windows with both channels above -70 dBFS whose correlation is below zero"
+  },
+  "false_stereo": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "whether two or more channels carry one signal: whole_correlation at least 0.9995 (Essentia FalseStereoDetector's threshold)"
+  },
+  "noise_floor": {
+   "kind": "scalar",
+   "unit": "dBFS",
+   "description": "10th percentile of the frames windows' levels (mean square over channels), digital silence excluded"
+  },
+  "snr": {
+   "kind": "scalar",
+   "unit": "dB",
+   "description": "95th percentile of the windows' levels minus the noise floor: a level ratio, not a measured signal and noise"
+  },
+  "bandwidth": {
+   "kind": "scalar",
+   "unit": "Hz",
+   "description": "frequency above which the long-term spectrum holds no content: where it falls 20 dB within 600 Hz and never comes back; the Nyquist frequency when it does not"
+  },
+  "band_limited": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "whether bandwidth is below 0.85 of the Nyquist frequency: an upsampled or lossily encoded source; false for digital silence"
+  },
+  "hum_examined": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "whether hum was looked for: false when the recording is shorter than 20 seconds, so an empty hum list means nothing"
+  },
+  "clipping": {
+   "kind": "spans",
+   "unit": "s",
+   "description": "saturated regions closer than 50 ms joined, per channel; value: seconds saturated inside; label: the channel, from 1"
+  },
+  "clicks": {
+   "kind": "events",
+   "unit": "s",
+   "description": "impulsive noise (Essentia ClickDetector) per channel; value: the largest sample-to-sample step, in full scale; label: the channel"
+  },
+  "discontinuities": {
+   "kind": "events",
+   "unit": "s",
+   "description": "jumps in the waveform (Essentia DiscontinuityDetector) with prediction error at least 0.05; value: that error, in full scale; label: the channel"
+  },
+  "gaps": {
+   "kind": "spans",
+   "unit": "s",
+   "description": "dropouts, silence of 10 ms to 3.5 s after and before sound (Essentia GapsDetector), per channel; label: the channel"
+  },
+  "noise_bursts": {
+   "kind": "spans",
+   "unit": "s",
+   "description": "noise bursts (Essentia NoiseBurstDetector) within 10 ms joined, per channel; value: the largest second difference, in full scale; label: the channel"
+  },
+  "hum": {
+   "kind": "spans",
+   "unit": "s",
+   "description": "steady low tones, 22.5 to 400 Hz, salience at least 0.1 (Essentia HumDetector on the channels' mean); value: the frequency in Hz; times trail the tone by up to the 10 s analysis window"
+  }
+ }
+}
