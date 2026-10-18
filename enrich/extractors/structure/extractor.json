@@ -1,0 +1,151 @@
+{
+ "contract": "archive-extractor/1",
+ "id": "structure",
+ "version": "1",
+ "description": "Where the playing is and its shape: playing, tuning up, count-ins, false starts, endings, sections, and loops, from the frames series and rhythm's onsets and beats. Decodes nothing.",
+ "command": [
+  "${python}",
+  "structure.py"
+ ],
+ "accepts": [
+  "audio/*",
+  "video/*"
+ ],
+ "requires": [
+  "numpy"
+ ],
+ "needs": [
+  "frames/hpcp",
+  "frames/rms_db",
+  "frames/mfcc",
+  "frames/seconds",
+  "rhythm/onsets",
+  "rhythm/beats"
+ ],
+ "parameters": {
+  "frames_grid": {
+   "sample_rate": 22050,
+   "hop": 2048,
+   "frame": 4096,
+   "first_centre": 0
+  },
+  "level_percentiles": [
+   5,
+   95
+  ],
+  "silence_db": -80,
+  "range_db": 35,
+  "floor_margin_db": 10,
+  "contrast_db": 12,
+  "sustain_ms": 1500,
+  "sustain_percent": 85,
+  "merge_gap_ms": 2500,
+  "min_playing_ms": 2000,
+  "pitch_smooth_frames": 5,
+  "single_pitch_percent": 55,
+  "tuning_gap_ms": 3000,
+  "tuning_min_ms": 2000,
+  "held_ms": 700,
+  "tuning_quiet_db": 6,
+  "tuning_share_percent": 75,
+  "open_strings": [
+   "C",
+   "D",
+   "E",
+   "G",
+   "A",
+   "B"
+  ],
+  "count_in_window_ms": 8000,
+  "count_in_min_interval_ms": 250,
+  "count_in_max_interval_ms": 1500,
+  "count_in_tolerance_percent": 12,
+  "false_start_max_ms": 30000,
+  "restart_max_ms": 60000,
+  "opening_ms": 8000,
+  "opening_shift_ms": 2000,
+  "decline_db": 3,
+  "abrupt_ms": 300,
+  "fade_min_ms": 2500,
+  "fade_onsets_per_minute": 60,
+  "block_frames": 11,
+  "kernel_blocks": 8,
+  "novelty": "detector.novelty_curve",
+  "section_features": [
+   "hpcp",
+   "mfcc[1:13] standardised"
+  ],
+  "section_min_novelty_percent": 15,
+  "section_min_ms": 8000,
+  "section_same_percent": 90,
+  "loop_min_period_ms": 2000,
+  "loop_max_period_ms": 32000,
+  "loop_features": [
+   "hpcp"
+  ],
+  "loop_min_repeats": 3,
+  "loop_similarity_percent": 85,
+  "loop_contrast_percent": 10,
+  "loop_tolerance_percent": 2
+ },
+ "outputs": {
+  "playing": {
+   "kind": "spans",
+   "unit": "s",
+   "description": "stretches of sustained sound that is not tuning up"
+  },
+  "tuning": {
+   "kind": "spans",
+   "unit": "s",
+   "description": "tuning up: held single pitches outside the playing; label the pitch classes held, in order; value the confidence"
+  },
+  "count_ins": {
+   "kind": "spans",
+   "unit": "s",
+   "description": "from the first of three or more regular onsets to the playing they lead into; label clicks=<n> interval=<s>; value the confidence"
+  },
+  "false_starts": {
+   "kind": "spans",
+   "unit": "s",
+   "description": "playing no longer than false_start_max_ms followed by more within restart_max_ms; label restart=<how much more alike the openings are than chance, 0 to 1>; value the confidence"
+  },
+  "endings": {
+   "kind": "spans",
+   "unit": "s",
+   "description": "each playing stretch's decline to the threshold; label stop, fade, or abrupt; value the confidence"
+  },
+  "sections": {
+   "kind": "spans",
+   "unit": "s",
+   "description": "each playing stretch cut at self-similarity novelty peaks; label A, B, ... within the stretch, alike sections alike; value the novelty at the start"
+  },
+  "loops": {
+   "kind": "spans",
+   "unit": "s",
+   "description": "stretches repeating one period loop_min_repeats or more times in a row; label period=<s> repeats=<n> [beats=<n>]; value the confidence"
+  },
+  "novelty": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "blocks",
+   "unit": "1",
+   "description": "section novelty, clipped to [0, 1]; row k is the boundary at the start of block k (block_frames frames); 0 outside playing and where the kernel does not fit"
+  },
+  "floor_db": {
+   "kind": "scalar",
+   "unit": "dBFS",
+   "description": "the 5th percentile frame level"
+  },
+  "reference_db": {
+   "kind": "scalar",
+   "unit": "dBFS",
+   "description": "the 95th percentile frame level"
+  },
+  "threshold_db": {
+   "kind": "scalar",
+   "unit": "dBFS",
+   "description": "the level above which a frame is active"
+  }
+ }
+}
