@@ -248,7 +248,7 @@ count comes first and the strict one second.
 |---|---|---|---|---|---|---|
 | Growing windows, exact distance (as first decided) | 60 | 48 / 41 | 4 / 2 | 8 / 17 | 45 / 38 | about 55 worker-hours on Essentia; about 7 CPU-hours on the port |
 | Whole recording, quarter-rate distance alone | 101 | 70 / 60 | 6 / 3 | 25 / 38 | 64 / 55 | 0.40 CPU-hours; 6.4 minutes on 4 processes |
-| Whole recording, near ties confirmed (this amendment) | 97 | 71 / 61 | 3 / 0 | 23 / 36 | 65 / 56 | 0.59 to 0.64 CPU-hours; 10 to 11 minutes on 4 processes |
+| Whole recording, near ties confirmed (this amendment) | 96 | 71 / 61 | 2 / 0 | 23 / 35 | 65 / 56 | about 0.61 to 0.66 CPU-hours; about 10 to 11 minutes on 4 processes |
 
 For the second row, the cost splits as follows:
 
@@ -258,23 +258,33 @@ For the second row, the cost splits as follows:
 - measuring the 17 recordings whole took about 0.06 CPU-hours more;
 - measuring the corpus is the same in every row and is left out.
 
-The third row adds about 710 to 770 CPU-seconds for the exact comparisons of
-its 10 near ties, 71 to 77 each. Its time is that of `enrich/windows.py`
+The third row adds about 780 to 850 CPU-seconds for the exact comparisons of
+its 11 near ties, 71 to 77 each. Its time is that of `enrich/windows.py`
 itself, which reproduced the second row's kept windows and quarter-rate
-distances bit for bit, and the replayed exact decisions, on the same profiles
-(Apple silicon, Accelerate, one BLAS thread per process). It was measured
-three times, at 2,126 to 2,298 CPU-seconds and 605 to 652 seconds of wall
-time, with the same decisions each time. Like
-the second row's, it leaves out measuring the recordings whole, about
-0.06 CPU-hours, so the command as a whole costs about 0.65 to 0.70 CPU-hours.
+distances bit for bit, on the same profiles (Apple silicon, Accelerate, one
+BLAS thread per process). At the first margin of 0.01475, with 10 near ties,
+it was measured three times, at 2,126 to 2,298 CPU-seconds and 605 to 652
+seconds of wall time, with the same decisions each time; the margin of 0.02
+adds one confirmation. Like the second row's, it leaves out measuring the
+recordings whole, about 0.06 CPU-hours, so the command as a whole costs about
+0.67 to 0.72 CPU-hours.
+
+The third row's counts are those of the calibration rerun at the margin of
+0.02 on 2026-10-18, on the Mac, with every near tie measured afresh. It
+differs from the margin of 0.01475 in one window, which was suggested wrongly
+on the quarter-rate distance (0.1130) and is now refused by the exact one
+(0.0828): 97 suggested and 3 wrong became 96 and 2 under the lenient rule,
+and 36 unaccepted became 35 under the strict one.
 
 **The caveats:**
 
 - **The numbers are in-sample.** The hit limit of 0.20, the distance of 0.118,
-  and the margin of 0.01475 were all fitted on these 98 occurrences.
+  and the margin of 0.02 were all chosen on these 98 occurrences.
   Leave-one-recording-out chose 0.118 in every fold on the earlier prototype's
   windows. Its predicted wrong count did not carry over, though: it predicted
-  1, and this search's windows gave 6 with the quarter-rate distance alone.
+  1, and this search's windows gave 6 with the quarter-rate distance alone. On
+  this search's windows 0.118 is stable only with the margin: alone, the folds
+  chose 0.100 in 14 of 17; with the margin, they chose 0.118 in 15 of 17.
 - **The third row is a replay.** Its 10 near-tie windows took their exact
   decisions from a run that decided the same windows exactly, on slices of the
   whole-recording profiles; the repository's matcher, given slices for those

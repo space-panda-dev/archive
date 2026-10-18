@@ -179,7 +179,7 @@ unsupported rather than guess.
   ([ADR 0071](decisions/0071-essentia-cover-similarity.md)).
 - Do the window matcher's thresholds hold outside the recordings that chose
   them? The hit limit (0.20), the quarter-rate suggestion distance (0.118),
-  and the near-tie margin (0.01475) were fitted on one calibration workset of
+  and the near-tie margin (0.02) were chosen on one calibration workset of
   98 accepted occurrences, and leave-one-recording-out did not predict the
   wrong suggestions that followed. They need a held-out set of recordings, and
   a listening pass over the unaccepted suggestions, before their precision is a

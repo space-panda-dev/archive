@@ -405,7 +405,7 @@ The capture import runs it last.
   by the quarter-rate distance. It is suggested when its closest occurrence's
   score, rounded to four places, is at or below 0.118.
   - **A near tie** is a suggested window whose closest Work beats the next by
-    less than 0.01475, compared on the unrounded distances. It is decided again by Essentia's exact distance, on
+    less than 0.02, compared on the unrounded distances. It is decided again by Essentia's exact distance, on
     its audio decoded afresh. It is compared with its candidate Works'
     occurrences and with the half of the corpus closest by mean chroma, and is
     suggested only at or below 0.08.
@@ -433,11 +433,13 @@ The capture import runs it last.
   decoding anything.
 - **Cost.** On the calibration workset, the search took 0.59 to 0.64
   CPU-hours for 19.8 recording-hours against about 92 occurrences, in three
-  runs of 10 to 11 minutes on 4 processes with one BLAS thread each. That is
-  roughly 107 to 116 CPU-seconds per recording-hour: 73 for the quarter-rate
-  passes, the rest for the exact comparisons of 10 near ties, about 71 to 77
-  CPU-seconds each. Measuring the recordings whole adds about 0.06
-  CPU-hours, so the whole command costs about 0.65 to 0.70 CPU-hours there. It
+  runs of 10 to 11 minutes on 4 processes with one BLAS thread each, at the
+  first margin of 0.01475 with 10 near ties. The margin of 0.02 confirms 11,
+  so about 0.61 to 0.66 CPU-hours. That is roughly 111 to 120 CPU-seconds per
+  recording-hour: 73 for the quarter-rate passes, the rest for the exact
+  comparisons of the near ties, about 71 to 77 CPU-seconds each. Measuring
+  the recordings whole adds about 0.06 CPU-hours, so the whole command costs
+  about 0.67 to 0.72 CPU-hours there. It
   grows with the size of the corpus. `--jobs` shares the candidate pass, the
   largest part, and a near tie's exact comparisons; claim rounds and
   decisions run in one process.
@@ -486,7 +488,7 @@ reproduces them.
 Only Essentia 2.1b6.dev1438 is accepted, because it measures the profiles that
 every threshold was fitted on.
 
-The thresholds of 0.20, 0.118, and 0.01475 were fitted on the calibration
+The thresholds of 0.20, 0.118, and 0.02 were chosen on the calibration
 workset: 17 recordings and 98 accepted occurrences. The exact distance's 0.08
 is the V2 system's: one false positive in 2,779 controlled pairs of the
 operator's own recordings. None of these thresholds has been checked out of

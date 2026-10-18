@@ -101,8 +101,8 @@ ANALYSIS: dict[str, Any] = {
 }
 # The whole-recording search (windows.py; ADR 0072, amendment of 2026-10-18).
 # The hit distance, the suggestion distance, and the near-tie margin were
-# fitted on the calibration workset's 98 accepted occurrences and are on the
-# quarter-rate scale; the exact suggestion distance is the V2 system's, one
+# chosen on the calibration workset's 98 accepted occurrences and are on the
+# quarter-rate scale (the operator set the margin to 0.02 on 2026-10-18); the exact suggestion distance is the V2 system's, one
 # false positive in 2,779 controlled pairs of the operator's own recordings.
 SEARCH: dict[str, Any] = {
     "span_classes": ["music", "unknown"],
@@ -114,7 +114,7 @@ SEARCH: dict[str, Any] = {
     "works_per_region": 5,
     "works_per_window": 8,
     "suggestion_distance": "0.118",
-    "near_tie_margin": "0.01475",
+    "near_tie_margin": "0.02",
     "exact_suggestion_distance": "0.08",
     "prefilter_retention": "0.5",
 }

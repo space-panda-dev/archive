@@ -165,7 +165,7 @@ Work of its closest corpus occurrence, compared against every occurrence in
 the corpus.
 
 **Near ties are confirmed exactly.** Take a suggested window whose closest Work
-beats the next Work by less than 0.01475, comparing the unrounded float
+beats the next Work by less than 0.02, comparing the unrounded float
 distances (each Work's closest occurrence's).
 
 - That window is decided again by the exact distance: Essentia's distance, by
@@ -179,18 +179,26 @@ distances (each Work's closest occurrence's).
   `archive-enrich/essentia-serra09/smaller-asymmetric-distance`. The scale is
   how a reader tells the two kinds of claims apart.
 
-The margin was fitted as 0.01 on a scale where 0.118 maps to 0.08. That is
-0.01475 in quarter-rate units. Every other window is decided by the
-quarter-rate distance alone, and the exact distance never runs for it.
+Every other window is decided by the quarter-rate distance alone, and the
+exact distance never runs for it.
+
+**The margin is 0.02, set by the operator on 2026-10-18.** The prototype
+fitted 0.01 on a scale where 0.118 maps to 0.08, which is 0.01475 in
+quarter-rate units, and the matcher was first built with that. Leave one
+recording out never chose 0.01475: choosing the limit and the margin together,
+the folds chose 0.03 sixteen times and 0.025 once. At 0.02 one more window is
+confirmed exactly than at 0.01475, 11 rather than 10, and its wrong suggestion
+is refused (quarter-rate 0.1130, exact 0.0828). At 0.03, 26 windows would be,
+for 3 fewer unaccepted suggestions and no fewer wrong ones.
 
 The prototype that fitted these rules applied them to the rescaled distance,
 written to six places: suggested at or below 0.08, a near tie below a margin of
 0.01. The rules above agree with it except within about 10⁻⁶ of a boundary,
 and in one band: a distance in (0.1180007, 0.11805] is suggested here and was
 not there. On the calibration workset no kept window lies within 0.0006 of
-0.118. The nearest margin to the cut is 0.0146979, 5 × 10⁻⁵ below 0.01475; a
-rule fitted on 98 occurrences with a window that close to its cut is fitted
-in-sample, which the caveats in ADR 0072's amendment say.
+0.118. The nearest margins to the cut of 0.02 are 0.0163 below it and 0.0211,
+0.0011 above it; a rule chosen on 98 occurrences is chosen in-sample, which
+the caveats in ADR 0072's amendment say.
 
 **Why exact equivalence is no longer the decision.** The exact distance was
 worth its cost because it carried the V2 system's measured false-positive rate.
@@ -199,11 +207,11 @@ amendment's companion retires.
 
 On the archive's own calibration workset, the new design compares as follows.
 The search with confirmed near ties made fewer wrong suggestions than the exact
-distance in today's search: 3 against 4 under the lenient rule, and 0 against 2
+distance in today's search: 2 against 4 under the lenient rule, and 0 against 2
 under the strict rule. It also suggested 20 more accepted occurrences: 65
 against 45, and 56 against 38 under the strict rule. The quarter-rate distance
 alone made 6 wrong suggestions. The confirmation of near ties is what brings
-that down to 3. The measurements and their caveats are in
+that down to 2. The measurements and their caveats are in
 [ADR 0072](0072-windowed-work-matches.md)'s amendment.
 
 **What stays exact:**
@@ -236,7 +244,7 @@ same bits on one thread and on its default.
 
 **The V2 thresholds describe only the exact scale.** The false-positive rate of
 one in 2,779 pairs, and the release threshold of about 0.11, apply to exact
-scores. Neither 0.118 nor 0.01475 has a measured false-positive rate outside
+scores. Neither 0.118 nor 0.02 has a measured false-positive rate outside
 the calibration workset that chose them. That is an
 [open question](../open-questions.md).
 
@@ -256,13 +264,13 @@ the calibration workset that chose them. That is an
   7 CPU-hours, about 11 times more. It suggested 45 accepted occurrences rather than
   65, because reach comes from the search, not from the distance.
 - **Use the quarter-rate distance alone.** It takes 0.40 CPU-hours rather than
-  0.61, but makes 6 wrong suggestions against 3, all at near ties.
+  about 0.63, but makes 6 wrong suggestions against 2, all at near ties.
 - **Rescale quarter-rate scores so that 0.118 reads as 0.08.** The prototype
   did this so it could reuse the old judge. A claim would then show a number on
   Essentia's scale that Essentia never measured.
 - **Confirm near ties on slices of the whole-recording profiles.** It is free,
   but a slice differs from a fresh measurement by 0.0034 at the median, and by
   up to 0.108. That error is as large as the margins being decided. A fresh
-  decode costs about 2 CPU-seconds per window, and about 10 windows in 20
+  decode costs about 2 CPU-seconds per window, and about 11 windows in 20
   recording-hours need one. Each confirmation's exact comparisons cost about
   77 CPU-seconds either way.
