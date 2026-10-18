@@ -8,14 +8,49 @@ and beats, to about 12 ms), and finds:
 - `playing`: stretches of sustained sound that is not tuning up. A frame is
   *active* when its level is above the recording's `threshold_db` scalar
   (the louder of `range_db` below the `reference_db` scalar, the 95th
-  percentile level, and `floor_margin_db` above the `floor_db` scalar, the
-  5th percentile; only the first when the recording has less than
-  `contrast_db` between them, since it then has no quiet to measure a
-  floor from), and never below `silence_db`. A frame is *sustained* when
-  at least `sustain_percent` of the `sustain_ms` centred on it is active,
-  which a run of clicks or plucks is not. Sustained runs grow to the
-  active frames touching them, merge across gaps up to `merge_gap_ms`,
-  and are kept from `min_playing_ms`.
+  percentile level, and `floor_margin_db` above the noise floor, if the
+  recording has one), and never below `silence_db`. The noise floor is the
+  level a recording returns to when nobody plays. A frame above
+  `silence_db` is *steady quiet* when it is at least `floor_depth_db`
+  below the reference, moves no more than `floor_range_db` over the
+  `sustain_ms` centred on it, and has no onset in that time; it is
+  *unpitched quiet* when it is at least `noise_depth_db` below the
+  reference, moves no more than `noise_range_db` over that time, and its
+  pitch-class profile is flat (the geometric over the arithmetic mean of
+  the profile, its median over `sustain_ms`, at least
+  `noise_flatness_percent`). The floor is the median of the lowest
+  `floor_band_db`-wide band of levels holding `floor_min_ms` of frames that
+  are either. The `floor` scalar says whether there is one, and `floor_db`
+  is its level (else the 5th percentile level). A rehearsal's room noise
+  between songs is a floor. A mastered recording has none: its quietest
+  frames are music (a quiet intro, a held drone, a breakdown) a dozen or
+  twenty dB under the rest, which a floor taken from the 5th percentile put
+  below the threshold, cutting the song into pieces with false starts and
+  count-ins between them. Without a floor the recording is measured from
+  the reference alone, so all of it above `range_db` below the reference
+  is playing, and it has no tuning, count-ins, or false starts: those are
+  a rehearsal's, sound between stretches of room noise. The two kinds of
+  quiet cover two kinds of room: one under a hum (pitched, but deep and
+  steady), and one too shallow (a quiet acoustic take, a phone's automatic
+  gain lifting the room) or too often struck (chairs, a pedal, a cough) to
+  be steady quiet, but unpitched as noise is. The defaults were
+  measured on synthetic rooms of white and pink noise, 17 to 39 dB under
+  the playing, steady or wobbling 3 to 5 dB and struck up to twice a
+  second, and on a mastered album of eighteen tracks with no gaps between
+  them. Room noise's flatness measured a median of 0.89 to 0.91; the
+  album's quiet frames (within `noise_range_db`, at least `noise_depth_db`
+  under) 0.51 at most, a track's median, and no track holds more than
+  0.7 s of unpitched quiet. Steady quiet alone makes a floor on the album
+  from 19.5 dB below the reference (a held intro, 19.0 dB for a held
+  outro), so `floor_depth_db` leaves 6.5 dB, and no track holds more than
+  0.7 s of steady quiet at it. No real room has been measured: a room
+  under a hum less than `floor_depth_db` under the playing has no floor,
+  and a master's steady unpitched bed (wind, tape hiss) at least
+  `noise_depth_db` under the rest would be taken for one. A frame is
+  *sustained* when at least `sustain_percent` of the `sustain_ms` centred
+  on it is active, which a run of clicks or plucks is not. Sustained runs
+  grow to the active frames touching them, merge across gaps up to
+  `merge_gap_ms`, and are kept from `min_playing_ms`.
 - `tuning`: tuning up. A frame is *single-pitch* when the squared
   pitch-class profile averaged over `pitch_smooth_frames` has at least
   `single_pitch_percent` of its energy in one class (a held string with its
@@ -133,7 +168,9 @@ LOOP_CHUNK = 4096  # frames of loop similarities held at once: 4096 x 324 lags o
 NEEDS = ("frames/hpcp", "frames/rms_db", "frames/mfcc", "frames/seconds", "rhythm/onsets", "rhythm/beats")
 CLASSES = ("A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#")  # frames/hpcp's bins, from A
 TUNABLE = {
-    "silence_db": (-120, -20), "range_db": (10, 80), "floor_margin_db": (3, 40), "contrast_db": (3, 60),
+    "silence_db": (-120, -20), "range_db": (10, 80), "floor_margin_db": (3, 40),
+    "floor_depth_db": (6, 60), "floor_range_db": (1, 20), "floor_band_db": (1, 20), "floor_min_ms": (500, 60000),
+    "noise_flatness_percent": (50, 100), "noise_depth_db": (3, 60), "noise_range_db": (1, 30),
     "sustain_ms": (500, 10000), "sustain_percent": (50, 100), "merge_gap_ms": (0, 30000),
     "min_playing_ms": (500, 60000),
     "pitch_smooth_frames": (1, 21), "single_pitch_percent": (30, 100), "tuning_gap_ms": (0, 10000),
@@ -160,7 +197,9 @@ def parameters() -> dict[str, Any]:
     """The default settings, which the manifest must declare exactly."""
     return {"frames_grid": {"sample_rate": RATE, "hop": HOP, "frame": 4096, "first_centre": 0},
             "level_percentiles": [5, 95],
-            "silence_db": -80, "range_db": 35, "floor_margin_db": 10, "contrast_db": 12,
+            "silence_db": -80, "range_db": 35, "floor_margin_db": 10,
+            "floor_depth_db": 26, "floor_range_db": 4, "floor_band_db": 6, "floor_min_ms": 2000,
+            "noise_flatness_percent": 80, "noise_depth_db": 12, "noise_range_db": 8,
             "sustain_ms": 1500, "sustain_percent": 85, "merge_gap_ms": 2500, "min_playing_ms": 2000,
             "pitch_smooth_frames": 5, "single_pitch_percent": 55, "tuning_gap_ms": 3000, "tuning_min_ms": 2000,
             "held_ms": 700, "tuning_quiet_db": 6, "tuning_share_percent": 75, "open_strings": ["C", "D", "E", "G", "A", "B"],
@@ -304,15 +343,91 @@ class Levels:
     reference_db: float
     threshold_db: float
     active: numpy.ndarray
+    floor: bool  # whether floor_db is a noise floor, not the 5th percentile
 
 
-def levels(level: numpy.ndarray, p: dict[str, Any]) -> Levels:
+def moving_range(values: numpy.ndarray, width: int) -> numpy.ndarray:
+    """For each frame, the largest minus the smallest value in the `width`
+    frames centred on it (fewer at the ends: only those that exist)."""
+    padded = numpy.pad(values, (width // 2, width - width // 2 - 1), mode="edge")
+    windows = numpy.lib.stride_tricks.sliding_window_view(padded, width)
+    return windows.max(axis=1) - windows.min(axis=1)
+
+
+def steady_quiet(level: numpy.ndarray, onsets: numpy.ndarray, reference: float,
+                 p: dict[str, Any]) -> numpy.ndarray:
+    """Frames that sound like nobody playing: above `silence_db`, at least
+    `floor_depth_db` below the reference, within `floor_range_db` over the
+    `sustain_ms` centred on them, and with no onset in that time."""
+    width = frames_of(p["sustain_ms"])
+    times = numpy.arange(len(level)) * SECONDS
+    half = p["sustain_ms"] / 2000
+    struck = numpy.searchsorted(onsets, times + half, side="right") - numpy.searchsorted(onsets, times - half)
+    return ((level > p["silence_db"]) & (level <= reference - p["floor_depth_db"])
+            & (moving_range(level, width) <= p["floor_range_db"]) & (struck == 0))
+
+
+def flatness(hpcp: numpy.ndarray) -> numpy.ndarray:
+    """For each frame, how evenly its pitch-class profile spreads over the
+    twelve classes: the geometric over the arithmetic mean of the profile
+    scaled to sum to one (plus 1e-6 a class), 1 when flat, near 0 when a
+    few classes hold it. Room noise measures about 0.9; music, which is
+    pitched, a median of 0.1 to 0.5."""
+    profile = numpy.maximum(hpcp, 0)
+    profile = profile / numpy.maximum(profile.sum(axis=1, keepdims=True), 1e-12) + 1e-6
+    return numpy.exp(numpy.mean(numpy.log(profile), axis=1)) / numpy.mean(profile, axis=1)
+
+
+def moving_median(values: numpy.ndarray, width: int) -> numpy.ndarray:
+    """For each frame, the median of the `width` frames centred on it (the
+    ends repeated)."""
+    padded = numpy.pad(values, (width // 2, width - width // 2 - 1), mode="edge")
+    return numpy.median(numpy.lib.stride_tricks.sliding_window_view(padded, width), axis=1)
+
+
+def unpitched_quiet(level: numpy.ndarray, hpcp: numpy.ndarray, reference: float,
+                    p: dict[str, Any]) -> numpy.ndarray:
+    """Frames that sound like room noise however shallow or struck: above
+    `silence_db`, at least `noise_depth_db` below the reference, within
+    `noise_range_db` over the `sustain_ms` centred on them, and unpitched,
+    their pitch-class profile's flatness (its median over `sustain_ms`) at
+    least `noise_flatness_percent`."""
+    width = frames_of(p["sustain_ms"])
+    flat = moving_median(flatness(hpcp), width) * 100 >= p["noise_flatness_percent"]
+    return ((level > p["silence_db"]) & (level <= reference - p["noise_depth_db"])
+            & (moving_range(level, width) <= p["noise_range_db"]) & flat)
+
+
+def lowest_band(values: numpy.ndarray, band: float, count: int) -> float | None:
+    """The median of the lowest `band`-dB-wide set of `values` holding at
+    least `count` of them, or None when no set does."""
+    ordered = numpy.sort(values)
+    within = numpy.searchsorted(ordered, ordered + band, side="right") - numpy.arange(len(ordered))
+    enough = numpy.flatnonzero(within >= count)
+    if not len(enough):
+        return None
+    first = int(enough[0])
+    return float(numpy.median(ordered[first:first + int(within[first])]))
+
+
+def levels(level: numpy.ndarray, onsets: numpy.ndarray, hpcp: numpy.ndarray, p: dict[str, Any]) -> Levels:
+    """The reference, the noise floor if the recording has one, and the
+    threshold they set. A floor is the level the recording returns to when
+    nobody plays: the lowest `floor_band_db` band holding `floor_min_ms` of
+    frames that are steady quiet (onset-free, at least `floor_depth_db`
+    below the reference) or unpitched quiet (flat pitch-class profiles at
+    least `noise_depth_db` below it, struck or not). A mastered recording
+    has none (its quietest frames are music, pitched, moving and struck, a
+    dozen or twenty dB under the rest), and is then measured from the
+    reference alone."""
     low, high = (float(v) for v in numpy.percentile(level, p["level_percentiles"]))
+    quiet = level[steady_quiet(level, onsets, high, p) | unpitched_quiet(level, hpcp, high, p)]
+    floor = lowest_band(quiet, p["floor_band_db"], frames_of(p["floor_min_ms"]))
     threshold = high - p["range_db"]
-    if high - low >= p["contrast_db"]:
-        threshold = max(threshold, low + p["floor_margin_db"])
+    if floor is not None:
+        threshold = max(threshold, floor + p["floor_margin_db"])
     threshold = max(threshold, p["silence_db"])
-    return Levels(low, high, threshold, level > threshold)
+    return Levels(low if floor is None else floor, high, threshold, level > threshold, floor is not None)
 
 
 def single_pitch(hpcp: numpy.ndarray, p: dict[str, Any]) -> tuple[numpy.ndarray, numpy.ndarray]:
@@ -376,10 +491,13 @@ def playing_and_tuning(f: Features, lv: Levels, p: dict[str, Any]) -> tuple[list
         on = active[a:b]
         share = float(numpy.mean(single[a:b][on])) if on.any() else 0.0
         quiet = float(numpy.median(f.level[a:b][on])) if on.any() else lv.floor_db
-        if share * 100 >= p["tuning_share_percent"] and quiet <= lv.reference_db - p["tuning_quiet_db"]:
+        if lv.floor and share * 100 >= p["tuning_share_percent"] and quiet <= lv.reference_db - p["tuning_quiet_db"]:
             tuning_like.append((a, b))
         elif b - a >= frames_of(p["min_playing_ms"]):
             playing.append((a, b))
+    if not lv.floor:
+        # No floor, no rehearsal: a quiet single-note line in a master is playing, not tuning up.
+        return [Stretch(a, b) for a, b in playing], []
     inside = numpy.zeros(f.frames, dtype=bool)
     for a, b in playing:
         inside[a:b] = True
@@ -691,15 +809,17 @@ def analyse(f: Features, p: dict[str, Any]) -> dict[str, Any]:
         raise StructureError("the frames series are empty")
     if not (numpy.isfinite(f.level).all() and numpy.isfinite(f.hpcp).all() and numpy.isfinite(f.mfcc).all()):
         raise StructureError("the frames series hold values that are not finite")
-    lv = levels(f.level, p)
+    lv = levels(f.level, f.onsets, f.hpcp, p)
     playing, tuning = playing_and_tuning(f, lv, p)
+    # Count-ins and false starts are a rehearsal's: sound between stretches over a floor of room noise.
+    rehearsal = lv.floor
     features = described(f, playing)
     section_spans, novelty = sections(features, playing, f.frames, p)
     spans = {
         "playing": [{"start": t(s.start), "end": t(s.end)} for s in playing],
         "tuning": [{"start": t(s.start), "end": t(s.end), "value": s.confidence, "label": s.label} for s in tuning],
-        "count_ins": count_ins(f, playing, tuning, p),
-        "false_starts": false_starts(f, playing, p),
+        "count_ins": count_ins(f, playing, tuning, p) if rehearsal else [],
+        "false_starts": false_starts(f, playing, p) if rehearsal else [],
         "endings": endings(f, lv, playing, p),
         "sections": section_spans,
         "loops": loops(unit_rows(f.hpcp), f, playing, p),
@@ -708,7 +828,7 @@ def analyse(f: Features, p: dict[str, Any]) -> dict[str, Any]:
         **{name: within(items, f.seconds) for name, items in spans.items()},
         "novelty": novelty,
         "floor_db": round(lv.floor_db, 3), "reference_db": round(lv.reference_db, 3),
-        "threshold_db": round(lv.threshold_db, 3),
+        "threshold_db": round(lv.threshold_db, 3), "floor": lv.floor,
     }
 
 

@@ -6,7 +6,8 @@ runs first because `structure` needs them; nothing here hand-writes a
 feature. The pieces are what a rehearsal holds: room noise, a guitar tuned
 string by string, drumstick count-ins, songs of looped chord progressions
 over a beat, a false start, a final chord ringing out, a fade, and a
-recording that stops while the band plays.
+recording that stops while the band plays. One is a master instead: no
+room under it, limited, with quiet passages that are music.
 """
 
 from __future__ import annotations
@@ -55,6 +56,24 @@ def hz(midi: float) -> float:
 def room(seconds: float, seed: int = 0, amplitude: float = 0.002) -> numpy.ndarray:
     """A room's noise floor, about -54 dBFS."""
     return numpy.random.default_rng(seed).normal(0, amplitude, int(round(seconds * RATE)))
+
+
+def busy_room(seconds: float, seed: int = 0, amplitude: float = 0.004, wobble_db: float = 3.0,
+              bumps: float = 2.0) -> numpy.ndarray:
+    """A room less kind than `room`: pink noise whose level wobbles by
+    `wobble_db` over 3 s (a fan, a phone's gain), struck `bumps` times a
+    second by quiet clicks (chairs, a cough, a pedal)."""
+    count = int(round(seconds * RATE))
+    rng = numpy.random.default_rng(seed)
+    spectrum = numpy.fft.rfft(rng.normal(0, 1, count))
+    frequency = numpy.fft.rfftfreq(count, 1 / RATE)
+    frequency[0] = frequency[1]
+    noise = numpy.fft.irfft(spectrum / numpy.sqrt(frequency), count)
+    noise = noise / noise.std() * amplitude
+    noise *= 10 ** (wobble_db / 2 * numpy.sin(2 * numpy.pi * numpy.arange(count) / RATE / 3) / 20)
+    for at in numpy.arange(0.3, seconds - 0.2, 1 / bumps) if bumps else ():
+        place(noise, stick(int(at * 100), amplitude=amplitude * 6), at + rng.uniform(-0.2, 0.2))
+    return noise
 
 
 def place(samples: numpy.ndarray, sound: numpy.ndarray, at: float) -> None:
@@ -140,6 +159,27 @@ def fade(samples: numpy.ndarray, seconds: float) -> numpy.ndarray:
     return samples * gain
 
 
+def dry(seconds: float, progression, bpm: float = 120.0, seed: int = 0) -> numpy.ndarray:
+    """A song with no room under it: a studio's, not a rehearsal's."""
+    return song(seconds, progression, bpm, seed) - room(seconds, seed)
+
+
+def line(notes, seconds: float, step: float = 0.5, amplitude: float = 0.012) -> numpy.ndarray:
+    """A quiet single-note line, a note every `step` seconds, with nothing under it."""
+    out = numpy.zeros(int(round(seconds * RATE)))
+    for k, at in enumerate(numpy.arange(0, seconds, step)):
+        place(out, pluck(notes[k % len(notes)], step + 0.5, amplitude=amplitude), at)
+    return out
+
+
+def mastered(pieces: list[tuple[str, numpy.ndarray]]) -> tuple[numpy.ndarray, dict[str, float]]:
+    """The pieces in order, softly limited and brought up to a peak of
+    -0.1 dBFS, as a master is, with no noise floor anywhere."""
+    samples, marks = rehearsal(pieces)
+    limited = numpy.tanh(3 * samples / numpy.max(numpy.abs(samples)))
+    return limited / numpy.max(numpy.abs(limited)) * 10 ** (-0.1 / 20), marks
+
+
 def rehearsal(pieces: list[tuple[str, numpy.ndarray]]) -> tuple[numpy.ndarray, dict[str, float]]:
     """The pieces in order, and the second each starts at."""
     marks, at = {}, 0
@@ -212,6 +252,13 @@ def needs_of(directory: Path, audio: Path) -> dict:
     return found
 
 
+def pitched(frames: int) -> numpy.ndarray:
+    """Pitch-class profiles holding one class, as a held note's do."""
+    profiles = numpy.zeros((frames, 12))
+    profiles[:, 3] = 1
+    return profiles
+
+
 # -- the tests ----------------------------------------------------------------------
 
 class Manifest(unittest.TestCase):
@@ -259,15 +306,106 @@ class Pieces(unittest.TestCase):
         mask = numpy.array([1, 1, 1, 0, 0, 0, 0, 1], dtype=bool)
         self.assertEqual(list(structure.centred_fraction(mask, 3)), [1.0, 1.0, 2 / 3, 1 / 3, 0, 0, 1 / 3, 0.5])
 
-    def test_levels_without_quiet_measure_from_the_reference_and_never_below_silence(self) -> None:
+    def test_a_floor_is_steady_onset_free_quiet_well_below_the_playing(self) -> None:
         p = structure.parameters()
-        loud = structure.levels(numpy.r_[numpy.full(90, -20.0), numpy.full(10, -30.0)], p)
+        rng = numpy.random.default_rng(3)
+        none = numpy.zeros(0)
+        # Playing at -20 with a few dB of movement, and room noise at -60 steady to a dB. Every
+        # profile here is pitched, so only steady, onset-free quiet can be a floor.
+        playing = -20 + rng.uniform(-3, 3, 200)
+        room = -60 + rng.uniform(-0.5, 0.5, 100)
+
+        def levels(level, onsets):
+            return structure.levels(level, onsets, pitched(len(level)), p)
+
+        found = levels(numpy.r_[room[:50], playing, room[50:]], none)
+        self.assertTrue(found.floor)
+        self.assertLess(abs(found.floor_db + 60), 0.5)
+        self.assertEqual(found.threshold_db, found.floor_db + p["floor_margin_db"])
+        # The same quiet struck again and again (a quiet passage of music) is no floor ...
+        times = numpy.arange(0, 300 * structure.SECONDS, 0.4)
+        struck = levels(numpy.r_[room[:50], playing, room[50:]], times)
+        self.assertFalse(struck.floor)
+        # ... nor is it when it moves (a fade, a crescendo) ...
+        moving = numpy.r_[numpy.linspace(-70, -50, 50), playing, numpy.linspace(-50, -70, 50)]
+        self.assertFalse(levels(moving, none).floor)
+        # ... nor when it lies within floor_depth_db of the playing (a held drone in a master).
+        lift = 40 - p["floor_depth_db"] + 5  # the drone at -60 + lift, a few dB less than floor_depth_db below
+        drone = numpy.r_[room[:50] + lift, playing, room[50:] + lift]
+        self.assertLess(numpy.percentile(drone, 95) - (room + lift).min(), p["floor_depth_db"])  # anchor
+        self.assertFalse(levels(drone, none).floor)
+        # ... nor when there is less than floor_min_ms of it.
+        width = structure.frames_of(p["sustain_ms"])
+        # The room frames whose window reaches into the playing move too much to count.
+        enough = structure.frames_of(p["floor_min_ms"]) + width - width // 2 - 1
+        self.assertTrue(levels(numpy.r_[room[:enough], playing], none).floor)  # anchor
+        self.assertFalse(levels(numpy.r_[room[:enough - 1], playing], none).floor)
+
+    def test_unpitched_quiet_is_a_floor_however_shallow_or_struck(self) -> None:
+        p = structure.parameters()
+        rng = numpy.random.default_rng(4)
+        playing = -20 + rng.uniform(-3, 3, 200)
+        depth = p["noise_depth_db"] + 3  # shallower than floor_depth_db: no steady floor
+        self.assertLess(depth + 1, p["floor_depth_db"])  # anchor
+        room = -20 - depth + rng.uniform(-0.5, 0.5, 100)
+        level = numpy.r_[room[:50], playing, room[50:]]
+        clicks = numpy.arange(0, len(level) * structure.SECONDS, 0.4)  # a busy room: something every 0.4 s
+        quiet = numpy.r_[numpy.ones(50, bool), numpy.zeros(200, bool), numpy.ones(50, bool)]
+
+        def profiles(room_profile):
+            return numpy.where(quiet[:, None], room_profile, pitched(len(level)))
+
+        # Anchor: pitched, the same quiet is no floor, struck or not (a master's quiet passage) ...
+        self.assertFalse(structure.levels(level, numpy.zeros(0), profiles(pitched(len(level))), p).floor)
+        self.assertFalse(structure.levels(level, clicks, profiles(pitched(len(level))), p).floor)
+        # ... unpitched, it is room noise, struck or not.
+        for onsets in (numpy.zeros(0), clicks):
+            found = structure.levels(level, onsets, profiles(numpy.ones((len(level), 12))), p)
+            self.assertTrue(found.floor)
+            self.assertLess(abs(found.floor_db - room.mean()), 0.5)
+            self.assertEqual(found.threshold_db, found.floor_db + p["floor_margin_db"])
+            self.assertFalse(found.active[quiet].any())
+            self.assertTrue(found.active[~quiet].all())
+        flat = profiles(numpy.ones((len(level), 12)))
+        # Not when it lies within noise_depth_db of the reference ...
+        near = numpy.r_[room[:50] + 7, playing, room[50:] + 7]
+        self.assertLess(numpy.percentile(near, 95) - near[quiet].max(), p["noise_depth_db"])  # anchor
+        self.assertFalse(structure.levels(near, numpy.zeros(0), flat, p).floor)
+        # ... nor when it moves more than noise_range_db over sustain_ms (talk, a crowd).
+        swing = numpy.r_[room[:50], playing, room[50:]] + quiet * numpy.tile([0.0, -p["noise_range_db"] - 1], 150)
+        self.assertFalse(structure.levels(swing, numpy.zeros(0), flat, p).floor)
+
+    def test_flatness_tells_noise_from_pitch(self) -> None:
+        self.assertAlmostEqual(float(structure.flatness(numpy.ones((1, 12)))[0]), 1.0, places=6)
+        self.assertLess(float(structure.flatness(pitched(1))[0]), 0.01)
+        triad = numpy.zeros((1, 12))
+        triad[0, [0, 4, 7]] = 1
+        self.assertLess(float(structure.flatness(triad)[0]), structure.parameters()["noise_flatness_percent"] / 100)
+        self.assertAlmostEqual(float(structure.flatness(numpy.zeros((1, 12)))[0]), 1.0, places=6)  # no profile: flat
+        self.assertEqual(list(structure.moving_median(numpy.array([0.0, 9, 0, 0, 5, 5, 5]), 3)), [0, 0, 0, 0, 5, 5, 5])
+
+    def test_without_a_floor_levels_measure_from_the_reference_and_never_below_silence(self) -> None:
+        p = structure.parameters()
+        none = numpy.zeros(0)
+        loud = structure.levels(numpy.r_[numpy.full(90, -20.0), numpy.full(10, -30.0)], none, pitched(100), p)
+        self.assertFalse(loud.floor)
         self.assertEqual(loud.threshold_db, -20.0 - p["range_db"])  # the recording has no quiet to call a floor
-        quiet = structure.levels(numpy.r_[numpy.full(50, -20.0), numpy.full(50, -60.0)], p)
+        self.assertEqual(loud.floor_db, -30.0)  # the 5th percentile, reported all the same
+        quiet = structure.levels(numpy.r_[numpy.full(50, -20.0), numpy.full(50, -60.0)], none, pitched(100), p)
+        self.assertTrue(quiet.floor)
         self.assertEqual(quiet.threshold_db, -60.0 + p["floor_margin_db"])
-        silent = structure.levels(numpy.full(100, -120.0), p)
+        silent = structure.levels(numpy.full(100, -120.0), none, numpy.ones((100, 12)), p)
+        self.assertFalse(silent.floor)  # digital silence is below silence_db, no floor
         self.assertEqual(silent.threshold_db, p["silence_db"])
         self.assertFalse(silent.active.any())
+
+    def test_the_lowest_band_and_the_moving_range(self) -> None:
+        self.assertEqual(structure.lowest_band(numpy.array([-70.0, -50, -49, -48, -10, -9]), 6, 3), -49.0)
+        self.assertEqual(structure.lowest_band(numpy.array([-70.0, -50, -40]), 6, 2), None)
+        self.assertEqual(structure.lowest_band(numpy.zeros(0), 6, 1), None)
+        values = numpy.array([0.0, 0, 5, 0, 0, 0, 0])
+        self.assertEqual(list(structure.moving_range(values, 3)), [0, 5, 5, 5, 0, 0, 0])
+        self.assertEqual(list(structure.moving_range(values, 4)), [0, 5, 5, 5, 5, 0, 0])
 
     def test_loops_measured_a_chunk_at_a_time_are_those_measured_at_once(self) -> None:
         rng = numpy.random.default_rng(4)
@@ -485,6 +623,7 @@ class Rehearsal(unittest.TestCase):
         self.near(self.entry.scalar("floor_db"), -54, 4)
         self.near(self.entry.scalar("reference_db"), -18, 4)
         self.assertEqual(self.entry.scalar("threshold_db"), round(self.entry.scalar("floor_db") + 10, 3))
+        self.assertIs(self.entry.scalar("floor"), True)
 
     def test_another_setting_is_another_entry(self) -> None:
         shorter = {**structure.parameters(), "false_start_max_ms": 5000}
@@ -648,6 +787,85 @@ class Cases(unittest.TestCase):
             self.assertEqual(entry.items(name), [], name)
         self.assertTrue(numpy.all(entry.series("novelty") == 0))
         self.assertEqual(entry.scalar("threshold_db"), structure.parameters()["silence_db"])
+        self.assertIs(entry.scalar("floor"), False)
+
+    def test_a_master_is_one_stretch_of_playing_whose_quiet_passages_are_music(self) -> None:
+        directory = scratch(self)
+        bass = (40, 43, 45, 47, 45, 43)
+        samples, marks = mastered([
+            ("intro", line(bass, 8)),
+            ("verse", dry(24, VERSE, 120, 1)),
+            ("chorus", dry(16, CHORUS, 120, 2)),
+            ("breakdown", line(bass, 8)),
+            ("last", dry(16, VERSE, 120, 3)),
+            ("ring", held(VERSE[0], 3.0) * numpy.exp(-3 * numpy.arange(3 * RATE) / RATE)),
+        ])
+        entry = measured(directory, samples, "master")
+        level = entry_of(directory, directory / "master.wav", extractor="frames").series("rms_db").reshape(-1)
+        p = structure.parameters()
+        seconds = numpy.arange(len(level)) * structure.SECONDS
+        quiet = (seconds > marks["breakdown"] + 1) & (seconds < marks["last"] - 1)
+        # Anchor: the quiet passages are a dozen dB and more under the rest, so a floor at the 5th
+        # percentile would have put the breakdown below the threshold and cut the song in two.
+        self.assertGreater(numpy.percentile(level, 95) - numpy.median(level[quiet]), 12)
+        self.assertGreater(numpy.percentile(level, 5) + p["floor_margin_db"], numpy.median(level[quiet]))
+        self.assertFalse(entry.scalar("floor"))
+        self.assertEqual(entry.scalar("threshold_db"), round(entry.scalar("reference_db") - p["range_db"], 3))
+        playing = entry.items("playing")
+        self.assertEqual(len(playing), 1, playing)
+        self.assertLess(playing[0]["start"], 0.3)
+        self.assertGreater(playing[0]["end"], marks["ring"])
+        for name in ("tuning", "count_ins", "false_starts"):
+            self.assertEqual(entry.items(name), [], name)
+        sections = entry.items("sections")
+        self.assertGreaterEqual(len(sections), 3, sections)
+        self.assertEqual((sections[0]["start"], sections[-1]["end"]), (playing[0]["start"], playing[0]["end"]))
+
+    def test_a_rehearsal_over_a_shallow_or_busy_room_keeps_its_songs_apart(self) -> None:
+        """Room noise too shallow or too often struck to be steady quiet is
+        still a floor, being unpitched: the songs stay apart and their
+        count-ins are found."""
+        directory = scratch(self)
+        p = structure.parameters()
+
+        def soft(seconds, progression, seed):  # an acoustic song, about 17 dB over its room
+            return (song(seconds, progression, 120, seed, drums=False) - room(seconds, seed)) * 0.08 + room(seconds, seed)
+
+        busy = lambda seconds, seed: busy_room(seconds, seed)  # noqa: E731
+        loud = lambda seconds, seed: room(seconds, seed, 0.02)  # noqa: E731
+        cases = {
+            # Pink, wobbling 3 dB, struck twice a second, about 32 dB under the playing.
+            "busy": ([("room", busy(8, 1)), ("count", count_in(4, 120, 2) + busy(2, 3)), ("song", song(30, VERSE, 120, 3)),
+                      ("gap", busy(12, 4)), ("count2", count_in(4, 120, 5) + busy(2, 6)), ("song2", song(30, SONG_B, 120, 7)),
+                      ("tail", busy(6, 8))], True),
+            # Steady white noise 19 dB under, as a phone's automatic gain lifts a room.
+            "agc": ([("room", loud(8, 1)), ("count", count_in(4, 120, 2) + loud(2, 3)), ("song", song(30, VERSE, 120, 3)),
+                     ("gap", loud(10, 4)), ("count2", count_in(4, 120, 5) + loud(2, 6)),
+                     ("song2", song(30, SONG_B, 120, 7)), ("tail", loud(6, 8))], True),
+            # A quiet acoustic rehearsal 17 dB over its room, with no count-ins.
+            "shallow": ([("room", room(8, 1)), ("song", soft(30, VERSE, 3)), ("gap", room(10, 4)),
+                         ("song2", soft(30, SONG_B, 5)), ("tail", room(6, 6))], False),
+        }
+        for name, (pieces, counted) in cases.items():
+            with self.subTest(name):
+                samples, marks = rehearsal(pieces)
+                entry = measured(directory, samples, name)
+                f = features_of(directory, directory / f"{name}.wav")
+                level = f.level
+                # Anchor: steady quiet alone finds no floor here, the room too shallow or too often struck.
+                steady = structure.steady_quiet(level, f.onsets, numpy.percentile(level, 95), p)
+                self.assertIsNone(structure.lowest_band(level[steady], p["floor_band_db"], structure.frames_of(p["floor_min_ms"])))
+                self.assertTrue(entry.scalar("floor"))
+                self.assertLess(entry.scalar("threshold_db"), numpy.percentile(level, 95) - 6)
+                playing = entry.items("playing")
+                self.assertEqual(len(playing), 2, playing)
+                for span, (start, end) in zip(playing, ((marks["song"], marks["gap"]), (marks["song2"], marks["tail"]))):
+                    self.assertLess(abs(span["start"] - start), 0.3, span)
+                    self.assertLess(abs(span["end"] - end), 0.5, span)
+                count_ins = [span["start"] for span in entry.items("count_ins")]
+                if counted:
+                    self.assertTrue(count_ins, name)
+                    self.assertTrue(all(abs(at - marks["count"]) < 1.1 or abs(at - marks["count2"]) < 1.1 for at in count_ins))
 
     def test_clipped_playing_with_no_quiet_runs_to_the_end(self) -> None:
         directory = scratch(self)
