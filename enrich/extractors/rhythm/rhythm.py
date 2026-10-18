@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""The rhythm extractor: beats, tempo, onsets, and how tightly onsets sit on
-the beat grid (ADR 0074).
+"""The rhythm extractor: beats, tempo, onsets, how tightly onsets sit on the
+beat grid, and the tempo level, meter, and downbeats a musician would count
+(ADR 0074).
 
 It decodes the content's first audio stream as mono 32-bit floats at
 44,100 Hz and measures it in chunks of `chunk_seconds`, each overlapping the
@@ -84,6 +85,50 @@ Outputs:
   `confidence` (the chunks' confidences weighted by the seconds each keeps),
   `onset_rate` (onsets a second), and `seconds`.
 
+A tracker follows one pulse and chooses it window by window: on dense
+playing it locks to the eighths (2:1 of the counted beat), to a
+cross-rhythm (3:2, 4:3), or to the beat, and changes its mind between
+sections, so `bpm` can be a level never played and a change of feel at a
+constant pulse (4/4 to 12/8) reads as a change of tempo. Measured on an
+album of dense, odd-metered music against Spotify's tempi and human Guitar
+Pro transcriptions, `bpm` was 3:2 or 4:3 of the reference on 4 of 17
+tracks. So `meter.py` (see there) also measures, from each chunk's spectral
+rows (spectral flux, its part below 200 Hz, and a chroma, from 2,048-sample
+frames every 512 samples, kept for the chunk's kept range only, about 17 MB
+a recording-hour) and the gated beats:
+
+- `primary_tempo` (seconds grid, BPM): the level each second among 1:2, 2:3,
+  3:4, 1:1, 4:3, 3:2 and 2:1 of the tracker's tempo with the most onset
+  support (the mean accent on the level's pulses at their best phase)
+  times a log-normal preference for tempi near `prior_bpm` (`prior_octaves`
+  wide, which settles octaves the support cannot tell apart), through a
+  path that charges `level_switch_cost` per octave of change;
+  `tempo_support` (seconds grid, 7 columns): the support of 1:2, 2:3, 3:4,
+  1:1, 4:3, 3:2 and 2:1 of that primary, the alternatives a reader may
+  prefer;
+- `pulse` (events): the primary level's beats, each with its place in its
+  bar (1 the downbeat); `downbeats` (events): the bar lines, each with the
+  bar's length in beats and its meter;
+- `tempo_spans` (spans): stretches of one tempo level (within 8%) and one
+  meter (`4/4`, `3/4`, `5/4`, `7/4`, or with a ternary division of the beat
+  `12/8`, `9/8`, `15/8`, `21/8`); `tempo_changes` (events): where one span
+  follows another, labelled `meter` when the beat or one of its
+  subdivisions persists across it (only the grouping changed) and `tempo`
+  otherwise;
+- scalars `primary_bpm` and `meter`, the level and the meter covering the
+  most time.
+
+The meter is how far apart the beat-by-beat pattern (where the harmony
+moves, the accents and the low accents) repeats; the downbeats are where a
+low accent and a move of the harmony fall, through a bar-position model in
+which a bar may end early (a bar of 2/4 in 4/4). On the album, beats per
+bar agreed with Spotify's time signature on 15 of 17 tracks and with a
+transcription's bars on 96 to 100% of three 4/4 songs' bars, but only 60%
+of one with a 5/4 section. On the one transcription aligned closely enough
+to check bar lines, the downbeats fell on one beat of its bar 89% of the
+time, but on its third beat, half a bar from its first: which of beats 1
+and 3 starts the bar is the weakest of these estimates.
+
 Invoked by the runner as `rhythm.py <request.json>`. The settings in
 `TUNABLE` may be configured; any other differing setting is refused.
 """
@@ -102,13 +147,16 @@ from typing import Any, Iterable, Iterator
 
 import numpy
 
+import meter
+
 RATE = 44100
 ESSENTIA_BUILD = "2.1b6.dev1438"
 SECOND = RATE
 # Fewest tick-to-onset pairs a chunk's alignment shift is measured from.
 ALIGN_MINIMUM = 8
 TUNABLE = {"min_tempo": (40, 180), "max_tempo": (60, 250), "subdivisions": (1, 12), "window_seconds": (2, 120),
-           "chunk_seconds": (60, 3600), "overlap_seconds": (10, 600), "beat_gate_seconds": (1, 30)}
+           "chunk_seconds": (60, 3600), "overlap_seconds": (10, 600), "beat_gate_seconds": (1, 30),
+           "prior_bpm": (60, 180), "level_switch_cost": (0, 100)}
 
 
 class RhythmError(Exception):
@@ -128,7 +176,9 @@ def parameters() -> dict[str, Any]:
             "analysis_rate": RATE, "beats": "RhythmExtractor2013", "method": "multifeature", "min_tempo": 40,
             "max_tempo": 208, "onsets": "OnsetRate", "chunk_seconds": 300, "overlap_seconds": 30,
             "beat_gate_seconds": 2, "beat_align_ms": 50, "edge_onset_ms": 25,
-            "window_seconds": 10, "subdivisions": 4}
+            "window_seconds": 10, "subdivisions": 4, "accents": "spectral flux", "accent_frame": meter.FRAME,
+            "accent_hop": meter.HOP, "prior_bpm": 120, "prior_octaves": 1, "level_switch_cost": 20,
+            "meters": list(meter.METERS)}
 
 
 def settings(requested: Any) -> dict[str, Any]:
@@ -260,6 +310,7 @@ class Measured:
     chunk_kept_seconds: list[float] = field(default_factory=list)
     chunk_onsets: list[int] = field(default_factory=list)
     chunk_shift: list[float] = field(default_factory=list)  # seconds each chunk's ticks were moved
+    rows: list[meter.Rows] = field(default_factory=list)  # each chunk's spectral rows in its kept range
     shift: float = 0.0  # the latest measured shift, for a chunk too sparse to measure its own
     samples: int = 0
 
@@ -332,6 +383,9 @@ def measure(pieces: Iterable[Chunk], config: dict[str, Any], es: Any) -> Measure
         found.chunk_confidence.append(float(confidence) if chunk_onsets else 0.0)
         found.chunk_kept_seconds.append((chunk.keep_to - chunk.keep_from) / RATE)
         found.chunk_onsets.append(len(chunk_onsets))
+        # The spectral rows centred in the kept range; the overlap gives each its whole frame.
+        found.rows.append(meter.spectral_rows(chunk.audio, chunk.start, -(-chunk.keep_from // meter.HOP),
+                                              -(-chunk.keep_to // meter.HOP)))
     return found
 
 
@@ -436,6 +490,27 @@ def events(times: list[float]) -> list[dict[str, float]]:
     return [{"time": round(t, 6)} for t in times]
 
 
+def metrical(found: Measured, beats: list[float], tempo: numpy.ndarray,
+             config: dict[str, Any]) -> tuple[dict[str, numpy.ndarray], dict[str, list[dict[str, Any]]],
+                                              dict[str, Any]]:
+    """The tempo levels, meter and downbeats (see `meter`), as the series,
+    the events and spans, and the scalars rhythm writes."""
+    found_levels = meter.analyse(beats, tempo, meter.Rows.join(found.rows), config)
+    starts = numpy.flatnonzero(found_levels.position == 0)
+    lengths = meter.bar_lengths(found_levels.position)
+    items = {
+        "pulse": [{"time": round(float(t), 6), "value": int(p) + 1}
+                  for t, p in zip(found_levels.pulse, found_levels.position)],
+        "downbeats": [{"time": round(float(found_levels.pulse[i]), 6), "value": int(n),
+                       "label": found_levels.labels[i]} for i, n in zip(starts, lengths)],
+        "tempo_spans": [{"start": round(span.start, 6), "end": round(span.end, 6), "value": round(span.bpm, 3),
+                         "label": span.label} for span in found_levels.spans],
+        "tempo_changes": found_levels.changes}
+    rows_out = {"primary_tempo": found_levels.primary.astype("<f4").reshape(-1, 1),
+                "tempo_support": found_levels.alternatives.astype("<f4")}
+    return rows_out, items, {"primary_bpm": found_levels.primary_bpm, "meter": found_levels.meter}
+
+
 def ffmpeg_version(ffmpeg: str = "ffmpeg") -> str:
     """The version `ffmpeg -version` names; refused rather than recorded as
     unknown when it names none, since the provenance would then be false."""
@@ -461,13 +536,15 @@ def main(argv: list[str]) -> int:
             raise RhythmError(f"{request['input']['path']} decodes to no samples")
         beats = gate(found.beats, found.onsets, config["beat_gate_seconds"], config["beat_align_ms"] / 1000)
         outputs: dict[str, Any] = {}
-        for name, values in series(found, beats, config).items():
+        rows = series(found, beats, config)
+        level_rows, level_items, level_scalars = metrical(found, beats, rows["tempo"], config)
+        for name, values in {**rows, **level_rows}.items():
             (output / f"{name}.f32").write_bytes(values.tobytes())
             outputs[name] = {"shape": list(values.shape)}
-        for name, values in (("beats", beats), ("onsets", found.onsets)):
-            (output / f"{name}.json").write_text(json.dumps(events(values)))
+        for name, items in {"beats": events(beats), "onsets": events(found.onsets), **level_items}.items():
+            (output / f"{name}.json").write_text(json.dumps(items))
             outputs[name] = {}
-        for name, value in scalars(found, beats, config).items():
+        for name, value in {**scalars(found, beats, config), **level_scalars}.items():
             outputs[name] = {"value": value}
         chunk_samples = config["chunk_seconds"] * RATE
         step = chunk_samples - config["overlap_seconds"] * RATE

@@ -1,8 +1,8 @@
 {
  "contract": "archive-extractor/1",
  "id": "rhythm",
- "version": "1",
- "description": "Beats, tempo, and onsets by Essentia's RhythmExtractor2013 (multifeature) and OnsetRate on 44,100 Hz audio in overlapping chunks, and how far onsets sit from the beat grid. Decodes for itself: both algorithms need 44,100 Hz and finer hops than frames has.",
+ "version": "2",
+ "description": "Beats, tempo, and onsets by Essentia's RhythmExtractor2013 (multifeature) and OnsetRate on 44,100 Hz audio in overlapping chunks, and how far onsets sit from the beat grid; the primary tempo level by onset support, its alternatives, meter, downbeats, and spans of steady tempo and meter, from the beats and its own spectral flux and chroma. Decodes for itself: both algorithms need 44,100 Hz and finer hops than frames has.",
  "command": [
   "${python}",
   "rhythm.py"
@@ -52,7 +52,19 @@
   "beat_align_ms": 50,
   "edge_onset_ms": 25,
   "window_seconds": 10,
-  "subdivisions": 4
+  "subdivisions": 4,
+  "accents": "spectral flux",
+  "accent_frame": 2048,
+  "accent_hop": 512,
+  "prior_bpm": 120,
+  "prior_octaves": 1,
+  "level_switch_cost": 20,
+  "meters": [
+   4,
+   3,
+   5,
+   7
+  ]
  },
  "outputs": {
   "beats": {
@@ -116,7 +128,7 @@
   "bpm": {
    "kind": "scalar",
    "unit": "BPM",
-   "description": "60 over the median of every beat interval; 0 with fewer than two beats"
+   "description": "60 over the median of every beat interval the tracker kept; 0 with fewer than two beats. A tracker that changes level mid-song makes this a level that may never be played: see primary_bpm"
   },
   "confidence": {
    "kind": "scalar",
@@ -132,6 +144,52 @@
    "kind": "scalar",
    "unit": "s",
    "description": "decoded length"
+  },
+  "pulse": {
+   "kind": "events",
+   "unit": "s",
+   "description": "the primary level's beats, from the tracker's beats by the chosen relation; value is the beat's place in its bar, 1 the downbeat"
+  },
+  "downbeats": {
+   "kind": "events",
+   "unit": "s",
+   "description": "the pulses that start a bar; value is the bar's length in beats, label its meter (4/4, 3/4, 12/8, ...)"
+  },
+  "primary_tempo": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "seconds",
+   "unit": "BPM",
+   "description": "the primary level's tempo: the relation of the tracker's tempo (1:2, 2:3, 3:4, 1:1, 4:3, 3:2, 2:1) with the most onset support times a preference for tempi near prior_bpm, through a path that changes level only on sustained evidence; 0 where the tracker has no beat"
+  },
+  "tempo_support": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 7,
+   "grid": "seconds",
+   "unit": "1",
+   "description": "the onset support of the levels at 1:2, 2:3, 3:4, 1:1, 4:3, 3:2 and 2:1 of the primary tempo, in that order: the mean accent on each level's pulses at its best phase, as a fraction of the window's 95th-percentile accent; 0 where there is no primary"
+  },
+  "tempo_spans": {
+   "kind": "spans",
+   "unit": "s",
+   "description": "stretches of one tempo level (within 8%) and one meter; value is the tempo in BPM, label the meter"
+  },
+  "tempo_changes": {
+   "kind": "events",
+   "unit": "s",
+   "description": "where one span meets the next: label meter when the beat or its fastest subdivision persists (only the grouping changed, such as 4/4 to 12/8), tempo otherwise; value is the new tempo over the old"
+  },
+  "primary_bpm": {
+   "kind": "scalar",
+   "unit": "BPM",
+   "description": "the tempo level covering the most time in tempo_spans; 0 with none"
+  },
+  "meter": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "the meter covering the most time in tempo_spans; empty with none"
   }
  }
 }

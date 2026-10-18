@@ -126,7 +126,8 @@ that writes one scalar, the worked example of
 [adding an extractor](../adding-an-extractor.md), and the proof that the
 runner does not care what an extractor is written in. Seven more measure
 from Essentia's standard algorithms or from what is already in the bank:
-`rhythm` (beats, tempo, onsets, and how far onsets sit off the beat),
+`rhythm` (beats, tempo, onsets, how far onsets sit off the beat, and the
+tempo level, meter, and downbeats a musician would count),
 `tonal` (tuning and its drift, key, chords, dissonance), `melody` (the
 mix's predominant melody with MELODIA), `structure` (playing, tuning,
 count-ins, false starts, endings, sections, and loops, from `frames` and
