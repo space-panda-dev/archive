@@ -568,7 +568,7 @@ failed or was blocked. `bank.py` reads entries back
 |---|---|---|
 | `frames` | Python, Essentia 2.1b6.dev1438 | on one grid of 4,096-sample frames every 2,048 at 22,050 Hz: `hpcp` (the bits `cover.py` measures), `rms_db`, `centroid`, `rolloff`, `flatness`, `flux`, `onset_hfc`, `mfcc`, `melbands`; scalars `samples`, `seconds` |
 | `loudness-r128` | POSIX shell, ffmpeg | `integrated`: EBU R 128 integrated loudness in LUFS |
-| `melody` | Python, Essentia 2.1b6.dev1438 | on a grid of 2,048-sample frames every 128 (the `hop_size` stride) at 44,100 Hz: `pitch` (MELODIA), `confidence`, `voiced`, `midi`, `cents`; `notes` spans; scalars `voiced_fraction`, `reference_hz`, `reference`, `source`, `samples`. Reads `stems/vocals` and `tonal/tuning_frequency` when the catalog has them |
+| `melody` | Python, Essentia 2.1b6.dev1438 | on a grid of 2,048-sample frames every 128 (the `hop_size` stride) at 44,100 Hz: `pitch` (MELODIA), `confidence`, `voiced`, `midi`, `cents`; `notes` spans; scalars `voiced_fraction`, `reference_hz`, `samples`. The predominant melody of whatever audio is the content; `voiced` is MELODIA's decision, not a level gate |
 
 The format is [docs/feature-bank.md](../docs/feature-bank.md); adding an
 extractor is [docs/adding-an-extractor.md](../docs/adding-an-extractor.md).

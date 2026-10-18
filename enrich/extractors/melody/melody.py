@@ -1,33 +1,45 @@
 #!/usr/bin/env python3
 """The melody extractor: a pitch contour, its voicing, and its intonation (ADR 0074).
 
-It measures the melody of the content's first audio stream with Essentia's
-MELODIA algorithms: `PredominantPitchMelodia` on the mix, or, when the
-catalog has a `stems` extractor, `PitchMelodia` on its `vocals` stem (one
-voice, so the monophonic variant). Both run on mono audio at 44,100 Hz after
-Essentia's `EqualLoudness` filter, as their documentation advises, with
+It measures the predominant melody of the content's first audio stream with
+Essentia's MELODIA (`PredominantPitchMelodia`), on mono audio at 44,100 Hz
+after Essentia's `EqualLoudness` filter, as its documentation advises, with
 frames of 2,048 samples every `hop_size` samples; row k of every series is
 centred on sample k x `hop_size`, and n samples make ceil(n / hop_size) + 1
 rows, as the algorithms frame them. Writes, on the `melody` grid:
 
 - `pitch`: the melody's fundamental frequency in Hz, 0 where unvoiced;
 - `confidence`: the algorithm's confidence in it, 0 where unvoiced;
-- `voiced`: 1 where the melody sounds, 0 where it does not;
+- `voiced`: 1 where MELODIA decides a melody sounds, 0 where it does not;
 - `midi`: the pitch as a fractional MIDI note number against the tuning
   reference (69 is the reference itself), 0 where unvoiced;
 - `cents`: the pitch's deviation from the nearest equal-tempered note
   against the reference, -50 to 50, 0 where unvoiced;
 
 and `notes` (spans in seconds, each valued with its MIDI note, by Essentia's
-`PitchContourSegmentation`), `voiced_fraction`, `reference_hz` and
-`reference` (where it came from), `source` (the mix or the stem), and
+`PitchContourSegmentation`), `voiced_fraction`, `reference_hz`, and
 `samples` (the decoded length at 44,100 Hz).
 
-The tuning reference is the `tonal` extractor's `tuning_frequency` when the
-catalog has one, and otherwise the `reference_hz` parameter (440 Hz).
-`PitchContourSegmentation` takes a whole number of hertz, so the notes are
-quantised against the reference rounded to one; `midi` and `cents` use it
-exactly.
+The tuning reference is the `reference_hz` parameter (440 Hz). It is not
+read from a tuning extractor: an extractor's needs are fixed (ADR 0074), and
+a reader holding a measured tuning t adds 12 log2(`reference_hz` / t) to `midi` and
+takes cents from that. `PitchContourSegmentation` takes a whole number of
+hertz, so the notes are quantised against the reference rounded to one;
+`midi` and `cents` use it exactly.
+
+It measures whatever audio it is given: the mix, or a stem when a stem is
+the content. Where the vocal line matters more than the mix's most salient
+one, that is the measure to run.
+
+`voiced` is MELODIA's voicing decision, which is relative to the contours
+present, not a level gate: a noise floor is mostly voiced (white noise at
+-40 dBFS between tones came out 86 % voiced, and noise alone about 80 %),
+and the confidence scales with level, so it does not separate them either.
+On recordings with room tone, gate `voiced` with the `frames` extractor's
+`rms_db` before reading `voiced_fraction` as how much is sung or played.
+`guessUnvoiced` is held false, since it reports guessed pitches in frames
+MELODIA judged unvoiced, with negative confidence, which `voiced` and
+`confidence` would not describe.
 
 Nothing here reads the `frames` series. MELODIA computes its own spectra
 (44,100 Hz, a Hann window zero-padded four times, a hop of 128 samples, 2.9
@@ -54,7 +66,6 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
-import math
 import platform
 import re
 import subprocess
@@ -68,25 +79,25 @@ import numpy
 RATE = 44100
 FRAME = 2048
 ESSENTIA_BUILD = "2.1b6.dev1438"
-STEM = "stems/vocals"
-TUNING = "tonal/tuning_frequency"
 HOPS = (64, 128, 256, 512, 1024)  # divisors of PitchContourSegmentation's 1,024-sample RMS hop
 SERIES = {"pitch": "<f4", "confidence": "<f4", "voiced": "u1", "midi": "<f4", "cents": "<f4"}
 DECIMAL = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?")
 
 # Essentia's defaults for each algorithm, as decimal text where they are not
 # integers; frameSize, hopSize and sampleRate are set from the fields above.
+# Essentia types each option: an INTEGER one takes only an integer (Essentia
+# refuses a fraction there), a REAL one an integer or decimal text, and a
+# BOOL one a boolean. The test reads the types from Essentia itself.
 PREDOMINANT = {"binResolution": 10, "filterIterations": 3, "guessUnvoiced": False, "harmonicWeight": "0.8",
                "magnitudeCompression": 1, "magnitudeThreshold": 40, "maxFrequency": 20000, "minDuration": 100,
                "minFrequency": 80, "numberHarmonics": 20, "peakDistributionThreshold": "0.9",
                "peakFrameThreshold": "0.9", "pitchContinuity": "27.5625", "referenceFrequency": 55,
                "timeContinuity": 100, "voiceVibrato": False, "voicingTolerance": "0.2"}
-MONOPHONIC = {"binResolution": 10, "filterIterations": 3, "guessUnvoiced": False, "harmonicWeight": "0.8",
-              "magnitudeCompression": 1, "magnitudeThreshold": 40, "maxFrequency": 20000, "minDuration": 100,
-              "minFrequency": 40, "numberHarmonics": 20, "peakDistributionThreshold": "0.9",
-              "peakFrameThreshold": "0.9", "pitchContinuity": "27.5625", "referenceFrequency": 55,
-              "timeContinuity": 100}
 SEGMENTATION = {"minDuration": "0.1", "pitchDistanceThreshold": 60, "rmsThreshold": -2}
+INTEGERS = {"predominant": {"filterIterations", "magnitudeThreshold", "minDuration", "numberHarmonics",
+                            "timeContinuity"},
+            "segmentation": {"pitchDistanceThreshold", "rmsThreshold"}}
+FIXED_OPTIONS = {"guessUnvoiced": False}  # see the module's description
 
 
 class MelodyError(Exception):
@@ -104,8 +115,8 @@ def parameters() -> dict[str, Any]:
     """The default settings, which the manifest must declare exactly."""
     return {"decoder": "ffmpeg", "decode_arguments": decode_arguments("{input}"), "sample_scale": 32768,
             "essentia": ESSENTIA_BUILD, "analysis_rate": RATE, "frame_size": FRAME, "hop_size": 128,
-            "equal_loudness": True, "predominant": PREDOMINANT, "monophonic": MONOPHONIC,
-            "segmentation": SEGMENTATION, "reference_hz": "440", "chunk_seconds": 120, "margin_seconds": 5}
+            "equal_loudness": True, "predominant": PREDOMINANT, "segmentation": SEGMENTATION,
+            "reference_hz": "440", "chunk_seconds": 120, "margin_seconds": 5}
 
 
 # -- settings ------------------------------------------------------------------
@@ -119,15 +130,28 @@ def _number(value: Any, where: str) -> float | int | bool:
 
 
 def _options(given: Any, defaults: dict[str, Any], where: str) -> dict[str, Any]:
+    """The options as Essentia takes them: a boolean, an integer, or a float,
+    by Essentia's type for each (INTEGERS)."""
     if not isinstance(given, dict) or set(given) != set(defaults):
         raise MelodyError(f"{where} must set exactly {sorted(defaults)}")
-    options = {}
+    options: dict[str, Any] = {}
     for name, value in given.items():
-        number = _number(value, f"{where}.{name}")
-        if isinstance(defaults[name], bool) != isinstance(number, bool):
-            kind = "a boolean" if isinstance(defaults[name], bool) else "a number"
-            raise MelodyError(f"{where}.{name} must be {kind}")
-        options[name] = number
+        default = defaults[name]
+        if isinstance(default, bool):
+            if not isinstance(value, bool):
+                raise MelodyError(f"{where}.{name} must be a boolean, not {value!r}")
+            if name in FIXED_OPTIONS and value != FIXED_OPTIONS[name]:
+                raise MelodyError(f"{where}.{name} is fixed at {FIXED_OPTIONS[name]!r} in melody 1")
+            options[name] = value
+        elif name in INTEGERS[where]:
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise MelodyError(f"{where}.{name} must be an integer, not {value!r}")
+            options[name] = value
+        else:
+            number = _number(value, f"{where}.{name}")
+            if isinstance(number, bool):
+                raise MelodyError(f"{where}.{name} must be a number, not {value!r}")
+            options[name] = float(number)
     return options
 
 
@@ -159,20 +183,7 @@ def settings(given: dict[str, Any]) -> dict[str, Any]:
     return {"hop": hop, "chunk": (chunk * RATE // hop) * hop, "margin": (margin * RATE // hop) * hop,
             "reference": float(reference),
             "predominant": _options(given["predominant"], PREDOMINANT, "predominant"),
-            "monophonic": _options(given["monophonic"], MONOPHONIC, "monophonic"),
             "segmentation": _options(given["segmentation"], SEGMENTATION, "segmentation")}
-
-
-def reference_of(request: dict[str, Any], default: float) -> tuple[float, str]:
-    """The tuning reference and where it came from: the tonal extractor's
-    measurement when the request carries one, else the parameter."""
-    need = request["needs"].get(TUNING)
-    if need is None:
-        return default, "parameter"
-    value = need.get("value")
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value < 22000:
-        raise MelodyError(f"{TUNING} is {value!r}, not a frequency in Hz")
-    return float(value), TUNING
 
 
 def essentia_standard() -> Any:
@@ -272,19 +283,15 @@ def chunks(blocks: Iterable[numpy.ndarray], chunk: int, margin: int, hop: int
 class Melody:
     """The algorithm instances, configured once."""
 
-    def __init__(self, es: Any, chosen: dict[str, Any], monophonic: bool):
+    def __init__(self, es: Any, chosen: dict[str, Any]):
         self.hop = chosen["hop"]
-        floats = {name: float(value) if isinstance(value, float) else value
-                  for name, value in chosen["monophonic" if monophonic else "predominant"].items()}
-        algorithm = es.PitchMelodia if monophonic else es.PredominantPitchMelodia
-        self.melodia = algorithm(sampleRate=RATE, frameSize=FRAME, hopSize=self.hop, **floats)
+        self.melodia = es.PredominantPitchMelodia(sampleRate=RATE, frameSize=FRAME, hopSize=self.hop,
+                                                  **chosen["predominant"])
         self.equal_loudness = es.EqualLoudness(sampleRate=RATE)
         segmentation = chosen["segmentation"]
         self.segmentation = es.PitchContourSegmentation(
             sampleRate=RATE, hopSize=self.hop, tuningFrequency=int(round(chosen["reference"])),
-            minDuration=float(segmentation["minDuration"]),
-            pitchDistanceThreshold=int(segmentation["pitchDistanceThreshold"]),
-            rmsThreshold=int(segmentation["rmsThreshold"]))
+            **segmentation)
 
     def measure(self, audio: numpy.ndarray) -> tuple[numpy.ndarray, numpy.ndarray, list[tuple[float, float, float]]]:
         """Pitch and confidence for every row of this audio, and its notes as
@@ -337,11 +344,9 @@ class Sink:
 def run(request: dict[str, Any], es: Any) -> dict[str, Any]:
     """Measure the request's audio and write every output; return the result."""
     chosen = settings(request["parameters"])
-    reference, reference_source = reference_of(request, chosen["reference"])
-    chosen["reference"] = reference
-    stem = request["needs"].get(STEM)
-    path = stem["path"] if stem is not None else request["input"]["path"]
-    melody = Melody(es, chosen, monophonic=stem is not None)
+    reference = chosen["reference"]
+    path = request["input"]["path"]
+    melody = Melody(es, chosen)
     hop = chosen["hop"]
     output = Path(request["output_dir"])
     sink = Sink(output)
@@ -375,8 +380,7 @@ def run(request: dict[str, Any], es: Any) -> dict[str, Any]:
     (output / "notes.json").write_text(json.dumps(notes))
     outputs: dict[str, Any] = {name: {"shape": [rows, 1]} for name in SERIES}
     outputs.update({"notes": {}, "voiced_fraction": {"value": sink.voiced / rows},
-                    "reference_hz": {"value": reference}, "reference": {"value": reference_source},
-                    "source": {"value": STEM if stem is not None else "mix"}, "samples": {"value": samples}})
+                    "reference_hz": {"value": reference}, "samples": {"value": samples}})
     software = [{"name": "ffmpeg", "version": ffmpeg_version()},
                 {"name": "essentia", "version": importlib.metadata.version("essentia")},
                 {"name": "numpy", "version": numpy.__version__},
@@ -387,8 +391,16 @@ def run(request: dict[str, Any], es: Any) -> dict[str, Any]:
 
 
 def ffmpeg_version(ffmpeg: str = "ffmpeg") -> str:
-    first = subprocess.run([ffmpeg, "-version"], capture_output=True, text=True).stdout.split("\n", 1)[0].split()
-    return first[2] if len(first) > 2 and first[:2] == ["ffmpeg", "version"] else "unknown"
+    """The decoder's version, which the entry records; a decoder that does
+    not say is a failure, not an entry with an unknown decoder."""
+    try:
+        first = subprocess.run([ffmpeg, "-version"], capture_output=True, text=True, stdin=subprocess.DEVNULL
+                               ).stdout.split("\n", 1)[0].split()
+    except OSError as exc:
+        raise MelodyError(f"ffmpeg could not run: {exc}") from exc
+    if len(first) > 2 and first[:2] == ["ffmpeg", "version"]:
+        return first[2]
+    raise MelodyError(f"{ffmpeg} -version does not say which ffmpeg it is")
 
 
 def main(argv: list[str]) -> int:

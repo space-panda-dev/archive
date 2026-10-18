@@ -30,18 +30,6 @@ declares:
   directory becomes that file's path;
 - `accepts`: the media types of content it measures, such as `audio/*`;
 - `needs`: the features it reads, as `<extractor>/<output>`;
-- `optional`: features it reads when it can and does without otherwise,
-  such as a vocal stem a melody is better measured on, or a measured tuning
-  reference. One is a need when the catalog has an extractor with its id,
-  and is dropped when it has none; whether it is read is therefore decided
-  by the installed extractors, never by what a run happened to find, and it
-  is in the key exactly when it is read. When the extractor is installed and
-  fails, or does not accept the content, what reads it is blocked or
-  skipped as for any need, rather than measured without it under the same
-  key. A name whose extractor is installed but declares no such output is
-  refused, so a misspelling is not silently dropped; one whose extractor is
-  not installed cannot be checked, and `extract.py list` shows what each
-  extractor reads from the catalog as it stands;
 - `parameters`: its settings, as JSON whose numbers are integers (a fraction
   is decimal text, as ADR 0064 requires of a run's parameters);
 - `outputs`: each output's name and kind, and for a series its element type,
@@ -137,9 +125,21 @@ and mel bands. `loudness-r128` is a 31-line shell script around `ffmpeg`
 that writes one scalar, the worked example of
 [adding an extractor](../adding-an-extractor.md), and the proof that the
 runner does not care what an extractor is written in. `melody` (Python with
-Essentia) measures the melody's pitch contour, voicing, and intonation with
-MELODIA, on a vocal stem and against a measured tuning reference when the
-catalog has extractors for them: the first user of optional needs.
+Essentia) measures the mix's predominant melody: its pitch contour,
+voicing, and intonation, with MELODIA.
+
+**A need is fixed; there is no optional one.** An extractor reads exactly
+the features its manifest needs, whatever else is installed. A need that
+became one only when the catalog held its extractor was tried for the
+melody (a vocal stem, a measured tuning) and dropped: an extractor in the
+catalog is not one that can run here (a stem separator whose program is not
+configured would block the melody on every such machine, and where it can
+run, every melody would first pay for a separation), and an output would
+change what it means under the same name when something unrelated was
+installed (the vocal stem's melody is silent on an instrumental recording,
+where the mix's would follow the lead instrument). Measuring a stem is
+running an extractor on the stem as its own content, and a measured tuning
+is applied by whoever reads both the melody and the tuning.
 
 ### Why a new noun
 

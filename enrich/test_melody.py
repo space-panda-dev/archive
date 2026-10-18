@@ -32,26 +32,6 @@ import melody  # noqa: E402
 
 RATE = melody.RATE
 
-# Stand-ins for a stem separator and a tuning estimator, which the catalog
-# does not ship yet: real programs the real runner runs, so the melody
-# extractor reads their outputs exactly as it would read the real ones'.
-STEMS = r'''
-import json, shutil, sys
-request = json.load(open(sys.argv[1]))
-shutil.copyfile(request["parameters"]["vocals"], request["output_dir"] + "/vocals.flac")
-json.dump({"contract": "archive-extractor-result/1", "outputs": {"vocals": {}}},
-          open(request["output_dir"] + "/result.json", "w"))
-'''
-TONAL = r'''
-import json, sys
-request = json.load(open(sys.argv[1]))
-value = request["parameters"]["tuning"]
-json.dump({"contract": "archive-extractor-result/1",
-           "outputs": {"tuning_frequency": {"value": float(value) if value[0].isdigit() else value}}},
-          open(request["output_dir"] + "/result.json", "w"))
-'''
-
-
 # MELODIA keeps a contour as melody only when its salience is near the mean
 # of every contour in the audio (`voicingTolerance`, 0.2 by default). Music
 # has hundreds of contours; a test tune of a few pure tones has a handful,
@@ -112,8 +92,9 @@ class Manifest(unittest.TestCase):
     def test_the_manifest_declares_exactly_what_the_program_implements(self) -> None:
         extractor = bank.Catalog.load()["melody"]
         self.assertEqual(extractor.manifest["parameters"], melody.parameters())
+        # It reads no feature, whatever else the catalog holds (ADR 0074: a need is fixed).
         self.assertEqual(extractor.needs, [])
-        self.assertEqual(extractor.optional, [melody.STEM, melody.TUNING])
+        self.assertNotIn("optional", extractor.manifest)
         series = {name: out for name, out in extractor.outputs.items() if out["kind"] == "series"}
         self.assertEqual(set(series), set(melody.SERIES))
         for name, out in series.items():
@@ -124,13 +105,6 @@ class Manifest(unittest.TestCase):
         self.assertEqual((chosen["hop"], chosen["reference"]), (128, 440.0))
         self.assertEqual(chosen["chunk"] % 128, 0)
         self.assertEqual(chosen["margin"] % 128, 0)
-
-    def test_without_a_stem_or_tuning_extractor_it_reads_nothing(self) -> None:
-        catalog = bank.Catalog.load()
-        for absent in ("stems", "tonal"):
-            self.assertNotIn(absent, catalog.extractors)  # anchor: this test is about their absence
-        self.assertEqual(catalog.needs("melody"), [])
-
 
 class Settings(unittest.TestCase):
     def given(self, **changes) -> dict:
@@ -158,20 +132,61 @@ class Settings(unittest.TestCase):
             "option": self.given(predominant={**melody.PREDOMINANT, "frameSize": 4096}),
             "missing option": self.given(segmentation={"minDuration": "0.1"}),
             "boolean option": self.given(predominant={**melody.PREDOMINANT, "voiceVibrato": 1}),
-            "number option": self.given(monophonic={**melody.MONOPHONIC, "minFrequency": True}),
+            "number option": self.given(predominant={**melody.PREDOMINANT, "minFrequency": True}),
+            "guessed pitches": self.given(predominant={**melody.PREDOMINANT, "guessUnvoiced": True}),
+            "fraction for an integer": self.given(predominant={**melody.PREDOMINANT, "numberHarmonics": "20.5"}),
+            "integer as text": self.given(predominant={**melody.PREDOMINANT, "numberHarmonics": "20"}),
+            "fraction for a threshold": self.given(segmentation={**melody.SEGMENTATION,
+                                                                 "pitchDistanceThreshold": "60.9"}),
+            "float for an integer": self.given(segmentation={**melody.SEGMENTATION, "rmsThreshold": -2.5}),
             "unknown": {**melody.parameters(), "colour": "blue"},
         }
         for name, given in refused.items():
             with self.subTest(name), self.assertRaises(melody.MelodyError):
                 melody.settings(given)
 
-    def test_a_tuning_reference_must_be_a_frequency(self) -> None:
-        self.assertEqual(melody.reference_of({"needs": {}}, 440.0), (440.0, "parameter"))
-        self.assertEqual(melody.reference_of({"needs": {melody.TUNING: {"value": 442.0}}}, 440.0),
-                         (442.0, melody.TUNING))
-        for value in (0, -440.0, "442", True, None, 30000.0):
-            with self.subTest(value=value), self.assertRaises(melody.MelodyError):
-                melody.reference_of({"needs": {melody.TUNING: {"value": value}}}, 440.0)
+    @needs_essentia
+    def test_every_option_it_accepts_reaches_essentia(self) -> None:
+        """Each option changed to another value of its kind is taken by the
+        algorithms, so what settings() accepts never fails inside Essentia."""
+        es = melody.essentia_standard()
+        algorithms = {"predominant": es.PredominantPitchMelodia(), "segmentation": es.PitchContourSegmentation()}
+        for group, defaults in (("predominant", melody.PREDOMINANT), ("segmentation", melody.SEGMENTATION)):
+            types = {name: str(algorithms[group].paramType(name)) for name in defaults}
+            self.assertEqual(melody.INTEGERS[group], {n for n, kind in types.items() if kind == "INTEGER"}, group)
+            self.assertEqual({n for n, d in defaults.items() if isinstance(d, bool)},
+                             {n for n, kind in types.items() if kind == "BOOL"}, group)
+
+        def changed(group: str, defaults: dict) -> dict:
+            # Within every option's range: booleans flipped unless fixed, integers
+            # moved by one toward zero, reals to nine tenths as decimal text
+            # (a fraction, even where the default is a whole number).
+            return {name: (default if name in melody.FIXED_OPTIONS else not default) if isinstance(default, bool)
+                    else default - (1 if default > 0 else -1) if name in melody.INTEGERS[group]
+                    else f"{float(default) * 0.9:.4f}" for name, default in defaults.items()}
+        chosen = melody.settings(self.given(predominant=changed("predominant", melody.PREDOMINANT),
+                                            segmentation=changed("segmentation", melody.SEGMENTATION)))
+        self.assertTrue(chosen["predominant"]["voiceVibrato"])
+        self.assertEqual(chosen["predominant"]["numberHarmonics"], 19)  # anchor: the values changed
+        self.assertEqual(chosen["predominant"]["magnitudeCompression"], 0.9)
+        self.assertIsInstance(chosen["predominant"]["harmonicWeight"], float)
+        melody.Melody(es, chosen)
+
+    def test_the_decoder_must_say_its_version(self) -> None:
+        directory = scratch(self)
+        for name, script, expected in (("good", "echo 'ffmpeg version 7.1.1 Copyright'", "7.1.1"),
+                                       ("silent", "exit 0", None), ("other", "echo 'avconv 12'", None)):
+            program = directory / name
+            program.write_text(f"#!/bin/sh\n{script}\n")
+            program.chmod(0o755)
+            with self.subTest(name):
+                if expected is None:
+                    with self.assertRaisesRegex(melody.MelodyError, "does not say"):
+                        melody.ffmpeg_version(str(program))
+                else:
+                    self.assertEqual(melody.ffmpeg_version(str(program)), expected)
+        with self.assertRaisesRegex(melody.MelodyError, "could not run"):
+            melody.ffmpeg_version(str(directory / "no-ffmpeg"))
 
     def test_essentia_other_than_the_pinned_build_is_refused(self) -> None:
         with patch.object(melody.importlib.metadata, "version", return_value="2.1b5"):
@@ -259,8 +274,7 @@ class Melody(unittest.TestCase):
         self.assertEqual(entry.scalar("samples"), len(audio))
         self.assertEqual(entry.series("pitch").shape, (math.ceil(len(audio) / 128) + 1, 1))
         self.assertEqual(entry.grid("pitch"), {"sample_rate": RATE, "hop": 128, "frame": 2048, "first_centre": 0})
-        self.assertEqual(entry.scalar("source"), "mix")
-        self.assertEqual((entry.scalar("reference"), entry.scalar("reference_hz")), ("parameter", 440.0))
+        self.assertEqual(entry.scalar("reference_hz"), 440.0)
 
     def test_chunks_follow_the_whole_recording(self) -> None:
         """A tune measured in chunks of 4 s with 1 s margins agrees with the
@@ -346,6 +360,29 @@ class Melody(unittest.TestCase):
         self.assertEqual(entry_of(directory, quiet).scalar("voiced_fraction"), 0)
         self.assertEqual(entry_of(directory, quiet).items("notes"), [])
 
+    def test_what_else_is_installed_changes_nothing(self) -> None:
+        """A stem separator in the catalog that cannot run here (its program
+        is not configured) neither blocks the melody nor changes its key."""
+        directory = scratch(self)
+        source = support.write_wav(directory / "tone.wav", tone(1.0, 440.0), RATE)
+        self.assertEqual(run_melody(directory, source)[0], 0)
+        plain = entry_of(directory, source)
+        more = directory / "more" / "stems"
+        more.mkdir(parents=True)
+        (more / "stems.py").write_text("raise SystemExit(1)\n")
+        (more / "extractor.json").write_text(json.dumps(
+            {"contract": "archive-extractor/1", "id": "stems", "version": "1",
+             "command": ["${demucs-python}", "stems.py"], "accepts": ["audio/*", "video/*"],
+             "outputs": {"vocals": {"kind": "file", "media_type": "audio/flac", "suffix": ".flac"}}}))
+        catalog = bank.Catalog.load([bank.EXTRACTORS, directory / "more"])
+        self.assertIn("stems", catalog.extractors)  # anchor: it is installed
+        config = directory / "config.json"
+        config.write_text(json.dumps({"extractors": [str(bank.EXTRACTORS), str(directory / "more")]}))
+        code, answer = run_melody(directory, source, "--config", str(config))
+        self.assertEqual((code, list(answer["extractors"])), (0, ["melody"]), answer)
+        self.assertEqual(answer["extractors"]["melody"]["status"], "hit")
+        self.assertEqual(catalog.keys(plain.manifest["content"], ["melody"])["melody"], plain.manifest["key"])
+
     def test_a_second_run_runs_nothing(self) -> None:
         directory = scratch(self)
         source = support.write_wav(directory / "tone.wav", tone(1.0, 440.0), RATE)
@@ -391,79 +428,6 @@ class Melody(unittest.TestCase):
         self.assertEqual(entry.grid("pitch")["hop"], 512)
         voiced = entry.series("voiced")[:, 0].astype(bool)
         self.assertLess(abs(float(numpy.median(entry.series("pitch")[voiced])) - 440.0), 1.0)
-
-
-@needs_ffmpeg
-@needs_essentia
-class OptionalNeeds(unittest.TestCase):
-    """With a stem separator and a tuning estimator in the catalog, the
-    melody is measured on the vocal stem against the measured reference."""
-
-    def catalog(self, directory: Path, tuning: str, vocals: Path) -> tuple[Path, Path]:
-        extractors = directory / "more"
-        for name, program, outputs, parameters in (
-                ("stems", STEMS, {"vocals": {"kind": "file", "media_type": "audio/flac", "suffix": ".flac"}},
-                 {"vocals": str(vocals)}),
-                ("tonal", TONAL, {"tuning_frequency": {"kind": "scalar", "unit": "Hz"}}, {"tuning": tuning})):
-            (extractors / name).mkdir(parents=True)
-            (extractors / name / "program.py").write_text(program)
-            (extractors / name / "extractor.json").write_text(json.dumps(
-                {"contract": "archive-extractor/1", "id": name, "version": "1",
-                 "command": ["${python}", "program.py"], "accepts": ["audio/*"], "parameters": parameters,
-                 "outputs": outputs}))
-        config = directory / "config.json"
-        config.write_text(json.dumps({"extractors": [str(bank.EXTRACTORS), str(extractors)]}))
-        return extractors, config
-
-    def test_the_vocal_stem_and_the_measured_reference_are_read(self) -> None:
-        directory = scratch(self)
-        # The mix holds a loud C5 and a quieter E4; the "vocal stem" holds only the E4.
-        mix = support.write_wav(directory / "mix.wav", tone(2.0, midi_hz(72), 0.4) + tone(2.0, midi_hz(64), 0.15),
-                                RATE)
-        support.ffmpeg("-i", str(support.write_wav(directory / "vocals.wav", tone(2.0, midi_hz(64)), RATE)),
-                       "-c:a", "flac", str(directory / "vocals.flac"))
-        extractors, config = self.catalog(directory, "442", directory / "vocals.flac")
-        code, answer = run_melody(directory, mix, "--config", str(config))
-        self.assertEqual(code, 0, answer)
-        self.assertEqual(list(answer["extractors"]), ["stems", "tonal", "melody"])
-        catalog = bank.Catalog.load([bank.EXTRACTORS, extractors])
-        self.assertEqual(catalog.needs("melody"), [melody.STEM, melody.TUNING])
-        entry = entry_of(directory, mix, catalog=catalog)
-        self.assertEqual(set(entry.manifest["needs"]), {melody.STEM, melody.TUNING})
-        self.assertEqual(entry.scalar("source"), melody.STEM)
-        self.assertEqual((entry.scalar("reference"), entry.scalar("reference_hz")), (melody.TUNING, 442.0))
-        voiced = entry.series("voiced")[:, 0].astype(bool)
-        self.assertGreater(float(voiced.mean()), 0.6)
-        # The stem's E4, not the mix's louder C5; and against 442 Hz, E4 tuned to 440 is about 7.85 cents flat.
-        self.assertLess(abs(float(numpy.median(entry.series("pitch")[voiced])) - midi_hz(64)), 1.5)
-        self.assertLess(abs(float(numpy.median(entry.series("cents")[voiced])) + 7.85), 2)
-        # Anchor: without them, the same mix is measured as a mix, under another key.
-        self.assertEqual(run_melody(directory, mix)[0], 0)
-        plain = entry_of(directory, mix)
-        self.assertNotEqual(plain.manifest["key"], entry.manifest["key"])
-        self.assertEqual(plain.scalar("source"), "mix")
-        plain_voiced = plain.series("voiced")[:, 0].astype(bool)
-        self.assertLess(abs(float(numpy.median(plain.series("pitch")[plain_voiced])) - midi_hz(72)), 2)
-
-    def test_a_reference_that_is_not_a_frequency_fails_the_melody(self) -> None:
-        directory = scratch(self)
-        mix = support.write_wav(directory / "mix.wav", tone(1.0, 440.0), RATE)
-        support.ffmpeg("-i", str(mix), "-c:a", "flac", str(directory / "vocals.flac"))
-        _, config = self.catalog(directory, "sharp", directory / "vocals.flac")
-        code, answer = run_melody(directory, mix, "--config", str(config))
-        self.assertEqual(code, 1)
-        self.assertEqual(answer["extractors"]["tonal"]["status"], "ran")
-        self.assertEqual(answer["extractors"]["melody"]["status"], "failed")
-        self.assertIn("not a frequency", answer["extractors"]["melody"]["log"])
-
-    def test_a_failed_stem_blocks_the_melody_rather_than_measuring_the_mix(self) -> None:
-        directory = scratch(self)
-        mix = support.write_wav(directory / "mix.wav", tone(1.0, 440.0), RATE)
-        _, config = self.catalog(directory, "440", directory / "no-such-stem.flac")
-        code, answer = run_melody(directory, mix, "--config", str(config))
-        self.assertEqual(code, 1)
-        self.assertEqual(answer["extractors"]["stems"]["status"], "failed")
-        self.assertEqual(answer["extractors"]["melody"]["status"], "blocked")
 
 
 if __name__ == "__main__":

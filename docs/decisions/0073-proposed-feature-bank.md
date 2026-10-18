@@ -48,10 +48,7 @@ and a derived-media root may be one directory. The key is the SHA-256 of the
 canonical JSON of the extractor's id and version, the digest of its
 canonical parameters, the content digest, and, for each feature it needs,
 the key of the entry that holds it. A change upstream is therefore a new key
-everywhere below it. An optional need ([ADR 0074](0074-proposed-extractor-contract.md))
-is in the key exactly when the catalog has its extractor, so installing a
-stem separator gives every extractor that may read a stem a new key, and
-the entries measured without it are not read again.
+everywhere below it.
 
 **Nothing is invalidated in place.** A new extractor version or other
 parameters make a new key and a new entry; the old entry is never read again

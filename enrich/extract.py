@@ -231,7 +231,7 @@ class Run:
         and digest, and where to write."""
         extractor = self.catalog[extractor_id]
         needs: dict[str, Any] = {}
-        for need in self.catalog.needs(extractor_id):
+        for need in extractor.needs:
             source, output = need.split("/", 1)
             entry = bank.read_entry(bank.entry_directory(self.root, self.content_digest(), source, keys[source]))
             if entry is None:
@@ -302,7 +302,7 @@ class Run:
                         "extractor": {"id": extractor.id, "version": extractor.version},
                         "parameters": request["parameters"], "content": self.content_digest(),
                         "media_type": self.media_type,
-                        "needs": {need: keys[need.split("/", 1)[0]] for need in self.catalog.needs(extractor_id)},
+                        "needs": {need: keys[need.split("/", 1)[0]] for need in extractor.needs},
                         **checked, "started_at": started, "ended_at": now(), "runner": RUNNER}
             bank.check_entry(manifest, f"{extractor_id} entry")
             (output_dir / bank.RESULT).unlink()
@@ -477,7 +477,6 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.command == "list":
             print(json.dumps({"extractors": [
                 {"id": e.id, "version": e.version, "accepts": e.manifest["accepts"], "needs": e.needs,
-                 "optional": e.optional, "reads": catalog.needs(e.id),
                  "requires": e.manifest.get("requires", []), "outputs": sorted(e.outputs),
                  "directory": str(e.directory)} for e in sorted(catalog.extractors.values(), key=lambda e: e.id)]},
                 indent=1))
