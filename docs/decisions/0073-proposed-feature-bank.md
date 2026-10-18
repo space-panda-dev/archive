@@ -70,7 +70,9 @@ not its code, so an edit that can change an output must come with a new
 version. A test pins a digest of each shipped extractor's files, and of the
 files it imports from outside its directory (`frames` imports `cover.py`),
 for each version, so an edit without a new version fails a test rather than
-serving old bits. Keying on that digest instead would make every comment
+serving old bits. The current versions, and what each changed, are listed
+with the outputs under
+[the shipped extractors](../feature-bank.md#the-shipped-extractors). Keying on that digest instead would make every comment
 edit discard hours of stem separation, would still miss imported code that a
 directory digest cannot see, and would tie a key to one checkout's bytes
 where a Spool worker's copy may differ only in what does not matter.

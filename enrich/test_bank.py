@@ -129,6 +129,7 @@ SHIPPED = {
                       "code": "sha256:37384ca259e5a38d61a4f09891b496bfeba339e5a10791aea2dc6b401aed0898",
                       "outside": {}},
     # Version 2: the primary tempo level, its alternatives, meter, downbeats, spans and changes (meter.py).
+    # Version 3: each take on its own, a preference for the tracker's octave, downbeats with a margin.
     "rhythm": {"version": "3",
                "code": "sha256:5f66bb145f6264da8b2973d847de7d679b6a697296641a50bbcfb23dc67ccf6b",
                "outside": {}},
@@ -182,6 +183,30 @@ def gone_soon(pid: int, seconds: float = 5.0) -> bool:
         time.sleep(0.05)
     return False
 
+
+
+KIND_HEADINGS = {"series": "series", "scalar": "scalars", "events": "events", "spans": "spans", "file": "files"}
+
+
+def shipped_table_rows(catalog: bank.Catalog) -> str:
+    """The rows of the table of shipped extractors in docs/feature-bank.md:
+    each extractor after what it needs, its version, its needs by
+    extractor, and its outputs by kind in manifest order."""
+    rows = []
+    for extractor_id in catalog.order(sorted(catalog.extractors)):
+        extractor = catalog[extractor_id]
+        by_source: dict[str, list[str]] = {}
+        for need in extractor.needs:
+            source, output = need.split("/", 1)
+            by_source.setdefault(source, []).append(output)
+        needs = "; ".join(f"`{source}`: " + ", ".join(outputs) for source, outputs in by_source.items()) or "none"
+        by_kind: dict[str, list[str]] = {}
+        for name, declared in extractor.outputs.items():
+            by_kind.setdefault(declared["kind"], []).append(f"`{name}`")
+        outputs = "; ".join(f"{KIND_HEADINGS[kind]} " + ", ".join(names)
+                            for kind, names in sorted(by_kind.items(), key=lambda item: list(KIND_HEADINGS).index(item[0])))
+        rows.append(f"| `{extractor.id}` | {extractor.version} | {needs} | {outputs} |\n")
+    return "".join(rows)
 
 class Fixture:
     """A scratch directory with extractors, a content file, and a bank."""
@@ -762,6 +787,16 @@ class Manifests(unittest.TestCase):
             command = extract.resolve_command(extractor, programs)
             self.assertTrue(any(Path(word).is_file() and Path(word).parent == extractor.directory
                                 for word in command), command)
+
+    def test_the_format_lists_every_shipped_extractor_as_its_manifest_declares_it(self) -> None:
+        catalog = bank.Catalog.load()
+        self.assertGreater(len(catalog.extractors), 1)
+        document = (Path(bank.__file__).resolve().parents[1] / "docs" / "feature-bank.md").read_text()
+        _, heading, after = document.partition("\n## The shipped extractors\n")
+        self.assertTrue(heading, "docs/feature-bank.md has no section on the shipped extractors")
+        listed = [line + "\n" for line in after.splitlines() if line.startswith("| `")]
+        self.assertEqual("".join(listed), shipped_table_rows(catalog),
+                         "the table no longer matches the manifests: paste shipped_table_rows' output")
 
     def test_the_worked_example_is_the_shipped_extractor(self) -> None:
         guide = (Path(bank.__file__).resolve().parents[1] / "docs" / "adding-an-extractor.md").read_text()

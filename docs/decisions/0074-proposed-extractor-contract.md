@@ -136,9 +136,12 @@ count-ins, false starts, endings, sections, and loops, from `frames` and
 `rhythm` without decoding), `quality` (how well the recording was captured),
 `colour` (a colour-coded waveform's data), and `stems` (Demucs, in an
 environment of its own; [ADR 0075](0075-proposed-stems-as-content.md)).
-What each writes is listed in one place, the table in
-[`enrich/README.md`](../../enrich/README.md#extractpy-the-feature-bank);
-the manifests are authoritative.
+Every shipped extractor's version, needs, and outputs are listed in one
+place, [the shipped extractors](../feature-bank.md#the-shipped-extractors)
+in the format, which a test holds to the manifests, with what each version
+changed; what each output means is in the table in
+[`enrich/README.md`](../../enrich/README.md#extractpy-the-feature-bank).
+The manifests are authoritative.
 
 **A need is fixed; there is no optional one.** An extractor reads exactly
 the features its manifest needs, whatever else is installed. A need that

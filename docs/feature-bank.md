@@ -251,3 +251,64 @@ directory must hold nothing but `result.json` and the declared files, each
 a regular file with one link: a symbolic or hard link is refused, since the
 runner makes every file owner-only and a hard link would change the linked
 file (perhaps the content itself). The runner replaces `result.json` with `entry.json` when it files the entry.
+
+## The shipped extractors
+
+The extractors in [`enrich/extractors/`](../enrich/extractors/), each after
+what it needs, with the version that goes into its entries' keys, the
+features it needs (by extractor, then output), and its outputs by kind. The
+manifests are authoritative; `test_the_format_lists_every_shipped_extractor_as_its_manifest_declares_it`
+in [`enrich/test_bank.py`](../enrich/test_bank.py) fails when this table and
+the manifests disagree. What each output means, its units, and its
+parameters are in the manifest's descriptions and in the
+[`enrich/README.md`](../enrich/README.md#extractpy-the-feature-bank) table.
+
+| Extractor | Version | Needs | Outputs |
+|---|---|---|---|
+| `frames` | 1 | none | series `hpcp`, `rms_db`, `centroid`, `rolloff`, `flatness`, `flux`, `onset_hfc`, `mfcc`, `melbands`; scalars `samples`, `seconds` |
+| `rhythm` | 3 | none | series `tempo`, `onset_count`, `onset_deviation`, `offgrid`, `chunk_bpm`, `chunk_confidence`, `primary_tempo`, `tempo_support`, `downbeat_margin`; scalars `bpm`, `confidence`, `onset_rate`, `seconds`, `primary_bpm`, `meter`; events `beats`, `onsets`, `pulse`, `downbeats`, `tempo_changes`; spans `tempo_spans` |
+| `tonal` | 4 | `frames`: rms_db | series `pitched`, `tuning_windows`, `chroma`, `bass_chroma`, `dissonance`; scalars `tuning_frequency`, `tuning_cents`, `tuning_confidence`, `tuning_window_count`, `drift_spread_cents`, `detuned`, `key`, `scale`, `mode`, `scale_notes`, `key_strength`, `key_margin`, `collection`, `collection_margin`, `tonic_margin`, `tonic_named`; spans `tuning_drift`, `detuned_spans`, `keys`, `key_regions` |
+| `chords` | 2 | `frames`: samples; `rhythm`: beats; `tonal`: bass_chroma, chroma, pitched | scalars `changes_per_minute`, `beat_share`; spans `chords`, `chord_candidates` |
+| `colour` | 3 | `frames`: centroid, hpcp, rms_db | series `colour`; files `palette`, `preview` |
+| `loudness-r128` | 1 | none | scalars `integrated` |
+| `melody` | 2 | none | series `pitch`, `confidence`, `voiced`, `midi`, `cents`, `level_db`; scalars `voiced_fraction`, `melodia_voiced_fraction`, `loud_db`, `gate_db`, `reference_hz`, `samples`; spans `notes` |
+| `quality` | 3 | `frames`: samples | series `correlation`, `peak_db`; scalars `sample_rate`, `channels`, `seconds`, `integrated`, `loudness_range`, `true_peak`, `sample_peak`, `full_scale_samples`, `clipped_seconds`, `dc_offset`, `whole_correlation`, `anti_phase`, `false_stereo`, `noise_floor`, `snr`, `bandwidth`, `band_limited`, `hum_examined`; events `clicks`, `discontinuities`; spans `clipping`, `overs`, `gaps`, `noise_bursts`, `hum` |
+| `stems` | 1 | none | series `levels`; scalars `vocals_rms_db`, `vocals_peak_db`, `vocals_clamped`, `drums_rms_db`, `drums_peak_db`, `drums_clamped`, `bass_rms_db`, `bass_peak_db`, `bass_clamped`, `other_rms_db`, `other_peak_db`, `other_clamped`, `mix_rms_db`, `samples`, `seconds`; files `vocals`, `drums`, `bass`, `other` |
+| `structure` | 2 | `frames`: hpcp, rms_db, mfcc, seconds; `rhythm`: onsets, beats | series `novelty`; scalars `floor_db`, `floor`, `reference_db`, `threshold_db`; spans `playing`, `tuning`, `count_ins`, `false_starts`, `endings`, `sections`, `loops` |
+
+A version changes whenever an extractor's code or outputs do, so an older
+entry is never read as a newer one (ADR 0073). The versions above 1, and
+what each changed:
+
+- `rhythm` 2 added the primary tempo level among the tracker's 1:2 to 2:1
+  relations, chosen by onset support, with its alternatives' support,
+  meter, downbeats, spans of one level and meter, and changes that say
+  `meter` where the beat persists; 3 decides each take on its own, prefers
+  the tracker's own octave, and publishes downbeats only where
+  `downbeat_margin` is clear.
+- `tonal` 1 and 2 measured tuning, key, and chords with Essentia's
+  `TuningFrequency`, `Key`, and `ChordsDetection` (2 records its second
+  decode and blanks harmony on a detuned recording); 3 takes the tuning as a
+  confidence-weighted median of windows, publishes profiles referenced to
+  it (`chroma`, `bass_chroma`), reports the key as a note collection with
+  a tonic and mode while keeping `key` and `scale`, and moves chords to
+  `chords`; 4 leaves mains hum out of the tuning and profiles, names a
+  tonic only where it leads, and draws `key_regions` by note collection.
+- `chords` 1 named a chord per half beat from `tonal`'s profiles by a
+  Viterbi path, with a bass of its own and three candidates a span; 2
+  prices the six-note m11 above the five-note chords.
+- `structure` 2 measures the playing threshold from a noise floor only
+  when the recording has one (steady or unpitched quiet), so a master is
+  all playing, and says which in `floor`.
+- `quality` 2 scaled the detectors' frames with the sample rate and
+  dropped quantisation-level bursts; 3 reports
+  clipping only at full scale or as long flat runs at the recording's own
+  peak, overs on their own, events that stand out from the music around
+  them or stand alone, and hum only at mains frequencies.
+- `melody` 2 resolves pitch in 2-cent bins, gates voicing by level, and
+  adds `level_db`.
+- `colour` 2 stopped copying the peaks into the bank and checks its
+  palette; 3 sets the centroid hue's
+  default range to 500 Hz to 4 kHz, which
+  [`enrich/hue_range.py`](../enrich/hue_range.py) can replace with a
+  collection's own.

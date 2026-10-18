@@ -566,6 +566,9 @@ failed or was blocked. `bank.py` reads entries back
 (`bank.Bank(root).entry(digest, "frames").series("hpcp")`), and
 `cover.py --bank <dir>` reads whole files' pitch-class profiles from it.
 
+Versions, needs, and outputs by kind are listed together in
+[the shipped extractors](../docs/feature-bank.md#the-shipped-extractors).
+
 | Extractor | Language | Writes |
 |---|---|---|
 | `frames` | Python, Essentia 2.1b6.dev1438 | on one grid of 4,096-sample frames every 2,048 at 22,050 Hz: `hpcp` (the bits `cover.py` measures), `rms_db`, `centroid`, `rolloff`, `flatness`, `flux`, `onset_hfc`, `mfcc`, `melbands`; scalars `samples`, `seconds` |

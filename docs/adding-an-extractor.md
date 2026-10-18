@@ -52,7 +52,11 @@ The byte-level format is in [the feature bank format](feature-bank.md).
    version: add yours to `SHIPPED` in `enrich/test_bank.py`, and when the
    test fails, bump the version or, if no output can change, record the new
    digest. A version is letters, digits, and dots, at most 40 characters,
-   so that it is also a Spool capability's version.
+   so that it is also a Spool capability's version. A shipped extractor's
+   new version, needs, or outputs also go in
+   [the shipped extractors](feature-bank.md#the-shipped-extractors), with a
+   line on what the version changed: `shipped_table_rows` in
+   `enrich/test_bank.py` renders the rows, and a test fails until they match.
 
 6. **Say what it writes** in one row of the extractor table in
    [`enrich/README.md`](../enrich/README.md#extractpy-the-feature-bank),
