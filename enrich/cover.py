@@ -14,7 +14,9 @@ The measure is the V2 system's, with its calibrated thresholds:
    magnitude spectrum, spectral peaks, and a pitch-class profile (HPCP).
 3. `ChromaCrossSimilarity` with the optimal transposition index, then
    `CoverSongSimilarity` with the serra09 alignment and the asymmetric
-   distance, in both directions. The distance is the smaller one.
+   distance, in both directions. The distance is the smaller one. The
+   cross-similarity is Essentia's, reproduced bit for bit in NumPy; its dot
+   products are summed once and serve both directions.
 4. The score is that distance rounded half to even to four places. Lower is
    closer.
 
@@ -219,6 +221,200 @@ def _options(options: dict[str, Any]) -> dict[str, Any]:
     return {key: float(value) if key in _FLOAT_OPTIONS else value for key, value in options.items()}
 
 
+# -- the cross-similarity ----------------------------------------------------
+#
+# Essentia's ChromaCrossSimilarity, as the method configures it, in NumPy
+# (src/algorithms/highlevel/chromacrosssimilarity.cpp and essentiamath.h).
+# Every step keeps Essentia's arithmetic, so the matrices are the same bits:
+#
+# - The transposition index: each profile's frames summed in float32, frame
+#   by frame, divided by the largest bin, and the reference's sum rotated by
+#   0 to 12 bins; the first largest dot product wins and the reference's
+#   frames are rotated by it.
+# - Nine consecutive frames stack into one vector; a profile of n frames has
+#   n - 9 stacks, and fewer than ten frames are refused.
+# - The distance of two stacks is the square root, in float32, of
+#   x.x - 2 x.y + y.y, each dot product a sum in double of float32 products,
+#   rounded to float32.
+# - A cell is 1 when its distance is at most the 9.5th percentile of its
+#   column and of its row, the percentile interpolated in float32 as
+#   Essentia's `percentile` does (which answers 0 when its index is whole).
+#
+# The cross dot products are summed per frame and then per stack, not in
+# Essentia's order. All products are non-negative, so both sums lie within
+# 2^-45 of the exact one, relative; wherever that interval could round to
+# two float32 values, the dot product is summed again in Essentia's order.
+#
+# The bits have been compared only with the pinned macOS arm64 wheel. The
+# x86_64 Linux wheel is another compilation of the same float32 arithmetic,
+# and whether its compiler fused any of it (such as the percentile's two
+# products into one) has not been checked.
+
+_STACK = ANALYSIS["chroma_cross_similarity"]["frameStackSize"]
+_BINS = 12
+_TOLERANCE = 2.0 ** -43
+_PERCENTILE = numpy.float32(numpy.float32(float(ANALYSIS["chroma_cross_similarity"]["binarizePercentile"]))
+                            * numpy.float32(100))
+
+
+def _ordered_dot(x: numpy.ndarray, y: numpy.ndarray) -> numpy.ndarray:
+    """Essentia's dot product along the last axis: float32 products added
+    in order to a double, rounded to float32."""
+    products = (x * y).astype(numpy.float32)
+    total = numpy.zeros(products.shape[:-1])
+    for index in range(products.shape[-1]):
+        total += products[..., index]
+    return total.astype(numpy.float32)
+
+
+def transposition_index(query: numpy.ndarray, reference: numpy.ndarray) -> int:
+    """The bins to rotate the reference's frames by (Essentia's
+    `optimalTranspositionIndex`, twelve shifts)."""
+    def global_chroma(profiles: numpy.ndarray) -> numpy.ndarray:
+        summed = numpy.add.accumulate(profiles, axis=0, dtype=numpy.float32)[-1]
+        largest = summed.max()
+        return summed / largest if largest != 0 else summed
+    a, b = global_chroma(query), global_chroma(reference)
+    values = _ordered_dot(a, numpy.stack([numpy.roll(b, shift) for shift in range(_BINS + 1)]))
+    return int(numpy.argmax(values))
+
+
+def _stacks(profiles: numpy.ndarray) -> numpy.ndarray:
+    count = len(profiles) - _STACK
+    return numpy.concatenate([profiles[offset:offset + count] for offset in range(_STACK)], axis=1)
+
+
+def _cross_dots(query: numpy.ndarray, reference: numpy.ndarray) -> tuple[numpy.ndarray, numpy.ndarray]:
+    """The stacks' cross dot products in double, summed per frame and then
+    along the stack, and where each may round otherwise in Essentia's order."""
+    rows, columns = len(query) - _STACK, len(reference) - _STACK
+    dots = numpy.empty((rows, columns))
+    block = 128
+    for start in range(0, rows, block):
+        stop = min(start + block, rows)
+        frames = query[start:stop + _STACK]
+        per_frame = numpy.zeros((len(frames), len(reference)))
+        for bin_ in range(_BINS):
+            per_frame += numpy.multiply.outer(frames[:, bin_], reference[:, bin_])
+        out = dots[start:stop]
+        out[...] = per_frame[:stop - start, :columns]
+        for offset in range(1, _STACK):
+            out += per_frame[offset:offset + stop - start, offset:offset + columns]
+    unsure = ((dots * (1 - _TOLERANCE)).astype(numpy.float32) != (dots * (1 + _TOLERANCE)).astype(numpy.float32))
+    return dots, unsure
+
+
+def _binarise(distances: numpy.ndarray) -> numpy.ndarray:
+    """1 where a distance is at most both its column's and its row's
+    threshold."""
+    def thresholds(axis: int) -> numpy.ndarray:
+        length = distances.shape[axis]
+        quantile = numpy.float32(float(_PERCENTILE) / 100.0)
+        k = numpy.float32(numpy.float32(length - 1 if length > 1 else length) * quantile)
+        low, high = int(numpy.floor(k)), int(numpy.ceil(k))
+        ordered = numpy.partition(distances, sorted({low, high}), axis=axis)
+        below = numpy.take(ordered, low, axis=axis) * numpy.float32(numpy.float32(high) - k)
+        above = numpy.take(ordered, high, axis=axis) * numpy.float32(k - numpy.float32(low))
+        return (below + above).astype(numpy.float32)
+    columns, rows = thresholds(0), thresholds(1)
+    return ((distances <= columns[None, :]) & (distances <= rows[:, None])).astype(numpy.float32)
+
+
+def _matrix(query_norms: numpy.ndarray, cross: numpy.ndarray, reference_norms: numpy.ndarray) -> numpy.ndarray:
+    with numpy.errstate(invalid="ignore"):
+        return numpy.sqrt(query_norms[:, None] - numpy.float32(2) * cross + reference_norms[None, :])
+
+
+def _profiles(profiles: numpy.ndarray) -> numpy.ndarray:
+    array = numpy.asarray(profiles, dtype=numpy.float32)
+    if array.ndim != 2 or array.shape[1] != _BINS:
+        raise CoverError(f"profiles of shape {array.shape} are not ({_BINS} bins) frames")
+    if len(array) <= _STACK:
+        raise TooShort(f"{len(array)} frames make no stack of {_STACK}; the cross-similarity needs more than {_STACK}")
+    if not numpy.isfinite(array).all() or (array < 0).any():
+        raise CoverError("pitch-class profiles must be finite and non-negative")
+    return numpy.ascontiguousarray(array)
+
+
+def _essentia_cross(query: numpy.ndarray, reference: numpy.ndarray) -> numpy.ndarray:
+    return essentia_module().ChromaCrossSimilarity(**_options(ANALYSIS["chroma_cross_similarity"]))(query, reference)
+
+
+@dataclass(frozen=True)
+class _Forward:
+    """One direction's cross-similarity, and what the other direction can
+    reuse of it."""
+    matrix: numpy.ndarray
+    index: int
+    cross: numpy.ndarray  # the stacks' cross dot products, float32
+    unsure: tuple[numpy.ndarray, numpy.ndarray]  # where they were summed again
+    query_norms: numpy.ndarray
+    reference_norms: numpy.ndarray
+
+
+def _forward(a: numpy.ndarray, b: numpy.ndarray) -> _Forward | None:
+    """`a` against `b`, or None where Essentia must answer: a distance that
+    is not a number (a stack and a nearly identical one can make
+    x.x - 2 x.y + y.y negative) has no defined place in Essentia's sort,
+    and a profile of exactly ten frames gives a row or column of one
+    distance, whose percentile Essentia reads from past the end of it."""
+    if min(len(a), len(b)) == _STACK + 1:
+        return None
+    index = transposition_index(a, b)
+    turned = numpy.roll(b, index, axis=1)
+    stacks_a, stacks_turned = _stacks(a), _stacks(turned)
+    dots, unsure = _cross_dots(a, turned)
+    cross = dots.astype(numpy.float32)
+    rows, columns = numpy.nonzero(unsure)
+    cross[rows, columns] = _ordered_dot(stacks_a[rows], stacks_turned[columns])
+    norms_a, norms_turned = _ordered_dot(stacks_a, stacks_a), _ordered_dot(stacks_turned, stacks_turned)
+    distances = _matrix(norms_a, cross, norms_turned)
+    if numpy.isnan(distances).any():
+        return None
+    return _Forward(_binarise(distances), index, cross, (rows, columns), norms_a, norms_turned)
+
+
+def cross_similarity(a: numpy.ndarray, b: numpy.ndarray) -> numpy.ndarray:
+    """Essentia's binary cross-similarity of `a` (the query) against `b`
+    (the reference), a float32 matrix of 0 and 1 with a row for each of
+    `a`'s stacks and a column for each of `b`'s."""
+    a, b = _profiles(a), _profiles(b)
+    forward = _forward(a, b)
+    return _essentia_cross(a, b) if forward is None else forward.matrix
+
+
+def cross_similarities(a: numpy.ndarray, b: numpy.ndarray) -> tuple[numpy.ndarray, numpy.ndarray]:
+    """`cross_similarity(a, b)` and `cross_similarity(b, a)`, the second
+    from the first's dot products wherever they are the same bits.
+
+    Both directions compare the same pairs of stacks, and when the two
+    transposition indices undo each other every dot product has the same
+    products, only summed in another order. The first's dot products are
+    reused when, besides, rotating the stacks leaves their norms' bits alone
+    and no re-summed cross dot product changes in the other order; otherwise
+    the other direction is measured on its own. The binary matrix is never
+    simply transposed: the other direction adds the norms in the other order,
+    x.x - 2 x.y + y.y against y.y - 2 x.y + x.x, which in float32 can differ
+    in the last bit and move a threshold, so its distances are added again."""
+    a, b = _profiles(a), _profiles(b)
+    forward = _forward(a, b)
+    if forward is None:
+        return _essentia_cross(a, b), cross_similarity(b, a)
+    index = transposition_index(b, a)
+    if index == (-forward.index) % _BINS:
+        stacks_b, stacks_turned = _stacks(b), _stacks(numpy.roll(a, index, axis=1))
+        rows, columns = forward.unsure
+        if (numpy.array_equal(_ordered_dot(stacks_b, stacks_b), forward.reference_norms)
+                and numpy.array_equal(_ordered_dot(stacks_turned, stacks_turned), forward.query_norms)
+                and numpy.array_equal(_ordered_dot(stacks_b[columns], stacks_turned[rows]),
+                                      forward.cross[rows, columns])):
+            cross = numpy.ascontiguousarray(forward.cross.T)
+            distances = _matrix(forward.reference_norms, cross, forward.query_norms)
+            if not numpy.isnan(distances).any():
+                return forward.matrix, _binarise(distances)
+    return forward.matrix, cross_similarity(b, a)
+
+
 class Analyser:
     """Essentia's algorithms, configured once with the method's settings."""
 
@@ -229,7 +425,6 @@ class Analyser:
         self.spectrum = es.Spectrum()
         self.peaks = es.SpectralPeaks(**_options(ANALYSIS["spectral_peaks"]))
         self.hpcp = es.HPCP(**_options(ANALYSIS["hpcp"]))
-        self.cross = es.ChromaCrossSimilarity(**_options(ANALYSIS["chroma_cross_similarity"]))
         self.cover = es.CoverSongSimilarity(**_options(ANALYSIS["cover_song_similarity"]))
 
     def features(self, audio: numpy.ndarray) -> Features:
@@ -242,9 +437,15 @@ class Analyser:
         profiles = numpy.array(frames)
         return Features(profiles, tuple(float(value) for value in profiles.mean(axis=0)))
 
+    def cross(self, a: numpy.ndarray, b: numpy.ndarray) -> numpy.ndarray:
+        return cross_similarity(a, b)
+
     def distance(self, a: numpy.ndarray, b: numpy.ndarray) -> float:
-        _, ab = self.cover(self.cross(a, b))
-        _, ba = self.cover(self.cross(b, a))
+        """The smaller of the two directions' distances. The stacks' dot
+        products are summed once and serve both directions."""
+        forward, backward = cross_similarities(a, b)
+        _, ab = self.cover(forward)
+        _, ba = self.cover(backward)
         return min(float(ab), float(ba))
 
 
