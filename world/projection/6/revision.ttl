@@ -11,6 +11,7 @@
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix skos: <http://www.w3.org/2004/02/skos/core#> .
 @prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix org: <http://www.w3.org/ns/org#> .
 @prefix arch: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#> .
 @prefix wsh: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#world-projection-6/shapes/> .
 
@@ -29,6 +30,8 @@ wsh:Asserted a sh:NodeShape ;
   sh:property [ sh:path arch:reference_rate ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
   sh:property [ sh:path arch:aligned_rate ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
   sh:property [ sh:path arch:max_error_samples ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:alignment_method ; sh:maxCount 1 ; sh:datatype xsd:string ;
+                rdfs:comment "A document alignment that states its bound is also a subject of arch:max_error_samples, so this shape admits its method too (revision 5)." ] ;
   sh:property [ sh:path arch:anchors ; sh:nodeKind sh:IRI ] ;
   sh:property [ sh:path arch:selection ; sh:nodeKind sh:IRI ; rdfs:comment "song_occurrence: each selection revision; work_match 2: the compared selection." ] ;
   sh:property [ sh:path arch:work ; sh:nodeKind sh:IRI ; rdfs:comment "performance_work: the Work linked to the performance; work_match 2 and 3: the matched Work revision." ] ;
@@ -174,3 +177,264 @@ wsh:SuggestedSpan a sh:NodeShape ;
   sh:property [ sh:path arch:end_sample ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
   sh:property [ sh:path arch:span_class ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ;
                 sh:in ( "music" "talk" "quiet" "unknown" ) ] .
+
+# Specification 0.0.9: chord stacks and meter layers (ADR 0077), and
+# contributions and band membership (ADR 0078), added in revision 5. Names of
+# chords are computed views and are not projected.
+
+wsh:ChordStacks a sh:NodeShape ;
+  rdfs:comment "chord_stacks 1: one asserter's readings of what sounds over spans of one source's samples." ;
+  sh:targetSubjectsOf arch:chord_spans ;
+  sh:closed true ;
+  sh:property [ sh:path arch:chord_spans ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:part ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:weight_scale ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:part_contribution ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+                rdfs:comment "The contribution saying whose part the stacks describe." ] ;
+  sh:property [ sh:path arch:placed_sequence ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+                rdfs:comment "The chord_sequence revision an alignment placed on this recording." ] ;
+  sh:property [ sh:path arch:corrects ; sh:maxCount 8 ; sh:nodeKind sh:IRI ;
+                rdfs:comment "A chord stacks revision this claim corrects; it stays, untouched." ] ;
+  sh:property [ sh:path arch:hold_rule ; sh:maxCount 1 ; sh:datatype xsd:string ;
+                rdfs:comment "How the asserter held the spans whose end is held." ] ;
+  sh:property [ sh:path prov:wasDerivedFrom ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+                rdfs:comment "The source Artifact revision: the mix whose samples are counted." ] ;
+  sh:property [ sh:path arch:measured_stream ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:sample_rate ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path prov:wasGeneratedBy ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:analysed_audio ; sh:maxCount 8 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path dcterms:source ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:document_url ; sh:maxCount 1 ; sh:datatype xsd:anyURI ] ;
+  sh:property [ sh:path arch:document_alignment ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
+
+wsh:MeterLayers a sh:NodeShape ;
+  rdfs:comment "meter_layers 1: one asserter's simultaneous layers of bars over one source's samples. Tempo is derived, never stored." ;
+  sh:targetSubjectsOf arch:meter_layers ;
+  sh:closed true ;
+  sh:property [ sh:path arch:meter_layers ; sh:minCount 1 ; sh:maxCount 8 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:metric_modulations ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path prov:wasDerivedFrom ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+                rdfs:comment "The source Artifact revision: the mix whose samples are counted." ] ;
+  sh:property [ sh:path arch:measured_stream ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:sample_rate ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path prov:wasGeneratedBy ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:analysed_audio ; sh:maxCount 8 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path dcterms:source ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:document_url ; sh:maxCount 1 ; sh:datatype xsd:anyURI ] ;
+  sh:property [ sh:path arch:document_alignment ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
+
+wsh:DocumentAlignment a sh:NodeShape ;
+  rdfs:comment "How an outside document's positions were placed on the recording's samples, <{revision}:alignment>." ;
+  sh:targetObjectsOf arch:document_alignment ;
+  sh:closed true ;
+  sh:property [ sh:path arch:alignment_method ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:max_error_samples ; sh:maxCount 1 ; sh:datatype xsd:integer ] .
+
+wsh:ChordSpan a sh:NodeShape ;
+  rdfs:comment "One span of chord readings, <{revision}:span={n}>; rdf:value is its position from 0." ;
+  sh:targetObjectsOf arch:chord_spans ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:start_sample ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:end_sample ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:readings ; sh:minCount 1 ; sh:maxCount 16 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:span_end ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ;
+                sh:in ( "asserted" "held" ) ;
+                rdfs:comment "held: the source gave only a start, and the asserter held the chord by its hold_rule; weaker evidence of where the chord stops." ] ;
+  sh:property [ sh:path arch:sequence_entry ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+                rdfs:comment "The entry of the placed sequence this span was placed from, <{sequence revision}:entry={n}>." ] ;
+  sh:property [ sh:path arch:locator ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
+
+wsh:Locator a sh:NodeShape ;
+  rdfs:comment "A position in the document's own numbering: a bar, and for a chord its beat; or, in a chord sequence, a line and at most one of its word, syllable, or column." ;
+  sh:targetObjectsOf arch:locator ;
+  sh:closed true ;
+  sh:property [ sh:path arch:locator_bar ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:locator_beat ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:locator_line ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:locator_word ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:locator_syllable ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:locator_column ; sh:maxCount 1 ; sh:datatype xsd:integer ] .
+
+wsh:ChordSequence a sh:NodeShape ;
+  rdfs:comment "chord_sequence 1: chords in a source's written order with no times, about a Work, a document, or both. Lyrics stay in the document." ;
+  sh:targetSubjectsOf arch:sequence_entries ;
+  sh:closed true ;
+  sh:property [ sh:path arch:sequence_entries ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:described_work ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path dcterms:source ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path prov:wasGeneratedBy ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:corrects ; sh:maxCount 8 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:part ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:weight_scale ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:document_url ; sh:maxCount 1 ; sh:datatype xsd:anyURI ] ;
+  sh:property [ sh:path arch:repeats ; sh:nodeKind sh:IRI ] .
+
+wsh:SequenceEntry a sh:NodeShape ;
+  rdfs:comment "One entry of a chord sequence, <{revision}:entry={n}>; rdf:value is its written position from 0." ;
+  sh:targetObjectsOf arch:sequence_entries ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:section ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:locator ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:readings ; sh:minCount 1 ; sh:maxCount 16 ; sh:nodeKind sh:IRI ] .
+
+wsh:Repeat a sh:NodeShape ;
+  rdfs:comment "A range of a chord sequence's entries the source marks as repeated; the played order is a view." ;
+  sh:targetObjectsOf arch:repeats ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:first_entry ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:last_entry ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:times ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] .
+
+wsh:Reading a sh:NodeShape ;
+  rdfs:comment "One reading of a span; rdf:value is its rank in the asserter's order of preference from 0. A stack has a bass; no chord has arch:no_chord; a text-only reading has only its text. Tones and voicing notes ascend, so their values in order are the arrays." ;
+  sh:targetObjectsOf arch:readings ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:bass ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:tones ; sh:maxCount 12 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:root ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:uncertain_tones ; sh:maxCount 4 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:voicing ; sh:maxCount 32 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:no_chord ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+  sh:property [ sh:path arch:source_text ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:weight ; sh:maxCount 1 ; sh:datatype xsd:decimal ] .
+
+wsh:UncertainTones a sh:NodeShape ;
+  rdfs:comment "One group of uncertain pitch classes of a stack; rdf:value is its position from 0." ;
+  sh:targetObjectsOf arch:uncertain_tones ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:pitch_classes ; sh:minCount 1 ; sh:maxCount 12 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:present ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ;
+                sh:in ( "exactly_one" "maybe" ) ] .
+
+wsh:MeterLayer a sh:NodeShape ;
+  rdfs:comment "One layer, <{revision}:layer={n}>; rdf:value is its position from 0. No layer is primary. A layer has bars, or is beat-only: beat samples, optional downbeats among them, and an optional beat unit." ;
+  sh:targetObjectsOf arch:meter_layers, arch:modulated_layer ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path rdfs:label ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:layer_role ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:in ( "written" "felt" ) ] ;
+  sh:property [ sh:path arch:bars ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:beat_samples ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:downbeat_samples ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:beat_unit ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
+
+wsh:Bar a sh:NodeShape ;
+  rdfs:comment "One bar, <{revision}:layer={n}:bar={m}>; rdf:value is its position from 0. A grouping is its usual notation (2+2+3); beat samples ascend." ;
+  sh:targetObjectsOf arch:bars, arch:modulated_bar ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:start_sample ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:end_sample ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:numerator ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:denominator ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ;
+                sh:in ( 1 2 4 8 16 32 64 ) ] ;
+  sh:property [ sh:path arch:grouping ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:pattern "^[1-9][0-9]*([+][1-9][0-9]*)*$" ] ;
+  sh:property [ sh:path arch:beat_samples ; sh:maxCount 64 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:locator ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
+
+wsh:MetricModulation a sh:NodeShape ;
+  rdfs:comment "One link between adjacent bars, <{revision}:modulation={n}>: an equation (a note value before lasts as long as one after; the tempo changes by their ratio, which is derived) or a regrouping (note values keep their lengths and the felt pulse moves)." ;
+  sh:targetObjectsOf arch:metric_modulations ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:modulation_kind ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ;
+                sh:in ( "equation" "regrouping" ) ] ;
+  sh:property [ sh:path arch:modulated_layer ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:modulated_bar ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:before_note ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:after_note ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:pulse_before ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:pulse_after ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
+
+wsh:NoteValue a sh:NodeShape ;
+  rdfs:comment "A note value: its denominator and dots." ;
+  sh:targetObjectsOf arch:before_note, arch:after_note, arch:pulse_before, arch:pulse_after, arch:beat_unit ;
+  sh:closed true ;
+  sh:property [ sh:path arch:denominator ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:dots ; sh:maxCount 1 ; sh:datatype xsd:integer ] .
+
+wsh:CreditClaim a sh:NodeShape ;
+  rdfs:comment "contribution 1 and band_membership 1: what the credit's asserter states about it, on the claim revision." ;
+  sh:targetSubjectsOf arch:contribution_scope, arch:membership ;
+  sh:closed true ;
+  sh:property [ sh:path arch:contribution_scope ; sh:maxCount 1 ; sh:datatype xsd:string ;
+                sh:in ( "work" "release" "recording" "span" "channel" ) ] ;
+  sh:property [ sh:path arch:membership ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:credit_text ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:credited_as ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:measured_stream ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:part_of_recording ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+                rdfs:comment "contribution 1, span or channel scope: the recording the audio is part of." ] ;
+  sh:property [ sh:path arch:sample_rate ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:credited_spans ; sh:maxCount 1000 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:channel_index ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path prov:wasGeneratedBy ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path dcterms:source ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:document_url ; sh:maxCount 1 ; sh:datatype xsd:anyURI ] ;
+  sh:property [ sh:path arch:retrieved_at ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:document_locator ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:document_alignment ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:confidence ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
+
+wsh:Attributed a sh:NodeShape ;
+  rdfs:comment "contribution 1: the credited subject (a Work, release, or recording revision, or the source Artifact of a span or channel), qualified by the claim's attribution." ;
+  sh:targetSubjectsOf prov:qualifiedAttribution ;
+  sh:closed true ;
+  sh:property [ sh:path prov:qualifiedAttribution ; sh:minCount 1 ; sh:maxCount 1 ; sh:class prov:Attribution ] .
+
+wsh:Attribution a sh:NodeShape ;
+  rdfs:comment "contribution 1: a PROV qualified attribution, <{revision}:attribution>: the contributor and the MusicBrainz role, with its attributes, instruments, and vocals. A detector's or a place's credit has no prov:agent." ;
+  sh:targetClass prov:Attribution ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:type ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( prov:Attribution ) ] ;
+  sh:property [ sh:path prov:agent ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path prov:hadRole ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+                rdfs:comment "A role type of D-17's role scheme, a concept in the domain graph." ] ;
+  sh:property [ sh:path arch:role_attributes ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:instruments ; sh:maxCount 16 ; sh:nodeKind sh:IRI ;
+                sh:pattern "^https://musicbrainz[.]org/instrument/" ] ;
+  sh:property [ sh:path arch:vocals ; sh:nodeKind sh:IRI ;
+                rdfs:comment "A vocal attribute of D-17's role scheme." ] .
+
+wsh:Membership a sh:NodeShape ;
+  rdfs:comment "band_membership 1: a W3C Organization Ontology membership, <{revision}:membership>, in MusicBrainz's member of band role, with MusicBrainz partial dates as written." ;
+  sh:targetClass org:Membership ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:type ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( org:Membership ) ] ;
+  sh:property [ sh:path org:member ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path org:organization ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path org:role ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:member_from ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:member_to ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:membership_ended ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+  sh:property [ sh:path arch:role_attributes ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:instruments ; sh:maxCount 16 ; sh:nodeKind sh:IRI ;
+                sh:pattern "^https://musicbrainz[.]org/instrument/" ] ;
+  sh:property [ sh:path arch:vocals ; sh:nodeKind sh:IRI ;
+                rdfs:comment "A vocal attribute of D-17's role scheme." ] .
+
+wsh:Member a sh:NodeShape ;
+  rdfs:comment "band_membership 1: the member's revision, a member of the band's revision." ;
+  sh:targetSubjectsOf org:memberOf ;
+  sh:closed true ;
+  sh:property [ sh:path org:memberOf ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
+
+wsh:Confidence a sh:NodeShape ;
+  rdfs:comment "A machine's confidence in a credit, compared only within its own scale." ;
+  sh:targetObjectsOf arch:confidence ;
+  sh:closed true ;
+  sh:property [ sh:path arch:confidence_scale ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:confidence_value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:decimal ] .
+
+wsh:CreditedSpan a sh:NodeShape ;
+  rdfs:comment "contribution 1, span scope: one credited span of the source's samples; rdf:value is its position from 0." ;
+  sh:targetObjectsOf arch:credited_spans ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:start_sample ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:end_sample ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] .

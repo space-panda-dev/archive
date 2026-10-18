@@ -49,11 +49,13 @@ wsh:Revision a sh:NodeShape ;
                 sh:pattern "#world:contract:[^:]+:[^:]+$" ;
                 rdfs:comment "Each contract the record cites: the bundle's node in the context graph, <{archive}#world:contract:{id}:{version}>. The same citations as arch:contracts, as links (revision 2)." ] ;
   # One direct triple per reference, by its role's predicate. These are the
-  # reference roles of specification 0.0.8's contracts. The roles `artifact`
-  # and `source` are core terms naming arch:Artifact and arch:source (D-15);
-  # a reference in either keeps its statement but gets no direct triple, so
-  # neither predicate gains a second meaning here (revision 3). A `source`
-  # reference is also prov:wasDerivedFrom.
+  # reference roles of specification 0.0.9's contracts. The roles `artifact`
+  # and `source` are core terms naming arch:Artifact and arch:source (D-15),
+  # and `release` and `recording` core terms naming the Entity kinds
+  # arch:Release and arch:Recording (D-17); a reference in any of them keeps
+  # its statement but gets no direct triple, so no predicate gains a second
+  # meaning here (revisions 3 and 5). A `source` reference is also
+  # prov:wasDerivedFrom.
   sh:property [ sh:path prov:wasDerivedFrom ; sh:nodeKind sh:IRI ] ;
   sh:property [ sh:path prov:wasGeneratedBy ; sh:nodeKind sh:IRI ;
                 rdfs:comment "Role run: the derivation run that made a claim, or, for work_match 1 and capture_alignment 1, any claim the record names as its run." ] ;
@@ -88,7 +90,21 @@ wsh:Revision a sh:NodeShape ;
   sh:property [ sh:path arch:transition_predecessor ; sh:nodeKind sh:IRI ] ;
   sh:property [ sh:path arch:translated_assessment ; sh:nodeKind sh:IRI ] ;
   sh:property [ sh:path arch:withdraws ; sh:nodeKind sh:IRI ] ;
-  sh:property [ sh:path arch:work ; sh:nodeKind sh:IRI ] .
+  sh:property [ sh:path arch:work ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path dcterms:source ; sh:nodeKind sh:IRI ;
+                rdfs:comment "Role document: the outside source's admitted bytes a claim read (revision 5)." ] ;
+  sh:property [ sh:path arch:analysed_audio ; sh:nodeKind sh:IRI ;
+                rdfs:comment "chord_stacks 1, meter_layers 1: audio analysed in place of the mix, such as a stem (revision 5)." ] ;
+  sh:property [ sh:path arch:placed_sequence ; sh:nodeKind sh:IRI ;
+                rdfs:comment "chord_stacks 1: the chord sequence an alignment placed on the recording (revision 5)." ] ;
+  sh:property [ sh:path arch:corrects ; sh:nodeKind sh:IRI ;
+                rdfs:comment "chord_stacks 1, chord_sequence 1: a claim this one corrects; it stays (revision 5)." ] ;
+  sh:property [ sh:path arch:part_contribution ; sh:nodeKind sh:IRI ;
+                rdfs:comment "chord_stacks 1: the contribution saying whose part the stacks describe (revision 5)." ] ;
+  sh:property [ sh:path arch:contributor ; sh:nodeKind sh:IRI ;
+                rdfs:comment "contribution 1: the person or organisation credited (revision 5)." ] ;
+  sh:property [ sh:path arch:band ; sh:nodeKind sh:IRI ; rdfs:comment "band_membership 1: the band (revision 5)." ] ;
+  sh:property [ sh:path arch:member ; sh:nodeKind sh:IRI ; rdfs:comment "band_membership 1: the member (revision 5)." ] .
 
 wsh:Reference a sh:NodeShape ;
   rdfs:comment "One reference or supersession, reified, named <{archive}#world:reference:{revision}:{refs|supersedes}:{index}>." ;

@@ -42,12 +42,19 @@ import Archive.Door.Contracts
   , ReferenceTargetRule (..)
   , SameSubjectRule (..)
   , SpanWindowRule (..)
+  , TargetBoundRule (..)
+  , TargetIndexRule (..)
   , TargetMeasureRule (..)
+  , TargetSamplesRule (..)
   , contractReferenceTargets
   , distinctTrackContentRule
   , sameSubjectRule
   , spanWindowRule
+  , targetBoundRule
+  , targetIndexRule
   , targetMeasureRule
+  , targetSamplesRule
+  , pathIntegers
   , validateContractBundle
   , validateContractInstance
   , validateCoreContextForSpecification
@@ -119,6 +126,7 @@ import Archive.GitSnapshot
 import qualified Archive.GitSnapshot as Git
 import Archive.Read.Core (CommittedRecord (..))
 import Control.Monad (foldM_)
+import Data.Either (isRight)
 import qualified Crypto.Hash.SHA256 as SHA256
 import Data.Aeson (Value (Array, Number, Object, String), object, (.=))
 import Data.Foldable (toList)
@@ -947,6 +955,9 @@ validateProposalContracts snapshot proposal = pure $ do
       mapM_ (validateTargetMeasure targets (proposalRecordDraft record)) bundles
       mapM_ (validateSameSubject targets (proposalRecordDraft record)) bundles
       mapM_ (validateSpanWindow targets (proposalRecordDraft record)) bundles
+      mapM_ (validateTargetBound targets (proposalRecordDraft record)) bundles
+      mapM_ (validateTargetSamples targets (proposalRecordDraft record)) bundles
+      mapM_ (validateTargetIndex targets (proposalRecordDraft record)) bundles
       (revision, _) <- canonicalizeDraftStrict (proposalRecordValue record)
       pure (earlier <> [Target (objectIdText (envelopeObject (proposalRecordDraft record)))
         revision (proposalRecordDraft record)])
@@ -1000,6 +1011,20 @@ validateReferenceTargetRules records draft bundles = do
     -- accepts a revision of any of them, then applies that shape's checks.
     validateOne role rule reference = do
       target <- referencedEntry records role reference
+      case referenceTargetAny rule of
+        [] -> validateAgainst role rule target
+        alternatives
+          | any (\alternative -> isRight (validateAgainst role alternative target)) alternatives -> Right ()
+          | otherwise -> Left (role <> " reference must target " <> Text.intercalate ", or "
+              (map describe alternatives))
+    describe alternative = case (referenceTargetShapes alternative, referenceTargetKind alternative,
+                                 referenceTargetKinds alternative, referenceTargetContract alternative) of
+      (_, Just kind, _, _) -> "an Entity revision of kind " <> kind
+      (_, _, kinds@(_ : _), _) -> "an Entity revision of kind " <> Text.intercalate " or " kinds
+      (_, _, _, Just (identifier, version)) -> "a Claim citing " <> identifier <> " version " <> version
+      ([single], _, _, _) -> article single
+      (shapes, _, _, _) -> "a revision of shape " <> Text.intercalate " or " shapes
+    validateAgainst role rule target = do
       let body = envelopeBody (targetDraft target)
           shape = bodyShape body
       case referenceTargetShapes rule of
@@ -1079,6 +1104,10 @@ validateTargetMeasure records draft bundle = do
   rule <- targetMeasureRule (contractBundleSchema bundle)
   case rule of
     Nothing -> Right ()
+    Just measure
+      | targetMeasureOptional measure, ClaimRecord (Object own) <- envelopeBody draft
+      , not (KeyMap.member (Key.fromText (maybe (targetMeasurePayload measure) id (targetMeasureWithin measure))) own)
+        -> Right ()
     Just measure -> do
       let role = targetMeasureRole measure
       reference <- singleReference draft role
@@ -1093,9 +1122,18 @@ validateTargetMeasure records draft bundle = do
         then Left (targetMeasureRate measure <> " must equal the " <> role <> " claim's "
           <> targetMeasureRate measure)
         else Right ()
-      spans <- case KeyMap.lookup (Key.fromText (targetMeasurePayload measure)) own of
+      groups <- case targetMeasureWithin measure of
+        Nothing -> Right [own]
+        Just within -> case KeyMap.lookup (Key.fromText within) own of
+          Just (Array values) -> mapM (\value -> case value of
+            Object group -> Right group
+            _ -> Left (within <> " must contain objects")) (toList values)
+          _ -> Left (within <> " must be an array")
+      spans <- concat <$> mapM (\group -> case KeyMap.lookup (Key.fromText (targetMeasurePayload measure)) group of
         Just (Array values) -> Right (toList values)
-        _ -> Left (targetMeasurePayload measure <> " must be an array")
+        -- With within, an element without the array has nothing to measure.
+        Nothing | targetMeasureWithin measure /= Nothing -> Right []
+        _ -> Left (targetMeasurePayload measure <> " must be an array")) groups
       ends <- mapM (spanEnd (targetMeasureEnd measure)) spans
       if all (<= targetCount) ends
         then Right ()
@@ -1116,6 +1154,9 @@ validateSameSubject records draft bundle = do
   rule <- sameSubjectRule (contractBundleSchema bundle)
   case rule of
     Nothing -> Right ()
+    Just same
+      | sameSubjectOptional same
+      , not (any ((== sameSubjectRole same) . referenceRole) (envelopeReferences draft)) -> Right ()
     Just same -> do
       let role = sameSubjectRole same
       reference <- singleReference draft role
@@ -1128,6 +1169,89 @@ validateSameSubject records draft bundle = do
         then Right ()
         else Left (role <> " claim must be about the same " <> sameSubjectEquals same
           <> " revision as this record's " <> sameSubjectEquals same <> " reference")
+
+-- | A payload index within what the pinned Claim counts: a channel index no
+-- greater than the pinned stream's channel count.
+validateTargetBound :: [Target] -> DraftEnvelope -> ContractBundle -> Either Text ()
+validateTargetBound records draft bundle = do
+  rule <- targetBoundRule (contractBundleSchema bundle)
+  case rule of
+    Nothing -> Right ()
+    Just bound -> do
+      own <- case envelopeBody draft of
+        ClaimRecord (Object payload) -> Right payload
+        _ -> Left "target bound rule applies only to a Claim payload"
+      case KeyMap.lookup (Key.fromText (targetBoundField bound)) own of
+        Nothing -> Right ()
+        Just _ -> do
+          let role = targetBoundRole bound
+          reference <- case filter ((== role) . referenceRole) (envelopeReferences draft) of
+            [reference] -> Right reference
+            _ -> Left (targetBoundField bound <> " needs exactly one " <> role <> " reference")
+          target <- targetClaimPayload records role reference
+          value <- integerField (targetBoundField bound) own
+          limit <- integerField (targetBoundBound bound) target
+          if value <= limit
+            then Right ()
+            else Left (targetBoundField bound <> " must not exceed the " <> role <> " claim's "
+              <> targetBoundBound bound)
+  where
+    integerField name fields = case KeyMap.lookup (Key.fromText name) fields of
+      Just (Number value) | Right integer <- (floatingOrInteger value :: Either Double Integer) -> Right integer
+      _ -> Left (name <> " must be an integer")
+
+-- | Samples within what the pinned Claim counts: a beat-only layer's beats
+-- before the pinned stream's sample count.
+validateTargetSamples :: [Target] -> DraftEnvelope -> ContractBundle -> Either Text ()
+validateTargetSamples records draft bundle = do
+  rule <- targetSamplesRule (contractBundleSchema bundle)
+  case rule of
+    Nothing -> Right ()
+    Just samples -> do
+      own <- case envelopeBody draft of
+        ClaimRecord (Object payload) -> Right payload
+        _ -> Left "target samples rule applies only to a Claim payload"
+      values <- concat <$> mapM (`pathIntegers` own) (targetSamplesPaths samples)
+      if null values
+        then Right ()
+        else do
+          let role = targetSamplesRole samples
+          reference <- singleReference draft role
+          target <- targetClaimPayload records role reference
+          count <- case KeyMap.lookup (Key.fromText (targetSamplesCount samples)) target of
+            Just (Number value) | Right integer <- (floatingOrInteger value :: Either Double Integer) -> Right integer
+            _ -> Left (targetSamplesCount samples <> " must be an integer")
+          if all (< count) values
+            then Right ()
+            else Left ("samples must be before the " <> role <> " claim's " <> targetSamplesCount samples)
+
+-- | Positions in the pinned Claim's array: each span's entry in the chord
+-- sequence it was placed from.
+validateTargetIndex :: [Target] -> DraftEnvelope -> ContractBundle -> Either Text ()
+validateTargetIndex records draft bundle = do
+  rule <- targetIndexRule (contractBundleSchema bundle)
+  case rule of
+    Nothing -> Right ()
+    Just index -> do
+      own <- case envelopeBody draft of
+        ClaimRecord (Object payload) -> Right payload
+        _ -> Left "target index rule applies only to a Claim payload"
+      values <- pathIntegers (targetIndexPath index) own
+      if null values
+        then Right ()
+        else do
+          let role = targetIndexRole index
+          reference <- case filter ((== role) . referenceRole) (envelopeReferences draft) of
+            [reference] -> Right reference
+            _ -> Left (Text.intercalate "." (targetIndexPath index) <> " needs exactly one " <> role <> " reference")
+          target <- targetClaimPayload records role reference
+          size <- case KeyMap.lookup (Key.fromText (targetIndexArray index)) target of
+            Just (Array items) -> Right (fromIntegral (length items))
+            _ -> Left (role <> " claim's " <> targetIndexArray index <> " must be an array")
+          if all (\value -> value >= 0 && value < size) values
+            then Right ()
+            else Left (Text.intercalate "." (targetIndexPath index) <> " must be a position in the "
+              <> role <> " claim's " <> targetIndexArray index)
 
 -- | A window is a run of whole spans of the Claim it was cut from: its rate
 -- equals the pinned Claim's, its start is some span's start, and its end is

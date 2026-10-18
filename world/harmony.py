@@ -3,12 +3,13 @@ computed names, and lossy exchange views.
 
 The three contracts, `archive.claim/chord_stacks`,
 `archive.claim/chord_sequence`, and `archive.claim/meter_layers`, each
-version 1, are decided by ADR 0077 and are not yet in a specification
-release, so Door cannot admit any of them. This module holds
-their rules as World will re-check them when it projects such a claim, the
-names a chord stack can be given, and the JAMS view of both. It uses only the
-standard library, so a future importer or extractor can check a proposal with
-it before Door does; Door remains the authority (INV-2).
+version 1, are decided by ADR 0077 (amended by ADR 0078) and installed by
+specification 0.0.9 (D-17). This module holds their rules as World re-checks
+them when it projects such a claim, the names a chord stack can be given,
+and the JAMS views. It uses only the standard library, so an importer or
+extractor can check a proposal with it before Door does; Door remains the
+authority (INV-2), and a test feeds the same accepted and refused claims to
+both.
 
 Every name and export here is a computed view: regenerable, never stored as
 the claim, and never a judgment between claims (INV-7). Pitch classes are
@@ -31,7 +32,9 @@ METER_LAYERS = ("archive.claim/meter_layers", "1")
 
 PITCH_NAMES = ("C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B")
 DECIMAL = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?\Z")
-URL = re.compile(r"https?://[^\s]+\Z")
+# An http or https URL in the characters RFC 3986 allows, as specification
+# 0.0.9's contracts state it, so World and Door accept the same URLs.
+URL = re.compile(r"https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+\Z")
 OBJECT_ID = re.compile(r"urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 REVISION_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
 DENOMINATORS = (1, 2, 4, 8, 16, 32, 64)
@@ -188,10 +191,13 @@ SOURCE_ROLES = {
 }
 
 
+
 CHORD_ROLES = {
     **SOURCE_ROLES,
     "sequence": (0, 1),   # the chord_sequence v1 claim an alignment placed on this recording
     "corrects": (0, 8),   # chord claims this one corrects; they stay, untouched
+    # ADR 0078 amends ADR 0077: the contribution saying whose part this is.
+    "contribution": (0, 1),
 }
 
 SEQUENCE_ROLES = {

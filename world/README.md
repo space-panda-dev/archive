@@ -14,8 +14,9 @@ immutable generation built from one snapshot and projection version.
 `archive.claim/meter_layers`, the names
 computed from a chord stack (Harte strings and lead-sheet symbols), the
 tempo derived from bars, and lossy JAMS views. It needs only the standard
-library. No specification release installs the contracts yet, so World does
-not project them and Door admits none of them. Its tests run alone:
+library. Specification 0.0.9 installs the contracts (D-17): Door admits them,
+and World re-checks each claim with this module before it projects it
+(projection 6, revision 5). Its tests run alone:
 
 ```sh
 python3 -m unittest world.tests.test_harmony
@@ -28,9 +29,9 @@ python3 -m unittest world.tests.test_harmony
 `archive.claim/contribution` and `archive.claim/band_membership`, the
 MusicBrainz relationship types each scope accepts, the resolved view in which
 a finer credit refines a coarser one, and the join from a chord stacks claim
-to whose part it is. It needs only the standard library. No specification
-release installs the contracts yet, so World does not project them and Door
-admits neither. Its tests run alone:
+to whose part it is. It needs only the standard library. Specification 0.0.9
+installs the contracts (D-17): Door admits them, and World re-checks each
+claim with this module before it projects it. Its tests run alone:
 
 ```sh
 python3 -m unittest world.tests.test_contributions
@@ -197,8 +198,20 @@ they cut a window from with `arch:compared_suggestions`, and the window as a
 node, `<{revision}:window>`, with `arch:start_sample`, `arch:end_sample`, and
 `arch:sample_rate`; the window is always a run of whole suggested spans, so a
 client can draw it over the spans it came from. Their Work, corpus, score,
-method, parameters, and run project as a version 2 match's do. World does not
-answer `current` yet.
+method, parameters, and run project as a version 2 match's do.
+Specification 0.0.9's claims (revision 5) are re-checked by `harmony.py` or
+`contributions.py` before they project. A chord stacks claim's spans are
+nodes `<{revision}:span={n}>` with ranked readings `<…:reading={m}>`, each
+span's `arch:span_end` (`asserted` or `held`) and, when placed from a chord
+sequence, its `arch:sequence_entry`, the sequence's `<{sequence}:entry={n}>`;
+corrections name what they correct with `arch:corrects`, and the corrected
+claim's graph is untouched. A chord sequence's entries have no samples. A
+meter claim's layers hold bars or beat samples; a link's
+`arch:modulation_kind` is `equation` or `regrouping`, and tempo is never
+projected. A contribution qualifies its subject with a `prov:Attribution`
+whose `prov:hadRole` is a concept of the specification's role scheme, and a
+band membership is an `org:Membership`. Chord names are views and are not
+projected. World does not answer `current` yet.
 
 ## What World emits
 

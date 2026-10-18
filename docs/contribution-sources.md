@@ -4,8 +4,8 @@ How the first importers turn a booklet, Discogs credits, and MusicBrainz
 relationships into `archive.claim/contribution` and
 `archive.claim/band_membership` claims
 ([ADR 0078](decisions/0078-contributions.md)). This is a design for code not
-yet written; the contracts are not yet in a specification release, so nothing
-here can be admitted until one installs them. Every example is invented.
+yet written; specification 0.0.9 installs the contracts (D-17), so Door admits
+what the importers will propose. Every example is invented.
 
 ## What every importer does
 

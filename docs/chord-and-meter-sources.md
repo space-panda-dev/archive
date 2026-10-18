@@ -2,8 +2,8 @@
 
 How the first importers of outside sources will assert chord stacks and meter
 layers ([ADR 0077](decisions/0077-chord-stacks-and-meter.md)). This is a
-design; neither importer exists, and neither can admit anything until a
-specification release installs the two contracts.
+design; neither importer exists. Specification 0.0.9 installs the contracts
+(D-17), so Door admits what they propose.
 
 ## What every source claim has
 

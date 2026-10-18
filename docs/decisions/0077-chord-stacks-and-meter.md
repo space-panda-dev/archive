@@ -219,7 +219,8 @@ samples and disagree, or claims correct each other, the view reports the
 conflict and chooses neither (INV-24). Without a citation the view chooses
 nothing; asking for the current chord stays unsupported.
 
-**How this fits the scopes of contributions (ADR 0078).** A sequence about a
+**How this fits the scopes of contributions
+([ADR 0078](0078-contributions.md)).** A sequence about a
 Work is that ADR's `work` scope: it describes the composition, and says
 nothing about any one recording's samples, as a Work's writers say nothing
 about who played. A timed chord stacks claim is its `span` scope: sample

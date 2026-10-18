@@ -1,6 +1,8 @@
 # World projection 6: the domain graph, <{archive}#world:domain>.
 # SKOS concept schemes and concepts that claims point into: the local Work
-# catalogue, the MusicBrainz catalogue, and the performance kinds (ADR 0059).
+# catalogue, the MusicBrainz catalogue, the performance kinds (ADR 0059), and,
+# from revision 5, the role scheme of specification 0.0.9 (D-17): MusicBrainz
+# role types and vocal attributes, named by the specification's own IRIs.
 
 @prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
@@ -11,16 +13,18 @@
 @prefix wsh: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#world-projection-6/shapes/> .
 
 wsh:Scheme a sh:NodeShape ;
-  rdfs:comment "<{archive}#catalogue>, <{archive}#catalogue:musicbrainz>, or <{archive}#catalogue:performance-kinds>." ;
+  rdfs:comment "<{archive}#catalogue>, <{archive}#catalogue:musicbrainz>, <{archive}#catalogue:performance-kinds>, or a scheme of D-17's role scheme: arch:roles-{pair} or arch:vocals." ;
   sh:targetClass skos:ConceptScheme ;
   sh:closed true ;
   sh:property [ sh:path rdf:type ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( skos:ConceptScheme ) ] .
 
 wsh:Concept a sh:NodeShape ;
-  rdfs:comment "A local Work (foaf:focus the Work object), a MusicBrainz Work (foaf:focus its MusicBrainz IRI), or a performance kind (skos:notation its name)." ;
+  rdfs:comment "A local Work (foaf:focus the Work object), a MusicBrainz Work (foaf:focus its MusicBrainz IRI), a performance kind (skos:notation its name), or a D-17 role type or vocal attribute (skos:notation its MusicBrainz name; a role type also skos:exactMatch its MusicBrainz relationship type, except the local label)." ;
   sh:targetClass skos:Concept ;
   sh:closed true ;
   sh:property [ sh:path rdf:type ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( skos:Concept ) ] ;
   sh:property [ sh:path skos:inScheme ; sh:minCount 1 ; sh:maxCount 1 ; sh:class skos:ConceptScheme ] ;
   sh:property [ sh:path foaf:focus ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
-  sh:property [ sh:path skos:notation ; sh:maxCount 1 ; sh:datatype xsd:string ] .
+  sh:property [ sh:path skos:notation ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path skos:exactMatch ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+                sh:pattern "^https://musicbrainz[.]org/relationship/" ] .

@@ -109,3 +109,85 @@ arch:score_direction a rdf:Property ; rdfs:comment "work_match: higher_is_closer
 
 arch:compared_suggestions a rdf:Property ; rdfs:comment "work_match 3: the span_suggestions claim whose window was compared." .
 arch:window a rdf:Property ; rdfs:comment "work_match 3: the compared window node, with its start_sample, end_sample, and sample_rate. Minted by World." .
+
+# Chord stacks, chord sequences, and meter layers, contributions and band membership
+# (specification 0.0.9, revision 5). Every reading and credit stays its
+# asserter's; chord names are computed views and are not terms here.
+
+arch:analysed_audio a rdf:Property ; rdfs:comment "chord_stacks 1, meter_layers 1: audio analysed in place of the mix, such as a stem, sharing its timeline." .
+arch:document_url a rdf:Property ; rdfs:comment "Where an outside document was retrieved from; never the evidence, which is the pinned Artifact." .
+arch:document_alignment a rdf:Property ; rdfs:comment "How a document's positions were placed on the recording's samples: a node with its method and optional bound." .
+arch:alignment_method a rdf:Property ; rdfs:comment "A document alignment's method: manual for a person's placement, otherwise the aligning method's identifier." .
+arch:locator a rdf:Property ; rdfs:comment "A position in a document's own numbering, as a node with its bar and beat." .
+arch:locator_bar a rdf:Property ; rdfs:comment "A locator's bar number in the document." .
+arch:locator_beat a rdf:Property ; rdfs:comment "A locator's beat in its bar." .
+arch:chord_spans a rdf:Property ; rdfs:comment "chord_stacks 1: one span node, in order." .
+arch:part a rdf:Property ; rdfs:comment "chord_stacks 1: the part the stacks describe, as the asserter names it." .
+arch:weight_scale a rdf:Property ; rdfs:comment "chord_stacks 1: what the claim's weights mean; weights compare only within their claim." .
+arch:part_contribution a rdf:Property ; rdfs:comment "chord_stacks 1: the contribution saying whose part the stacks describe (ADR 0078)." .
+arch:readings a rdf:Property ; rdfs:comment "chord_stacks 1: one reading node of a span, ranked by rdf:value." .
+arch:bass a rdf:Property ; rdfs:comment "A stack's bass pitch class, 0 to 11, C = 0." .
+arch:tones a rdf:Property ; rdfs:comment "A pitch class sounding above a stack's bass." .
+arch:root a rdf:Property ; rdfs:comment "A stack's asserted root pitch class, which need not sound." .
+arch:uncertain_tones a rdf:Property ; rdfs:comment "A group of uncertain pitch classes of a stack." .
+arch:pitch_classes a rdf:Property ; rdfs:comment "One pitch class of an uncertain group." .
+arch:present a rdf:Property ; rdfs:comment "exactly_one (one class of the group sounds) or maybe (one or none)." .
+arch:voicing a rdf:Property ; rdfs:comment "One MIDI note of a stack's voicing; the lowest is the bass." .
+arch:no_chord a rdf:Property ; rdfs:comment "true: the asserter states that no chord sounds, which differs from asserting nothing." .
+arch:source_text a rdf:Property ; rdfs:comment "The source's own chord symbol, verbatim." .
+arch:weight a rdf:Property ; rdfs:comment "A reading's weight on its claim's weight_scale, as xsd:decimal." .
+arch:meter_layers a rdf:Property ; rdfs:comment "meter_layers 1: one layer node; layers are simultaneous and none is primary." .
+arch:bars a rdf:Property ; rdfs:comment "meter_layers 1: one bar node of a layer, in order." .
+arch:numerator a rdf:Property ; rdfs:comment "A bar's numerator." .
+arch:denominator a rdf:Property ; rdfs:comment "A bar's or note value's denominator." .
+arch:grouping a rdf:Property ; rdfs:comment "A bar's beat grouping in its usual notation, such as 2+2+3." .
+arch:beat_samples a rdf:Property ; rdfs:comment "The sample of one counted beat of a bar." .
+arch:metric_modulations a rdf:Property ; rdfs:comment "meter_layers 1: one metric modulation node." .
+arch:modulated_layer a rdf:Property ; rdfs:comment "The layer a metric modulation is in." .
+arch:modulated_bar a rdf:Property ; rdfs:comment "The bar a metric modulation starts. Minted by World." .
+arch:before_note a rdf:Property ; rdfs:comment "The note value before a metric modulation." .
+arch:after_note a rdf:Property ; rdfs:comment "The note value after a metric modulation." .
+arch:dots a rdf:Property ; rdfs:comment "A note value's dots, 0 to 2." .
+arch:modulation_kind a rdf:Property ; rdfs:comment "equation or regrouping. Minted by World, since kind is a core term." .
+arch:pulse_before a rdf:Property ; rdfs:comment "A regrouping's felt pulse before it." .
+arch:pulse_after a rdf:Property ; rdfs:comment "A regrouping's felt pulse after it." .
+arch:layer_role a rdf:Property ; rdfs:comment "written (the meter as notated) or felt (a feel heard over it). Minted by World, since role is a core term." .
+arch:downbeat_samples a rdf:Property ; rdfs:comment "A beat-only layer's beat that the asserter marks as a downbeat." .
+arch:beat_unit a rdf:Property ; rdfs:comment "A beat-only layer's beat note value, when the asserter states it." .
+arch:hold_rule a rdf:Property ; rdfs:comment "chord_stacks 1: how the asserter held spans whose end is held." .
+arch:span_end a rdf:Property ; rdfs:comment "asserted, or held: the asserter held the chord by its hold_rule." .
+arch:sequence_entry a rdf:Property ; rdfs:comment "The entry of the placed chord sequence a span was placed from." .
+arch:placed_sequence a rdf:Property ; rdfs:comment "chord_stacks 1: the chord sequence an alignment placed on the recording." .
+arch:corrects a rdf:Property ; rdfs:comment "A chord claim this one corrects; it replaces nothing." .
+arch:sequence_entries a rdf:Property ; rdfs:comment "chord_sequence 1: one entry node, in written order." .
+arch:described_work a rdf:Property ; rdfs:comment "chord_sequence 1: the Work the sequence describes. Minted by World." .
+arch:section a rdf:Property ; rdfs:comment "A sequence entry's section label as the source writes it; never a lyric." .
+arch:locator_line a rdf:Property ; rdfs:comment "A sequence locator's line in the document." .
+arch:locator_word a rdf:Property ; rdfs:comment "A sequence locator's word in its line." .
+arch:locator_syllable a rdf:Property ; rdfs:comment "A sequence locator's syllable in its line." .
+arch:locator_column a rdf:Property ; rdfs:comment "A sequence locator's column in its line." .
+arch:repeats a rdf:Property ; rdfs:comment "chord_sequence 1: one repeated range node." .
+arch:first_entry a rdf:Property ; rdfs:comment "A repeat's first entry." .
+arch:last_entry a rdf:Property ; rdfs:comment "A repeat's last entry." .
+arch:times a rdf:Property ; rdfs:comment "How many times a repeat is played." .
+arch:contribution_scope a rdf:Property ; rdfs:comment "contribution 1: work, release, recording, span, or channel." .
+arch:credit_text a rdf:Property ; rdfs:comment "contribution 1, band_membership 1: the credit exactly as the source printed it." .
+arch:credited_as a rdf:Property ; rdfs:comment "The contributor's name as printed." .
+arch:credited_spans a rdf:Property ; rdfs:comment "contribution 1, span scope: one credited span node." .
+arch:channel_index a rdf:Property ; rdfs:comment "contribution 1, channel scope: the 1-based channel of a multichannel source." .
+arch:part_of_recording a rdf:Property ; rdfs:comment "contribution 1, span or channel scope: the recording the audio is part of. Minted by World." .
+arch:retrieved_at a rdf:Property ; rdfs:comment "When a document was retrieved, as written: a full date or a UTC instant." .
+arch:document_locator a rdf:Property ; rdfs:comment "Where in a document a credit is: a page, a track's credit list." .
+arch:confidence a rdf:Property ; rdfs:comment "A machine's confidence node, compared only within its own scale." .
+arch:confidence_scale a rdf:Property ; rdfs:comment "What a confidence value measures." .
+arch:confidence_value a rdf:Property ; rdfs:comment "A confidence value as xsd:decimal." .
+arch:role_attributes a rdf:Property ; rdfs:comment "A MusicBrainz attribute of a role, such as co or guest." .
+arch:instruments a rdf:Property ; rdfs:comment "A MusicBrainz instrument a role or membership names." .
+arch:vocals a rdf:Property ; rdfs:comment "A vocal attribute concept of D-17's role scheme." .
+arch:contributor a rdf:Property ; rdfs:comment "contribution 1: the credited person or organisation revision." .
+arch:band a rdf:Property ; rdfs:comment "band_membership 1: the band, an organisation revision." .
+arch:member a rdf:Property ; rdfs:comment "band_membership 1: the member, a person revision." .
+arch:membership a rdf:Property ; rdfs:comment "band_membership 1: the claim's org:Membership node. Minted by World." .
+arch:member_from a rdf:Property ; rdfs:comment "A membership's start as a MusicBrainz partial date." .
+arch:member_to a rdf:Property ; rdfs:comment "A membership's end as a MusicBrainz partial date." .
+arch:membership_ended a rdf:Property ; rdfs:comment "true: the membership ended at an unknown date." .

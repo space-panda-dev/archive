@@ -22,6 +22,13 @@ module Archive.Door.Contracts
   , sameSubjectRule
   , SpanWindowRule (..)
   , spanWindowRule
+  , TargetBoundRule (..)
+  , targetBoundRule
+  , TargetSamplesRule (..)
+  , targetSamplesRule
+  , TargetIndexRule (..)
+  , targetIndexRule
+  , pathIntegers
   ) where
 
 import Archive.Door.Json (decodeUnique)
@@ -45,7 +52,7 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Scientific (floatingOrInteger)
 import qualified Data.Set as Set
-import Data.Time (UTCTime, ZonedTime, defaultTimeLocale, parseTimeM)
+import Data.Time (Day, UTCTime, ZonedTime, defaultTimeLocale, fromGregorian, fromGregorianValid, gregorianMonthLength, parseTimeM)
 
 data ContractBundle = ContractBundle
   { contractBundleId :: Text
@@ -65,6 +72,10 @@ data ReferenceTargetRule = ReferenceTargetRule
   , referenceTargetKinds :: [Text]
   , referenceTargetContract :: Maybe (Text, Text)
   , referenceTargetMany :: Bool
+  -- | Alternatives (specification 0.0.9): a reference in the role must
+  -- satisfy one of these rules, each a shape with its kind or contract.
+  -- Empty for an ordinary rule.
+  , referenceTargetAny :: [ReferenceTargetRule]
   } deriving (Eq, Show)
 
 -- | Load a cited bundle only through its digest-addressed path.  The bytes'
@@ -106,7 +117,7 @@ validateCoreContext (Object outer) = do
   inner <- requiredObject "@context" outer
   rejectContextDirectives "core context" inner
   let actualKeys = Set.fromList (map Key.toText (KeyMap.keys inner))
-  keys <- case filter ((== actualKeys) . Set.fromList) [reviewContextKeys, worldContextKeys, coreContextKeys] of
+  keys <- case filter ((== actualKeys) . Set.fromList) [creditContextKeys, reviewContextKeys, worldContextKeys, coreContextKeys] of
     catalog : _ -> Right catalog
     [] -> Left "core context has an unknown term catalog"
   requireExactKeys "core context terms" keys inner
@@ -151,6 +162,12 @@ validateCoreContext (Object outer) = do
   case KeyMap.lookup (Key.fromText "recording_session") inner of
     Nothing -> Right ()
     Just _ -> checkCoreString inner ("recording_session", "arch:RecordingSession")
+  case KeyMap.lookup (Key.fromText "release") inner of
+    Nothing -> Right ()
+    Just _ -> checkCoreString inner ("release", "arch:Release")
+  case KeyMap.lookup (Key.fromText "recording") inner of
+    Nothing -> Right ()
+    Just _ -> checkCoreString inner ("recording", "arch:Recording")
   requiredString "arch" inner >>= expect "Archive namespace" "urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#"
   requiredString "by" inner >>= expect "by mapping" "as:generator"
   requiredString "agent" inner >>= expect "agent mapping" "dcterms:creator"
@@ -180,6 +197,7 @@ validateCoreContextForSpecification specification value = do
         "archive/0.0.6" -> Set.fromList reviewContextKeys
         "archive/0.0.7" -> Set.fromList reviewContextKeys
         "archive/0.0.8" -> Set.fromList reviewContextKeys
+        "archive/0.0.9" -> Set.fromList creditContextKeys
         _ -> Set.empty
   if not (Set.null expected) && keys == expected
     then Right ()
@@ -201,6 +219,11 @@ worldContextKeys = coreContextKeys <> ["skos", "musical_work"]
 
 reviewContextKeys :: [Text]
 reviewContextKeys = worldContextKeys <> ["recording_session"]
+
+-- | Specification 0.0.9 adds the Entity kinds @release@ and @recording@
+-- (ADR 0078).
+creditContextKeys :: [Text]
+creditContextKeys = reviewContextKeys <> ["release", "recording"]
 
 expectJsonLdVersion :: KeyMap.KeyMap Value -> Either Text ()
 expectJsonLdVersion fields = case KeyMap.lookup "@version" fields of
@@ -275,11 +298,27 @@ validateSchema schema@(Object fields) = do
     _ -> Right ()
   maybe (Right ()) validateOrderedInstantsRule
     (KeyMap.lookup "x-archive-ordered-instants" fields)
-  maybe (Right ()) (validateNamedFieldsRule "sequential spans rule" ["payload", "start", "end"])
+  maybe (Right ()) (validateWithinFieldsRule "sequential spans rule" ["payload", "start", "end"])
     (KeyMap.lookup "x-archive-sequential-spans" fields)
   _ <- targetMeasureRule schema
   _ <- sameSubjectRule schema
   _ <- spanWindowRule schema
+  maybe (Right ()) validateAscendingItemsRule
+    (KeyMap.lookup "x-archive-ascending-items" fields)
+  maybe (Right ()) validatePitchStacksRule
+    (KeyMap.lookup "x-archive-pitch-stacks" fields)
+  maybe (Right ()) validateBarBeatsRule
+    (KeyMap.lookup "x-archive-bar-beats" fields)
+  maybe (Right ()) validateMetricModulationsRule
+    (KeyMap.lookup "x-archive-metric-modulations" fields)
+  _ <- targetBoundRule schema
+  maybe (Right ()) validatePartialDatesRule
+    (KeyMap.lookup "x-archive-partial-dates" fields)
+  maybe (Right ()) validateSubsetRule (KeyMap.lookup "x-archive-subset" fields)
+  maybe (Right ()) validateDocumentOrderRule (KeyMap.lookup "x-archive-document-order" fields)
+  maybe (Right ()) validateNestedRangesRule (KeyMap.lookup "x-archive-nested-ranges" fields)
+  _ <- targetSamplesRule schema
+  _ <- targetIndexRule schema
   walkSchema schema [] schema
 validateSchema _ = Left "contract schema must be a JSON object"
 
@@ -290,6 +329,10 @@ profileRuleNames =
   , "x-archive-monotonic-anchors", "x-archive-distinct-refs", "x-archive-ordered-distinct-refs"
   , "x-archive-ordered-instants", "x-archive-sequential-spans", "x-archive-target-measure"
   , "x-archive-same-subject", "x-archive-span-window"
+  , "x-archive-ascending-items", "x-archive-pitch-stacks", "x-archive-bar-beats"
+  , "x-archive-metric-modulations", "x-archive-target-bound", "x-archive-partial-dates"
+  , "x-archive-subset", "x-archive-document-order", "x-archive-nested-ranges"
+  , "x-archive-target-samples", "x-archive-target-index"
   ]
 
 walkSchema :: Value -> [Text] -> Value -> Either Text ()
@@ -311,7 +354,8 @@ schemaKeywords :: [Text]
 schemaKeywords =
   [ "$schema", "$defs", "$ref", "type", "const", "enum", "required"
   , "properties", "additionalProperties", "items", "minItems", "maxItems"
-  , "contains", "minContains", "maxContains", "allOf", "pattern"
+  , "uniqueItems", "contains", "minContains", "maxContains", "allOf", "anyOf", "not"
+  , "if", "then", "else", "pattern"
   , "minLength", "maxLength", "format", "minimum", "maximum"
   , "$comment", "title", "description", "default", "deprecated"
   , "examples", "readOnly", "writeOnly"
@@ -329,32 +373,62 @@ validateReferenceTargetRules (Object roles) = mapM_ validateRole (KeyMap.toList 
   where
     validateRole (role, value)
       | Text.null (Key.toText role) = Left "contract reference target role must not be empty"
-      | otherwise = do
-          fields <- objectValue "contract reference target rule" value
-          shapes <- targetShapes fields
-          kind <- case KeyMap.lookup "kind" fields of
-            Nothing -> Right Nothing
-            Just (String value') | not (Text.null value') -> Right (Just value')
-            _ -> Left "contract reference target kind must be a non-empty string"
-          kinds <- optionalKinds fields
-          targetContract <- optionalTargetContract fields
-          many <- optionalMany fields
-          let expectedKeys = [if KeyMap.member "shapes" fields then "shapes" else "shape"]
-                <> ["kind" | kind /= Nothing]
-                <> ["kinds" | not (null kinds)]
-                <> ["contract" | targetContract /= Nothing]
-                <> ["many" | KeyMap.member "many" fields]
-          requireExactKeys "contract reference target rule" expectedKeys fields
-          if (kind /= Nothing || not (null kinds)) && shapes /= ["entity"]
-            then Left "contract reference target kind is valid only for entity shape"
-            else if kind /= Nothing && not (null kinds)
-              then Left "contract reference target may name kind or kinds, not both"
-              else if targetContract /= Nothing && shapes /= ["claim"]
-                then Left "contract reference target contract is valid only for claim shape"
-                else if many && kind /= Nothing
-                  then Left "repeated Entity kind rules are unsupported"
-                  else Right ()
+      | otherwise = () <$ parseTargetRule True value
 validateReferenceTargetRules _ = Left "contract reference targets must be an object"
+
+-- | One role's target rule, checked strictly. With @any@ (specification
+-- 0.0.9) it lists at least two alternative rules, none of which may itself
+-- name @any@ or @many@; @many@ then belongs to the role.
+parseTargetRule :: Bool -> Value -> Either Text ReferenceTargetRule
+parseTargetRule allowAny value = do
+  fields <- objectValue "contract reference target rule" value
+  if KeyMap.member "any" fields
+    then do
+      if allowAny then Right () else Left "contract reference target alternatives must not nest"
+      requireExactKeys "contract reference target rule" (["any"] <> ["many" | KeyMap.member "many" fields]) fields
+      alternatives <- case KeyMap.lookup "any" fields of
+        Just (Array values) | length values >= 2 -> mapM (parseTargetRule False) (toList values)
+        _ -> Left "contract reference target any must list at least two rules"
+      if any referenceTargetMany alternatives
+        then Left "contract reference target alternatives must not name many"
+        else Right ()
+      if length alternatives /= length (unique alternatives)
+        then Left "contract reference target alternatives must differ"
+        else Right ()
+      many <- optionalMany fields
+      pure ReferenceTargetRule
+        { referenceTargetShapes = unique (concatMap referenceTargetShapes alternatives)
+        , referenceTargetKind = Nothing
+        , referenceTargetKinds = []
+        , referenceTargetContract = Nothing
+        , referenceTargetMany = many
+        , referenceTargetAny = alternatives
+        }
+    else do
+      shapes <- targetShapes fields
+      kind <- case KeyMap.lookup "kind" fields of
+        Nothing -> Right Nothing
+        Just (String value') | not (Text.null value') -> Right (Just value')
+        _ -> Left "contract reference target kind must be a non-empty string"
+      kinds <- optionalKinds fields
+      targetContract <- optionalTargetContract fields
+      many <- optionalMany fields
+      let expectedKeys = [if KeyMap.member "shapes" fields then "shapes" else "shape"]
+            <> ["kind" | kind /= Nothing]
+            <> ["kinds" | not (null kinds)]
+            <> ["contract" | targetContract /= Nothing]
+            <> ["many" | KeyMap.member "many" fields]
+      requireExactKeys "contract reference target rule" expectedKeys fields
+      if (kind /= Nothing || not (null kinds)) && shapes /= ["entity"]
+        then Left "contract reference target kind is valid only for entity shape"
+        else if kind /= Nothing && not (null kinds)
+          then Left "contract reference target may name kind or kinds, not both"
+          else if targetContract /= Nothing && shapes /= ["claim"]
+            then Left "contract reference target contract is valid only for claim shape"
+            else if many && kind /= Nothing
+              then Left "repeated Entity kind rules are unsupported"
+              else Right ()
+      pure (ReferenceTargetRule shapes kind kinds targetContract many [])
 
 -- | A target rule names one record shape in `shape`, or, for a role that may
 -- pin records of several shapes, a set of at least two in `shapes`.
@@ -473,12 +547,20 @@ validateOrderedInstantsRule value = do
 -- payload holds integer fields @rate@ and @count@.  The record's own payload
 -- @rate@ MUST equal the target's, and every element of the payload array
 -- @payload@ MUST have an integer @end@ no greater than the target's @count@.
+--
+-- With @within@ (specification 0.0.9), @payload@ is an array inside each
+-- element of the payload array @within@, and every element of every such
+-- array is measured.
 data TargetMeasureRule = TargetMeasureRule
   { targetMeasureRole :: Text
   , targetMeasureRate :: Text
   , targetMeasureCount :: Text
   , targetMeasurePayload :: Text
   , targetMeasureEnd :: Text
+  , targetMeasureWithin :: Maybe Text
+  -- | With @optional@ true, a record whose payload lacks @payload@ (or
+  -- @within@) is not measured.
+  , targetMeasureOptional :: Bool
   } deriving (Eq, Show)
 
 targetMeasureRule :: Value -> Either Text (Maybe TargetMeasureRule)
@@ -486,15 +568,17 @@ targetMeasureRule schema@(Object fields) = case KeyMap.lookup "x-archive-target-
   Nothing -> Right Nothing
   Just value -> do
     let names = ["role", "rate", "count", "payload", "end"]
-    validateNamedFieldsRule "target measure rule" names value
+    validateWithinFieldsRule "target measure rule" names value
     rule <- objectValue "target measure rule" value
+    optional <- optionalFlag rule
     role <- requiredString "role" rule
     rate <- requiredString "rate" rule
     count <- requiredString "count" rule
     payload <- requiredString "payload" rule
     end <- requiredString "end" rule
+    within <- optionalWithin rule
     requireSingleClaimTarget "target measure rule" schema role
-    pure (Just (TargetMeasureRule role rate count payload end))
+    pure (Just (TargetMeasureRule role rate count payload end within optional))
 targetMeasureRule _ = Left "contract schema must be an object"
 
 -- | @x-archive-same-subject@: the Claim pinned in @role@ has exactly one
@@ -504,6 +588,9 @@ data SameSubjectRule = SameSubjectRule
   { sameSubjectRole :: Text
   , sameSubjectSubject :: Text
   , sameSubjectEquals :: Text
+  -- | With @optional@ true, a record with no reference in @role@ is not
+  -- compared.
+  , sameSubjectOptional :: Bool
   } deriving (Eq, Show)
 
 sameSubjectRule :: Value -> Either Text (Maybe SameSubjectRule)
@@ -511,8 +598,9 @@ sameSubjectRule schema@(Object fields) = case KeyMap.lookup "x-archive-same-subj
   Nothing -> Right Nothing
   Just value -> do
     let names = ["role", "subject", "equals"]
-    validateNamedFieldsRule "same subject rule" names value
+    validateOptionalFieldsRule "same subject rule" names value
     rule <- objectValue "same subject rule" value
+    optional <- optionalFlag rule
     role <- requiredString "role" rule
     subject <- requiredString "subject" rule
     equals <- requiredString "equals" rule
@@ -520,7 +608,7 @@ sameSubjectRule schema@(Object fields) = case KeyMap.lookup "x-archive-same-subj
       then Left "same subject rule must compare two different roles"
       else Right ()
     requireSingleClaimTarget "same subject rule" schema role
-    pure (Just (SameSubjectRule role subject equals))
+    pure (Just (SameSubjectRule role subject equals optional))
 sameSubjectRule _ = Left "contract schema must be an object"
 
 -- | @x-archive-span-window@: the record pins one Claim in @role@ whose
@@ -558,6 +646,591 @@ spanWindowRule schema@(Object fields) = case KeyMap.lookup "x-archive-span-windo
     pure (Just (SpanWindowRule role rate payload start end spans))
 spanWindowRule _ = Left "contract schema must be an object"
 
+-- | A rule with named fields that may also name @within@ (specification
+-- 0.0.9): a payload array whose elements each hold the rule's array.
+validateWithinFieldsRule :: Text -> [Text] -> Value -> Either Text ()
+validateWithinFieldsRule label names value@(Object fields) =
+  validateOptionalFieldsRule label (names <> ["within" | KeyMap.member "within" fields]) value
+validateWithinFieldsRule label _ _ = Left (label <> " must be an object")
+
+-- | A rule with named fields that may also say @optional@: true
+-- (specification 0.0.9), so that it applies only to records that have what
+-- it reads. @optional@ false is refused: absence says it.
+validateOptionalFieldsRule :: Text -> [Text] -> Value -> Either Text ()
+validateOptionalFieldsRule label names value@(Object fields) = do
+  validateNamedFieldsRule label names (Object (KeyMap.delete "optional" fields))
+  _ <- optionalFlag fields
+  pure (const () value)
+validateOptionalFieldsRule label _ _ = Left (label <> " must be an object")
+
+optionalFlag :: KeyMap.KeyMap Value -> Either Text Bool
+optionalFlag rule = case KeyMap.lookup "optional" rule of
+  Nothing -> Right False
+  Just (Bool True) -> Right True
+  Just _ -> Left "a rule's optional must be true when present"
+
+optionalWithin :: KeyMap.KeyMap Value -> Either Text (Maybe Text)
+optionalWithin rule = case KeyMap.lookup "within" rule of
+  Nothing -> Right Nothing
+  Just _ -> Just <$> requiredString "within" rule
+
+-- Paths (specification 0.0.9). A path is a nonempty array of field names
+-- read from the payload; every array met on the way is entered element by
+-- element, so ["spans", "readings", "tones"] reaches the tones of every
+-- reading of every span. A missing field reaches nothing: whether it must
+-- be present is the schema's question, not the path's.
+
+payloadPath :: Text -> Value -> Either Text [Text]
+payloadPath label (Array values) = case mapM name (toList values) of
+  Right names | not (null names) -> Right names
+  _ -> Left (label <> " must be a nonempty array of field names")
+  where
+    name (String field) | not (Text.null field) = Right field
+    name _ = Left (label <> " must contain non-empty field names")
+payloadPath label _ = Left (label <> " must be a nonempty array of field names")
+
+payloadPaths :: Text -> Value -> Either Text [[Text]]
+payloadPaths label (Array values) = do
+  paths <- mapM (payloadPath label) (toList values)
+  if length paths /= length (unique paths)
+    then Left (label <> " must not repeat a path")
+    else Right paths
+payloadPaths label _ = Left (label <> " must be an array of paths")
+
+requiredPath :: Text -> KeyMap.KeyMap Value -> Either Text [Text]
+requiredPath name fields = case KeyMap.lookup (Key.fromText name) fields of
+  Just value -> payloadPath name value
+  Nothing -> Left (name <> " is required")
+
+-- | The values a path's fields lead to, entering arrays on the way but not
+-- the last value itself.
+descend :: [Text] -> [Value] -> [Value]
+descend [] values = values
+descend (name : rest) values = descend rest (concatMap step values)
+  where
+    step (Object fields) = case KeyMap.lookup (Key.fromText name) fields of
+      Just (Array items) | not (null rest) -> toList items
+      Just value -> [value]
+      Nothing -> []
+    step _ = []
+
+-- | The objects that hold a path's last field (or would): every object
+-- reached by the path without its last name, entering arrays.
+pathHolders :: [Text] -> KeyMap.KeyMap Value -> Either Text [KeyMap.KeyMap Value]
+pathHolders path payload = mapM holder (enter (descend (init path) [Object payload]))
+  where
+    enter = concatMap (\value -> case value of
+      Array items -> toList items
+      _ -> [value])
+    holder (Object fields) = Right fields
+    holder _ = Left (Text.intercalate "." path <> " must be reached through objects")
+
+-- | @x-archive-ascending-items@: @paths@ names arrays of the payload whose
+-- items MUST strictly ascend: all integers in numeric order, or all strings
+-- in code point order, and no item twice.
+validateAscendingItemsRule :: Value -> Either Text ()
+validateAscendingItemsRule (Object fields) = do
+  requireExactKeys "ascending items rule" ["paths"] fields
+  paths <- maybe (Left "ascending items rule requires paths") (payloadPaths "ascending items rule paths")
+    (KeyMap.lookup "paths" fields)
+  if null paths then Left "ascending items rule must name at least one path" else Right ()
+validateAscendingItemsRule _ = Left "ascending items rule must be an object"
+
+data Ordered = OrderedInteger Integer | OrderedText Text
+  deriving (Eq, Ord)
+
+validateAscendingItemsInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
+validateAscendingItemsInstance rule instanceValue = do
+  paths <- maybe (Left "ascending items rule requires paths") (payloadPaths "ascending items rule paths")
+    (KeyMap.lookup "paths" rule)
+  payload <- requiredObject "payload" instanceValue
+  mapM_ (checkPath payload) paths
+  where
+    checkPath payload path = do
+      holders <- pathHolders path payload
+      let named = Text.intercalate "." path
+      mapM_ (\fields -> case KeyMap.lookup (Key.fromText (last path)) fields of
+        Nothing -> Right ()
+        Just (Array values) -> do
+          items <- mapM (orderedItem named) (toList values)
+          let sameKind = all isInteger items || not (any isInteger items)
+          if sameKind && and (zipWith (<) items (drop 1 items))
+            then Right ()
+            else Left (named <> " must be distinct items in ascending order")
+        Just _ -> Left (named <> " must be an array")) holders
+    orderedItem _ (Number value) | Right integer <- (floatingOrInteger value :: Either Double Integer) =
+      Right (OrderedInteger integer)
+    orderedItem _ (String text) = Right (OrderedText text)
+    orderedItem named _ = Left (named <> " must contain integers or strings")
+    isInteger (OrderedInteger _) = True
+    isInteger _ = False
+
+-- | @x-archive-pitch-stacks@: every object @payload@ reaches that has a
+-- @bass@ is a stack of pitch classes (0 to 11): @tones@ above the bass, and
+-- optional @uncertain@ groups of @classes@ and a @voicing@ of MIDI notes.
+-- No uncertain class is the bass, a tone, or in another group; the groups
+-- are in ascending order of their classes; the voicing's lowest note is the
+-- bass, and the classes of its other notes include every tone and nothing
+-- outside the tones and uncertain classes.
+validatePitchStacksRule :: Value -> Either Text ()
+validatePitchStacksRule (Object fields) = do
+  let names = ["bass", "tones", "uncertain", "classes", "voicing"]
+  requireExactKeys "pitch stacks rule" ("payload" : names) fields
+  _ <- requiredPath "payload" fields
+  named <- mapM (`requiredString` fields) names
+  if length named /= length (unique named)
+    then Left "pitch stacks rule must name distinct fields"
+    else Right ()
+validatePitchStacksRule _ = Left "pitch stacks rule must be an object"
+
+validatePitchStacksInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
+validatePitchStacksInstance rule instanceValue = do
+  path <- requiredPath "payload" rule
+  bassName <- requiredString "bass" rule
+  tonesName <- requiredString "tones" rule
+  uncertainName <- requiredString "uncertain" rule
+  classesName <- requiredString "classes" rule
+  voicingName <- requiredString "voicing" rule
+  payload <- requiredObject "payload" instanceValue
+  holders <- pathHolders (path <> [bassName]) payload
+  let stacks = filter (KeyMap.member (Key.fromText bassName)) holders
+  mapM_ (stack bassName tonesName uncertainName classesName voicingName) stacks
+  where
+    stack bassName tonesName uncertainName classesName voicingName fields = do
+      bass <- requiredInteger bassName fields
+      tones <- integers tonesName fields
+      groups <- case KeyMap.lookup (Key.fromText uncertainName) fields of
+        Nothing -> Right []
+        Just (Array values) -> mapM (\group -> case group of
+          Object groupFields -> integers classesName groupFields
+          _ -> Left (uncertainName <> " must contain objects")) (toList values)
+        Just _ -> Left (uncertainName <> " must be an array")
+      let certain = Set.fromList (bass : tones)
+          unsure = concat groups
+      if Set.null (Set.fromList unsure `Set.intersection` certain) && length unsure == length (unique unsure)
+        then Right ()
+        else Left (uncertainName <> " must not name the bass, a tone, or a class of another group")
+      if groups == sort groups
+        then Right ()
+        else Left (uncertainName <> " groups must be in ascending order of their " <> classesName)
+      case KeyMap.lookup (Key.fromText voicingName) fields of
+        Nothing -> Right ()
+        Just _ -> do
+          notes <- integers voicingName fields
+          case notes of
+            lowest : upper
+              | lowest `mod` 12 /= bass -> Left (voicingName <> "'s lowest note must be the bass")
+              | otherwise -> do
+                  let above = Set.fromList (map (`mod` 12) upper)
+                  if Set.fromList tones `Set.isSubsetOf` above
+                      && above `Set.isSubsetOf` Set.fromList (tones <> unsure)
+                    then Right ()
+                    else Left (voicingName <> "'s upper notes must sound every tone and only tones or uncertain classes")
+            [] -> Left (voicingName <> " must not be empty")
+    integers name fields = case KeyMap.lookup (Key.fromText name) fields of
+      Just (Array values) -> mapM (\item -> case item of
+        Number value | Right integer <- (floatingOrInteger value :: Either Double Integer) -> Right integer
+        _ -> Left (name <> " must contain integers")) (toList values)
+      _ -> Left (name <> " must be an array")
+
+-- | @x-archive-bar-beats@: every bar @payload@ reaches has an integer
+-- @numerator@; its optional @grouping@ MUST sum to the numerator, and its
+-- optional @beats@ MUST hold one sample per group (or per numerator unit
+-- without a grouping), the first at the bar's @start@, each later than the
+-- one before, and all before its @end@.
+validateBarBeatsRule :: Value -> Either Text ()
+validateBarBeatsRule (Object fields) = do
+  let names = ["start", "end", "numerator", "grouping", "beats"]
+  requireExactKeys "bar beats rule" ("payload" : names) fields
+  _ <- requiredPath "payload" fields
+  named <- mapM (`requiredString` fields) names
+  if length named /= length (unique named)
+    then Left "bar beats rule must name distinct fields"
+    else Right ()
+validateBarBeatsRule _ = Left "bar beats rule must be an object"
+
+validateBarBeatsInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
+validateBarBeatsInstance rule instanceValue = do
+  path <- requiredPath "payload" rule
+  startName <- requiredString "start" rule
+  endName <- requiredString "end" rule
+  numeratorName <- requiredString "numerator" rule
+  groupingName <- requiredString "grouping" rule
+  beatsName <- requiredString "beats" rule
+  payload <- requiredObject "payload" instanceValue
+  let bars = concatMap (\value -> case value of
+        Array items -> toList items
+        _ -> []) (descend path [Object payload])
+  mapM_ (\bar -> case bar of
+    Object fields -> do
+      start <- requiredInteger startName fields
+      end <- requiredInteger endName fields
+      numerator <- requiredInteger numeratorName fields
+      count <- case KeyMap.lookup (Key.fromText groupingName) fields of
+        Nothing -> Right numerator
+        Just _ -> do
+          groups <- integerArray groupingName fields
+          if sum groups == numerator
+            then Right (fromIntegral (length groups))
+            else Left (groupingName <> " must add up to the bar's " <> numeratorName)
+      case KeyMap.lookup (Key.fromText beatsName) fields of
+        Nothing -> Right ()
+        Just _ -> do
+          beats <- integerArray beatsName fields
+          if fromIntegral (length beats) /= count
+            then Left (beatsName <> " must hold one sample per counted beat")
+            else if take 1 beats /= [start]
+              || not (and (zipWith (<) beats (drop 1 beats)))
+              || any (>= end) beats
+              then Left (beatsName <> " must start on the bar's downbeat and rise within the bar")
+              else Right ()
+    _ -> Left "bar must be an object") bars
+  where
+    integerArray name fields = case KeyMap.lookup (Key.fromText name) fields of
+      Just (Array values) -> mapM (\item -> case item of
+        Number value | Right integer <- (floatingOrInteger value :: Either Double Integer) -> Right integer
+        _ -> Left (name <> " must contain integers")) (toList values)
+      _ -> Left (name <> " must be an array")
+
+-- | @x-archive-metric-modulations@: each element of the payload array
+-- @payload@ joins bar @bar@ of layer @layer@ (positions in the payload
+-- arrays @layers@ and, in that layer, @bars@; the layer MUST hold @bars@) to
+-- the bar before it, which MUST end where it starts. Links are distinct and
+-- in order of layer and bar. A link with both @pulse_before@ and
+-- @pulse_after@ (a regrouping) MUST name note values (an integer
+-- @denominator@ and optional @dots@) of different lengths: the pulse moves.
+validateMetricModulationsRule :: Value -> Either Text ()
+validateMetricModulationsRule value = do
+  let names = [ "payload", "layers", "bars", "start", "end", "layer", "bar", "pulse_before", "pulse_after"
+              , "denominator", "dots" ]
+  validateNamedFieldsRule "metric modulations rule" names value
+  case value of
+    Object fields -> do
+      named <- mapM (`requiredString` fields) names
+      if length named /= length (unique named)
+        then Left "metric modulations rule must name distinct fields"
+        else Right ()
+    _ -> Left "metric modulations rule must be an object"
+
+validateMetricModulationsInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
+validateMetricModulationsInstance rule instanceValue = do
+  payloadName <- requiredString "payload" rule
+  layersName <- requiredString "layers" rule
+  barsName <- requiredString "bars" rule
+  startName <- requiredString "start" rule
+  endName <- requiredString "end" rule
+  layerName <- requiredString "layer" rule
+  barName <- requiredString "bar" rule
+  pulseBeforeName <- requiredString "pulse_before" rule
+  pulseAfterName <- requiredString "pulse_after" rule
+  denominatorName <- requiredString "denominator" rule
+  dotsName <- requiredString "dots" rule
+  payload <- requiredObject "payload" instanceValue
+  links <- case KeyMap.lookup (Key.fromText payloadName) payload of
+    Nothing -> Right []
+    Just (Array values) -> Right (toList values)
+    Just _ -> Left (payloadName <> " must be an array")
+  layers <- withinGroups (Just layersName) payload
+  places <- mapM (\link -> case link of
+    Object fields -> do
+      layer <- requiredInteger layerName fields
+      bar <- requiredInteger barName fields
+      bars <- case drop (fromIntegral layer) layers of
+        chosen : _ | layer >= 0 -> case KeyMap.lookup (Key.fromText barsName) chosen of
+          Just (Array values) -> Right (toList values)
+          _ -> Left (payloadName <> " must join bars of a layer that holds " <> barsName)
+        _ -> Left (layerName <> " must name a layer of the claim")
+      (previous, this) <- case drop (fromIntegral bar - 1) bars of
+        Object earlier : Object later : _ | bar >= 1 -> Right (earlier, later)
+        _ -> Left (barName <> " must name a bar after the first of its layer")
+      previousEnd <- requiredInteger endName previous
+      thisStart <- requiredInteger startName this
+      if previousEnd /= thisStart
+        then Left (payloadName <> " must join bars that are adjacent")
+        else Right ()
+      case (KeyMap.lookup (Key.fromText pulseBeforeName) fields, KeyMap.lookup (Key.fromText pulseAfterName) fields) of
+        (Just (Object before), Just (Object after)) -> do
+          (beforeTop, beforeBottom) <- noteLength denominatorName dotsName before
+          (afterTop, afterBottom) <- noteLength denominatorName dotsName after
+          if beforeTop * afterBottom == afterTop * beforeBottom
+            then Left (payloadName <> " must move the pulse to a note value of another length")
+            else Right ()
+        _ -> Right ()
+      pure (layer, bar)
+    _ -> Left (payloadName <> " must contain objects")) links
+  if places == sort places && length places == length (unique places)
+    then Right ()
+    else Left (payloadName <> " must be distinct and in order of layer and bar")
+  where
+    -- A note value's length in whole notes as (numerator, denominator):
+    -- (2^(dots+1) - 1) / (denominator * 2^dots).
+    noteLength denominatorName dotsName fields = do
+      denominator <- requiredInteger denominatorName fields
+      dots <- case KeyMap.lookup (Key.fromText dotsName) fields of
+        Nothing -> Right 0
+        Just _ -> requiredInteger dotsName fields
+      if denominator <= 0 || dots < 0
+        then Left (denominatorName <> " and " <> dotsName <> " must be a note value")
+        else Right (2 ^ (dots + 1) - 1, denominator * 2 ^ dots :: Integer)
+
+-- | @x-archive-subset@: on every object the @payload@ path reaches, the
+-- array @items@, when present, holds only values of its array @of@ (a beat
+-- layer's downbeats among its beats).
+validateSubsetRule :: Value -> Either Text ()
+validateSubsetRule (Object fields) = do
+  requireExactKeys "subset rule" ["payload", "items", "of"] fields
+  _ <- requiredPath "payload" fields
+  items <- requiredString "items" fields
+  others <- requiredString "of" fields
+  if items == others then Left "subset rule must name two different arrays" else Right ()
+validateSubsetRule _ = Left "subset rule must be an object"
+
+validateSubsetInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
+validateSubsetInstance rule instanceValue = do
+  path <- requiredPath "payload" rule
+  items <- requiredString "items" rule
+  others <- requiredString "of" rule
+  payload <- requiredObject "payload" instanceValue
+  holders <- pathHolders (path <> [items]) payload
+  mapM_ (\fields -> case (KeyMap.lookup (Key.fromText items) fields, KeyMap.lookup (Key.fromText others) fields) of
+    (Nothing, _) -> Right ()
+    (Just (Array chosen), Just (Array pool))
+      | all (`elem` toList pool) (toList chosen) -> Right ()
+    _ -> Left (items <> " must be among " <> others)) holders
+
+-- | @x-archive-document-order@: the elements of the payload array @payload@
+-- that have a @locator@ object never go backwards in the document: compared
+-- by the locator's integer @line@ and then by the first of the @within@
+-- fields it has (0 when none), each is at or after the one before.
+validateDocumentOrderRule :: Value -> Either Text ()
+validateDocumentOrderRule (Object fields) = do
+  requireExactKeys "document order rule" ["payload", "locator", "line", "within"] fields
+  mapM_ (`requiredString` fields) ["payload", "locator", "line"]
+  within <- requiredStrings "within" fields
+  if null within || length within /= length (unique within)
+    then Left "document order rule must name distinct within fields"
+    else Right ()
+validateDocumentOrderRule _ = Left "document order rule must be an object"
+
+validateDocumentOrderInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
+validateDocumentOrderInstance rule instanceValue = do
+  payloadName <- requiredString "payload" rule
+  locatorName <- requiredString "locator" rule
+  lineName <- requiredString "line" rule
+  within <- requiredStrings "within" rule
+  payload <- requiredObject "payload" instanceValue
+  elements <- case KeyMap.lookup (Key.fromText payloadName) payload of
+    Just (Array values) -> Right (toList values)
+    _ -> Left (payloadName <> " must be an array")
+  positions <- concat <$> mapM (\element -> case element of
+    Object fields -> case KeyMap.lookup (Key.fromText locatorName) fields of
+      Nothing -> Right []
+      Just (Object locator) -> do
+        line <- requiredInteger lineName locator
+        inner <- case [name | name <- within, KeyMap.member (Key.fromText name) locator] of
+          name : _ -> requiredInteger name locator
+          [] -> Right 0
+        pure [(line, inner)]
+      Just _ -> Left (locatorName <> " must be an object")
+    _ -> Left (payloadName <> " must contain objects")) elements
+  if and (zipWith (<=) positions (drop 1 positions))
+    then Right ()
+    else Left (payloadName <> " located in the document must not go backwards")
+
+-- | @x-archive-nested-ranges@: each element of the payload array @payload@
+-- is a range of positions in the payload array @of@ with integer @first@
+-- and @last@: @first <= last@, and @last@ is a position of @of@. Ranges are
+-- distinct and in order of first position, the longer of two with the same
+-- first position first, and two ranges nest or are apart, never cross.
+validateNestedRangesRule :: Value -> Either Text ()
+validateNestedRangesRule value = do
+  validateNamedFieldsRule "nested ranges rule" ["payload", "first", "last", "of"] value
+  case value of
+    Object fields -> do
+      first <- requiredString "first" fields
+      lastName <- requiredString "last" fields
+      if first == lastName then Left "nested ranges rule must name two bound fields" else Right ()
+    _ -> Left "nested ranges rule must be an object"
+
+validateNestedRangesInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
+validateNestedRangesInstance rule instanceValue = do
+  payloadName <- requiredString "payload" rule
+  firstName <- requiredString "first" rule
+  lastName <- requiredString "last" rule
+  ofName <- requiredString "of" rule
+  payload <- requiredObject "payload" instanceValue
+  size <- case KeyMap.lookup (Key.fromText ofName) payload of
+    Just (Array values) -> Right (fromIntegral (length values) :: Integer)
+    _ -> Left (ofName <> " must be an array")
+  ranges <- case KeyMap.lookup (Key.fromText payloadName) payload of
+    Nothing -> Right []
+    Just (Array values) -> mapM (\element -> case element of
+      Object fields -> do
+        first <- requiredInteger firstName fields
+        lastPosition <- requiredInteger lastName fields
+        if 0 <= first && first <= lastPosition && lastPosition < size
+          then Right (first, lastPosition)
+          else Left (payloadName <> " must be ranges of positions in " <> ofName)
+      _ -> Left (payloadName <> " must contain objects")) (toList values)
+    Just _ -> Left (payloadName <> " must be an array")
+  let keys = [(first, negate lastPosition) | (first, lastPosition) <- ranges]
+  if keys == sort keys && length keys == length (unique keys)
+    then Right ()
+    else Left (payloadName <> " must be distinct and in order of first position, outer before inner")
+  let crossing (a, b) (c, d) = (c > a && c <= b && d > b) || (a > c && a <= d && b > d)
+  if or [crossing x y | (index, x) <- zip [0 :: Int ..] ranges, y <- drop (index + 1) ranges]
+    then Left (payloadName <> " must nest or be apart, never cross")
+    else Right ()
+
+-- | @x-archive-target-samples@: every integer the @paths@ reach MUST be
+-- less than the integer @count@ of the Claim the record pins in @role@ (a
+-- beat's sample within the pinned stream).
+data TargetSamplesRule = TargetSamplesRule
+  { targetSamplesRole :: Text
+  , targetSamplesCount :: Text
+  , targetSamplesPaths :: [[Text]]
+  } deriving (Eq, Show)
+
+targetSamplesRule :: Value -> Either Text (Maybe TargetSamplesRule)
+targetSamplesRule schema@(Object fields) = case KeyMap.lookup "x-archive-target-samples" fields of
+  Nothing -> Right Nothing
+  Just value -> do
+    rule <- objectValue "target samples rule" value
+    requireExactKeys "target samples rule" ["role", "count", "paths"] rule
+    role <- requiredString "role" rule
+    count <- requiredString "count" rule
+    paths <- maybe (Left "target samples rule requires paths") (payloadPaths "target samples rule paths")
+      (KeyMap.lookup "paths" rule)
+    if null paths then Left "target samples rule must name at least one path" else Right ()
+    requireSingleClaimTarget "target samples rule" schema role
+    pure (Just (TargetSamplesRule role count paths))
+targetSamplesRule _ = Left "contract schema must be an object"
+
+-- | The integers a path's last field holds, on every object it reaches: the
+-- field's value, or each item of it when it is an array.
+pathIntegers :: [Text] -> KeyMap.KeyMap Value -> Either Text [Integer]
+pathIntegers path payload = do
+  holders <- pathHolders path payload
+  concat <$> mapM (\fields -> case KeyMap.lookup (Key.fromText (last path)) fields of
+    Nothing -> Right []
+    Just (Array values) -> mapM integerAt (toList values)
+    Just value -> (: []) <$> integerAt value) holders
+  where
+    integerAt (Number value) | Right integer <- (floatingOrInteger value :: Either Double Integer) = Right integer
+    integerAt _ = Left (Text.intercalate "." path <> " must hold integers")
+
+-- | @x-archive-target-index@: every integer the @path@ reaches MUST be a
+-- position in the payload array @array@ of the Claim the record pins in
+-- @role@; a record with such integers MUST pin exactly one (a span's entry
+-- in the chord sequence it was placed from).
+data TargetIndexRule = TargetIndexRule
+  { targetIndexRole :: Text
+  , targetIndexPath :: [Text]
+  , targetIndexArray :: Text
+  } deriving (Eq, Show)
+
+targetIndexRule :: Value -> Either Text (Maybe TargetIndexRule)
+targetIndexRule schema@(Object fields) = case KeyMap.lookup "x-archive-target-index" fields of
+  Nothing -> Right Nothing
+  Just value -> do
+    rule <- objectValue "target index rule" value
+    requireExactKeys "target index rule" ["role", "path", "array"] rule
+    role <- requiredString "role" rule
+    path <- requiredPath "path" rule
+    array <- requiredString "array" rule
+    requireSingleClaimTarget "target index rule" schema role
+    pure (Just (TargetIndexRule role path array))
+targetIndexRule _ = Left "contract schema must be an object"
+
+-- | @x-archive-target-bound@: when this record's payload has the integer
+-- @field@, the record pins one Claim in @role@, and @field@ MUST NOT exceed
+-- the integer @bound@ of that Claim's payload (a channel index within the
+-- pinned stream's channel count).
+data TargetBoundRule = TargetBoundRule
+  { targetBoundRole :: Text
+  , targetBoundField :: Text
+  , targetBoundBound :: Text
+  } deriving (Eq, Show)
+
+targetBoundRule :: Value -> Either Text (Maybe TargetBoundRule)
+targetBoundRule schema@(Object fields) = case KeyMap.lookup "x-archive-target-bound" fields of
+  Nothing -> Right Nothing
+  Just value -> do
+    validateNamedFieldsRule "target bound rule" ["role", "field", "bound"] value
+    rule <- objectValue "target bound rule" value
+    role <- requiredString "role" rule
+    field <- requiredString "field" rule
+    bound <- requiredString "bound" rule
+    requireSingleClaimTarget "target bound rule" schema role
+    pure (Just (TargetBoundRule role field bound))
+targetBoundRule _ = Left "contract schema must be an object"
+
+-- | @x-archive-partial-dates@: each payload field in @fields@, when present,
+-- begins with a calendar date written @YYYY@, @YYYY-MM@, or @YYYY-MM-DD@ (a
+-- year from 1, a real month, a real day of it); what may follow is the
+-- schema's pattern's. With @start@ and @end@, both among @fields@, the
+-- last day @end@ can mean MUST NOT be before the first day @start@ can mean.
+validatePartialDatesRule :: Value -> Either Text ()
+validatePartialDatesRule (Object fields) = do
+  let ordered = KeyMap.member "start" fields || KeyMap.member "end" fields
+  requireExactKeys "partial dates rule" (["fields"] <> (if ordered then ["start", "end"] else [])) fields
+  names <- requiredStrings "fields" fields
+  if null names || length names /= length (unique names)
+    then Left "partial dates rule must name distinct fields"
+    else Right ()
+  if ordered
+    then do
+      start <- requiredString "start" fields
+      end <- requiredString "end" fields
+      if start /= end && start `elem` names && end `elem` names
+        then Right ()
+        else Left "partial dates rule must order two of its fields"
+    else Right ()
+validatePartialDatesRule _ = Left "partial dates rule must be an object"
+
+validatePartialDatesInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
+validatePartialDatesInstance rule instanceValue = do
+  names <- requiredStrings "fields" rule
+  payload <- requiredObject "payload" instanceValue
+  let dateOf name = case KeyMap.lookup (Key.fromText name) payload of
+        Nothing -> Right Nothing
+        Just (String text) -> maybe (Left (name <> " must begin with a calendar date")) (Right . Just)
+          (partialDate (Text.takeWhile (/= 'T') text))
+        Just _ -> Left (name <> " must be text")
+  mapM_ dateOf names
+  case (KeyMap.lookup "start" rule, KeyMap.lookup "end" rule) of
+    (Just (String start), Just (String end)) -> do
+      from <- dateOf start
+      to <- dateOf end
+      case (from, to) of
+        (Just (earliest, _), Just (_, latest)) | latest < earliest ->
+          Left (end <> " must not be before " <> start)
+        _ -> Right ()
+    _ -> Right ()
+
+-- | The first and last day a partial date can mean.
+partialDate :: Text -> Maybe (Day, Day)
+partialDate text = case Text.splitOn "-" text of
+  [year] -> do
+    y <- digits 4 year
+    if y < 1 then Nothing else Just (fromGregorian y 1 1, fromGregorian y 12 31)
+  [year, month] -> do
+    y <- digits 4 year
+    m <- digits 2 month
+    first <- if y < 1 then Nothing else fromGregorianValid y (fromInteger m) 1
+    pure (first, fromGregorian y (fromInteger m) (gregorianMonthLength y (fromInteger m)))
+  [year, month, day] -> do
+    y <- digits 4 year
+    m <- digits 2 month
+    d <- digits 2 day
+    exact <- if y < 1 then Nothing else fromGregorianValid y (fromInteger m) (fromInteger d)
+    pure (exact, exact)
+  _ -> Nothing
+  where
+    digits count piece
+      | Text.length piece == count && Text.all (\c -> '0' <= c && c <= '9') piece = Just (read (Text.unpack piece))
+      | otherwise = Nothing
+
 -- | The rules that read a pinned Claim's payload or references need that
 -- role to name exactly one Claim: its target rule says so.
 requireSingleClaimTarget :: Text -> Value -> Text -> Either Text ()
@@ -578,21 +1251,9 @@ requiredStrings name fields = case KeyMap.lookup (Key.fromText name) fields of
 contractReferenceTargets :: Value -> Either Text [(Text, ReferenceTargetRule)]
 contractReferenceTargets (Object fields) = case KeyMap.lookup (Key.fromText "x-archive-reference-targets") fields of
   Nothing -> Right []
-  Just (Object roles) -> mapM parseRole (KeyMap.toList roles)
+  Just (Object roles) -> mapM (\(role, rule) -> (,) (Key.toText role) <$> parseTargetRule True rule)
+    (KeyMap.toList roles)
   Just _ -> Left "contract reference targets must be an object"
-  where
-    parseRole (role, Object rule) = do
-      let roleName = Key.toText role
-      shapes <- targetShapes rule
-      kind <- case KeyMap.lookup (Key.fromText "kind") rule of
-        Nothing -> Right Nothing
-        Just (String value) -> Right (Just value)
-        Just _ -> Left "contract reference target kind must be a string"
-      kinds <- optionalKinds rule
-      targetContract <- optionalTargetContract rule
-      many <- optionalMany rule
-      pure (roleName, ReferenceTargetRule shapes kind kinds targetContract many)
-    parseRole _ = Left "contract reference target rule must be an object"
 contractReferenceTargets _ = Left "contract schema must be an object"
 
 validateRef :: Value -> KeyMap.KeyMap Value -> Either Text ()
@@ -625,8 +1286,14 @@ validateSchemaKeywordTypes fields = do
   maybe (Right ()) validateStringKeyword (KeyMap.lookup "pattern" fields)
   maybe (Right ()) validateFormatKeyword (KeyMap.lookup "format" fields)
   validateArrayKeyword "allOf" fields
+  validateNonEmptyArrayKeyword "anyOf" fields
+  maybe (Right ()) validateUniqueItemsKeyword (KeyMap.lookup "uniqueItems" fields)
   validateSchemaKeyword "items" fields
   validateSchemaKeyword "contains" fields
+  mapM_ (`validateSchemaKeyword` fields) ["not", "if", "then", "else"]
+  if not (KeyMap.member "if" fields) && (KeyMap.member "then" fields || KeyMap.member "else" fields)
+    then Left "contract schema then/else require if"
+    else Right ()
   validateContainsBounds fields
 
 validateTypeKeyword :: Value -> Either Text ()
@@ -689,6 +1356,18 @@ validateArrayKeyword name fields = case KeyMap.lookup (Key.fromText name) fields
   Just (Array _) -> Right ()
   Just _ -> Left ("contract schema " <> name <> " must be an array")
 
+-- | @anyOf@ (specification 0.0.9): a nonempty array of schemas, at least one
+-- of which the instance must satisfy.
+validateNonEmptyArrayKeyword :: Text -> KeyMap.KeyMap Value -> Either Text ()
+validateNonEmptyArrayKeyword name fields = case KeyMap.lookup (Key.fromText name) fields of
+  Nothing -> Right ()
+  Just (Array values) | not (null values) -> Right ()
+  Just _ -> Left ("contract schema " <> name <> " must be a nonempty array")
+
+validateUniqueItemsKeyword :: Value -> Either Text ()
+validateUniqueItemsKeyword (Bool _) = Right ()
+validateUniqueItemsKeyword _ = Left "contract schema uniqueItems must be a boolean"
+
 validateSchemaKeyword :: Text -> KeyMap.KeyMap Value -> Either Text ()
 validateSchemaKeyword name fields = maybe (Right ()) (validateSchemaKeywordValue name)
   (KeyMap.lookup (Key.fromText name) fields)
@@ -748,7 +1427,11 @@ nestedSchemas fields = concatMap one (KeyMap.toList fields)
       "allOf" -> case value of
         Array schemas -> zipWith (\index schema -> (Key.fromText ("allOf[" <> Text.pack (show index) <> "]"), schema)) [0 :: Int ..] (toList schemas)
         _ -> []
+      "anyOf" -> case value of
+        Array schemas -> zipWith (\index schema -> (Key.fromText ("anyOf[" <> Text.pack (show index) <> "]"), schema)) [0 :: Int ..] (toList schemas)
+        _ -> []
       "items" -> [(Key.fromText "items", value)]
+      name | name `elem` ["not", "if", "then", "else"] -> [(key, value)]
       "contains" -> [(Key.fromText "contains", value)]
       "additionalProperties" -> case value of
         Object _ -> [(key, value)]
@@ -805,6 +1488,38 @@ validateContractProfile (Object schema) (Object instanceValue) = do
     Nothing -> pure ()
     Just (Object rule) -> validateSequentialSpansInstance rule instanceValue
     Just _ -> Left "sequential spans rule must be an object"
+  case KeyMap.lookup "x-archive-ascending-items" schema of
+    Nothing -> pure ()
+    Just (Object rule) -> validateAscendingItemsInstance rule instanceValue
+    Just _ -> Left "ascending items rule must be an object"
+  case KeyMap.lookup "x-archive-pitch-stacks" schema of
+    Nothing -> pure ()
+    Just (Object rule) -> validatePitchStacksInstance rule instanceValue
+    Just _ -> Left "pitch stacks rule must be an object"
+  case KeyMap.lookup "x-archive-bar-beats" schema of
+    Nothing -> pure ()
+    Just (Object rule) -> validateBarBeatsInstance rule instanceValue
+    Just _ -> Left "bar beats rule must be an object"
+  case KeyMap.lookup "x-archive-metric-modulations" schema of
+    Nothing -> pure ()
+    Just (Object rule) -> validateMetricModulationsInstance rule instanceValue
+    Just _ -> Left "metric modulations rule must be an object"
+  case KeyMap.lookup "x-archive-partial-dates" schema of
+    Nothing -> pure ()
+    Just (Object rule) -> validatePartialDatesInstance rule instanceValue
+    Just _ -> Left "partial dates rule must be an object"
+  case KeyMap.lookup "x-archive-subset" schema of
+    Nothing -> pure ()
+    Just (Object rule) -> validateSubsetInstance rule instanceValue
+    Just _ -> Left "subset rule must be an object"
+  case KeyMap.lookup "x-archive-document-order" schema of
+    Nothing -> pure ()
+    Just (Object rule) -> validateDocumentOrderInstance rule instanceValue
+    Just _ -> Left "document order rule must be an object"
+  case KeyMap.lookup "x-archive-nested-ranges" schema of
+    Nothing -> pure ()
+    Just (Object rule) -> validateNestedRangesInstance rule instanceValue
+    Just _ -> Left "nested ranges rule must be an object"
 validateContractProfile _ _ = Left "contract profile requires an object instance"
 
 -- | Spans are grouped by track, and references of the span role follow the
@@ -923,11 +1638,36 @@ parseUtcInstant value
 validateSequentialSpansInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
 validateSequentialSpansInstance rule instanceValue = do
   payloadName <- requiredString "payload" rule
+  within <- optionalWithin rule
+  optional <- optionalFlag rule
+  payload <- requiredObject "payload" instanceValue
+  groups <- withinGroups within payload
+  if optional && not (KeyMap.member (Key.fromText (maybe payloadName id within)) payload)
+    then Right ()
+    else mapM_ (sequentialSpans rule payloadName) groups
+
+-- | The objects a rule's array lives in: the payload itself, or, with
+-- @within@, each element of the payload array @within@ (one layer of bars,
+-- say), so that order is checked inside each group and never across them.
+withinGroups :: Maybe Text -> KeyMap.KeyMap Value -> Either Text [KeyMap.KeyMap Value]
+withinGroups Nothing payload = Right [payload]
+withinGroups (Just name) payload = case KeyMap.lookup (Key.fromText name) payload of
+  Just (Array values) -> mapM asObject (toList values)
+  _ -> Left (name <> " must be an array")
+  where
+    asObject (Object group) = Right group
+    asObject _ = Left (name <> " must contain objects")
+
+sequentialSpans :: KeyMap.KeyMap Value -> Text -> KeyMap.KeyMap Value -> Either Text ()
+sequentialSpans rule payloadName payload = do
   startName <- requiredString "start" rule
   endName <- requiredString "end" rule
-  payload <- requiredObject "payload" instanceValue
+  within <- optionalWithin rule
   spans <- case KeyMap.lookup (Key.fromText payloadName) payload of
     Just (Array values) | not (null values) -> Right (toList values)
+    -- With within, an element without the array (a beat-only layer beside
+    -- layers of bars) has no spans to order.
+    Nothing | within /= Nothing -> Right []
     _ -> Left "sequential spans payload must be a nonempty array"
   bounds <- mapM (spanBounds startName endName) spans
   if all (\(start, end) -> start >= 0 && end > start) bounds
@@ -1054,6 +1794,9 @@ evaluateSchema root path (Object fields) value = do
     , evaluateArray root path fields value
     , evaluateString fields value
     , evaluateAllOf root path fields value
+    , evaluateAnyOf root path fields value
+    , evaluateNot root path fields value
+    , evaluateConditional root path fields value
     ]
   pure (referenceMatch && keywordMatch)
 evaluateSchema _ path _ _ = Left (schemaPath path <> " must be an object")
@@ -1154,12 +1897,19 @@ evaluateArray root path fields (Array values) = do
           upper = integerField "maxContains" fields
       pure (count >= lower && maybe True (count <=) upper)
     Just _ -> Left "contract schema contains must be a schema object"
-  pure (itemMatch && minMatch && maxMatch && containsMatch)
+  uniqueMatch <- case KeyMap.lookup "uniqueItems" fields of
+    Nothing -> Right True
+    Just (Bool False) -> Right True
+    -- JSON equality: aeson compares objects by their members and numbers by
+    -- value, as JSON Schema's uniqueItems does.
+    Just (Bool True) -> Right (length (toList values) == length (unique (toList values)))
+    Just _ -> Left "contract schema uniqueItems must be a boolean"
+  pure (itemMatch && minMatch && maxMatch && containsMatch && uniqueMatch)
 evaluateArray _ _ fields _ = pure (not (hasArrayOnlyConstraint fields))
 
 hasArrayOnlyConstraint :: KeyMap.KeyMap Value -> Bool
 hasArrayOnlyConstraint fields = any (`KeyMap.member` fields)
-  ["items", "minItems", "maxItems", "contains", "minContains", "maxContains"]
+  ["items", "minItems", "maxItems", "uniqueItems", "contains", "minContains", "maxContains"]
 
 compareArrayBound :: Text -> (Integer -> Integer -> Bool) -> KeyMap.KeyMap Value -> VectorLike -> Either Text Bool
 compareArrayBound name comparison fields values = case integerField name fields of
@@ -1211,6 +1961,37 @@ evaluateAllOf root path fields value = case KeyMap.lookup "allOf" fields of
   Nothing -> Right True
   Just (Array schemas) -> and <$> mapM (\schema -> evaluateSchema root ("allOf" : path) schema value) (toList schemas)
   Just _ -> Left "contract schema allOf must be an array"
+
+-- | @not@ (specification 0.0.9): the instance must not satisfy the schema.
+evaluateNot :: Value -> [Text] -> KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateNot root path fields value = case KeyMap.lookup "not" fields of
+  Nothing -> Right True
+  Just schema -> not <$> evaluateSchema root ("not" : path) schema value
+
+-- | @if@, @then@, and @else@ (specification 0.0.9): when the instance
+-- satisfies @if@ it must satisfy @then@, and otherwise @else@; an absent
+-- branch is satisfied. Both branches are evaluated, so a malformed branch is
+-- refused whichever applies.
+evaluateConditional :: Value -> [Text] -> KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateConditional root path fields value = case KeyMap.lookup "if" fields of
+  Nothing -> Right True
+  Just condition -> do
+    holds <- evaluateSchema root ("if" : path) condition value
+    whenTrue <- branch "then"
+    whenFalse <- branch "else"
+    pure (if holds then whenTrue else whenFalse)
+  where
+    branch name = maybe (Right True) (\schema -> evaluateSchema root (name : path) schema value)
+      (KeyMap.lookup (Key.fromText name) fields)
+
+-- | Every branch is evaluated, so a malformed branch is refused even when an
+-- earlier one matched; the instance must satisfy at least one.
+evaluateAnyOf :: Value -> [Text] -> KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateAnyOf root path fields value = case KeyMap.lookup "anyOf" fields of
+  Nothing -> Right True
+  Just (Array schemas) | not (null schemas) ->
+    or <$> mapM (\schema -> evaluateSchema root ("anyOf" : path) schema value) (toList schemas)
+  Just _ -> Left "contract schema anyOf must be a nonempty array"
 
 -- Contract patterns use a small, closed regular-expression subset instead of
 -- a regex engine with dialect-dependent behaviour: anchored patterns built from
@@ -1465,7 +2246,7 @@ coreContextNames =
   , "model", "process", "role", "id", "namespace", "name", "revision"
   , "content", "digest", "size", "schema", "version", "protocol", "records"
   , "identities", "contents", "expected_heads", "expected", "annex_key"
-  , "staging_remote"
+  , "staging_remote", "skos", "musical_work", "recording_session", "release", "recording"
   ]
 
 rejectContextDirectives :: Text -> KeyMap.KeyMap Value -> Either Text ()

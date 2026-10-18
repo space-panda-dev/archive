@@ -1,0 +1,1945 @@
+# Archive Specification
+
+Version: 0.0.9
+Status: draft
+
+This is the contract an archive is governed by. It is copied into every archive
+when the archive is created, so it has to make sense to someone who has only the
+archive and not this source repository. The version above must match
+[`VERSION`](VERSION). Older copied specifications remain immutable.
+
+This specification is dedicated to the public domain under CC0 1.0. Anyone
+may copy, implement, or change it, and an archive that carries it owes nothing
+to anyone for doing so.
+
+The key words MUST, MUST NOT, SHOULD, and MAY are used as in RFC 2119.
+
+This draft is deliberately small. It states what is settled, marks what is
+provisional, and lists what is not yet defined.
+
+## 1. Terms
+
+- **Archive**: a durable collection of evidence governed by this specification.
+- **Evidence**: anything whose loss would lose information, including derived
+  results deliberately kept.
+- **Regenerable state**: anything that can be rebuilt from evidence.
+- **Archival state**: evidence, and the transitions that change its meaning. It
+  is distinct from storage (where bytes physically sit), operational state,
+  external systems, and regenerable state.
+- **Door**: the single authority through which archival state changes.
+- **Operator**: the person who holds governance authority over an archive.
+- **Governance authority**: authority to cause a consequence. **Evidentiary
+  authority**: how strongly a claim should be believed.
+- **Record**: one immutable revision of an object, in one of four shapes:
+  artifact, entity, claim, or assessment.
+- **Object**: the enduring thing a record describes, named by a stable opaque
+  identifier.
+- **Content**: bytes, identified by digest. Several objects may share content.
+- **Location**: where content currently sits.
+- **Claim**: a typed, versioned statement about other objects, with provenance.
+- **Assessment**: a judgment of an exact claim revision, or a settlement between
+  competing claims.
+- **Admission**: bringing a new object into the archive through Door.
+- **Transition**: any other change to archival state recorded by Door.
+- **Retire**: a transition taking an object out of the collection; its records
+  remain.
+- **Destroy**: a transition withdrawing content from the archive's custody and
+  requiring its deletion from every managed copy.
+- **Policy**: a versioned declaration of desired archival state, authorized by
+  the operator.
+- **Failure domain**: a set of locations likely to fail together.
+- **Managed copy**: a copy the archive tracks, can verify on demand, and can
+  drop. **Observed copy**: a copy the archive can verify but does not control.
+  **Projection**: another view of the same bytes. **Source**: where content came
+  from before admission.
+- **Disclose**: let content leave the operator's custody in a form others can
+  read. **Publication** is
+  disclosure that others can see. A **processor** is a destination that
+  receives content to compute on it and shows it to no one else.
+
+## 2. Requirements
+
+### The archive
+
+**S-1.** An archive MUST identify the version of this specification that governs
+it.
+
+**S-2.** Archival state MUST change only through Door. A change to archival state
+made any other way is a defect, not a new valid state. Storage MAY change without
+Door, but only to carry out what Door has sanctioned (a policy revision or a
+recorded transition).
+
+**S-3.** An archive MUST have at most one active operator at a time. A change of
+operator MUST be recorded as a transition.
+
+**S-4.** Repeating an operation whose inputs have not changed MUST NOT change
+durable state: no new records, commits, or content-location entries.
+
+**S-5.** Regenerable state MUST NOT be the only copy of any evidence, and its loss
+MUST NOT be archival loss.
+
+**S-6.** Program configuration is not policy and is not governed by this
+specification.
+
+**S-7.** Requirements about content, copies, destruction, and placement apply to
+digital content. A physical item is recorded as an entity admitted to and retired
+from the collection; its physical custody is outside the archive.
+
+### Records
+
+**S-8.** Every record MUST have exactly one of the shapes artifact, entity,
+claim, or assessment. A record revision MUST NOT be altered after admission; a
+change is a new revision. Every transition MUST be recorded as a claim whose
+kind names the transition; a policy revision is an artifact holding the rules
+text, adopted by a claim of kind `policy_revision`.
+
+**S-9.** An object identifier MUST NOT be derived from content and MUST NOT change
+when the object's name, location, or content changes. Content MUST be identified
+by a cryptographic digest. A change of location MUST NOT change any identity and
+MUST NOT create a new revision.
+
+**S-10.** Supersession MUST be explicit. It MUST NOT be inferred from timestamps,
+names, digests, or locations.
+
+**S-11.** Every record MUST identify the program that wrote it and the agent that
+asserted it. Provenance MUST be carried by the record's envelope and references,
+not repeated in its payload.
+
+**S-12.** A claim MUST cite the contract (identifier, version, digest) that
+defines its payload. Contract definitions MUST be available within the archive.
+
+**S-13.** The meaning of every envelope and payload field MUST be declared by the
+JSON-LD context stored in the archive with this specification. Validating an
+admission MUST NOT depend on processing that context.
+
+**S-14.** No identifier (of an object, content, archive, or agent) MAY contain a
+hostname.
+
+**S-15.** Media boundaries MUST be stored exactly, for example as integer sample
+offsets with a sample rate. Intervals are half-open.
+
+### Claims
+
+**S-16.** An archive MUST be able to hold conflicting claims about the same
+evidence, each with its provenance, without its storage choosing between them.
+
+**S-17.** An assessment MUST NOT erase the claim it judges or that claim's
+provenance.
+
+**S-18.** Which claim is current MUST NOT be stored as evidence. It MUST be
+defined only by the rule in the claim's contract, and every materialisation of it
+MUST derive from that rule.
+
+**S-19.** Evidentiary authority MUST NOT be assigned solely by whether the agent
+was a person, a model, a deterministic process, or an external authority.
+
+**S-20.** A correspondence between an archive subject and an external one MUST be
+recorded as a mapping claim, never as an assertion that they are identical.
+
+### Deletion and copies
+
+**S-21.** Deletion is permitted; an archive is not required to be append-only.
+Retiring an object MUST leave its records in place. Destroying content MUST be
+refused while any unretired object refers to it, and MUST NOT implicitly destroy
+dependent content: each dependent with its own content is decided explicitly.
+Destroyed content MUST NOT count as a copy anywhere and MUST NOT be placed again.
+Managed copies not yet deleted MUST be reported as pending, and known copies the
+archive does not control MUST be reported as external survivors.
+
+**S-22.** Every destroy transition MUST be initiated by a person and MUST record
+at least the content digest, size, reason, and agent. Retirement and destruction
+MUST NOT be carried out on the strength of policy alone; policy MAY recommend
+them.
+
+**S-23.** Consequential transitions MUST keep enough provenance to explain why
+they happened. Where policy caused one, the record MUST identify the policy
+revision, the rules that fired, and the facts they matched. The record MUST
+identify the specification version in force.
+
+**S-24.** Placement requirements MUST be counted in failure domains. Managed
+copies count; an observed copy counts only when recently enough verified;
+projections and published copies MUST NOT count.
+
+**S-25.** A reclaim verdict that the operator acts on MUST be recorded as
+evidence, with the survivors, their failure domains, and the verification state
+that justified it.
+
+### Policy and plans
+
+**S-26.** Policy MUST be versioned, and changes to it MUST pass through Door.
+Authoritative policy MUST be authorized by the operator. A policy revision MUST
+record its author and its authorizer as separate facts; a machine MAY author a
+proposal but MUST NOT enact it, and authorization MUST NOT record a machine's
+authorship as a person's.
+
+**S-27.** Policy MUST be written in the policy language this specification
+defines. Rules MUST only add desired state; no rule may cancel or lower another.
+Policy MUST select only on evidence in the archive. A fact that cannot be
+established MUST NOT cause a reduction in copies, a retirement, or a withdrawal;
+a missing observation is unknown, not zero.
+
+**S-28.** A plan MUST record the policy revision and evidence it was computed
+from, and applying it MUST refuse any action whose conditions no longer hold.
+
+### Publication and disclosure
+
+**S-29.** Publication and withdrawal are transitions. A publication MUST depend on
+an approval by a person, scoped to its destination (or to an exposure class the
+operator names) and pinned to exact revisions. Every destination MUST have an
+exposure class declared by policy; an undeclared destination MUST be treated as
+distribution.
+
+**S-30.** Publishing work that is not the operator's own beyond the operator's
+circle MUST require an approval given for that publication. A change in rights
+MUST NOT by itself cause publication. Open and distribution destinations MUST
+require a rights claim permitting publication; unknown or restrictive rights MUST
+block it.
+
+**S-31.** A withdrawal from an irreversible destination MUST be recorded as
+requested, with known outside copies reported.
+
+**S-32.** Content MUST NOT be disclosed except to a destination that policy
+grants for it; a fact that cannot be established MUST NOT widen disclosure.
+Every disclosure MUST be recorded with its destination, the content, and the
+policy revision that allowed it, whether or not any result is kept, and MUST
+be recorded before any content is sent; a send that may have begun counts as
+received. A processor
+that received content MUST be reported as a possible external survivor when
+that content is destroyed. A sensitivity claim MUST cap disclosure: RED at
+private, AMBER at circle, GREEN at service; CLEAR sets no cap. When an object
+carries several sensitivity claims, the most restrictive MUST apply. A
+sensitivity claim whose source is a person the content records MUST NOT be
+withdrawn except by a later claim from that person. The operator MAY disclose
+past such a claim only to one named destination no further out than service,
+with a recorded reason; content MUST NOT be published past it to open or
+distribution. Disclosure compelled by law
+MUST be recorded like any other.
+
+## 3. Conventions
+
+P-1 through P-7 and P-9 through P-12 are made normative by the corresponding
+requirements in section 4. P-8 and P-13 through P-15 remain provisional while
+their open questions are unresolved.
+
+- **P-1.** Records are JSON files committed to Git, one file per revision.
+  Content is managed by git-annex.
+- **P-2.** A record's envelope has the fields `spec`, `revision_id`,
+  `object_id`, `shape`, `by`, `agent`, `at`, `payload`, `refs`, `supersedes`,
+  and optionally `source` and `contracts`. No other envelope field is allowed.
+- **P-3.** `revision_id` is derived from the SHA-256 of the record's RFC 8785
+  (JCS) canonical form with `revision_id` and `at` removed, so an identical
+  retry yields the identical revision. `spec` stays in: the same payload under
+  another specification version is another revision.
+- **P-4.** A reference is `{role, id, revision_id?}`; `revision_id`, when
+  present, pins an exact revision.
+- **P-5.** `at` is recording time, never capture time. Door stamps it at
+  commit; a retry of a stored revision keeps the first `at`. An unknown capture time
+  is recorded as unknown, never substituted.
+- **P-6.** Content digests are SHA-256.
+- **P-7.** `archive init` copies this document and its version into the new
+  archive.
+- **P-8.** The policy language is a subset of standard Datalog: rules, safe
+  negation, and a maximum. Its grammar and test fixtures will be given here.
+- **P-9.** An archive receives a UUID when it is created; object identifiers are
+  formed from it and the `object_id` under a non-resolvable scheme.
+- **P-10.** Content identifiers are equivalent to RFC 6920 `ni:` URIs.
+- **P-11.** Claim-kind contracts are JSON Schema documents with a JSON-LD context
+  fragment; controlled vocabularies are SKOS concept schemes.
+- **P-12.** Agents that are people or organisations are entities in the archive;
+  software and models are identified by Package URL where one exists.
+- **P-13.** A PREMIS Level 1 mapping is stored alongside this specification.
+- **P-14.** Entity kinds follow the IFLA Library Reference Model, with
+  MusicBrainz kinds for music mapped onto it.
+- **P-15.** Sensitivity claims use the Traffic Light Protocol 2.0 labels.
+
+## 4. Format and protocols
+
+### D-1. On-disk layout (ADR 0020)
+
+An archive root MUST contain these paths:
+
+- `archive.json`;
+- `spec/<version>/VERSION`;
+- `spec/<version>/archive-spec.md`;
+- `spec/<version>/context.jsonld`;
+- `contracts/sha256-<digest>.json`;
+- `records/<h0h1>/<h2h3>/sha256-<digest>.json`; and
+- `content/sha256/<h0h1>/<h2h3>/<digest>` for each locally present content
+  item.
+
+`<h0h1>` and `<h2h3>` are the first and second pairs of characters of the
+lowercase hexadecimal digest in the same path. This is layout `archive/2`
+(ADR 0053); specifications before 0.0.6 used layout `archive/1`, with every
+record directly in `records/` and every content path directly in
+`content/sha256/`. Specification 0.0.6 changes only the layout: it installs
+the same contract bundles and the same core context as 0.0.5. Specification
+0.0.7 keeps layout `archive/2` and the 0.0.6 core context and adds contract
+bundles (D-15), specification 0.0.8 keeps them again and adds one more
+(D-16), and specification 0.0.9 keeps layout `archive/2`, adds two Entity
+kinds to the core context, and adds five bundles (D-17).
+
+`archive.json` MUST contain only the layout version, archive identifier, and
+governing specification identifier. Its layout MUST be `archive/2`. The specification directory and contract
+files MUST contain the exact local documents needed to interpret admitted
+records. A contract filename MUST equal the lowercase SHA-256 digest of its
+contents. A record filename MUST equal the lowercase SHA-256 part of the
+record's `revision_id`.
+
+`content/` MUST be a git-annex worktree. Its paths are locations, not object
+identities. Object identifiers and source names MUST NOT determine content
+paths. Locks, proposals, plans, indexes, views, caches, and other operational
+or regenerable state MUST NOT be required to recover archival evidence.
+
+Changing the governing specification of an existing archive is possible only
+by the specification upgrade transition of D-15, and only to an additive
+release; every other change of specification remains unsupported.
+
+### D-2. Portable identifiers (ADR 0021)
+
+An archive identifier MUST have the form `urn:uuid:<archive-uuid>`, with a
+canonical lowercase RFC 9562 UUID created when the archive is initialized.
+
+An object identifier MUST have the form `urn:uuid:<object-uuid>`. Door MUST
+derive `object-uuid` using RFC 9562 UUIDv5 with the archive UUID as namespace
+and the UTF-8 sequence `identity namespace`, NUL, `identity name` as input. The
+identity name MUST be a non-empty ASCII token containing only letters, digits,
+hyphen, and underscore. It MUST NOT be derived from a path, filename, title,
+location, or content digest. Records and references MUST store the full object
+URN.
+
+A content digest MUST be written as `sha256:` followed by 64 lowercase
+hexadecimal digits. Its RFC 6920 equivalent is the `ni:///sha-256;...` URI made
+from the same digest bytes using unpadded base64url. Records MUST store only the
+`sha256:` spelling.
+
+### D-3. Normative record envelope (ADR 0022)
+
+A stored record MUST be a JSON object with exactly these required fields:
+`spec`, `revision_id`, `object_id`, `shape`, `by`, `agent`, `at`, `payload`,
+`refs`, and `supersedes`. It MAY contain `source` and `contracts`. It MUST NOT
+contain another top-level field.
+
+`spec` MUST have the form `archive/<major>.<minor>.<patch>`. `revision_id` MUST
+be a canonical SHA-256 digest. `object_id` MUST be a portable object identifier.
+`shape` MUST be exactly `artifact`, `entity`, `claim`, or `assessment`. `by`
+MUST identify the writing program and `agent` MUST separately identify the
+asserting person, model, or process. `at` MUST be Door's RFC 3339 UTC recording
+time. `payload` MUST be a JSON object.
+
+`refs` and `supersedes` MUST be arrays even when empty. A reference MUST contain
+only non-empty `role` and `id` strings and an optional canonical
+`revision_id`. Its `id` MUST be an object identifier. A supersession reference
+MUST have role `supersedes`, MUST pin an exact revision, and MUST name the same
+object as the record.
+
+`source`, when present, MUST contain only the non-empty strings `schema` and
+`id` and an optional non-empty `revision_id`. It records imported source
+identity and MUST NOT supply Archive object identity. `schema` MUST be a
+portable identifier, not a repository path.
+
+`contracts`, when present, MUST be a non-empty array. Each entry MUST contain
+only non-empty `id` and `version` strings and a canonical SHA-256 `digest`.
+Every claim MUST cite the contract that defines its payload. Another shape MUST
+cite a contract when its payload depends on one. An empty `contracts` array
+MUST be refused.
+
+An admission proposal MUST omit `revision_id` and `at`; Door supplies them.
+The proposal MUST include `refs` and `supersedes`, including when they are
+empty. Retrying the same proposal MUST return the stored revision with its
+original recording time. Envelope and payload validation MUST reject unknown
+fields rather than discard them.
+
+### D-4. Admission and staging (ADR 0023)
+
+An admission proposal MUST be a metadata-only directory containing
+`manifest.json` and the record drafts it names beneath `records/`. Its closed
+manifest MUST identify protocol `archive-admission/1` and contain ordered
+`records`, `identities`, `contents`, and `expected_heads` arrays, including when
+empty. `identities` MUST contain exactly one allocation defined by D-7 for each
+new object and none for an existing object.
+Proposal paths MUST be normalized relative paths to distinct regular files
+beneath the proposal root and MUST NOT contain an empty, `.` or `..` component
+or traverse a symlink.
+
+Each content declaration MUST contain one canonical digest, byte size,
+git-annex key, and configured staging-remote identifier. Every content item
+referenced by a proposed artifact MUST be declared exactly once, and every
+declaration MUST be referenced. `expected_heads` MUST contain exactly one row
+for every object created or revised; its expected revision is null for a new
+object and an exact pin for an existing object.
+
+Door MUST validate the complete proposal under one archive lock before writing
+a record. It MUST use git-annex to obtain each key from the configured staging
+remote, require the key to be present locally, verify local fixity, and compare
+both digest and byte size independently with the manifest. A key name, remote
+claim, or location log alone MUST NOT count as verification. Content bytes
+MUST NOT pass through Door's input, output, or memory.
+
+After validation Door MUST recheck the retained proposal bytes and archive
+heads, compute all revisions, create the canonical content and record paths,
+stage only those paths, and commit the batch once. A failure MUST leave no
+authoritative record or partial commit. Already transferred content remains
+reported, unadmitted storage until retried or explicitly cleaned up.
+
+Before checking the proposal's original expected heads, Door MUST detect an
+identical previously committed complete batch and return its stored revisions
+without a record, commit, or location write. A partially present revision set,
+or a stale head when no complete retry exists, MUST be refused. A dry run MAY
+validate metadata and predict revisions, but MUST NOT transfer content or
+report fixity as verified.
+
+Retry identity is the complete set of computed record revisions introduced by
+one commit. Proposal order controls response order, but is not archival
+identity. Expected heads and the staging transport fields `annex_key` and
+`staging_remote` MUST still validate, but are operational inputs that are not
+retained and do not change retry identity; the artifact's retained digest and
+size do.
+
+`door admit --proposal <directory> --dry-run` MUST run from the archive root.
+On success it exits 0 and writes one closed JSON object to stdout containing
+exactly `status` equal to `predicted`, ordered `revision_ids`, ordered canonical
+`records`, `content_verified` equal to false, and `retry`. It writes nothing to
+stderr. A refusal exits nonzero, writes no stdout, and explains the refusal on
+stderr. The dry run MUST read archival evidence from one committed Git snapshot
+and recheck the retained proposal bytes before reporting success. It MUST NOT
+transfer content, invoke git-annex, change the archive or proposal, or claim
+content fixity.
+
+Without `--dry-run`, a proposal with no content declarations and no artifact
+records MAY be admitted without invoking git-annex. Door MUST hold the archive
+lock across validation, retained-byte and snapshot recheck, and the write;
+refuse a staged ordinary Git index; create every canonical record and advance
+the current branch in one commit; and leave unrelated working-tree files and
+changes untouched. On success it exits 0 and writes one closed JSON object
+containing exactly `status` equal to `committed`, ordered `revision_ids`, and
+`retry`. An identical complete retry, including a previously committed
+content-bearing batch, MUST return without invoking git-annex, changing bytes,
+or creating a commit. Until the required INV-5 git-annex experiment has been
+run and its result accepted, every new content-bearing or mixed proposal MUST
+fail loudly as unsupported before mutation or git-annex invocation. A refusal
+exits nonzero, writes no stdout, and explains the refusal on stderr.
+
+Git-annex is responsible for transfer, byte storage, presence, fixity
+operations, and location logs. Door is responsible for proposal validation,
+the verified result, archive invariants, expected heads, record identity, and
+the commit that makes the admission authoritative.
+
+### D-5. Retire and destroy transitions (ADR 0024)
+
+The specification MUST ship version 1 claim contracts named
+`archive.transition/retire` and `archive.transition/destroy`. A claim under
+either contract MUST have one pinned `author` reference to a person entity and
+one pinned `authorizer` reference to the active operator's person entity. The
+same person MAY fill both roles, but the facts remain separate. `agent` MUST
+identify the author.
+
+A retire claim MUST have the closed payload `{reason}` and exactly one
+`retires` reference pinned to the current revision of the object leaving the
+collection. Recording it MUST retire the object without removing its records.
+
+A destroy claim MUST have the closed payload
+`{content, reason, external_survivors}`, where `content` contains exactly a
+canonical digest and non-negative byte size and `external_survivors` is an
+array, including when empty. It MUST have one or more pinned `destroys`
+references to retired artifact revisions carrying those bytes. Door MUST
+refuse it while an unretired object refers to the content.
+
+Every dependent artifact with content of its own that is reachable from the
+destroyed content under the installed contracts MUST have exactly one pinned
+reference with role `dependent_destroy` or `dependent_source_gone`. A
+`dependent_destroy` reference MUST correspond to a destroy claim for that
+dependent content in the same atomic batch. Claims and assessments without
+bytes remain as history and require no disposition.
+
+Every known outside copy MUST have one closed `external_survivors` row with
+non-empty `destination`, `basis` equal to `disclosure` or `verified_copy`, and
+an RFC 3339 `observed_at`. When archival evidence exists, a pinned
+`external_survivor` reference MUST identify it. An outside survivor MUST NOT
+block destroy or deletion completion.
+
+Recording the destroy claim MUST immediately make the content destroyed for
+archival purposes. The claim MUST NOT store managed locations, deletion
+attempts, or pending/completed execution state. Those are derived from the
+claim and current storage. Later survivor evidence MUST be a new record, never
+an edit of the destroy claim. Door and apply MUST refuse every later attempt to
+place content whose destroy claim is authoritative.
+
+When policy contributes to a transition, the claim MUST also carry the policy
+provenance required by S-23. Policy-caused retire and destroy MUST remain
+unsupported until the policy grammar, stable rule names, and matched-fact
+representation are defined. Information erasure and expungement remain
+unsupported.
+
+### D-6. JSON-LD context versioning (ADR 0025)
+
+Every specification version MUST include exactly one immutable core JSON-LD
+context at `spec/<version>/context.jsonld`. A record's `spec` value MUST select
+that context. A record MUST NOT contain an `@context` field, and a conforming
+reader MUST NOT fetch a context or vocabulary from the network.
+
+The core context MUST define the meaning of core envelope, shape, reference,
+and provenance fields. Contract fragments MUST define their payload and
+relation-role terms, including transition terms. A change to any core mapping
+requires a new specification version. Existing records MUST retain the context
+selected by their original `spec` value.
+
+A contract MUST be one closed JSON object containing exactly `id`, `version`,
+`schema`, and `context`. `schema` MUST be the JSON Schema for the
+contract-defined payload and relations. `context` MUST map only terms owned by
+that contract and MUST NOT redefine a core term or a term owned by another
+cited contract. It MUST be an object of term definitions and MUST NOT contain
+`@context`, `@import`, or a term definition that selects a remote context.
+
+The contract digest MUST be SHA-256 over the RFC 8785 canonical form of the
+whole bundle. Its contract file MUST contain exactly those canonical bytes, and
+its filename and every citation MUST match that digest. The citation's `id`
+and `version` MUST also match the bundle. Any schema or context change requires
+a new contract version and digest; the same version MUST NOT identify different
+bytes.
+
+Door MUST validate envelopes and contract JSON Schemas without JSON-LD
+processing. JSON-LD supplies interpretation, not admission semantics. A reader
+missing the selected core context or a cited bundle MUST report an incomplete
+read. For interpretation, a reader MUST start with the object inside the core
+context's top-level `@context` and then consider contract fragments in citation
+order. A term collision between any two objects MUST be refused on admission
+and reported as an incomplete read. An imported vocabulary term MUST be
+constrained by an Archive profile or used only as a mapping; a context mapping
+MUST NOT import weaker semantics.
+
+### D-7. Initialization and identity allocation (ADR 0026)
+
+`archive init --operator <identity-name> <root>` MUST create an archive only
+when the root does not exist or is empty. It MUST generate a random RFC 9562
+UUIDv4 and write a closed, RFC 8785-canonical `archive.json` containing exactly
+`archive_id`, `layout`, and `spec`, with values `urn:uuid:<archive-uuid>`,
+`archive/2`, and the governing `archive/<version>`.
+
+Initialization MUST create the normative layout, initialize Git and git-annex,
+copy the governing specification, core context, and specification-owned
+contract bundles, and make one initial commit. That commit MUST contain a
+person entity and an `archive.transition/operator_initialization` version `1`
+claim with pinned `author`, `authorizer`, and `appoints` references to that
+person revision. It is the only transition permitted without a previous active
+operator. The active operator MUST be derived from transition claims, not a
+mutable manifest field. Succession MUST remain unsupported until its
+verification is defined.
+
+The operator entity MUST use identity namespace `archive.core/entity` and the
+supplied operator identity name. The initialization claim MUST use namespace
+`archive.transition/operator_initialization` and name `initial`. Core artifact
+objects use `archive.core/artifact`; other core entities use
+`archive.core/entity`; contract-owned objects use their contract identifier as
+namespace.
+
+An identical init retry MUST return the stored archive and operator identifiers
+without writing. A non-empty uninitialized root, changed manifest, incomplete
+bootstrap, or different requested operator MUST be refused without cleanup of
+pre-existing paths.
+
+Every new object in an admission proposal MUST have exactly one row in a
+required `identities` array; existing objects MUST have none. A row contains
+exactly `object_id`, `namespace`, and `name`. Door MUST derive and compare the
+object identifier by D-2. The namespace MUST use lowercase slash-separated
+segments, each beginning with a letter and continuing with letters, digits,
+dot, underscore, or hyphen. Specification-owned namespaces begin `archive.`.
+Contract identifiers and `source.schema` use the same syntax.
+
+`by` MUST be a canonical Package URL. `agent` MUST be an Archive object URN for
+a person, organisation, software, model, or process entity, or a canonical
+Package URL for packaged software, a model, or a process. Such a Package URL
+MUST NOT have a qualifier, subpath, URI authority, repository URL, download
+URL, or component parsed as a DNS hostname. An unpackageable agent MUST first
+be represented by an Archive entity. None of these identifiers may contain a
+hostname.
+
+### D-8. Core payloads and installed contracts (ADR 0027)
+
+An artifact payload MUST be the closed object `{content}`, where `content`
+contains exactly a canonical SHA-256 digest and a non-negative byte size.
+Location, annex key, filename, source path, capture time, media type, origin,
+and preference MUST NOT be artifact payload fields.
+
+An entity payload MUST be the closed object `{kind, label?}`. `kind` MUST be a
+non-empty term defined by the core context or an installed controlled
+vocabulary. `label`, when present, MUST be a non-empty string and MUST NOT
+supply identity. The core context MUST define `person`, `organisation`,
+`software`, `model`, and `process`. Specification 0.0.3 also defines
+`musical_work` in its versioned context. A context for 0.0.1 or 0.0.2 MUST NOT
+accept that later kind. Specification 0.0.5 also defines `recording_session`,
+a local kind with no Library Reference Model equivalent; a context for an
+earlier version MUST NOT accept it. Specifications 0.0.6, 0.0.7, and 0.0.8
+keep the 0.0.5 kinds and core context unchanged. Specification 0.0.9 also
+defines `release` (one edition of music as issued, after MusicBrainz's
+Release) and `recording` (after MusicBrainz's Recording), mapped to
+`arch:Release` and `arch:Recording`; a context for an earlier version MUST NOT
+accept them, and their identities are opaque, never a title or an external
+identifier. This Archive-owned term does not establish an RDF
+equivalence between Archive and MusicBrainz Work types or settle the open LRM
+mapping question.
+
+A claim MUST cite at least one contract. An assessment MUST cite at least one
+contract and MUST have one or more exact `assessment_of` references to claim
+revisions. Every cited contract schema MUST validate the closed payload and
+the reference roles it owns. The payload MUST NOT repeat a kind or contract
+version.
+
+The specification distribution MUST contain canonical bundles for version `1`
+of `archive.transition/operator_initialization`,
+`archive.transition/retire`, and `archive.transition/destroy`. Their schemas
+MUST use JSON Schema 2020-12, be closed and self-contained, contain no remote
+`$ref`, and encode D-5 and D-7. Their context fragments MUST follow D-6. This
+specification release MUST leave those version `1` bundles unchanged and add
+version `2` retire and destroy bundles whose
+schemas permit `transition_predecessor` and whose context fragments map it
+exactly to `arch:transition_predecessor`. The version `1` initialization bundle
+MUST NOT permit that role.
+
+Initialization MUST verify and copy every specification-owned bundle before
+creating a record that cites it. Door MUST resolve a citation by its digest
+path, verify the bundle bytes, and then require its identifier and version to
+match. Missing, changed, unknown, or remotely dependent contracts MUST be
+refused on admission and reported as incomplete on read.
+
+Adding contracts outside a specification release, domain assessment
+contracts, enrichment contracts other than those of D-15 to D-17, and current rules
+remain unsupported until separately defined.
+
+### D-9. Transition proposals and dispatch (ADR 0028)
+
+`door transition --proposal <directory>` MUST accept a metadata proposal with
+the safe-path and retained-byte rules of D-4. Its closed manifest MUST contain
+protocol `archive-transition/1` and non-empty ordered `records`, `identities`,
+and `expected_heads` arrays. It MUST contain exactly one identity allocation
+for every new transition object and an expected head for every existing object
+whose revision or derived state the transition relies on, plus a null
+expectation for every new transition object.
+
+Door MUST verify each contract bundle and dispatch a transition by the exact
+tuple of contract identifier, version, and digest. The initial table contains
+only the installed `operator_initialization`, `retire`, and `destroy` bundles.
+Only initialization may invoke `operator_initialization`; `door transition`
+supports retire and destroy. Every other transition MUST fail as unsupported.
+Generic admission MUST refuse a claim citing a transition contract.
+
+Under one archive lock Door MUST validate the complete proposal, identities,
+contracts, references, expected heads, author, authorizer, active operator, and
+legal pre-state; compute every revision and resulting state; recheck the
+retained bytes and heads; then write all records in one Git commit. Every
+`dependent_destroy` artifact MUST have exactly one matching destroy draft in
+the batch. References to an existing or earlier computable revision MAY be
+used; a forward reference or dependency cycle MUST be refused.
+
+The transition order that affects authorization and pre-state MUST survive
+the proposal directory. In a multi-record transition proposal, the first
+record MUST have no `transition_predecessor` reference and every later record
+MUST have exactly one pinned `transition_predecessor` reference to the
+immediately preceding transition draft in that same proposal. The reference
+MUST name a transition claim and MUST resolve to an earlier draft, not to a
+record from another committed batch. Door MUST require the manifest's record
+order and this predecessor chain to agree, and MUST refuse missing,
+duplicated, branching, cyclic, cross-batch, or out-of-order chains. A
+single-record proposal has no predecessor. The chain is committed in the
+records and is the durable order for replay; it is not an operational sidecar.
+Every record in a multi-record chain MUST cite version `2` of its retire or
+destroy contract. Version `1` retire and destroy contracts remain valid only
+for single-record transition proposals. A complete retry MUST satisfy D-9's
+existing complete-batch rule: the same computed revisions, including their
+exact predecessor pins, MUST all have been introduced by one committed Git
+batch. Chain equality MUST NOT weaken any non-retry identity, authorization,
+expected-head, or state check.
+
+Before checking the proposal's original expected heads, Door MUST detect an
+identical previously committed complete batch and return its revisions in
+manifest order without writing. A partially present batch, or—when no complete
+retry exists—a changed contract, authorization, expected head, or state
+precondition MUST be refused. A dry run MAY perform pure validation and identity
+computation but MUST report that authorization and state are rechecked at
+commit.
+
+Before validating a new transition or recognizing a retry, Door MUST replay
+the committed record history from the archive root to the pinned snapshot.
+It MUST establish each record's introducing commit, refuse a normative
+manifest, specification, contract, or record path that was later modified,
+deleted, renamed, copied, or re-added, and refuse a shallow or otherwise
+incomplete history whose root-to-snapshot order it cannot prove. Such a
+refusal reports incomplete evidence; it does not reinterpret the visible
+subset as a complete archive.
+
+Replay MUST validate the root initialization before establishing the active
+operator, reconstruct object heads from explicit supersession, and validate
+every historical transition against the actors, current heads, and legal
+pre-state that preceded it. A commit containing retire or destroy records MUST
+contain only one transition batch. Door MUST recover a multi-record batch's
+order solely from its durable `transition_predecessor` chain and MUST reject a
+chain that does not cover exactly the transition records introduced by that
+commit. Each effect is applied in that order. A record introduced by a later
+commit MUST NOT satisfy an earlier reference, and an artifact record introduced
+after destruction MUST NOT place that destroyed content back into archival
+custody.
+
+`door transition --proposal <directory> --dry-run` MUST run from the archive
+root. On success it exits 0 and writes one closed JSON object to stdout
+containing exactly `status` equal to `predicted`, ordered `revision_ids`,
+`retired_objects`, `destroyed_digests`, `authorization_recheck_required` equal
+to true, `state_recheck_required` equal to true, and `retry`. It writes nothing
+to stderr. A refusal exits nonzero, writes no stdout, and explains the refusal
+on stderr. The command MUST use one committed Git snapshot, recheck retained
+proposal bytes, and MUST NOT write or invoke git-annex.
+
+Without `--dry-run`, the command MUST hold the archive lock across validation,
+the retained-byte and snapshot recheck, and the write. A new batch MUST create
+all canonical record files and advance the current branch in one Git commit;
+no successful prefix may remain after refusal. An identical complete retry
+MUST create no commit and MUST preserve the original stored bytes and `at`.
+On success the command exits 0 and writes one closed JSON object containing
+exactly `status` equal to `committed`, ordered `revision_ids`,
+`retired_objects`, `destroyed_digests`, and `retry`. A refusal exits nonzero,
+writes no stdout, and explains the refusal on stderr. Persistent transition
+MUST NOT invoke git-annex and MUST leave unrelated working-tree files and
+changes outside its record batch untouched.
+Door MUST refuse a persistent transition while the ordinary Git index contains
+staged changes, so no bypass write can be mistaken for part of Door's batch.
+
+Policy-caused and all other transition kinds MUST remain unsupported until
+their provenance representation, contracts, and handlers are accepted.
+Because Archive 0.0.2 installs no artifact relation or survivor-evidence
+contracts, a destroy proposal containing `dependent_destroy`,
+`dependent_source_gone`, or `external_survivor` references MUST fail loudly as
+unsupported; Door MUST NOT guess reachability or evidence kind from an
+uncontracted reference.
+
+## 5. Core context and bootstrap contract
+
+### D-10. Core context and bootstrap contract (ADR 0029)
+
+The Archive-owned vocabulary namespace is
+`urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#`. The core context MUST define
+the prefixes `arch`, `as`, `dcterms`, `prov`, `rdf`, `rdfs`, and `xsd` with the
+IRIs listed in ADR 0029. It MUST map `by` to `as:generator`, `agent` to
+`dcterms:creator`, `at` to `prov:generatedAtTime`, `kind` to `rdf:type`, and
+`label` to `rdfs:label`.
+
+The values `person`, `organisation`, and `software` MUST map to `prov:Person`,
+`prov:Organization`, and `prov:SoftwareAgent`. `model` and `process` MUST map
+to `arch:ModelAgent` and `arch:ProcessAgent`, which are Archive profiles of
+`prov:SoftwareAgent`. Every other core field and controlled value MUST map
+one-for-one to its `arch:` name. `role` MUST be vocabulary-valued; installed
+contract fragments define allowed role terms. Generic `id` and `revision_id`
+MUST NOT be JSON-LD `@id` aliases.
+
+The version `1` `archive.transition/operator_initialization` contract MUST
+accept only the empty payload `{}`. It MUST require exactly one pinned
+`author`, `authorizer`, and `appoints` reference, all naming the same person
+revision, and `agent` MUST name that person. Its context maps those roles to
+`arch:author`, `arch:authorizer`, and `arch:appoints` under Archive's PROV
+profile.
+
+Archive version 0.0.2 MUST write `pkg:hackage/archive@0.0.1.0` as `by`.
+
+This provision corrects ADR 0012's nonexistent `oa:generator` and
+`oa:creator` mappings to the Web Annotation terms `as:generator` and
+`dcterms:creator`.
+
+## 6. Reading commands
+
+The reading commands run from the current working directory, which MUST be the
+archive root. They MUST obtain `archive.json`, the selected core context, and
+records from committed Git `HEAD`; worktree files MUST NOT affect a read.
+Their stdout is one closed JSON object, and they MUST emit no other stdout.
+
+Every successful response contains `{"status":"ok"}`. An incomplete response
+contains `{"status":"incomplete","issues":[...]}` and exits 2; it MUST retain
+all usable records it read. A failed Git acquisition contains
+`{"status":"failed","issues":[...]}` and exits 1. Each read issue contains
+exactly `kind`, `path`, and `detail`; `kind` is one of `git`, `missing_tree`,
+`parse`, or `unsupported`, and `path` is either a relative archive path or
+null. A structural Doctor issue instead contains exactly `code`,
+`revision_id`, `object_id`, and `detail`; either identifier may be null. `code`
+is one of `duplicate_revision`, `duplicate_object_revision`,
+`dangling_reference`, `wrong_revision_pin`, `unpinned_supersession`,
+`invalid_supersession_role`, `supersession_wrong_object`,
+`supersession_wrong_shape`, `supersession_fork`, `supersession_cycle`,
+`missing_assessment_target`, `unpinned_assessment_target`,
+`assessment_target_wrong_shape`, `missing_contract_citation`,
+`invalid_contract_citation`, or `contract_not_installed`.
+
+For `status`, `doctor`, `ls`, `show`, and `current`, all command output is on
+stdout as the one JSON object described here; these commands write nothing to
+stderr. Exit 0 means the requested projection completed, exit 1 means Git
+acquisition failed (or `doctor` found structural issues), and exit 2 means the
+projection is incomplete or deliberately unsupported. Usage errors remain
+command-line errors and may use stderr; `archive init` retains its separate
+initialization interface.
+
+In addition to `status`, `archive status` returns exactly `archive_id`, `spec`,
+`context_present`, and `record_count`. `archive ls` returns those fields and
+`records`, an array of closed objects containing exactly `revision_id`,
+`object_id`, `shape`, and `path`. `archive show <object-or-revision>` returns
+the status fields plus `selector` and `records`; the latter
+contains the raw stored record values that match the selector. After a complete
+read, no match is the complete empty answer, not an incomplete read. `archive
+doctor` returns the status fields plus `issues`, `doctor_issue_count`,
+`coverage`, `contracts`, and `current`; its coverage and check objects are
+closed and explain checks which were not run. An incomplete response adds
+`issues` to the normal command fields. A failed acquisition contains only
+`status` and `issues`. `current` is deliberately unsupported until each contract
+defines a current rule: it MUST print exactly the error string
+`unsupported: no current rule is defined` in a closed object containing exactly
+`status` equal to `unsupported` and that `error` field, then exit 2.
+
+These commands are projections only. They MUST NOT write the archive, create a
+cache, choose a current claim, or treat unreadable evidence as absent (INV-4,
+INV-7, INV-18, INV-24).
+
+### D-11. Musical works and performance correspondence (ADR 0042)
+
+Specification 0.0.3 installs the entity kind `musical_work` and two closed
+claim contracts, each version 1:
+
+- `archive.claim/performance_work` has an empty payload and exactly two
+  references: `performance` and `work`. Both MUST pin an exact revision. The
+  `performance` reference MUST target a Claim revision; the `work` reference
+  MUST target an Entity revision with kind `musical_work`. This is a
+  structural check and does not establish the meaning or truth of the target
+  performance claim. A reader MUST preserve the claim and its provenance, and
+  MUST NOT treat the target as a performance unless its own contract supports
+  that interpretation.
+- `archive.claim/work_musicbrainz_correspondence` has a closed payload with
+  `external_work`, a canonical `https://musicbrainz.org/work/<MBID>` URI, and
+  `mapping`, either `skos:exactMatch` or `skos:closeMatch`. Its one `work`
+  reference MUST pin an exact `musical_work` Entity revision.
+
+Each claim has an opaque object ID supplied by its proposer, independent of
+the work IDs and external URI. These claims do not define `current`; readers
+show competing claims and assessments without selecting a winner. World may
+map SKOS catalogue concepts for the local and MusicBrainz works, but MUST NOT
+assert `owl:sameAs` or merge their Archive object identities. Neither contract
+settles the current rule, admits external source content, or defines a general
+MusicBrainz collection policy.
+
+These contract bundles use the root schema annotation
+`x-archive-reference-targets`, which maps a reference role to a closed target
+rule containing `shape` (`claim` or `entity`) and an optional entity `kind`.
+Door checks the rule against the exact committed revision named by the
+reference. This annotation is part of Archive's closed contract profile; it
+does not add fields to records or make target claims true.
+
+### D-12. Audio selections and song occurrences (ADRs 0044 and 0045)
+
+Specification 0.0.4 installs version 1 claim contracts
+`archive.claim/audio_selection` and `archive.claim/song_occurrence`, and
+version 2 of `archive.claim/performance_work`. Every older contract bundle
+remains installed with its exact earlier bytes.
+
+An audio selection MUST have a nonempty ordered `pieces` payload. Each piece
+MUST contain exactly integer `start_sample`, `end_sample`, and `sample_rate`.
+The start MUST be nonnegative, the end MUST exceed the start, and the sample
+rate MUST be positive. The Claim MUST have exactly one `piece` reference per
+payload piece, in the same array position. Every such reference MUST pin an
+exact committed Artifact revision. A selection MAY repeat an Artifact or
+cross Artifact boundaries. Door does not claim that the bounds fit the audio
+bytes without separate admitted duration evidence. A correction to the same
+intended excerpt MUST supersede its previous selection revision; a different
+excerpt MUST have another object identity.
+
+A song occurrence MUST have an empty payload and one or more exact `selection`
+references to audio selection Claim revisions. These references MUST be
+unique and sorted by object ID and revision ID because membership has no
+semantic order. Two concurrent capture perspectives of one rendition MAY
+belong to one occurrence; separate takes MUST have separate occurrence
+identities. An occurrence revision MUST change explicitly when its selection
+pins change. A single selection MUST NOT produce an occurrence merely because
+it has a title; the operator must assert a rendition or link it to a durable
+Work.
+
+`archive.claim/performance_work` version 2 retains the version 1 payload and
+reference roles but requires its `performance` reference to pin a Claim citing
+the song-occurrence version 1 contract. Version 1 remains a structural Claim
+target check and MUST NOT be read as proof of a song occurrence. World MUST
+preserve the exact Claim revisions, their attribution, and disagreement; it
+MUST NOT choose current relations without per-kind current rules.
+
+The contract profile extends `x-archive-reference-targets` with Artifact
+shape, repeated roles (`many: true`), and a Claim target's exact `contract`
+identifier and version. `x-archive-ordered-sample-spans` names the payload
+array, reference role, and sample-bound fields Door checks in index order.
+`x-archive-unique-sorted-refs` names a repeated role Door checks for unique,
+canonical membership. These root-only rules are closed; unknown or malformed
+rules MUST be refused, and generic JSON Schema success alone MUST NOT bypass
+them. This section defines no PWA gesture, annotation outcome, or `current`
+rule.
+
+### D-13. Review application contracts (ADR 0048)
+
+Specification 0.0.5 installs version 2 of `archive.claim/audio_selection` and
+version 1 of `archive.claim/capture_alignment`, `archive.claim/selection_kind`,
+`archive.claim/selection_title`, `archive.claim/artist_credit`,
+`archive.assessment/judgment`, `archive.transition/publication_approval`,
+`archive.transition/publication_withdrawal`, and `archive.claim/session_parts`,
+with version 2 of `archive.claim/song_occurrence` and version 3 of
+`archive.claim/performance_work`. Every older contract bundle remains
+installed with its exact earlier bytes, and an audio selection version 1
+remains valid as a single-track selection.
+
+**Occurrences of multi-source selections.** A song occurrence version 2 is a
+song occurrence version 1 whose `selection` references MUST pin
+`archive.claim/audio_selection` version 2 Claim revisions. A
+`performance_work` version 3 is version 2 whose `performance` reference MUST
+pin a song occurrence version 2 Claim revision. The earlier versions keep
+their own targets: an occurrence version 1 groups version 1 selections, and
+`performance_work` version 2 links an occurrence version 1.
+
+**Multi-source selections.** A version 2 audio selection MUST have a nonempty
+`tracks` payload. Each track MUST have a nonempty ordered `pieces` array of
+spans with exactly integer `start_sample`, `end_sample`, and `sample_rate`,
+where `0 <= start_sample < end_sample` and the rate is positive. All tracks
+denote the same moment captured by different sources. The Claim MUST have
+exactly one `piece` reference per span, in track-then-span order, and each
+MUST pin an exact Artifact revision. Within one track, a span that pins the
+same Artifact object as the span before it MUST start at or after that span's
+end. No content digest MAY appear in two tracks of one selection: bit-identical
+recordings are one source. Optional `alignment` references MUST pin
+`archive.claim/capture_alignment` version 1 Claim revisions that the selection
+relied on.
+
+**Clock alignment.** A capture alignment MUST pin exactly one `reference` and
+one `aligned` Artifact revision of different Artifact objects, and MAY pin one
+`run` Claim revision. Its payload MUST contain exactly `reference_rate` and
+`aligned_rate` (positive integer nominal sample rates), a nonempty `anchors`
+array, a nonnegative integer `max_error_samples`, and a `method` with a
+non-empty `id` (at most 200 characters) and `version` (at most 100). Each
+anchor pairs a `reference_sample` with the `aligned_sample` recorded at the
+same instant; anchors MUST strictly increase in both. Between consecutive
+anchors the mapping is linear. Beyond the outer anchors it extends with the
+nearest segment's slope, or, with one anchor, at the nominal rate ratio. A
+consumer that needs one sample rounds half to even. Competing alignments
+coexist; none is current.
+
+**Selection facts.** `selection_kind`, `selection_title`, and `artist_credit`
+each MUST pin exactly one `archive.claim/audio_selection` version 2 Claim
+revision in role `selection`. A kind is one of `original`, `cover`,
+`improvisation`, `noodle`, `talking`, `transition`, `incomplete`, or
+`unknown`. A title has 1 to 200 characters and never identifies a Work. An
+artist credit has an empty payload and 1 to 12 `artist` references, each
+pinning an Entity revision of kind `person` or `organisation`; their order is
+the credit order, and no Entity object MAY appear twice.
+
+**Judgments.** An `archive.assessment/judgment` is an assessment whose one
+`assessment_of` reference pins an exact Claim revision of any contract. Its
+payload has a `verdict` of `affirmed`, `rejected`, or `withdrawn`, and an
+optional `reason` of 1 to 2,000 characters. It never rewrites what it judges.
+
+**Publication.** A publication approval pins one `authorizer` person Entity
+revision and one or more `covers` Claim revisions; its payload names one
+`destination` (1 to 200 characters) and a `decision` of `approve` or
+`hold_back`. A publication withdrawal pins one `authorizer` person Entity
+revision and the one `publication_approval` version 1 Claim revision it
+`withdraws`, with an optional `reason`. These are transition contracts:
+`door transition` commits them under the manifest, lock, expected-head, and
+single-commit rules of the earlier transitions, and `door admit` MUST refuse
+them (ADR 0051). The `authorizer` MUST pin the current revision of the active
+operator's appointed person Entity; the envelope `agent` may differ. Every
+`covers` reference MUST pin its object's current head, and `expected_heads`
+MUST name each covered object. A `hold_back` decision passes the same checks
+and withdraws nothing. A withdrawal MUST pin an existing approval revision
+that no earlier withdrawal names. Door records `destination` exactly and does
+not check it against policy.
+
+**Sessions and songs.** A rehearsal session is an Entity of kind
+`recording_session`; its `label` is its name, and renaming it is a new
+revision of that Entity. Its identity name is `session-` followed by the
+lowercase hexadecimal SHA-256 of its first part's content, in namespace
+`archive.audio/session`. `archive.claim/session_parts` has an empty payload,
+exactly one `session` reference pinning a `recording_session` Entity revision,
+and one or more `part` Artifact revisions in recording order, with no Artifact
+object twice. A song first identified by a review application is an Entity of
+kind `musical_work` whose identity name is `song-` followed by a lowercase
+RFC 9562 UUIDv4, in namespace `archive.audio/song`. Door validates these
+identities by the general rules of ADR 0026; the name forms are obligations on
+the proposer.
+
+**Profile rules.** A reference target MAY name `kinds`, a nonempty set of
+Entity kinds, in place of `kind`; it MAY be repeated with `many`. A target
+rule constrains the references present; how many references a role needs is
+stated by the schema. `x-archive-track-sample-spans` names the track array,
+its span array, the span reference role, and the sample-bound fields.
+`x-archive-distinct-track-content` names the span reference role whose
+Artifact content digests MUST be distinct across tracks.
+`x-archive-monotonic-anchors` names an array and two integer fields that MUST
+both strictly increase. `x-archive-distinct-refs` names roles whose references
+MUST name different objects. `x-archive-ordered-distinct-refs` names a role
+whose references keep their order and MUST name different objects. The JSON
+Schema keyword `maxLength` counts Unicode code points. These rules are closed
+and root-only like the earlier profile rules, and a generic schema success
+MUST NOT bypass them. This section defines no `current` rule.
+
+### D-14. V2 migration route (ADR 0049)
+
+Specification 0.0.5 also installs version 1 of
+`archive.migration/translation`, `archive.migration/selection_translation`,
+and `archive.claim/work_match`. Translated V2 evidence uses the native claim
+contracts of D-12 and D-13; a translation record carries its provenance.
+
+A translation MUST pin one or more `translated` Claim revisions or
+`translated_assessment` Assessment revisions, and exactly one
+`migration_source` Artifact revision: the frozen migration bundle. Its
+payload has a `rule` naming one of `v2-song-performance/1`,
+`v2-performance-review/1`, `v2-performance-kind/1`, `v2-performance-title/1`,
+`v2-performance-artists/1`, or `v2-operator-identification/1`; a closed
+`locator` (`member`, `member_sha256`, `offset`, `length`, record `sha256`); a
+`source` naming the V2 `schema`, `id`, and optional `revision_id`; and an
+optional `part_position`, a positive integer. A selection translation MUST pin
+exactly one `translated` audio selection version 2 Claim revision and one
+`migration_source` Artifact revision. Its payload has rule
+`v2-audio-segment-chain/1`, the same locator and source, the `chain_root` and
+nonnegative `chain_position` of ADR 0047 rule 1, `source_seconds` with `start`
+and `end` as exact decimal text of at most six decimal places, the sample-rate
+`probe` (`tool`, `tool_version`, positive `sample_rate`), and
+`boundary_rule` `round-half-even/1`. A translation and the records it pins are
+proposed in one admission batch; a contract reference MAY pin an earlier
+record of the same batch, as any reference may.
+
+A work match MUST pin exactly one `occurrence` and one or more `corpus` song
+occurrence version 2 Claim revisions, which MUST name different objects;
+exactly one `musical_work` Entity revision as `work`; an optional
+`parameters` Artifact revision; and exactly one `run` Claim revision. Its
+payload has the `method` (`id`, `version`), the `score` as exact signed
+decimal text, its `scale`, and a `direction` of `higher_is_closer` or
+`lower_is_closer`. Version 1's `run` target is any Claim, so no proposer can
+satisfy a version 1 match's provenance; D-15 defines the run contract and a
+work match version 2 that pins it. Implementations MUST NOT read a match of
+either version as identity or as current.
+
+These bundles extend the contract profile with the reference target shape
+`assessment`. The pattern subset Door evaluates is: anchored patterns of
+literals, escaped metacharacters, ASCII character classes without negation,
+groups with alternation, and the quantifiers `?`, `*`, `+`, `{n}`, and
+`{n,m}`; any other syntax MUST be refused when the bundle is loaded.
+
+### D-15. Derivation runs, audio facts, and upgrades (ADRs 0064 to 0068)
+
+Specification 0.0.7 installs version 1 of `archive.claim/derivation_run`,
+`archive.claim/audio_stream`, `archive.claim/span_suggestions`, and
+`archive.transition/specification_upgrade`, and version 2 of
+`archive.claim/work_match` and `archive.claim/capture_alignment`. Every older
+contract bundle remains installed with its exact earlier bytes. The layout,
+the entity kinds, and the core context are those of 0.0.6.
+
+**Derivation runs.** A derivation run is a Claim describing one execution of
+one method. Its payload MUST contain exactly `method`, with an `id` of 1 to 200
+characters and a `version` of 1 to 100; `software`, an array of 0 to 32
+objects of exactly `name` (1 to 200 characters) and `version` (1 to 100),
+naming the programs and libraries whose behaviour the output depends on, in
+the order the tool reports them; and `started_at` and `ended_at`, RFC 3339
+instants in UTC with a `Z` suffix. `ended_at` MUST NOT be earlier than
+`started_at`. A run MAY pin any number of `used` references, each to an
+Artifact, Claim, or Entity revision the run read, and at most one
+`parameters` reference to the Artifact revision holding the run's
+configuration as canonical JSON. Presets, thresholds, and prompts MUST be in
+that Artifact, never in a run or output payload. The envelope `agent` MUST be
+the tool's Package URL. A run's identity name is `run-` followed by a
+lowercase RFC 9562 UUIDv4, in namespace `archive.derivation/run`, so every run
+is a new object. A claim a run made pins it in role `run`. A run and its
+outputs MUST be proposed in one admission batch, and a run that keeps no
+output MUST NOT be proposed. The `agent` form, the name form, and the batch
+rule are obligations on the proposer; Door checks the payload, the instants,
+and the reference targets.
+
+**Audio stream facts.** An audio stream Claim states the facts of one audio
+stream. It MUST pin exactly one `artifact` Artifact revision and exactly one
+`run` derivation run version 1 Claim revision. Its payload MUST contain exactly
+`stream_index`, the stream's zero-based index in its container; `codec`, 1 to
+100 characters as the probing method reports it; `sample_rate`, a positive
+integer in hertz; `channel_count`, an integer from 1 to 64; `sample_count`, a
+positive integer, the exact number of sample frames decoded at `sample_rate`;
+and, optionally, `bits_per_sample`, an integer from 1 to 64. A method that
+cannot count every frame MUST NOT propose a stream claim. A file with several
+audio streams has one claim per stream. Claims of different runs may
+disagree; all of them remain and none is current.
+
+**Span suggestions.** A span suggestions Claim holds one run's suggested spans
+for one source. It MUST pin exactly one `source` Artifact revision, exactly one
+`stream` audio stream version 1 Claim revision whose `artifact` reference pins
+that same Artifact object and revision, and exactly one `run` derivation run
+version 1 Claim revision. Its payload MUST contain exactly `sample_rate`, equal
+to the stream claim's `sample_rate`, and `spans`, 1 to 10,000 objects of
+exactly integer `start_sample` and `end_sample` and a `class` of `music`,
+`talk`, `quiet`, or `unknown`. Every span MUST satisfy
+`0 <= start_sample < end_sample <= sample_count`, where `sample_count` is the
+pinned stream claim's, and every span MUST start at or after the previous
+span's end. A suggestion is never a selection: it accepts no audio and names
+no excerpt. A suggestion is never current, and a later run's suggestions do
+not supersede an earlier run's.
+
+**Matches and alignments.** `archive.claim/work_match` version 2 is version 1
+with two changes: its `run` reference MUST pin a derivation run version 1
+Claim revision, and the compared audio MUST be exactly one reference, either
+in role `occurrence`, pinning a song occurrence version 2 Claim revision, or
+in role `selection`, pinning an audio selection version 2 Claim revision. Its
+`corpus`, `work`, and `parameters` references, its payload, and the rule that
+`occurrence` and `corpus` references name different objects are unchanged.
+`archive.claim/capture_alignment` version 2 is version 1 whose optional `run`
+reference MUST pin a derivation run version 1 Claim revision. Version 1 of
+both remains installed with its exact bytes. A new match of an occurrence or
+a selection MUST cite version 2 (D-16 adds version 3, which compares a window
+of suggested spans): Door checks a version 1 match only structurally, as
+before, and does not refuse one whose `run` pins any Claim. A match never establishes a Work.
+
+**Specification upgrade.** An `archive.transition/specification_upgrade`
+version 1 Claim moves an archive from its current specification to a named
+later one. Its payload MUST contain exactly `from` and `to`, each
+`archive/<version>`. It MUST pin exactly one `authorizer` person Entity
+revision, which MUST be the current revision of the active operator's
+appointed person. Door MAY commit an upgrade only when `from` is the archive's
+specification and `to` names a later version whose catalog contains every
+bundle of the current catalog with identical bytes, whose layout equals the
+archive's layout, and whose core context defines every term the current one
+defines, with the same mapping; any other upgrade MUST be refused as
+unsupported. A committed upgrade MUST, in one commit under the archive lock,
+verify each added bundle against the target catalog, install it under its
+digest path, record the new version where the archive records its version,
+and write the transition record citing the upgrade bundle. Expected heads,
+author, and authorizer are checked as for every transition, a complete retry
+changes nothing, and no downgrade exists. `door admit` MUST refuse the
+contract as it refuses every transition contract, and a Door without an
+upgrade handler MUST refuse every upgrade proposal as an unsupported
+transition.
+
+**Terms.** The payload field `software` and the reference roles `artifact` and
+`source` are core terms; these contracts' context fragments do not redefine
+them. Each fragment maps its own payload fields and roles; `run` maps to
+`prov:wasGeneratedBy`, `used` to `prov:used`, and `started_at` and `ended_at`
+to `prov:startedAtTime` and `prov:endedAtTime`.
+
+**Profile rules.** A reference target MAY name `shapes`, a set of at least two
+record shapes, in place of `shape`; a reference in that role MUST pin a
+revision of one of them. `x-archive-ordered-instants` names two payload
+fields, `start` and `end`, that MUST be RFC 3339 instants in UTC with a `Z`
+suffix, the second not earlier than the first. `x-archive-sequential-spans`
+names a nonempty payload array and its integer `start` and `end` fields; every
+element MUST have `0 <= start < end` and MUST start at or after the previous
+element's end. `x-archive-target-measure` names a `role` whose one reference
+pins a Claim, a `rate` field whose value in this payload MUST equal its value
+in the pinned Claim's payload, the pinned Claim's `count` field, and a
+`payload` array whose `end` fields MUST NOT exceed that count.
+`x-archive-same-subject` names a `role` whose one reference pins a Claim, a
+`subject` role of that Claim, and an `equals` role of this record; the pinned
+Claim's one `subject` reference and this record's one `equals` reference MUST
+pin the same object and revision. The roles these two rules name MUST have a
+reference target rule for exactly one Claim. The JSON Schema keyword `maximum`
+is supported. These rules are closed and root-only like the earlier profile
+rules: an unknown or malformed rule MUST be refused when the bundle loads, and
+a generic schema success MUST NOT bypass them. This section defines no
+`current` rule.
+
+### D-16. Work matches over a window of suggested spans (ADR 0072)
+
+Specification 0.0.8 installs version 3 of `archive.claim/work_match`. Every
+0.0.7 contract bundle remains installed with its exact bytes, including
+version 2 of `archive.claim/work_match`, and the layout, the entity kinds, and
+the core context are those of 0.0.7. The release is additive, so a 0.0.7
+archive adopts it by the specification upgrade of D-15.
+
+**Window matches.** A work match version 3 compares a window of one span
+suggestions Claim with the occurrences of one Work. It MUST pin exactly one
+`suggestions` reference to a span suggestions version 1 Claim revision,
+exactly one `work` reference to a `musical_work` Entity revision, one or more
+`corpus` references to song occurrence version 2 Claim revisions that name
+different objects, exactly one `run` reference to a derivation run version 1
+Claim revision, and at most one `parameters` Artifact revision. Its payload
+MUST contain exactly the version 2 fields `method`, `score`, `scale`, and
+`direction`, with their version 2 rules, and `sample_rate`, a positive
+integer equal to the pinned suggestions' `sample_rate`, and `window`, an
+object of exactly integer `start_sample` and `end_sample`. `start_sample`
+MUST equal the `start_sample` of one span of the pinned suggestions, and
+`end_sample` MUST equal the `end_sample` of that span or of a later one, so a
+window is a run of whole suggested spans within the stream they were measured
+against. A window is a suggestion like the spans it is cut from: it accepts no
+audio and names no excerpt, and a person accepts audio by proposing an audio
+selection. Version 2 remains the form for a match of a whole occurrence or
+selection; neither version supersedes the other. A match never establishes a
+Work, and implementations MUST NOT read a match as identity or as current.
+
+**Terms.** The fragment maps `suggestions` to `arch:compared_suggestions`,
+`window` to `arch:window`, and `sample_rate`, `start_sample`, and
+`end_sample` to the terms span suggestions version 1 uses; its other terms
+are those of version 2.
+
+**Profile rule.** `x-archive-span-window` names a `role` whose one reference
+pins a Claim, a `rate` field whose value in this payload MUST equal its value
+in the pinned Claim's payload, a `payload` object of this record with integer
+fields `start` and `end`, and a `spans` array of the pinned Claim whose
+elements have integer `start` and `end` fields. The `start` of this record's
+object MUST equal the `start` of some element of that array, and its `end`
+MUST equal the `end` of that element or of a later one. The role MUST have a
+reference target rule for exactly one Claim, and `start` and `end` MUST name
+different fields. The rule is closed and root-only like the earlier profile
+rules: an unknown or malformed rule MUST be refused when the bundle loads,
+and a generic schema success MUST NOT bypass it. The existing
+`x-archive-ordered-distinct-refs` rule keeps the `corpus` references
+distinct. This section defines no `current` rule.
+
+### D-17. Chords, meter, contributions, and band membership (ADRs 0077 and 0078)
+
+Specification 0.0.9 installs version 1 of `archive.claim/chord_stacks`,
+`archive.claim/chord_sequence`, `archive.claim/meter_layers`,
+`archive.claim/contribution`, and `archive.claim/band_membership`. Every 0.0.8 contract bundle remains
+installed with its exact bytes, and the layout is `archive/2`. The core
+context is that of 0.0.8 with the Entity kinds `release` and `recording`
+added (D-8); it drops and changes no term, so the release is additive and a
+0.0.8 archive adopts it by the specification upgrade of D-15. None of these
+contracts defines a `current` rule, and none is current by kind or asserter.
+
+**Asserted from the audio and from documents.** A chord stacks or meter
+layers Claim is one asserter's reading of one audio stream. It MUST pin
+exactly one `source` Artifact revision, the audio whose samples it counts;
+exactly one `stream`, an audio stream version 1 Claim revision whose
+`artifact` reference pins that same Artifact object and revision; at most one
+`run`, a derivation run version 1 Claim revision, which a machine's claim
+pins; at most one `document`, the Artifact revision of an outside source's
+bytes; and zero to eight `analysed` Artifact revisions, audio the asserter
+analysed in place of the source, such as a separated stem, whose samples
+share the source's timeline. A chord stacks Claim MAY also pin at most one
+`sequence`, a chord sequence version 1 Claim revision an alignment placed on
+this recording, and zero to eight `corrects`, chord stacks version 1 Claim
+revisions it corrects. Its payload's `sample_rate` MUST equal the stream's,
+and no span, bar, or beat ends after the stream's `sample_count`. A claim
+that pins a `document` or a `sequence` MUST state `alignment`, an object of
+`method` (1 to 200 characters; `manual` for a person's placement) and
+optional integer `max_error_samples` of at least 0, and any other MUST NOT. A
+claim that pins a `document` MAY give `document_url`, an `http` or
+`https` URL of at most 2,000 characters drawn from the characters RFC 3986
+allows (letters, digits, and `-._~:/?#[]@!$&'()*+,;=%`); and its spans or
+bars MAY carry a `locator`, the document's own numbering. A claim that pins
+no document MUST NOT have either. The URL says where the document came
+from; the pinned Artifact is the evidence. Pitch classes are integers 0 to
+11, C = 0, in twelve-tone equal temperament.
+
+**Chord stacks.** The payload MUST contain `sample_rate` and `spans`, and MAY
+contain `part` (1 to 100 characters naming the part described),
+`weight_scale` (1 to 200 characters naming what weights mean), `hold_rule`,
+`alignment`, and `document_url`. `spans` holds 1 to 10,000 objects of
+integer `start_sample` and `end_sample`, `readings`, and optional `end`,
+`entry`, and `locator` (integer `bar` and optional `beat`, each at least 1);
+every span MUST satisfy `0 <= start_sample < end_sample` and start at or
+after the previous span's end. A span's `end` is `asserted` (also when
+absent) or `held`: the source gave only a start and the asserter held the
+chord by its own rule, which the payload states as `hold_rule` (1 to 500
+characters) exactly when some span is held. A held end is weaker evidence of
+where the chord stops than an asserted one. A span's `entry`, allowed only
+when the claim pins a `sequence`, is the 0-based position of the sequence
+entry it was placed from and MUST be a position in that sequence's
+`entries`. `readings` holds 1 to 16 distinct readings in the asserter's order
+of preference, each exactly one of:
+
+- a stack: `bass`, a pitch class; `tones`, 0 to 12 pitch classes in strictly
+  ascending order, the classes sounding above the bass; optional `root`, a
+  pitch class that need not sound; optional `uncertain`, 1 to 4 groups of
+  `pitch_classes` (strictly ascending) and `present`, where `exactly_one`
+  needs 2 to 12 classes and `maybe` 1 to 12; and optional `voicing`, 1 to 32
+  strictly ascending MIDI note numbers 0 to 127. No uncertain class is the
+  bass, a tone, or in another group, and the groups are in ascending order of
+  their `pitch_classes` compared item by item. The voicing's lowest note's
+  class is the bass, and the classes of its other notes include every tone
+  and nothing outside the tones and uncertain classes;
+- no chord: `no_chord`, which MUST be `true`;
+- text only: the source's `text`, uninterpreted.
+
+Every form MAY carry `text` (1 to 200 characters, the source's symbol
+verbatim), and carries `weight`, exact decimal text, exactly when the payload
+states `weight_scale`. A weight compares readings within its own claim only.
+A chord stacks claim MAY also pin at most one `contribution`, a contribution
+version 1 Claim revision saying whose part the stacks describe (ADR 0078).
+A correction is its own claim citing in `corrects` what it corrects; it
+replaces nothing. Names (Harte strings, lead-sheet symbols) are computed
+views and never stored.
+
+**Chord sequences.** A chord sequence Claim holds chords in a source's
+written order with no times. It MUST pin at least one of a `work`, a
+`musical_work` Entity revision, and a `document` Artifact revision, and MAY
+pin at most one `run` and zero to eight `corrects`, chord sequence version 1
+Claim revisions it corrects. It pins no audio and its payload has no
+`sample_rate` and no `alignment`. Its payload MUST contain `entries` and MAY
+contain `part`, `weight_scale`, `document_url` (with a document only), and
+`repeats`. `entries` holds 1 to 10,000 objects of `readings` (as a chord
+span's, with the same weight rule), optional `section` (1 to 100 characters,
+the source's section label), and optional `locator` (with a document only):
+an integer `line` and at most one of integer `word`, `syllable`, or `column`,
+each at least 1. Located entries MUST NOT go backwards in the document,
+compared by line and then by the word, syllable, or column given (0 when
+none). `repeats` holds 0 to 1,000 objects of integer `first` and `last`,
+positions in `entries` with `first <= last`, and `times` (2 to 999); they
+MUST be distinct and in order of `first`, the longer of two with the same
+`first` first, and two ranges MUST nest or be apart, never cross. A sequence
+holds no lyric text: a locator points into the document.
+
+**Meter layers.** The payload MUST contain `sample_rate` and `layers`, and MAY
+contain `modulations`, `alignment`, and `document_url`. `layers` holds 1 to 8
+simultaneous layers, none primary, each of optional `label` (1 to 100
+characters), optional `role` (`written` or `felt`; a claim with a `felt`
+layer MUST have a `written` one), and exactly one of `bars` and `beats`. A
+bars layer holds 1 to 10,000 bars, each starting at or after the end of the
+previous bar of its layer. A bar has integer `start_sample` and `end_sample`
+with `0 <= start_sample < end_sample`, `numerator` (1 to 64), `denominator`
+(1, 2, 4, 8, 16, 32, or 64), optional `grouping` (1 to 64 positive integers
+whose sum MUST equal the numerator), optional `beats`, and optional `locator`
+(integer `bar` of at least 1). A bar's `beats` holds the sample of each
+counted beat, one per group, or one per numerator unit without a grouping;
+the first MUST equal the bar's `start_sample`, each MUST be later than the
+one before, and every one MUST be before `end_sample`. A beat-only layer
+asserts no meter: `beats` holds 1 to 100,000 strictly ascending samples, each
+before the stream's `sample_count`; optional `downbeats` holds strictly
+ascending samples, each one of its `beats`; and optional `beat_unit` is a
+note value. `modulations` holds 0 to 10,000 links, distinct and in ascending
+order of `layer` and then `bar`, each of `layer` (the 0-based position of a
+bars layer), `bar` (the 0-based position of a bar in it, at least 1), and
+`kind`: an `equation` has `before` and `after` note values (`denominator`
+from the bar denominators and optional `dots`, 0 to 2), saying the note value
+before under the old tempo lasts as long as the one after under the new; a
+`regrouping` has `pulse_before` and `pulse_after`, note values of different
+lengths, saying every note value keeps its length and the felt pulse moves.
+The bar before `bar` MUST end where `bar` starts. The tempo ratio and tempo
+are derived, never stored.
+
+**Contributions.** A contribution Claim says that one contributor took part in
+one role in one scope. Its payload MUST contain `scope`, one of `work`,
+`release`, `recording`, `span`, or `channel`, and MAY contain `role`, `text`
+(1 to 1,000 characters, the credit exactly as the source printed it),
+`credited_as` (1 to 200 characters, the contributor's name as printed), the
+scope's fields below, and the asserter fields. It MAY pin at most one
+`contributor`, a `person` or `organisation` Entity revision, at most one
+`run`, a derivation run version 1 Claim revision, and at most one `document`
+Artifact revision. A `recording` reference MAY pin a `recording` Entity, an
+audio selection version 2 or song occurrence version 2 Claim, or an Artifact.
+Each scope MUST have exactly these other references and fields:
+
+| Scope | References | Payload |
+|---|---|---|
+| `work` | one `work`, a `musical_work` Entity | nothing more |
+| `release` | one `release`, a `release` Entity | nothing more |
+| `recording` | one `recording` | nothing more |
+| `span` | one `source` Artifact, one `stream`, at most one `recording` | `sample_rate` and `spans` |
+| `channel` | one `source` Artifact, at most one `stream`, at most one `recording` | optional `channel` |
+
+A `stream` MUST be an audio stream version 1 Claim revision whose `artifact`
+reference pins the `source` Artifact object and revision. A span claim's
+`sample_rate` MUST equal the stream's, and its `spans` hold 1 to 1,000 objects
+of exactly integer `start_sample` and `end_sample`, ordered and not
+overlapping as chord spans are, none ending after the stream's
+`sample_count`. A span claim that pins a document MUST state `alignment` as a
+chord stacks claim does, and one that pins none MUST NOT. A channel claim's
+`channel` is the 1-based index of one channel of a multichannel source; it
+needs a `stream`, and it MUST NOT exceed the stream's `channel_count`.
+
+`role` is a closed object of `type`, the name of a MusicBrainz relationship
+type for the entity pair the scope implies (artist-work for `work`;
+artist-release and place-release for `release`; artist-recording and
+place-recording for `recording` and `span`; artist-recording for `channel`),
+or the local type `label` for a release; and, as the type takes them,
+`attributes` (its MusicBrainz attributes, distinct and in ascending code
+point order), `instruments` (1 to 16 distinct
+`https://musicbrainz.org/instrument/<MBID>` URIs, required by `instrument`),
+and `vocals` (distinct MusicBrainz vocal attributes). The types, their
+attributes, and which take instruments or vocals are the scheme at the end
+of this section; the contract bundle encodes the same table. A claim without
+`role` MUST keep `text`. A claim without a contributor MUST have a `role`. A
+place type (`recorded at`, `mastered at`, and the other `... at` types) MUST
+NOT pin a contributor and MUST keep `text`, because no Entity kind holds a
+place yet. `credited_as` needs a contributor or a place type.
+
+The asserter fields are `confidence` (exactly `scale`, 1 to 200 characters,
+and `value`, exact decimal text, compared only within its scale),
+`document_url` (as above), `retrieved_at` (an RFC 3339 full date or a UTC
+instant with a `Z` suffix whose date is a calendar date), and `locator` (1 to
+200 characters naming where in the document). A claim that pins a document
+MUST keep `text`; `document_url`, `retrieved_at`, and `locator` MUST NOT
+appear without a document.
+
+**Band membership.** A band membership Claim states MusicBrainz's `member of
+band`. It MUST pin exactly one `band`, an `organisation` Entity revision, and
+exactly one `member`, a `person` Entity revision of a different object, and
+at most one `run` and one `document` as a contribution does. Its payload is a
+closed object that MAY contain `attributes` (distinct, ascending, from
+`additional`, `eponymous`, and `original`), `instruments` and `vocals` as a
+role's, `from` and `to` (partial dates `YYYY`, `YYYY-MM`, or `YYYY-MM-DD`
+naming a calendar year, month, or day from year 1), `ended` (`true`, only
+when `to` is absent), `text`, `credited_as`, and the asserter fields with the
+same document rules. The last day `to` can mean MUST NOT be before the first
+day `from` can mean.
+
+**Terms.** Each fragment maps its payload fields and roles; `run` maps to
+`prov:wasGeneratedBy`, `document` to `dcterms:source`, and `stream` to
+`arch:measured_stream` as in D-15. The roles `source`, `release`, and
+`recording` are core terms (`release` and `recording` also name the new
+kinds); no fragment redefines a core term. A meter layer's `role` and a
+modulation's `kind` are payload fields that share a core term's name; no
+fragment maps them.
+
+**JSON Schema keywords.** The evaluator also supports `anyOf` (a nonempty
+array of schemas, at least one of which the instance satisfies), `not`,
+`if` with optional `then` and `else` (a `then` or `else` without `if` is
+refused when the bundle loads), and `uniqueItems` (JSON equality). Every
+branch is evaluated, so a malformed branch is refused even when it does not
+decide the result.
+
+**Profile rules.** A path is a nonempty array of payload field names; every
+array met on the way is entered element by element, and a missing field
+reaches nothing.
+
+- A reference target rule MAY name `any`, at least two distinct ordinary
+  target rules, none naming `any` or `many`; a reference in the role MUST
+  satisfy one of them. `many` then belongs to the role.
+- `x-archive-sequential-spans` and `x-archive-target-measure` MAY name
+  `within`, a payload array whose elements each hold the rule's `payload`
+  array; order is then checked within each element, never across them,
+  every element of every such array is measured, and an element without the
+  array has nothing to check. They and
+  `x-archive-same-subject` MAY say `optional: true` (no other value): the
+  span rules then apply only when the payload has their array (or `within`),
+  and the same-subject rule only when the record has a reference in `role`.
+- `x-archive-ascending-items` names `paths` to arrays whose items MUST be all
+  integers in strictly ascending numeric order, or all strings in strictly
+  ascending code point order.
+- `x-archive-pitch-stacks` names a `payload` path to readings and the fields
+  `bass`, `tones`, `uncertain`, `classes`, and `voicing`; every reading with
+  a `bass` MUST satisfy the uncertain-tone and voicing rules stated for chord
+  stacks above.
+- `x-archive-bar-beats` names a `payload` path to bars and the fields
+  `start`, `end`, `numerator`, `grouping`, and `beats`, with the grouping and
+  beat rules stated for meter layers above.
+- `x-archive-metric-modulations` names the `payload` array of links, the
+  `layers` and `bars` arrays they address, the bar's `start` and `end`, the
+  link's `layer`, `bar`, `pulse_before`, and `pulse_after`, and the note
+  value's `denominator` and `dots`: each link addresses a bar after the first
+  of a layer that holds `bars`, that bar's predecessor ends where it starts,
+  links are distinct and in order, and a link with both pulses names note
+  values of different lengths.
+- `x-archive-subset` names a `payload` path and two arrays, `items` and
+  `of`: on every object reached, each value of `items` MUST be a value of
+  `of`.
+- `x-archive-target-samples` names a `role` whose one reference pins a Claim,
+  that Claim's integer `count`, and `paths`: every integer reached MUST be
+  less than `count`.
+- `x-archive-target-index` names a `role` whose one reference pins a Claim, a
+  `path`, and that Claim's payload array `array`: when the path reaches an
+  integer, the record MUST pin exactly one reference in `role`, and every
+  integer reached MUST be a position in `array`.
+- `x-archive-document-order` names a payload array `payload`, its elements'
+  `locator`, the locator's integer `line`, and `within`, the fields compared
+  after the line: elements with a locator MUST NOT go backwards.
+- `x-archive-nested-ranges` names a payload array `payload` of ranges with
+  integer `first` and `last` over the positions of the payload array `of`,
+  with the order and nesting rules stated for repeats above.
+- `x-archive-target-bound` names a `role` whose one reference pins a Claim, a
+  payload `field`, and that Claim's payload field `bound`: when the payload
+  has `field`, the record MUST pin exactly one reference in `role`, and
+  `field` MUST NOT exceed `bound`.
+- `x-archive-partial-dates` names payload `fields` whose values, when present,
+  begin with a calendar date written `YYYY`, `YYYY-MM`, or `YYYY-MM-DD` with a
+  year of at least 1 (what follows a `T` is the schema's to check), and
+  optionally `start` and `end`, two of those fields: the last day `end` can
+  mean MUST NOT be before the first day `start` can mean.
+
+Each rule names distinct fields, is closed and root-only like the earlier
+profile rules, and an unknown or malformed rule MUST be refused when the
+bundle loads; a generic schema success MUST NOT bypass it. No earlier
+bundle's rules change meaning: `within`, `optional`, and `any` are new keys.
+
+**The role scheme.** This is the vocabulary a contribution's `role` and a band
+membership's attributes and vocals draw from, as SKOS. Each role type is a
+concept whose notation is its name, in the scheme of its entity pair, and
+`skos:exactMatch` the MusicBrainz relationship type with that identifier, so
+a renamed MusicBrainz type keeps its meaning. `arch:takesAttribute`,
+`arch:takesInstruments`, and `arch:takesVocals` say what each type accepts.
+MusicBrainz's relationship types, attributes, and instruments are CC0 data,
+read from musicbrainz.org on 2026-10-18.
+
+```turtle
+@prefix arch: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix mbrel: <https://musicbrainz.org/relationship/> .
+
+arch:roles-artist-artist a skos:ConceptScheme ; skos:notation "artist-artist" .
+arch:role-artist-artist-member_of_band a skos:Concept ;
+  skos:inScheme arch:roles-artist-artist ;
+  skos:notation "member of band" ;
+  skos:exactMatch mbrel:5be4c609-9afa-4ea0-910b-12ffb71e3821 ;
+  arch:takesAttribute "additional", "eponymous", "original" ;
+  arch:takesInstruments true ;
+  arch:takesVocals true .
+
+arch:roles-artist-recording a skos:ConceptScheme ; skos:notation "artist-recording" .
+arch:role-artist-recording-arranger a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "arranger" ;
+  skos:exactMatch mbrel:22661fb8-cdb7-4f67-8385-b2a8be6c9f0d ;
+  arch:takesAttribute "additional", "associate", "co" .
+arch:role-artist-recording-audio a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "audio" ;
+  skos:exactMatch mbrel:ca8d6d99-b847-439c-b0ec-33d8a1b942bc ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-recording-balance a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "balance" ;
+  skos:exactMatch mbrel:0748fa55-56b5-4ad5-8ce8-15b97f82a0c2 ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-recording-chorus_master a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "chorus master" ;
+  skos:exactMatch mbrel:45115945-597e-4cb9-852f-4e6ba583fcc8 ;
+  arch:takesAttribute "additional", "assistant" .
+arch:role-artist-recording-concertmaster a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "concertmaster" ;
+  skos:exactMatch mbrel:ffeaa74f-8295-45ee-a2f2-7c0cc1f73b1e ;
+  arch:takesAttribute "guest" .
+arch:role-artist-recording-conductor a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "conductor" ;
+  skos:exactMatch mbrel:234670ce-5f22-4fd0-921b-ef1662695c5d ;
+  arch:takesAttribute "additional", "assistant" .
+arch:role-artist-recording-editor a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "editor" ;
+  skos:exactMatch mbrel:40dff87a-e475-4aa6-b615-9935b564d756 ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-recording-engineer a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "engineer" ;
+  skos:exactMatch mbrel:5dcc52af-7064-4051-8d62-7d80f4c3c907 ;
+  arch:takesAttribute "additional", "assistant", "associate", "co", "executive" .
+arch:role-artist-recording-field_recordist a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "field recordist" ;
+  skos:exactMatch mbrel:fc9b963a-29fa-4949-b22a-3bffd2440024 .
+arch:role-artist-recording-instrument a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "instrument" ;
+  skos:exactMatch mbrel:59054b12-01ac-43ee-a618-285fd397e461 ;
+  arch:takesAttribute "additional", "guest", "solo" ;
+  arch:takesInstruments true .
+arch:role-artist-recording-instrument_arranger a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "instrument arranger" ;
+  skos:exactMatch mbrel:4820daa1-98d6-4f8b-aa4b-6895c5b79b27 ;
+  arch:takesAttribute "additional", "associate", "co" ;
+  arch:takesInstruments true .
+arch:role-artist-recording-instrument_technician a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "instrument technician" ;
+  skos:exactMatch mbrel:e88fefc3-042b-4f28-83af-6a79793b630b ;
+  arch:takesInstruments true .
+arch:role-artist-recording-mix a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "mix" ;
+  skos:exactMatch mbrel:3e3102e1-1896-4f50-b5b2-dd9824e46efe ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-recording-orchestrator a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "orchestrator" ;
+  skos:exactMatch mbrel:38fa7405-f9a5-48cb-827a-8ac601933ba0 ;
+  arch:takesAttribute "additional" .
+arch:role-artist-recording-performer a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "performer" ;
+  skos:exactMatch mbrel:628a9658-f54c-4142-b0c0-95f031b544da ;
+  arch:takesAttribute "additional", "guest", "solo" .
+arch:role-artist-recording-performing_orchestra a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "performing orchestra" ;
+  skos:exactMatch mbrel:3b6616c5-88ba-4341-b4ee-81ce1e6d7ebb ;
+  arch:takesAttribute "additional" .
+arch:role-artist-recording-producer a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "producer" ;
+  skos:exactMatch mbrel:5c0ceac3-feb4-41f0-868d-dc06f6e27fc0 ;
+  arch:takesAttribute "additional", "assistant", "associate", "co", "executive" .
+arch:role-artist-recording-programming a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "programming" ;
+  skos:exactMatch mbrel:36c50022-44e0-488d-994b-33f11d20301e ;
+  arch:takesAttribute "additional", "assistant", "associate" ;
+  arch:takesInstruments true .
+arch:role-artist-recording-recording a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "recording" ;
+  skos:exactMatch mbrel:a01ee869-80a8-45ef-9447-c59e91aa7926 ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-recording-remixer a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "remixer" ;
+  skos:exactMatch mbrel:7950be4d-13a3-48e7-906b-5af562e39544 ;
+  arch:takesAttribute "additional", "assistant" .
+arch:role-artist-recording-sound a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "sound" ;
+  skos:exactMatch mbrel:0cd6aa63-c297-42ed-8725-c16d31913a98 ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-recording-vocal a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "vocal" ;
+  skos:exactMatch mbrel:0fdbe3c6-7700-4a31-ae54-b53f06ae1cfa ;
+  arch:takesAttribute "additional", "guest", "solo" ;
+  arch:takesVocals true .
+arch:role-artist-recording-vocal_arranger a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "vocal arranger" ;
+  skos:exactMatch mbrel:8a2799e8-a7e2-41ce-a7da-b5f520687216 ;
+  arch:takesAttribute "additional", "associate", "co" ;
+  arch:takesVocals true .
+
+arch:roles-artist-release a skos:ConceptScheme ; skos:notation "artist-release" .
+arch:role-artist-release-arranger a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "arranger" ;
+  skos:exactMatch mbrel:34d5334e-a4c8-4b65-a5f8-bbcc9c81d13d ;
+  arch:takesAttribute "additional", "associate", "co" .
+arch:role-artist-release-art_direction a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "art direction" ;
+  skos:exactMatch mbrel:f3b80a09-5ebf-4ad2-9c46-3e6bce971d1b ;
+  arch:takesAttribute "additional", "assistant" .
+arch:role-artist-release-audio a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "audio" ;
+  skos:exactMatch mbrel:b04848d7-dbd9-4be0-9d8c-13df6d6e40db ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-release-balance a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "balance" ;
+  skos:exactMatch mbrel:97169e5e-c978-486e-a5ea-da353ca9ea42 ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-release-booklet_editor a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "booklet editor" ;
+  skos:exactMatch mbrel:74518a6b-589d-460e-8dd7-a8383851040a .
+arch:role-artist-release-chorus_master a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "chorus master" ;
+  skos:exactMatch mbrel:b9129850-73ec-4af5-803c-1c12b97e25d2 ;
+  arch:takesAttribute "additional", "assistant" .
+arch:role-artist-release-compiler a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "compiler" ;
+  skos:exactMatch mbrel:2f81887a-8674-4d8b-bd48-8bfd4c6fa332 .
+arch:role-artist-release-conductor a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "conductor" ;
+  skos:exactMatch mbrel:9ae9e4d0-f26b-42fb-ab5c-1149a47cf83b ;
+  arch:takesAttribute "additional", "assistant" .
+arch:role-artist-release-copyright a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "copyright" ;
+  skos:exactMatch mbrel:730b5251-7432-4896-8fc6-e1cba943bfe1 .
+arch:role-artist-release-design a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "design" ;
+  skos:exactMatch mbrel:9c02ea37-7680-4fb5-8555-e330c7aa885b ;
+  arch:takesAttribute "additional", "assistant" .
+arch:role-artist-release-editor a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "editor" ;
+  skos:exactMatch mbrel:f30c29d3-a3f1-420d-9b6c-a750fd6bc2aa ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-release-engineer a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "engineer" ;
+  skos:exactMatch mbrel:87e922ba-872e-418a-9f41-0a63aa3c30cc ;
+  arch:takesAttribute "additional", "assistant", "associate", "co", "executive" .
+arch:role-artist-release-graphic_design a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "graphic design" ;
+  skos:exactMatch mbrel:cf43b79e-3299-4b0c-9244-59ea06337107 ;
+  arch:takesAttribute "additional" .
+arch:role-artist-release-illustration a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "illustration" ;
+  skos:exactMatch mbrel:a6029157-d96b-4dc3-9f73-f99f76423d11 ;
+  arch:takesAttribute "additional" .
+arch:role-artist-release-instrument a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "instrument" ;
+  skos:exactMatch mbrel:67555849-61e5-455b-96e3-29733f0115f5 ;
+  arch:takesAttribute "additional", "guest", "solo" ;
+  arch:takesInstruments true .
+arch:role-artist-release-instrument_arranger a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "instrument arranger" ;
+  skos:exactMatch mbrel:18f159bb-44f0-4aef-b198-a4736ad9b659 ;
+  arch:takesAttribute "additional", "associate", "co" ;
+  arch:takesInstruments true .
+arch:role-artist-release-instrument_technician a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "instrument technician" ;
+  skos:exactMatch mbrel:bd780597-0b67-4b97-a4a0-671a70e1182d ;
+  arch:takesInstruments true .
+arch:role-artist-release-lacquer_cut a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "lacquer cut" ;
+  skos:exactMatch mbrel:904e57f3-cbbc-43ab-8798-13e710e400d3 .
+arch:role-artist-release-licensor a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "licensor" ;
+  skos:exactMatch mbrel:eaaf08cf-a698-4e3b-a871-f9570f8fdab1 .
+arch:role-artist-release-liner_notes a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "liner notes" ;
+  skos:exactMatch mbrel:01323b4f-7aba-410c-8c91-cb224b963a40 ;
+  arch:takesAttribute "additional", "translator" .
+arch:role-artist-release-mastering a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "mastering" ;
+  skos:exactMatch mbrel:84453d28-c3e8-4864-9aae-25aa968bcf9e ;
+  arch:takesAttribute "additional", "assistant", "associate", "co", "pre", "re" .
+arch:role-artist-release-mix a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "mix" ;
+  skos:exactMatch mbrel:6cc958c0-533b-4540-a281-058fbb941890 ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-release-orchestrator a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "orchestrator" ;
+  skos:exactMatch mbrel:04e1f0b6-ef40-4168-ba25-42a87729fe09 ;
+  arch:takesAttribute "additional" .
+arch:role-artist-release-performer a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "performer" ;
+  skos:exactMatch mbrel:888a2320-52e4-4fe8-a8a0-7a4c8dfde167 ;
+  arch:takesAttribute "additional", "guest", "solo" .
+arch:role-artist-release-performing_orchestra a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "performing orchestra" ;
+  skos:exactMatch mbrel:23a2e2e7-81ca-4865-8d05-2243848a77bf ;
+  arch:takesAttribute "additional" .
+arch:role-artist-release-phonographic_copyright a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "phonographic copyright" ;
+  skos:exactMatch mbrel:01d3488d-8d2a-4cff-9226-5250404db4dc .
+arch:role-artist-release-photography a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "photography" ;
+  skos:exactMatch mbrel:0b58dc9b-9c49-4b19-bb58-9c06d41c8fbf ;
+  arch:takesAttribute "additional" .
+arch:role-artist-release-producer a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "producer" ;
+  skos:exactMatch mbrel:8bf377ba-8d71-4ecc-97f2-7bb2d8a2a75f ;
+  arch:takesAttribute "additional", "assistant", "associate", "co", "executive" .
+arch:role-artist-release-programming a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "programming" ;
+  skos:exactMatch mbrel:617063ad-dbb5-4877-9ba0-ba2b9198d5a7 ;
+  arch:takesAttribute "additional", "assistant", "associate" ;
+  arch:takesInstruments true .
+arch:role-artist-release-recording a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "recording" ;
+  skos:exactMatch mbrel:023a6c6d-80af-4f88-ae69-f5f6213f9bf4 ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-release-remixer a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "remixer" ;
+  skos:exactMatch mbrel:ac6a86db-f757-4815-a07e-744428d2382b ;
+  arch:takesAttribute "additional", "assistant" .
+arch:role-artist-release-sound a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "sound" ;
+  skos:exactMatch mbrel:271306ca-c77f-4fe0-94bc-dd4b87ae0205 ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-release-transfer a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "transfer" ;
+  skos:exactMatch mbrel:9fe3ca27-f9df-4e06-ab2d-84947f3f897e ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-release-vocal a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "vocal" ;
+  skos:exactMatch mbrel:eb10f8a0-0f4c-4dce-aa47-87bcb2bc42f3 ;
+  arch:takesAttribute "additional", "guest", "solo" ;
+  arch:takesVocals true .
+arch:role-artist-release-vocal_arranger a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "vocal arranger" ;
+  skos:exactMatch mbrel:d7d9128d-e676-4d8f-a353-f48a55a98501 ;
+  arch:takesAttribute "additional", "associate", "co" ;
+  arch:takesVocals true .
+
+arch:roles-artist-work a skos:ConceptScheme ; skos:notation "artist-work" .
+arch:role-artist-work-adapter a skos:Concept ;
+  skos:inScheme arch:roles-artist-work ;
+  skos:notation "adapter" ;
+  skos:exactMatch mbrel:89fff34a-2c51-4068-9709-50d6c6dd3d01 ;
+  arch:takesAttribute "additional" .
+arch:role-artist-work-arranger a skos:Concept ;
+  skos:inScheme arch:roles-artist-work ;
+  skos:notation "arranger" ;
+  skos:exactMatch mbrel:d3fd781c-5894-47e2-8c12-86cc0e2c8d08 ;
+  arch:takesAttribute "additional", "associate", "co" .
+arch:role-artist-work-composer a skos:Concept ;
+  skos:inScheme arch:roles-artist-work ;
+  skos:notation "composer" ;
+  skos:exactMatch mbrel:d59d99ea-23d4-4a80-b066-edca32ee158f ;
+  arch:takesAttribute "additional" .
+arch:role-artist-work-instrument_arranger a skos:Concept ;
+  skos:inScheme arch:roles-artist-work ;
+  skos:notation "instrument arranger" ;
+  skos:exactMatch mbrel:0084e70a-873e-4f7f-b3ff-635b9e863dae ;
+  arch:takesAttribute "additional", "associate", "co" ;
+  arch:takesInstruments true .
+arch:role-artist-work-librettist a skos:Concept ;
+  skos:inScheme arch:roles-artist-work ;
+  skos:notation "librettist" ;
+  skos:exactMatch mbrel:7474ab81-486f-40b5-8685-3a4f8ea624cb ;
+  arch:takesAttribute "additional" .
+arch:role-artist-work-lyricist a skos:Concept ;
+  skos:inScheme arch:roles-artist-work ;
+  skos:notation "lyricist" ;
+  skos:exactMatch mbrel:3e48faba-ec01-47fd-8e89-30e81161661c ;
+  arch:takesAttribute "additional" .
+arch:role-artist-work-orchestrator a skos:Concept ;
+  skos:inScheme arch:roles-artist-work ;
+  skos:notation "orchestrator" ;
+  skos:exactMatch mbrel:0a1771e1-8639-4740-8a43-bdafc050c3da ;
+  arch:takesAttribute "additional" .
+arch:role-artist-work-revised_by a skos:Concept ;
+  skos:inScheme arch:roles-artist-work ;
+  skos:notation "revised by" ;
+  skos:exactMatch mbrel:eeb9c319-9fde-4313-b76d-29db1576aad8 .
+arch:role-artist-work-translator a skos:Concept ;
+  skos:inScheme arch:roles-artist-work ;
+  skos:notation "translator" ;
+  skos:exactMatch mbrel:da6c5d8a-ce13-474d-9375-61feb29039a5 ;
+  arch:takesAttribute "additional" .
+arch:role-artist-work-vocal_arranger a skos:Concept ;
+  skos:inScheme arch:roles-artist-work ;
+  skos:notation "vocal arranger" ;
+  skos:exactMatch mbrel:6a88b92b-8fb5-41b3-aa1f-169ee7e05ed6 ;
+  arch:takesAttribute "additional", "associate", "co" ;
+  arch:takesVocals true .
+arch:role-artist-work-writer a skos:Concept ;
+  skos:inScheme arch:roles-artist-work ;
+  skos:notation "writer" ;
+  skos:exactMatch mbrel:a255bca1-b157-4518-9108-7b147dc3fc68 ;
+  arch:takesAttribute "additional" .
+
+arch:roles-label-release a skos:ConceptScheme ; skos:notation "label-release" .
+arch:role-label-release-label a skos:Concept ;
+  skos:inScheme arch:roles-label-release ;
+  skos:notation "label" .
+
+arch:roles-place-recording a skos:ConceptScheme ; skos:notation "place-recording" .
+arch:role-place-recording-arranged_at a skos:Concept ;
+  skos:inScheme arch:roles-place-recording ;
+  skos:notation "arranged at" ;
+  skos:exactMatch mbrel:ce8dbff2-0f07-45f3-8b7c-2ea40d82cbfe .
+arch:role-place-recording-edited_at a skos:Concept ;
+  skos:inScheme arch:roles-place-recording ;
+  skos:notation "edited at" ;
+  skos:exactMatch mbrel:069c1cf0-a9b2-448e-8486-1eced48b48f9 .
+arch:role-place-recording-engineered_at a skos:Concept ;
+  skos:inScheme arch:roles-place-recording ;
+  skos:notation "engineered at" ;
+  skos:exactMatch mbrel:f845a95e-b2b5-4a94-9645-fc8b031ab0bd .
+arch:role-place-recording-mixed_at a skos:Concept ;
+  skos:inScheme arch:roles-place-recording ;
+  skos:notation "mixed at" ;
+  skos:exactMatch mbrel:11d74801-1493-4a5d-bc0f-4ddc537acddb .
+arch:role-place-recording-produced_at a skos:Concept ;
+  skos:inScheme arch:roles-place-recording ;
+  skos:notation "produced at" ;
+  skos:exactMatch mbrel:6bc3827d-bc20-4621-ae14-9c3707ad140a .
+arch:role-place-recording-programmed_at a skos:Concept ;
+  skos:inScheme arch:roles-place-recording ;
+  skos:notation "programmed at" ;
+  skos:exactMatch mbrel:e9771fa3-57ce-41cd-895f-52e70ced99cd .
+arch:role-place-recording-recorded_at a skos:Concept ;
+  skos:inScheme arch:roles-place-recording ;
+  skos:notation "recorded at" ;
+  skos:exactMatch mbrel:ad462279-14b0-4180-9b58-571d0eef7c51 .
+arch:role-place-recording-remixed_at a skos:Concept ;
+  skos:inScheme arch:roles-place-recording ;
+  skos:notation "remixed at" ;
+  skos:exactMatch mbrel:88183045-b769-48ba-a55c-c58450903241 .
+
+arch:roles-place-release a skos:ConceptScheme ; skos:notation "place-release" .
+arch:role-place-release-edited_at a skos:Concept ;
+  skos:inScheme arch:roles-place-release ;
+  skos:notation "edited at" ;
+  skos:exactMatch mbrel:9b678c30-453a-47c4-8f69-9ba96b2c5e9c .
+arch:role-place-release-engineered_at a skos:Concept ;
+  skos:inScheme arch:roles-place-release ;
+  skos:notation "engineered at" ;
+  skos:exactMatch mbrel:b35aae66-5578-41d1-b34b-1c9b1897ad49 .
+arch:role-place-release-lacquer_cut_at a skos:Concept ;
+  skos:inScheme arch:roles-place-release ;
+  skos:notation "lacquer cut at" ;
+  skos:exactMatch mbrel:e87ae6d1-4453-4e73-aa29-86a6badc1f1d .
+arch:role-place-release-manufactured_at a skos:Concept ;
+  skos:inScheme arch:roles-place-release ;
+  skos:notation "manufactured at" ;
+  skos:exactMatch mbrel:3de9787f-c148-4b4f-b4bf-cb9a2616a092 .
+arch:role-place-release-mastered_at a skos:Concept ;
+  skos:inScheme arch:roles-place-release ;
+  skos:notation "mastered at" ;
+  skos:exactMatch mbrel:5d075afa-6bb8-4327-9528-e3e4d3d68f49 .
+arch:role-place-release-mixed_at a skos:Concept ;
+  skos:inScheme arch:roles-place-release ;
+  skos:notation "mixed at" ;
+  skos:exactMatch mbrel:8ebfc2f6-0ac7-40f6-b03e-67fe3428f5d4 .
+arch:role-place-release-pressed_at a skos:Concept ;
+  skos:inScheme arch:roles-place-release ;
+  skos:notation "pressed at" ;
+  skos:exactMatch mbrel:eabf5903-8467-4329-b905-7504336e8241 .
+arch:role-place-release-produced_at a skos:Concept ;
+  skos:inScheme arch:roles-place-release ;
+  skos:notation "produced at" ;
+  skos:exactMatch mbrel:1c73465d-9bf7-41f4-bcb6-fb1852ffa64c .
+arch:role-place-release-recorded_at a skos:Concept ;
+  skos:inScheme arch:roles-place-release ;
+  skos:notation "recorded at" ;
+  skos:exactMatch mbrel:3b1fae9f-5b22-42c5-a40c-d1e5c9b90251 .
+arch:role-place-release-remixed_at a skos:Concept ;
+  skos:inScheme arch:roles-place-release ;
+  skos:notation "remixed at" ;
+  skos:exactMatch mbrel:32af03cf-8879-4d07-b7c2-68c6cbf060bd .
+
+arch:vocals a skos:ConceptScheme ; skos:notation "vocals" .
+arch:vocal-alto_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "alto vocals" .
+arch:vocal-background_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "background vocals" .
+arch:vocal-baritone_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "baritone vocals" .
+arch:vocal-bass_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "bass vocals" .
+arch:vocal-bass-baritone_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "bass-baritone vocals" .
+arch:vocal-choir_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "choir vocals" .
+arch:vocal-contralto_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "contralto vocals" .
+arch:vocal-countertenor_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "countertenor vocals" .
+arch:vocal-lead_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "lead vocals" .
+arch:vocal-meane_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "meane vocals" .
+arch:vocal-mezzo-soprano_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "mezzo-soprano vocals" .
+arch:vocal-other_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "other vocals" .
+arch:vocal-soprano_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "soprano vocals" .
+arch:vocal-spoken_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "spoken vocals" .
+arch:vocal-tenor_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "tenor vocals" .
+arch:vocal-treble_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "treble vocals" .
+arch:vocal-whistling a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "whistling" .
+```
+
+## 7. Not yet defined
+
+This specification does not yet define, and implementations MUST NOT pretend it
+does:
+
+- the grammar of the policy language and its test fixtures;
+- the rule for "current" in each claim kind;
+- expunging records and their history, and erasing information derived from
+  destroyed content;
+- digest algorithm migration;
+- migration of an archive between specification versions, other than the
+  additive upgrade of D-15.
+
+## 8. Versioning
+
+The version follows `MAJOR.MINOR.PATCH`. Until 1.0.0, any release may change the
+requirements. After 1.0.0, a change that makes a previously conforming archive
+non-conforming requires a MAJOR increment.

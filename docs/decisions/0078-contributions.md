@@ -282,7 +282,7 @@ invariant, and hold no state outside the claims Door admits.
   release, or recording needs correspondence claims like the Work's.
 - [ADR 0048](0048-review-app-write-contracts.md): `artist_credit` stays as
   billing; judgments apply to contributions unchanged.
-- ADR 0077 (chord stacks and meter, on its own branch): the same reference
+- [ADR 0077](0077-chord-stacks-and-meter.md): the same reference
   pattern (`source`, `stream`, `run`, `document`, alignment), and the
   `contribution` reference above.
 

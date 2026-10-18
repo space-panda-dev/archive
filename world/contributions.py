@@ -3,11 +3,12 @@ the inherited MusicBrainz roles, and the resolved view that prefers a finer
 scope and says why.
 
 The two contracts, `archive.claim/contribution` version 1 and
-`archive.claim/band_membership` version 1, are decided by ADR 0078 and are not
-yet in a specification release, so Door cannot admit either. This module holds
-their rules as World will re-check them when it projects such a claim, so an
-importer can check a proposal before Door does; Door remains the authority
-(INV-2). It uses only the standard library.
+`archive.claim/band_membership` version 1, are decided by ADR 0078 and
+installed by specification 0.0.9 (D-17). This module holds their rules as
+World re-checks them when it projects such a claim, so an importer can check
+a proposal before Door does; Door remains the authority (INV-2), and a test
+feeds the same accepted and refused claims to both. It uses only the
+standard library.
 
 Roles are inherited, not invented (ADR 0012): a role's `type` is a MusicBrainz
 relationship type name for the entity pair its scope implies (artist-work,
@@ -15,10 +16,11 @@ artist-release, artist-recording, place-release, place-recording), its
 attributes and vocals are MusicBrainz relationship attribute names, and an
 instrument is a MusicBrainz instrument URI. MusicBrainz's relationship types,
 attributes, and instruments are CC0 data. The identifiers below were read from
-musicbrainz.org's relationship and attribute pages on 2026-10-18; the release
-that installs these contracts ships them as a SKOS scheme, and this table is
-then checked against it. The only local role is `label`, which MusicBrainz
-keeps as release data rather than as a relationship.
+musicbrainz.org's relationship and attribute pages on 2026-10-18;
+specification 0.0.9 ships them as a SKOS scheme (D-17), and
+world/tests/test_role_scheme.py checks this table against it and against the
+contract bundles. The only local role is `label`, which MusicBrainz keeps as
+release data rather than as a relationship.
 
 The resolved view is a computed view: regenerable, never stored, and never a
 judgment between claims (INV-7, INV-8). It never ranks asserters.
@@ -30,6 +32,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Iterable
+from urllib.parse import quote
 
 CONTRIBUTION = ("archive.claim/contribution", "1")
 BAND_MEMBERSHIP = ("archive.claim/band_membership", "1")
@@ -42,11 +45,11 @@ SCOPES = ("work", "release", "recording", "span", "channel")
 OBJECT_ID = re.compile(r"urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 REVISION_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
 INSTRUMENT = re.compile(r"https://musicbrainz\.org/instrument/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
-URL = re.compile(r"https?://[^\s]+\Z")
+URL = re.compile(r"https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+\Z")
 DECIMAL = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?\Z")
-INSTANT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z\Z")
-FULL_DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
-PARTIAL_DATE = re.compile(r"(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?\Z")
+INSTANT = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z\Z")
+FULL_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
+PARTIAL_DATE = re.compile(r"([0-9]{4})(?:-([0-9]{2})(?:-([0-9]{2}))?)?\Z")
 MAX_TEXT = 1000
 MAX_NAME = 200
 MAX_URL = 2000
@@ -216,6 +219,38 @@ VOCALS = frozenset({
 
 # "member of band" (5be4c609-9afa-4ea0-910b-12ffb71e3821), artist-artist.
 MEMBERSHIP_ATTRIBUTES = frozenset({"additional", "original", "eponymous"})
+
+
+# "member of band" as a role: band membership's attributes, instruments, and
+# vocals are this type's.
+MEMBER_OF_BAND = RoleType("member of band", "artist-artist", "5be4c609-9afa-4ea0-910b-12ffb71e3821",
+                          MEMBERSHIP_ATTRIBUTES, instruments=True, vocals=True)
+
+# The role scheme of specification 0.0.9 (D-17) names each type, pair, and
+# vocal attribute by these IRIs; World's domain graph uses the same ones.
+ARCH = "urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#"
+MUSICBRAINZ_RELATIONSHIP = "https://musicbrainz.org/relationship/"
+
+
+def _scheme_iri(*parts: str) -> str:
+    return ARCH + "-".join(quote(part.replace(" ", "_"), safe="") for part in parts)
+
+
+def role_scheme(pair: str) -> str:
+    """The concept scheme of one MusicBrainz entity pair's role types."""
+    return _scheme_iri("roles", pair)
+
+
+def role_concept(kind: RoleType) -> str:
+    """A role type's concept: skos:exactMatch its MusicBrainz relationship type."""
+    return _scheme_iri("role", kind.pair, kind.name)
+
+
+VOCAL_SCHEME = _scheme_iri("vocals")
+
+
+def vocal_concept(name: str) -> str:
+    return _scheme_iri("vocal", name)
 
 
 def role_type(scope: str, name: str) -> RoleType:

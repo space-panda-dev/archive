@@ -209,9 +209,6 @@ unsupported rather than guess.
   recording far from it (a detuned instrument, a microtonal passage) kept?
 - Does a stem's claim need a check that the stem shares the mix's timeline?
   The `analysed` role asserts it; nothing measures it.
-- Which Door profile rules does the release of ADR 0077's three contracts add?
-  Its checks reach into nested arrays (tones within readings within spans,
-  beats within bars within layers), which the existing root-only rules do not.
 - Which recordings does a release carry? No contract states a tracklist, so a
   release credit never reaches a recording in the resolved view of credits,
   and an importer cannot place a release-wide performer on each track
