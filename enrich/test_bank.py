@@ -140,10 +140,11 @@ SHIPPED = {
                   "code": "sha256:9fc498fabca00b759a976939890ac94782c8b18110a331ef124bad6da31cfaa1",
                   "outside": {"detector.py": "sha256:892a47fc87e7ffdd71b2c0fa38c553284ba4b4fd5ed607c0956a1a814075d9e4",
                               "probe.py": "sha256:6be7514d1671f50e43a07646fe6aa2a54cf4d35a44e608d6a27f58d8d9732384"}},
-    # Version 2: the detectors' frames scale with the sample rate, and
-    # quantisation-level bursts are dropped.
-    "quality": {"version": "2",
-                "code": "sha256:0bac148ad9c53b2861fed840fe7d0d67f69c87a2a02e7a1c79e2b95b06579307",
+    # Version 3: clipping at full scale or long at the recording's own peak,
+    # overs, events kept where they stand out from their surroundings or
+    # stand alone in their own neighbourhood, and mains hum only.
+    "quality": {"version": "3",
+                "code": "sha256:43d3e0007efc65b10ccb5aa90de85b6477e8f71f50a0bd33c7b47c40e8769ea3",
                 "outside": {}},
     "melody": {"version": "1",
                "code": "sha256:b678b71cc9ab9e80fee833c32722bfea343bf44c418a6d5ec17556169235212d",
