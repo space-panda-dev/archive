@@ -166,6 +166,17 @@ runner does not care what an extractor is written in.
   it for one reader; it becomes worth it when a second extractor needs the
   same peaks. An extractor that repeats `frames`' work says so in its
   manifest's description, so that the cost is visible where it is chosen.
+- `quality` is the measured case of a second decode at another rate: it
+  decodes again at the stream's own rate
+  with every channel, because downmixing and resampling to 22,050 Hz remove
+  what it measures (one channel's defects, the stereo image, everything
+  above 11,025 Hz, single-sample steps and flat tops), and it reads only
+  `frames/samples` from the bank, so its window series keep the `frames`
+  rows. On 48 kHz stereo its second decode runs at about 16 times real time
+  on one core of an otherwise idle machine and about 9 times on a shared
+  one (load average near 13), where `frames` ran at about 150: 15 to 30
+  core-minutes for a four-hour recording, the detectors' frame loop and
+  not the decode being the cost, so it grows with the sample rate.
 - A stem separator runs in its own environment, named by configuration, and
   its stems are `file` outputs that later extractors need like any feature.
 - The plugin and dependency-injection frameworks
