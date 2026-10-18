@@ -14,7 +14,9 @@ here writes a record: Door decides every revision.
 | [`probe.py`](probe.py) | The audio stream probe, a standalone tool ([ADR 0065](../docs/decisions/0065-audio-stream-facts.md)) |
 | [`detector.py`](detector.py) | The span detector, a standalone tool ([ADR 0066](../docs/decisions/0066-span-suggestions.md)) |
 | [`match.py`](match.py) | The numpy work matcher, a standalone tool ([ADR 0067](../docs/decisions/0067-matches-and-alignments-pin-runs.md)); uncalibrated |
-| [`cover.py`](cover.py) | Essentia cover similarity and the growing-window search, a standalone tool ([ADR 0071](../docs/decisions/0071-essentia-cover-similarity.md), [ADR 0072](../docs/decisions/0072-windowed-work-matches.md)) |
+| [`cover.py`](cover.py) | The measure: Essentia's profiles, measured per span or for a whole recording, the quarter-rate distance, and the bit-exact port of Essentia's distance ([ADR 0071](../docs/decisions/0071-essentia-cover-similarity.md)) |
+| `windows.py` | The whole-recording window search: candidate pass, regions, snapping, claim rounds, and decisions, a standalone tool ([ADR 0072](../docs/decisions/0072-windowed-work-matches.md)) |
+| [`calibrate_windows.py`](calibrate_windows.py) | Checks the window matcher's thresholds against an archive's accepted occurrences; proposes nothing |
 | [`enrich.py`](enrich.py) | The `enrich` command that runs a tool against an archive's records |
 | [`media.py`](media.py), [`derived.py`](derived.py) | Derived media, a standalone tool that never touches an archive, and its layout ([ADR 0069](../docs/decisions/0069-derived-media.md)) |
 | [`requirements.txt`](requirements.txt) | The libraries: numpy (detector, matchers, derived media) and scipy (numpy matcher) |
@@ -314,8 +316,9 @@ archive involved.
 
 This method is its own implementation under its own identifier, and its
 scores are not on the V2 system's scale: the V2 thresholds do not apply.
-`enrich match-windows` uses the V2 system's own Essentia measure instead, with
-its thresholds ([ADR 0071](../docs/decisions/0071-essentia-cover-similarity.md)).
+`enrich match-windows` uses Essentia's profiles instead, with thresholds
+fitted on the archive's own accepted occurrences
+([ADR 0071](../docs/decisions/0071-essentia-cover-similarity.md)).
 **The operator must calibrate `--limit` on real recordings** (known same-song
 and different-song pairs from the archive) before trusting a proposal; no
 default limit exists. The tests show only that, on synthetic tunes, the same
@@ -329,78 +332,172 @@ enrich/enrich.py match-windows --archive <dir> --suggestions <object id> [--jobs
                  [--staging <annex>] [--dry-run]
 ```
 
-Grows windows over one `archive.claim/span_suggestions` claim's spans,
-compares each with the occurrences linked to each Work by Essentia's cover
-similarity, and proposes an `archive.claim/work_match` version 3 claim for
-each Work whose closest occurrence is within the suggestion distance of a
-run's best window ([ADR 0071](../docs/decisions/0071-essentia-cover-similarity.md),
-[ADR 0072](../docs/decisions/0072-windowed-work-matches.md)). All claims are
-made by one derivation run in one Door batch. It prints one JSON object with
-every run's steps, best window, and closest occurrences, and exits as
-`enrich match` does: 0 when matches were committed, predicted, or already
-recorded; 3 when nothing was within the distance, the corpus is empty, or no
-corpus occurrence is long enough (`nothing_proposed`, with the reason); 1 on
-any failure; and 2 when the arguments are not understood. The capture import
-runs it last.
+Searches the whole recording behind one `archive.claim/span_suggestions`
+claim for the Works of the corpus. Each suggested window becomes an
+`archive.claim/work_match` version 3 claim
+([ADR 0071](../docs/decisions/0071-essentia-cover-similarity.md) and
+[ADR 0072](../docs/decisions/0072-windowed-work-matches.md), both as amended on
+2026-10-18). All claims are made by one derivation run in one Door batch.
 
-- **The windows.** A run is a maximal sequence of `music` or `unknown`
-  spans; `talk` and `quiet` end it. A window starts at a run's first span and
-  grows by one span to at most eight. A window shorter than two seconds is
-  skipped without counting as a step. Growth stops after two steps without
-  improvement, or after one step worse than the best by more than 0.15. The
-  result is the best step, compared by the rounded distance.
-- **No alignment.** Essentia answers infinity when two pieces align nowhere
-  (one second of music against silence does). That entry is counted in the
-  step's `unaligned` and never ranked or proposed. A step where nothing
-  aligns keeps growing before any best step and stops the run after one.
-- **The corpus** is what `enrich match` uses, less every occurrence whose
-  selections take audio from the suggestions' source or from any part of
-  any source of its session, as head `session_parts` claims record them:
-  another microphone on the same rehearsal is not evidence about it. Each occurrence is measured once,
-  from its first selection's first track. An occurrence too short to align is
-  skipped with its reason; any other failure to read one refuses the run. For
-  each window, the half of the corpus closest by transposition-invariant mean
-  chroma is aligned.
-- **What is proposed.** At a run's best window, each Work's distance is that
-  of its closest compared occurrence. A Work at or below 0.08 gets one claim:
-  `suggestions` pins the suggestions, `work` the Work's head, `corpus` every
-  occurrence of that Work aligned at that window, and `parameters` and `run`
-  as for every match. The payload adds `sample_rate` and `window`, whose
-  edges are the edges of whole suggested spans; Door checks that they are.
+It prints one JSON object. The object holds every kept window with its
+closest occurrences, the path that decided it, and whether it was proposed,
+and the number of hits and regions behind them. The exit status is the same as
+for `enrich match`:
+
+- 0 when matches were committed, predicted, or already recorded;
+- 3 when no window was suggested, the corpus is empty, or no corpus occurrence
+  is long enough (`nothing_proposed`, with the reason);
+- 1 on any failure;
+- 2 when the arguments are not understood.
+
+The capture import runs it last.
+
+- **The corpus** is the corpus `enrich match` uses, less every occurrence
+  whose selections take audio from the suggestions' source, or from any part
+  of any source in its session, as head `session_parts` claims record them.
+  Another microphone on the same rehearsal is not evidence about it. Each
+  occurrence is measured once, from its first selection's first track. An
+  occurrence too short to compare is skipped, with its reason. Any other
+  failure to read one refuses the run.
+- **The recording is measured once, whole.** The pinned stream is decoded from
+  sample 0 to its `sample_count`, in blocks, and turned into HPCP profiles.
+  These take about 1.9 MB per recording-hour, and memory does not grow with
+  the recording's length. Every later step reads a window as a slice of these
+  profiles. The one exception is an exact confirmation, which decodes its
+  window afresh.
+- **The candidate pass** compares every corpus occurrence along the recording
+  at a quarter of the frame rate:
+  - it uses chunks 2 occurrence-lengths long, one starting every
+    occurrence-length;
+  - it traces up to 2 alignments per chunk;
+  - an alignment within 0.20 is a hit.
+
+  `--jobs` processes share the occurrences. The answer does not depend on how
+  many there are.
+- **Regions and windows.** Overlapping hits gather into regions, and each
+  region keeps its 5 closest Works. A region snaps to the group of `music` and
+  `unknown` spans it overlaps most. A `talk` or `quiet` span between them does
+  not split the group. That gives an outer variant and an inner one, and
+  either is dropped when it is under two seconds. Each window's edges are
+  span edges, which Door checks.
+- **Claim rounds.** Windows are compared with the occurrences of their
+  candidate Works, which are the region's Works and up to 8 Works hit inside
+  the window. The closest window is kept and claims its spans, and the other
+  regions snap again without those spans. Kept windows never overlap in spans.
+- **The decision.** Each kept window is compared with every corpus occurrence
+  by the quarter-rate distance. It is suggested when its closest Work is at or
+  below 0.118.
+  - **A near tie** is a suggested window whose closest Work beats the next by
+    less than 0.01475. It is decided again by Essentia's exact distance, on
+    its audio decoded afresh. It is compared with its candidate Works'
+    occurrences and with the half of the corpus closest by mean chroma, and is
+    suggested only at or below 0.08.
+  - No other window is ever compared exactly.
+- **What is proposed.** A suggested window gets one claim, for its closest
+  Work:
+  - `suggestions` pins the suggestions;
+  - `work` pins the Work's head;
+  - `corpus` pins that Work's occurrences that aligned on the path that decided
+    it;
+  - `parameters` and `run` are as for every match.
+
+  The payload adds `sample_rate` and `window`. Its score and scale are those of
+  the deciding path: the quarter-rate scale, or Essentia's for a confirmed
+  near tie. Other Works within the distance are not claimed.
 - **The run** reads the suggestions, their source and stream, and everything
   `enrich match` reads for the corpus. Its software is ffprobe, ffmpeg, the
-  libav libraries, Essentia, and numpy. A rerun with the same inputs, software,
-  and parameters answers `unchanged` before decoding anything.
-- **Cost.** Each alignment takes about two seconds on one core for
-  song-length audio (the V2 system's measurement). `--jobs` processes measure
-  the corpus and align each window; their results do not depend on how many
-  there are.
+  libav libraries, Essentia, numpy, and the BLAS library numpy uses. A rerun
+  with the same inputs, software, and parameters answers `unchanged` before
+  decoding anything.
+- **Cost.** On the calibration workset, the search took about 0.5 CPU-hours
+  for 19.8 recording-hours against about 92 occurrences. That is roughly 73
+  CPU-seconds per recording-hour, and it grows with the size of the corpus.
 
 ### The method
 
-The method is `archive-enrich/essentia-serra09` version 1, made by
-`pkg:generic/archive-enrich-cover@0.1.0`, with scale
-`archive-enrich/essentia-serra09/smaller-asymmetric-distance`. It is the V2
-system's measure, setting for setting (`cover.py`):
+The method is `archive-enrich/whole-recording-serra09` version 1, made by
+`pkg:generic/archive-enrich-cover@0.2.0`. Every value below is in the run's
+parameters (`cover.parameters()`).
 
-1. ffmpeg decodes to mono 16-bit PCM at 22,050 Hz, scaled by 1/32,768. That
-   is exactly what Essentia's loader read from the WAV file the V2 system had
-   ffmpeg write.
-2. Each 4,096-sample frame (hop 2,048) passes through a Blackman-Harris
-   62 dB window, the spectrum, spectral peaks (40 to 5,000 Hz), and HPCP.
-3. `ChromaCrossSimilarity` (optimal transposition index, binarisation
-   percentile 0.095, frame stack 9) and `CoverSongSimilarity` (serra09,
-   asymmetric) run in both directions, and the smaller distance is kept.
-4. The score is rounded half to even to four places; lower is closer.
+The profiles are the V2 system's measure, setting for setting:
 
-Only Essentia 2.1b6.dev1438 is accepted, because the thresholds were measured
-with it. The suggestion distance of 0.08 had one false positive in 2,779
-controlled pairs of the operator's own recordings. The V2 system judged
-commercial releases at about 0.11, but the archive does not yet record a
-corpus entry's origin, so everything is judged at 0.08
-([open question](../docs/open-questions.md)). `cover.py <query>
-<reference>...` prints the distances of whole files, with no archive
-involved.
+1. ffmpeg decodes to mono 16-bit PCM at 22,050 Hz, scaled by 1/32,768.
+2. Each 4,096-sample frame, with a hop of 2,048, passes through a
+   Blackman-Harris 62 dB window, the spectrum, spectral peaks (40 to
+   5,000 Hz), and HPCP.
+
+The **quarter-rate distance** decides most windows. Its scale is
+`archive-enrich/whole-recording-serra09/quarter-rate-distance`. It works as
+follows:
+
+1. Average every 4 frames, and divide each averaged frame by its largest bin.
+2. Rotate the occurrence by the key shift that best matches the two mean
+   frames.
+3. Build stacks of 9 frames, and compare them by float32 squared distances
+   from one matrix product.
+4. Set a cell when its distance is within both its row's and its column's
+   order statistic at int(0.095 m) − 1.
+5. Score with serra09.
+6. The distance is √(smaller dimension) / best score. That is the smaller of
+   the two directions' distances.
+7. Round half to even to four places; lower is closer.
+
+Its low bits depend on the BLAS library, which the run records.
+
+The **exact distance** decides near ties. Its scale is
+`archive-enrich/essentia-serra09/smaller-asymmetric-distance`. It is
+Essentia's `ChromaCrossSimilarity` and `CoverSongSimilarity`, run in both
+directions with the smaller distance kept, as the bit-exact port in `cover.py`
+reproduces them.
+
+Only Essentia 2.1b6.dev1438 is accepted, because it measures the profiles that
+every threshold was fitted on.
+
+The thresholds of 0.20, 0.118, and 0.01475 were fitted on the calibration
+workset: 17 recordings and 98 accepted occurrences. The exact distance's 0.08
+is the V2 system's: one false positive in 2,779 controlled pairs of the
+operator's own recordings. None of these thresholds has been checked out of
+sample, and the V2 system's release threshold of about 0.11 is not used
+([open questions](../docs/open-questions.md)).
+
+`cover.py <query> <reference>...` still prints the exact distances of whole
+files, under `archive-enrich/essentia-serra09`, with no archive involved.
+
+### Checking the thresholds
+
+`calibrate_windows.py` checks the thresholds against an archive's accepted
+occurrences before its suggestions are trusted. It proposes nothing.
+
+- **The searched recordings.** Every recording that holds an accepted
+  occurrence is searched exactly as `match-windows` would search it, with
+  every other accepted occurrence outside its session as the corpus.
+- **The judgments.** Each kept window is judged against what was accepted on
+  that recording. A window is correct when its closest Work is the Work of an
+  accepted occurrence it overlaps, wrong when it overlaps only accepted
+  occurrences of other Works, and unaccepted when it overlaps none. Each count
+  is given under two rules. The lenient rule counts any overlap. The strict
+  rule counts only accepted occurrences that cover more than half of the
+  window.
+- **What is reported.** The report gives reach, how many accepted occurrences
+  were suggested, and how many were never touched.
+
+`all` runs everything in one process. The other subcommands split the work
+across machines:
+
+- `measure` runs where the audio is. It writes a workset holding the corpus's
+  profiles and each recording's whole-recording profiles, but no audio.
+- `search --source-index i` searches one recording from the workset alone.
+  This is the unit of work handed out, one per recording.
+- A near tie needs its window decoded afresh, which a workset cannot do. In
+  that case `search` reports the window as needing measurement. `measure-windows`,
+  run where the audio is, measures every window the results ask for. A second
+  `search` with `--windows` then decides them.
+- `judge` refuses any result that still needs a window, and any workset in the
+  earlier, per-window format.
+
+A result names the software it ran with. Quarter-rate distances can differ in
+their low bits between BLAS libraries, so `judge` reports which libraries the
+results came from.
 
 ## The adapter interface
 

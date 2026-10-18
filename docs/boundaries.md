@@ -117,7 +117,8 @@ third is the work matcher
 interpreter, built from hash-pinned wheels. numpy, scipy, and Essentia are the
 only libraries outside the standard library that `enrich/` uses. The
 detector's presets and the first matcher's score limit are the operator's to
-calibrate; the window matcher carries the V2 system's calibrated thresholds.
+calibrate; the window matcher's thresholds were fitted on the archive's own
+accepted occurrences, and `enrich/calibrate_windows.py` checks them.
 
 `enrich/media.py` is different: it proposes nothing and never reads or writes
 an archive. It makes waveform peaks and a listening copy of a recording into a
