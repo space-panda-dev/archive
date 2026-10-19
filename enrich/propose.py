@@ -227,12 +227,16 @@ def run(args: argparse.Namespace, env: dict[str, str], reader: adapter.ArchiveRe
 
 def local_media_type(root: Path, artifact: dict[str, Any]) -> str | None:
     """The media type the first bytes of the Artifact's local content declare
-    ("" when they name none), or None when its content is not here to read."""
+    ("" when they name none), or None when its content is not here or cannot
+    be read, so it is counted as unexamined rather than as not audio."""
     hexdigest = artifact["payload"]["content"]["digest"].removeprefix("sha256:")
     path = Path(root) / "content" / "sha256" / hexdigest[0:2] / hexdigest[2:4] / hexdigest
     if not path.is_file():
         return None
-    return extract.sniff_media_type(path) or ""
+    try:
+        return extract.sniff_media_type(path) or ""
+    except OSError:
+        return None
 
 
 def unprobed_report(unprobed: list[dict[str, Any]], unexamined: int) -> dict[str, Any]:
@@ -249,7 +253,7 @@ def unprobed_report(unprobed: list[dict[str, Any]], unexamined: int) -> dict[str
                      f"listed in `unprobed`, then propose again")
     if unexamined:
         parts.append(f"{unexamined} other Artifact{'s' if unexamined != 1 else ''} with no audio_stream claim "
-                     f"{'have' if unexamined != 1 else 'has'} no local content to examine")
+                     f"{'have' if unexamined != 1 else 'has'} no local content that could be read to examine")
     return {"unprobed": unprobed, "detail": "; ".join(parts)}
 
 

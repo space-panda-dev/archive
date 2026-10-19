@@ -1127,6 +1127,15 @@ class MediaType(unittest.TestCase):
         for path in (unknown, directory / "missing.blob"):
             with self.assertRaisesRegex(extract.RunError, "pass --media-type"):
                 extract.media_type_of(path)
+        # Unreadable is refused as unreadable, never as an unknown type.
+        unreadable = directory / "folder"
+        unreadable.mkdir()
+        with self.assertRaises(OSError):
+            extract.sniff_media_type(unreadable)
+        with self.assertRaisesRegex(extract.RunError, "cannot read the first bytes .*pass --media-type"):
+            extract.media_type_of(unreadable)
+        with self.assertRaisesRegex(extract.RunError, "from its name or its first bytes"):
+            extract.media_type_of(unknown)
         # The suffix still wins, without reading the file.
         self.assertEqual(extract.media_type_of(directory / "card.WAV"), "audio/wav")
 

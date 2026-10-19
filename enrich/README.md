@@ -601,7 +601,7 @@ proposes nothing and says which features it lacked.
   for it: the answer lists each Artifact with no such claim whose local
   content's first bytes are audio or video under `unprobed`, says in
   `detail` to run `enrich probe` on them first, and counts the Artifacts
-  with no claim and no local content. It never probes for you: a probe is
+  with no claim and no local content it can read. It never probes for you: a probe is
   its own proposal to Door.
 - `--bank` defaults to `ARCHIVE_FEATURE_BANK`; with neither, the command
   fails.

@@ -211,5 +211,26 @@ class ProposeCommand(unittest.TestCase):
         self.assertIn("cannot go with --all", answer["detail"])
 
 
+
+class LocalMediaType(unittest.TestCase):
+    """`propose --all` sorts claimless Artifacts by their local content's
+    first bytes; content it cannot read is unexamined, never "not audio"."""
+
+    def test_unreadable_content_is_unexamined_not_silently_skipped(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="propose-type-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        hexdigest = "ab" * 32
+        path = root / "content" / "sha256" / "ab" / "ab" / hexdigest
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"fLaC" + bytes(40))
+        artifact = {"payload": {"content": {"digest": "sha256:" + hexdigest}}}
+        # Anchor: readable content is read.
+        self.assertEqual(propose.local_media_type(root, artifact), "audio/flac")
+        with patch.object(propose.extract, "sniff_media_type", side_effect=PermissionError(13, "denied")):
+            self.assertIsNone(propose.local_media_type(root, artifact))
+        path.write_bytes(b"plain text")
+        self.assertEqual(propose.local_media_type(root, artifact), "")
+
+
 if __name__ == "__main__":
     unittest.main()

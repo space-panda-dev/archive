@@ -101,12 +101,11 @@ def now() -> str:
 def sniff_media_type(path: Path) -> str | None:
     """The media type the file's first bytes declare, for content with no
     telling suffix (an archive's content files have none): the containers
-    the extractors accept and the images a card holds, or None."""
-    try:
-        with path.open("rb") as handle:
-            head = handle.read(16)
-    except OSError:
-        return None
+    the extractors accept and the images a card holds, or None when they
+    name none. A file that cannot be read raises OSError: unreadable is not
+    "names none"."""
+    with path.open("rb") as handle:
+        head = handle.read(16)
     if head[:4] == b"RIFF" and head[8:12] == b"WAVE":
         return "audio/wav"
     if head[:4] == b"fLaC":
@@ -141,7 +140,11 @@ def media_type_of(path: Path) -> str:
         return _MEDIA_TYPES[suffix]
     guessed, _ = mimetypes.guess_type(path.name)
     if guessed is None:
-        guessed = sniff_media_type(path)
+        try:
+            guessed = sniff_media_type(path)
+        except OSError as error:
+            raise RunError(f"cannot read the first bytes of {path} ({error.strerror or error}); "
+                           f"pass --media-type") from None
     if guessed is None:
         raise RunError(f"cannot tell the media type of {path} from its name or its first bytes; pass --media-type")
     return guessed
