@@ -114,12 +114,17 @@ answer, a reading is named by `{"claim": <revision>, "span": <index>,
 
 **Judgments, as every view here reads them.** A judgment
 (`archive.assessment/judgment`, [ADR 0048](0048-review-app-write-contracts.md))
-of version 1 judges a whole claim; one of version 2 may judge one span or
-one reading of a span (ADR 0081).
-A claim, or a span, `withdrawn` by the claim's own agent is gone from every
-view; a `withdrawn` verdict from anyone else changes nothing, since
-withdrawing is an asserter taking back their own claim. `affirmed` and
-`rejected` count only where a view takes a person, and only that person's.
+of version 1 judges a whole claim; one of version 2 may judge a span of
+samples or one reading of one span ([ADR 0081](0081-judgments-and-annotations.md)).
+Every view reads them through ADR 0081's **standing**, one judge at a time,
+and defines no rule of its own for combining them: at each sample, the
+narrowest applicable judgment of that judge stands, and equally narrow ones
+that disagree give no verdict. A view cuts its stretches where a judged span
+starts or ends. What the claim's own agent's standing says is `withdrawn`
+is gone from every view; a `withdrawn` verdict from anyone else changes
+nothing, since withdrawing is an asserter taking back their own claim
+(ADR 0081 refuses it in version 2). `affirmed` and `rejected` count only
+where a view takes a person, and only that person's standing.
 
 **`archive.view/chord_names` version 1: names served, so clients never
 reimplement them.** For each reading it answers its `form` (`stack`,
@@ -241,8 +246,9 @@ stretch of samples where any chord claim speaks, it takes these steps:
    as agreeing. If it disagrees, the stretch has a `conflict` listing them,
    and the rule chooses nothing there.
 5. **The slash bass.** Where a `machine` reading is chosen, has a bass, and
-   has no uncertain tones, and the bass-only claims of machines analysed
-   from the bass stem (ADR 0079) that cover
+   has no uncertain tones, and the machines' bass-only claims read from the
+   bass stem (claims pinning a run whose payload cites, by bank key, a stem
+   whose `output` is `bass`, ADR 0079) that cover
    the stretch agree on a bass the person has not rejected, the answer's
    stack takes that bass: the machine's sounding classes become the tones
    above it, its root is kept, and `bass_from` names the bass reading. Where
@@ -337,7 +343,8 @@ application's state, not the archive's
 **The rules live in World until a release installs them.**
 `world/views.py` holds the registry of served views, the request rules
 (fail closed: an unknown view, version, field, or value is refused), and
-every rule above. It uses only the standard library and `world/harmony.py`.
+every rule above. It uses only the standard library, `world/harmony.py`
+(names, the reading forms), and `world/judgments.py` (standing).
 The registry is the one list that both the listing route and the dispatch
 read, so a view cannot be listed and not answered, or answered and not
 listed. Until a specification release names these views, they are World's

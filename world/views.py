@@ -38,7 +38,8 @@ import re
 from bisect import bisect_right
 from typing import Any, Callable
 
-from world.harmony import HarmonyError, check_reading, reading_names, stack_names
+from world import judgments as judging
+from world.harmony import HarmonyError, check_reading_v2, is_bass_only, reading_names, stack_names
 
 VIEW = "archive.view/"
 CHORD_STACKS = {("archive.claim/chord_stacks", "1"), ("archive.claim/chord_stacks", "2")}
@@ -241,25 +242,12 @@ def catalogue() -> list[dict[str, str]]:
 # Reading the records
 
 
-def is_bass_only(reading: Any) -> bool:
-    """A bass-only reading (decision D1.3, ADR 0079): a bass and an optional
-    root, saying nothing about upper tones. It differs from a stack with
-    empty `tones`, which says that only the bass sounds."""
-    return isinstance(reading, dict) and "bass" in reading and "tones" not in reading
-
-
 def _check_any_reading(reading: Any, where: str) -> str:
-    if is_bass_only(reading):
-        allowed = {"bass", "root", "text", "weight"}
-        if set(reading) - allowed:
-            raise _bad(f"{where} has unknown fields {sorted(set(reading) - allowed)}")
-        for key in ("bass", "root"):
-            if key in reading and (not isinstance(reading[key], int) or isinstance(reading[key], bool)
-                                   or not 0 <= reading[key] <= 11):
-                raise _bad(f"{where} {key} must be a pitch class 0 to 11")
-        return "bass_only"
+    """A reading of any form chord stacks version 2 holds (ADR 0079's check),
+    weighted exactly when it carries a weight, since a request has no
+    claim to state a scale."""
     try:
-        return check_reading(reading, isinstance(reading, dict) and "weight" in reading, where)
+        return check_reading_v2(reading, isinstance(reading, dict) and "weight" in reading, where)
     except HarmonyError as error:
         raise _bad(str(error)) from None
 
@@ -278,46 +266,64 @@ def _heads(world: list[dict[str, Any]], contracts: set[tuple[str, str]]) -> list
 
 
 class Judgments:
-    """Judgments of claims, by the claim revision they assess. A version 1
-    judgment assesses a whole claim; a version 2 judgment (ADR 0081) may
-    name one `span` of it, or one `reading` of one span."""
+    """Judgments of claims, by the claim revision they assess, read through
+    ADR 0081's standing (`world/judgments.py`): one judge at a time, the
+    narrowest applicable judgment standing, at one sample of the judged
+    claim. A version 1 judgment, or a version 2 one with no scope, judges
+    the whole claim; a version 2 one may judge a span of samples or one
+    reading of one span. A conflict between one judge's equally narrow
+    judgments is no verdict here."""
 
     def __init__(self, world: list[dict[str, Any]]):
-        self.of: dict[str, list[tuple[str, str | None, int | None, int | None]]] = {}
+        self.of: dict[str, list[dict[str, Any]]] = {}
         for record in _heads(world, JUDGMENT):
             target = _refs(record, "assessment_of")
             if len(target) != 1:
                 continue
-            payload = record.get("payload", {})
-            self.of.setdefault(target[0]["revision_id"], []).append(
-                (payload.get("verdict"), record.get("agent"), payload.get("span"), payload.get("reading")))
+            contract = _contract(record)
+            self.of.setdefault(target[0]["revision_id"], []).append({
+                "payload": record.get("payload", {}), "refs": record.get("refs", []),
+                "contracts": [{"id": contract[0], "version": contract[1]}],
+                "revision_id": record.get("revision_id"), "agent": record.get("agent")})
 
-    def _matches(self, claim: dict[str, Any], verdict: str, agent: str | None, span: int | None,
-                 reading: int | None) -> bool:
-        for v, a, s, r in self.of.get(claim["revision_id"], []):
-            if v != verdict or a != agent:
-                continue
-            if s is None or (s == span and (r is None or r == reading)):
-                return True
-        return False
+    def _verdict(self, claim: dict[str, Any], judge: str | None, at: int | None, reading: int | None = None):
+        found = self.of.get(claim["revision_id"])
+        if not found or judge is None:
+            return None
+        judged = {k: claim[k] for k in ("payload", "refs", "revision_id", "agent") if k in claim}
+        try:
+            return judging.standing(judged, found, judge, at, reading).verdict
+        except (judging.JudgmentError, ValueError) as error:
+            raise ViewError("view_request_invalid", f"a judgment of {claim['revision_id']} is malformed: {error}") \
+                from None
 
-    def withdrawn(self, claim: dict[str, Any], span: int | None = None) -> bool:
-        """Taken back by its own asserter, whole or over this span."""
-        return self._matches(claim, "withdrawn", claim.get("agent"), span, None)
+    def boundaries(self, claim: dict[str, Any]) -> set[int]:
+        """The samples where a span-scoped judgment of this claim starts or
+        ends, so a view cuts its stretches there."""
+        points: set[int] = set()
+        for judgment in self.of.get(claim["revision_id"], []):
+            span = judgment["payload"].get("span")
+            if isinstance(span, dict):
+                points |= {p for p in (span.get("start_sample"), span.get("end_sample")) if isinstance(p, int)}
+        return points
 
-    def rejected(self, claim: dict[str, Any], person: str, span: int, reading: int | None = None) -> bool:
-        return self._matches(claim, "rejected", person, span, reading)
+    def withdrawn(self, claim: dict[str, Any], at: int | None = None) -> bool:
+        """Taken back by its own asserter, whole (`at` None) or at this sample."""
+        return self._verdict(claim, claim.get("agent"), at) == "withdrawn"
 
-    def affirmed(self, claim: dict[str, Any], person: str, span: int) -> tuple[bool, int | None]:
-        """Whether `person` affirmed this span (or the whole claim), and the
-        reading they affirmed, when the judgment names one."""
-        found, reading = False, None
-        for v, a, s, r in self.of.get(claim["revision_id"], []):
-            if v == "affirmed" and a == person and (s is None or s == span):
-                found = True
-                if s == span and r is not None:
-                    reading = r
-        return found, reading
+    def rejected(self, claim: dict[str, Any], person: str, at: int, reading: int | None = None) -> bool:
+        return self._verdict(claim, person, at, reading) == "rejected"
+
+    def affirmed(self, claim: dict[str, Any], person: str, at: int, index: int) -> tuple[bool, int | None]:
+        """Whether `person` affirmed what the claim says at this sample, and
+        the one reading of span `index` they affirmed, when a judgment of one
+        reading decided it."""
+        whole = self._verdict(claim, person, at)
+        readings = claim["payload"]["spans"][index]["readings"]
+        picked = [r for r in range(len(readings)) if self._verdict(claim, person, at, r) == "affirmed"]
+        if whole != "affirmed" and len(picked) == 1:
+            return True, picked[0]
+        return whole == "affirmed", None
 
 
 def _chord_claims(world: list[dict[str, Any]], source: dict[str, str]) -> list[dict[str, Any]]:
@@ -371,10 +377,13 @@ def _name(name: Any) -> dict[str, Any]:
             "symbol": name.symbol, "distance": name.distance}
 
 
-def _segments(intervals: list[tuple[int, int]], start: int, end: int | None) -> list[tuple[int, int]]:
-    """The elementary segments every interval boundary cuts, inside the
-    window, keeping only those some interval covers."""
-    cuts = sorted({p for interval in intervals for p in interval} | {start} | (set() if end is None else {end}))
+def _segments(intervals: list[tuple[int, int]], start: int, end: int | None,
+              points: set[int] = frozenset()) -> list[tuple[int, int]]:
+    """The elementary segments every interval boundary, and every extra
+    point (where a judgment's span starts or ends), cuts inside the window,
+    keeping only those some interval covers."""
+    cuts = sorted({p for interval in intervals for p in interval} | set(points) | {start}
+                  | (set() if end is None else {end}))
     cuts = [p for p in cuts if p >= start and (end is None or p <= end)]
     position = {p: n for n, p in enumerate(cuts)}
     depth = [0] * (len(cuts) + 1)
@@ -442,10 +451,11 @@ def chord_corrections(world: list[dict[str, Any]], subject: dict[str, Any], para
     spans = [_Spans(c) for c in claims]
     corrects = {c["revision_id"]: {r.get("revision_id") for r in _refs(c, "corrects")} for c in claims}
     intervals = [(s["start_sample"], s["end_sample"]) for x in spans for s in x.spans]
+    points = {p for c in claims for p in judgments.boundaries(c)}
     segments = []
-    for a, b in _segments(intervals, params["start_sample"], params.get("end_sample")):
+    for a, b in _segments(intervals, params["start_sample"], params.get("end_sample"), points):
         cover = [(x.claim, i) for x in spans if (i := x.covering(a, b)) is not None
-                 and not judgments.withdrawn(x.claim, i)]
+                 and not judgments.withdrawn(x.claim, a)]
         present = {c["revision_id"] for c, _ in cover}
         corrected = []
         for claim, index in cover:
@@ -507,17 +517,22 @@ def chord_differences(world: list[dict[str, Any]], subject: dict[str, Any], para
                 for sj, sb in enumerate(second["payload"]["spans"]):
                     lo = max(sa["start_sample"], sb["start_sample"], start)
                     hi = min(sa["end_sample"], sb["end_sample"], *(() if end is None else (end,)))
-                    if lo >= hi or judgments.withdrawn(first, si) or judgments.withdrawn(second, sj):
+                    if lo >= hi:
                         continue
                     entry = _difference(sa["readings"][0], sb["readings"][0])
                     if entry is None:
                         continue
-                    if entry == "not_compared":
-                        not_compared += 1
-                        continue
-                    found.append({"kind": kind, "label": "difference", "start_sample": lo, "end_sample": hi,
-                                  "a": _side(first, si, by_revision), "b": _side(second, sj, by_revision),
-                                  **entry})
+                    cuts = sorted({lo, hi} | {p for p in judgments.boundaries(first) | judgments.boundaries(second)
+                                              if lo < p < hi})
+                    for x, y in zip(cuts, cuts[1:]):
+                        if judgments.withdrawn(first, x) or judgments.withdrawn(second, x):
+                            continue
+                        if entry == "not_compared":
+                            not_compared += 1
+                            continue
+                        found.append({"kind": kind, "label": "difference", "start_sample": x, "end_sample": y,
+                                      "a": _side(first, si, by_revision), "b": _side(second, sj, by_revision),
+                                      **entry})
     found.sort(key=lambda d: (d["start_sample"], d["end_sample"], d["a"]["claim"], d["b"]["claim"]))
     return {"differences": found, "not_compared": not_compared,
             "unresolved_runs": _unresolved_runs(claims, by_revision)}
@@ -568,17 +583,17 @@ def _difference(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any] | str | 
 # archive.view/chords_current version 1: the first current rule
 
 
-def _candidate(claim: dict[str, Any], index: int, person: str, order: list[str], judgments: Judgments,
+def _candidate(claim: dict[str, Any], index: int, at: int, person: str, order: list[str], judgments: Judgments,
                by_revision: dict[str, dict[str, Any]]) -> tuple[int, int, int, str] | None:
     """(tier, rank, reading, why) for one span under the rule, or None when
     the rule never chooses it: withdrawn, rejected by the person, every
     reading rejected, or from an asserter the rule does not name."""
-    if judgments.withdrawn(claim, index) or judgments.rejected(claim, person, index):
+    if judgments.withdrawn(claim, at) or judgments.rejected(claim, person, at):
         return None
     readings = claim["payload"]["spans"][index]["readings"]
-    affirmed, affirmed_reading = judgments.affirmed(claim, person, index)
+    affirmed, affirmed_reading = judgments.affirmed(claim, person, at, index)
     usable = [r for r, reading in enumerate(readings)
-              if not is_bass_only(reading) and not judgments.rejected(claim, person, index, r)]
+              if not is_bass_only(reading) and not judgments.rejected(claim, person, at, r)]
     if affirmed_reading is not None and affirmed_reading in usable:
         usable = [affirmed_reading]
     if not usable:
@@ -612,17 +627,18 @@ def chords_current(world: list[dict[str, Any]], subject: dict[str, Any], params:
     by_revision = {r["revision_id"]: r for r in world if "revision_id" in r}
     claims = [c for c in _chord_claims(world, subject["source"]) if not judgments.withdrawn(c)]
     chords = [c for c in claims if not all(is_bass_only(s["readings"][0]) for s in c["payload"]["spans"])]
-    basses = [_Spans(c) for c in claims if c not in chords and _refs(c, "run")]
+    basses = [_Spans(c) for c in claims if c not in chords and _refs(c, "run") and _from_bass_stem(c)]
     spans = [_Spans(c) for c in chords]
     corrects = {c["revision_id"]: {r.get("revision_id") for r in _refs(c, "corrects")} for c in chords}
     # Bass spans cut the stretches too, so a slash bass changes where it does.
     intervals = [(s["start_sample"], s["end_sample"]) for x in spans + basses for s in x.spans]
+    points = {p for x in spans + basses for p in judgments.boundaries(x.claim)}
     segments = []
-    for a, b in _segments(intervals, params["start_sample"], params.get("end_sample")):
+    for a, b in _segments(intervals, params["start_sample"], params.get("end_sample"), points):
         cover = [(x.claim, i) for x in spans if (i := x.covering(a, b)) is not None]
         ranked = {}
         for claim, index in cover:
-            found = _candidate(claim, index, person, order, judgments, by_revision)
+            found = _candidate(claim, index, a, person, order, judgments, by_revision)
             if found:
                 ranked[claim["revision_id"]] = (claim, index, found)
         segment = _choose(a, b, cover, ranked, corrects, judgments, basses, person)
@@ -704,6 +720,14 @@ def _in_held_stretch(claim: dict[str, Any], index: int, start: int) -> bool:
     return span.get("end") == "held" and start > span["start_sample"]
 
 
+def _from_bass_stem(claim: dict[str, Any]) -> bool:
+    """A claim read from a bass stem (ADR 0079): its payload cites, by bank
+    key, a stem whose output is `bass`. D4.2's slash bass is the stem bass,
+    so a bass-only claim read from the mix or another stem is not one."""
+    stem = claim["payload"].get("stem")
+    return isinstance(stem, dict) and stem.get("output") == "bass"
+
+
 def _stem_bass(a: int, b: int, basses: list, judgments: Judgments, person: str):
     """The bass the machines' bass-only claims (from the bass stem) agree on
     over these samples, with the span it came from; a sentence when they
@@ -711,7 +735,7 @@ def _stem_bass(a: int, b: int, basses: list, judgments: Judgments, person: str):
     found = []
     for x in basses:
         index = x.covering(a, b)
-        if index is None or judgments.withdrawn(x.claim, index) or judgments.rejected(x.claim, person, index):
+        if index is None or judgments.withdrawn(x.claim, a) or judgments.rejected(x.claim, person, a):
             continue
         found.append((x.spans[index]["readings"][0]["bass"], _ref(x.claim, index, 0)))
     if not found:

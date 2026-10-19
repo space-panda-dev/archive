@@ -17,7 +17,8 @@ from pathlib import Path
 
 from world import views
 from world.contributions import check_band_membership
-from world.harmony import check_chord_stacks
+from world.harmony import check_chord_stacks, check_chord_stacks_v2, is_bass_only
+from world.judgments import check_judgment
 from world.tests.test_harmony import RATE, SOURCE, STREAM, fixture_stream, refs, span
 from world.views import ViewError, check_request, run_view
 
@@ -34,6 +35,8 @@ def rev(n: int) -> str:
     return "sha256:" + f"{n:02x}" * 32
 
 
+# A bass stem cited by bank key (ADR 0079), as the bank writes it.
+BASS_STEM = {"extractor": "stems", "key": "sha256:" + "ab" * 32, "output": "bass", "sha256": "sha256:" + "cd" * 32}
 PERSON = uid(0x501)
 BANDMATE = uid(0x502)
 BAND = uid(0x503)
@@ -79,11 +82,11 @@ class World:
         oid, rid = self._next()
         claim = {"revision_id": rid, "payload": {"sample_rate": RATE, "spans": spans, **payload},
                  "refs": refs(*extra_refs), "agent": agent}
-        # The real rules, before any view reads it. A bass-only reading is
-        # ADR 0079's form, which version 1's rules do not know.
-        if not any(views.is_bass_only(r) for s in spans for r in s["readings"]):
-            check_chord_stacks(claim, fixture_stream())
-        record = {**claim, "id": oid, "shape": "claim", "contract": ["archive.claim/chord_stacks", "1"]}
+        # The real rules, before any view reads it. A bass-only reading and a
+        # stem citation are ADR 0079's version 2, which version 1 refuses.
+        version = "2" if "stem" in payload or any(is_bass_only(r) for s in spans for r in s["readings"]) else "1"
+        (check_chord_stacks_v2 if version == "2" else check_chord_stacks)(claim, fixture_stream())
+        record = {**claim, "id": oid, "shape": "claim", "contract": ["archive.claim/chord_stacks", version]}
         self.records.append(record)
         return record
 
@@ -94,6 +97,10 @@ class World:
         record = {"revision_id": rid, "id": oid, "shape": "assessment",
                   "contract": ["archive.assessment/judgment", version], "agent": agent, "payload": payload,
                   "refs": [{"role": "assessment_of", "id": claim["id"], "revision_id": claim["revision_id"]}]}
+        # ADR 0081's own check, against the claim it judges, so a scope is the shape 0081 defines.
+        check_judgment({"payload": payload, "refs": record["refs"], "agent": agent,
+                        "contracts": [{"id": "archive.assessment/judgment", "version": version}]},
+                       {k: claim[k] for k in ("payload", "refs", "revision_id", "agent")}, fixture_stream())
         self.records.append(record)
         return record
 
@@ -397,7 +404,7 @@ class FirstCurrentRule(unittest.TestCase):
     def test_an_affirmed_reading_is_the_persons_word(self):
         world = World()
         machine = world.chords([span(0, 4, triad(C), triad(A, "min"))], method="chords-chordino")
-        world.judge(machine, "affirmed", PERSON, version="2", span=0, reading=1)
+        world.judge(machine, "affirmed", PERSON, version="2", reading={"span": 0, "reading": 1})
         chosen = at(current(world), 1)["chosen"]
         self.assertEqual((chosen["tier"], chosen["reading"]), ("person", 1))
 
@@ -410,12 +417,26 @@ class FirstCurrentRule(unittest.TestCase):
 
     def test_a_rejected_span_falls_to_the_next_machine(self):
         world, jiang, chordino = self.two_machines()
-        world.judge(jiang, "rejected", PERSON, version="2", span=0)
+        world.judge(jiang, "rejected", PERSON, version="2", sample_rate=RATE,
+                    span={"start_sample": 0, "end_sample": 4 * SECOND})
         self.assertEqual(at(current(world), 1)["chosen"]["claim"], chordino["revision_id"])
         # Another person's rejection does not change this person's view.
         world2, jiang2, _ = self.two_machines()
         world2.judge(jiang2, "rejected", BANDMATE)
         self.assertEqual(at(current(world2), 1)["chosen"]["claim"], jiang2["revision_id"])
+
+    def test_the_narrowest_judgment_stands_and_cuts_the_stretch(self):
+        """ADR 0081's standing: "I affirm this claim, except here" is two
+        judgments; the rejected two seconds fall to the next machine and the
+        rest stays the person's."""
+        world, jiang, chordino = self.two_machines()
+        world.judge(jiang, "affirmed", PERSON)
+        world.judge(jiang, "rejected", PERSON, version="2", sample_rate=RATE,
+                    span={"start_sample": 2 * SECOND, "end_sample": 4 * SECOND})
+        answer = current(world)
+        self.assertEqual((at(answer, 1)["chosen"]["claim"], at(answer, 1)["chosen"]["tier"]),
+                         (jiang["revision_id"], "person"))
+        self.assertEqual(at(answer, 3)["chosen"]["claim"], chordino["revision_id"])
 
     def test_withdrawn_only_by_its_own_asserter(self):
         world, jiang, chordino = self.two_machines()
@@ -463,7 +484,7 @@ class FirstCurrentRule(unittest.TestCase):
 
     def test_the_bass_stem_is_the_slash_bass_of_a_machine_chord(self):
         world, _, _ = self.two_machines()
-        world.chords([span(0, 2, {"bass": E})], method="bass-stem-pitch")
+        world.chords([span(0, 2, {"bass": E})], method="bass-stem-pitch", stem=BASS_STEM)
         answer = current(world)
         segment = at(answer, 1)
         self.assertEqual(segment["stack"], {"bass": E, "tones": [C, G], "root": C})
@@ -471,10 +492,20 @@ class FirstCurrentRule(unittest.TestCase):
         self.assertIn("bass_from", segment)
         self.assertEqual(at(answer, 3)["stack"]["bass"], C)
 
+    def test_a_bass_line_not_read_from_the_bass_stem_is_no_slash_bass(self):
+        """D4.2's slash bass is the stem bass: a machine's bass-only claim
+        from the mix, or from another stem, leaves the chord's bass alone."""
+        world, _, _ = self.two_machines()
+        world.chords([span(0, 2, {"bass": E})], method="bass-from-mix")
+        world.chords([span(0, 2, {"bass": E})], method="bass-from-other", stem={**BASS_STEM, "output": "other"})
+        segment = at(current(world), 1)
+        self.assertEqual(segment["stack"]["bass"], C)
+        self.assertNotIn("bass_from", segment)
+
     def test_disagreeing_bass_stems_keep_the_machines_own_bass(self):
         world, _, _ = self.two_machines()
-        world.chords([span(0, 4, {"bass": E})], method="bass-stem-pitch")
-        world.chords([span(0, 4, {"bass": G})], method="bass-stem-other")
+        world.chords([span(0, 4, {"bass": E})], method="bass-stem-pitch", stem=BASS_STEM)
+        world.chords([span(0, 4, {"bass": G})], method="bass-stem-other", stem=BASS_STEM)
         segment = at(current(world), 1)
         self.assertEqual(segment["stack"]["bass"], C)
         self.assertNotIn("bass_from", segment)
