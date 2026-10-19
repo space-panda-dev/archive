@@ -80,6 +80,9 @@ class Gains:
             out[0, 0, 0] = numpy.nan
         if mode == "changed":
             out = out * numpy.float32(0.5)
+        if mode == "instrumental":
+            # A vocal stem of bleed: only its first tenth sounds.
+            out[self.sources.index("vocals"), ..., out.shape[-1] // 10:] = 0
         return out
 
 for module in modules:
@@ -535,13 +538,35 @@ class StemAsContent(unittest.TestCase):
                            *stand_in_programs(directory), program=fake_python(directory))
         self.assertEqual(code, 0, answer)
         self.assertNotIn("stems", answer["extractors"])
-        self.assertEqual(set(answer["extractors"]), set(bank.Catalog.load().extractors) - {"stems"})
+        # Nor the six-stem separator, though `run` configures its interpreter: it would separate the stem again.
+        self.assertNotIn("stems-6s", answer["extractors"])
+        self.assertEqual(set(answer["extractors"]), set(bank.Catalog.load().extractors) - {"stems", "stems-6s"})
         # Those whose interpreter is not configured here are skipped; the rest would measure the stem.
         tasks = [task for task in answer["extractors"].values() if task["status"] != "skipped"]
         self.assertIn("loudness-r128", {e for e, t in answer["extractors"].items() if t["status"] == "would_run"})
         for task in tasks:
             self.assertEqual(task["task"]["input"]["digest"], answer["content"])
             self.assertEqual(task["task"]["input"]["filed_under"], bank.file_digest(audio))
+
+    def test_all_on_a_stem_never_separates_it_again(self) -> None:
+        """Every separator in the catalog is left out of `all --from`, with
+        its interpreter configured; named on its own, it still runs."""
+        catalog = bank.Catalog.load()
+        separators = {e for e, extractor in catalog.extractors.items() if extract.makes_content(extractor)}
+        self.assertEqual(separators, {"stems", "stems-6s"})
+        directory = scratch(self)
+        audio = chord_with_clicks(directory / "take.flac", 2)
+        fake = fake_python(directory)
+        self.assertEqual(run(directory, audio, "stems", program=fake)[0], 0)
+        for source in ("stems/vocals", "stems/other"):
+            with self.subTest(source=source):
+                code, answer = run(directory, audio, "all", "--from", source, "--dry-run", program=fake)
+                self.assertEqual(code, 0, answer)
+                self.assertTrue(answer["extractors"])  # anchor: the stem is measured
+                self.assertEqual(separators & set(answer["extractors"]), set())
+                self.assertEqual(set(answer["from"]["extractors"]), {"stems"})
+        code, answer = run(directory, audio, "stems-6s", "--from", "stems/vocals", "--dry-run", program=fake)
+        self.assertEqual((code, answer["extractors"]["stems-6s"]["status"]), (0, "would_run"))
 
     def test_what_cannot_be_content_is_refused(self) -> None:
         directory = scratch(self)

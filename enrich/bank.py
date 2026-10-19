@@ -28,6 +28,7 @@ import re
 import stat
 import sys
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -55,6 +56,7 @@ PROGRAM = re.compile(r"\$\{([a-z][a-z0-9-]{0,62})\}")
 SUFFIX = re.compile(r"\.[a-z0-9]{1,10}")
 KEY = re.compile(r"sha256:[0-9a-f]{64}")
 SPOOL_CAPABILITY = re.compile(r"[A-Za-z0-9._-]+@[A-Za-z0-9.]+")
+DECIMAL = re.compile(r"-?[0-9]{1,15}(\.[0-9]{1,15})?")
 # The integers every JSON reader holds exactly (an IEEE double's), as RFC 8785 requires.
 MAX_INTEGER = 2 ** 53 - 1
 
@@ -217,8 +219,9 @@ class Extractor:
     @property
     def prefers(self) -> list[dict[str, Any]]:
         """The file features this extractor measures by default where the
-        content has them, in order, each with the parameters it takes there."""
-        return [{"parameters": {}, **preference} for preference in self.manifest.get("prefers", [])]
+        content has them, in order, each with the parameters it takes there
+        and the minimums its measure there must reach to be the default."""
+        return [{"parameters": {}, "at_least": {}, **preference} for preference in self.manifest.get("prefers", [])]
 
     def accepts(self, media_type: str) -> bool:
         kind, _, sub = media_type.partition("/")
@@ -291,9 +294,17 @@ def check_manifest(manifest: Any, where: str) -> dict[str, Any]:
     prefers = manifest.get("prefers", [])
     _require(isinstance(prefers, list), f"{where}: prefers must list preferred inputs")
     for preference in prefers:
-        _require(isinstance(preference, dict) and set(preference) <= {"input", "parameters"}
+        _require(isinstance(preference, dict) and set(preference) <= {"input", "parameters", "at_least"}
                  and isinstance(preference.get("input"), str) and FEATURE.fullmatch(preference["input"]) is not None,
-                 f"{where}: each preference is {{\"input\": \"<extractor>/<output>\", \"parameters\": {{...}}}}")
+                 f"{where}: each preference is {{\"input\": \"<extractor>/<output>\", \"parameters\": {{...}}, "
+                 f"\"at_least\": {{...}}}}")
+        minimums = preference.get("at_least", {})
+        _require(isinstance(minimums, dict) and all(
+            isinstance(value, str) and DECIMAL.fullmatch(value) is not None for value in minimums.values()),
+                 f"{where}: a preference's at_least maps outputs to decimal text, such as \"0.2\"")
+        _require(all(isinstance(manifest.get("outputs"), dict)
+                     and manifest["outputs"].get(name, {}).get("kind") == "scalar" for name in minimums),
+                 f"{where}: at_least for {preference['input']} names only scalar outputs it declares")
         fields = preference.get("parameters", {})
         _require(isinstance(fields, dict), f"{where}: a preference's parameters must be an object")
         check_parameters(fields, f"{where}: parameters preferred for {preference['input']}")
@@ -759,19 +770,42 @@ class Bank:
     def default_input(self, content: str, extractor_id: str) -> str | None:
         """The file feature an extractor measures by default for this
         content: the first it prefers that the bank holds for it, or None,
-        for the content itself. The runner and every reader decide by this,
-        so they agree on which entry is the content's."""
+        for the content itself. A preference with `at_least` is passed over
+        once its measure of the feature is in the bank and any of those
+        scalars falls below its minimum (a vocal stem that is mostly
+        unvoiced); until then, it is the default. The runner and every
+        reader decide by this, so they agree on which entry is the
+        content's."""
         for preference in self.catalog[extractor_id].prefers:
             source = preference["input"].split("/", 1)[0]
-            if source in self.catalog.extractors and self.input_of(content, preference["input"]) is not None:
-                return preference["input"]
+            if source not in self.catalog.extractors or self.input_of(content, preference["input"]) is None:
+                continue
+            if preference["at_least"] and self.falls_short(content, preference, extractor_id):
+                continue
+            return preference["input"]
         return None
+
+    def falls_short(self, content: str, preference: Mapping[str, Any], extractor_id: str) -> bool:
+        """Whether the measure of a preferred feature is in the bank and one
+        of the scalars its preference names is below the minimum given. A
+        value that is not a number is refused rather than read as either."""
+        measured = self.entry_from(content, preference["input"], extractor_id)
+        if measured is None:
+            return False
+        for name, minimum in preference["at_least"].items():
+            value = measured.scalar(name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value:
+                raise BankError(f"{measured.path}: {name} is {value!r}, not a number to compare with {minimum}")
+            if Decimal(repr(value)) < Decimal(minimum):
+                return True
+        return False
 
     def default_entry(self, content: str, extractor_id: str) -> tuple[Entry | None, str | None]:
         """The entry an extractor makes of this content by default, and the
         feature it measured (None for the content itself): the measure of
-        the first preferred feature the bank holds, else of the content. The
-        entry is None when that measure is not in the bank; it is never the
+        the first preferred feature the bank holds whose measure, if made,
+        reaches the preference's `at_least`, else of the content. The entry
+        is None when that measure is not in the bank; it is never the
         content's own entry in place of a preferred feature's."""
         feature = self.default_input(content, extractor_id)
         if feature is None:

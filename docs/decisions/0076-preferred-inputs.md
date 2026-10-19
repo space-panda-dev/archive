@@ -1,6 +1,8 @@
 # 0076. An extractor may prefer a file feature of its content as its default input
 
-Status: proposed (2026-10-18)
+Status: accepted (operator, 2026-10-19); proposed 2026-10-18, amended before
+acceptance (a mostly unvoiced preferred stem falls back to the mix; bass is
+its own category)
 
 The melody of a band recording is the sung line, and the sung line is in the
 vocal stem. Measured on the mix, MELODIA follows whichever line is most
@@ -66,10 +68,10 @@ entry is a recording's default, and the reader is told which.
 - On an instrumental recording the vocal stem holds bleed, and its melody is
   nearly empty (three instrumental tracks of the album voiced 3 to 20 % of
   their rows on the stem) where the mix's would follow the lead instrument.
-  The default is still the stem's; a reader that wants the lead line reads
-  the content's own entry (`Bank.entry`, `--no-prefer`). Whether a default
-  should fall back to the content when the preferred measure is empty is
-  [open](../open-questions.md#interfaces-and-tooling).
+  As proposed, the default stayed the stem's, and whether it should fall
+  back to the content was left open; the
+  [amendment](#amendment-2026-10-19-a-mostly-unvoiced-stem-falls-back-to-the-mix)
+  settles it: it falls back.
 - A dry run decides from the bank as it stands, so a `run all --dry-run` that
   would make the stems reports the melody on the mix, and the run itself
   measures the stem it has just made.
@@ -111,3 +113,64 @@ left.
 - **Choosing the bins by the operator's configuration per run.** A reader
   could not tell which parameters keyed the stem's entry; the preference
   carries them, so every reader computes the same key.
+
+## Amendment, 2026-10-19: a mostly unvoiced stem falls back to the mix
+
+Decided by the operator on accepting this record. The album rerun of
+2026-10-18 measured what the proposal predicted: on the album's three
+instrumentals the vocal stem's melody voiced 17, 7, and 3 % of its rows
+(`voiced_fraction`, the share of rows `voiced` marks), so their default
+melody was nearly empty, while on its fifteen sung tracks it voiced 33 to
+70 %.
+
+**A preference may set minimums for scalar outputs of its own measure,
+`at_least`; a preferred measure below one is passed over for the next
+preferred feature, or the content.** `melody` declares
+
+```json
+"prefers": [{"input": "stems/vocals", "parameters": {"bin_cents": 2},
+             "at_least": {"voiced_fraction": "0.2"}}]
+```
+
+`Bank.default_input` decides it, so the runner and every reader still agree:
+a preference whose feature the bank holds is the default until its measure
+of the feature is in the bank, and then only while each named scalar reaches
+its minimum (decimal text, as parameters are written). A value that is not a
+number is refused, not read either way. Without `--from`, the runner
+measures the preferred feature as before; when that measure falls short, it
+keeps the entry, measures the next default input too, and says what it
+passed over (`passed_over`, each feature with its entry's key). A failed
+measure is a failure, not a fall-back. `at_least` is not a parameter: no
+entry's key or bits change, only which entry is a recording's default, so
+`melody` stays version 3.
+
+**Bass is its own category.** A melody never selects the bass part or a bass
+stem by default: no feature `melody` prefers is a bass output (`stems/bass`,
+`stems-6s/bass`), and a test holds the manifest to it. The bass line is read
+by asking for it (`--from stems/bass`, `notes-basic-pitch` on that stem), never
+as a recording's melody.
+
+### Evidence for the amendment
+
+The threshold sits between the two groups the rerun measured. With this
+change, `extract.py run melody` on the eighteen tracks against the album's
+scratch bank ran nothing (every entry was there) and chose:
+
+| | tracks | vocal stem voiced (`voiced_fraction`) | default |
+|---|---|---|---|
+| instrumentals | 3 | 0.174, 0.071, 0.027 | the mix (5-cent bins; its melody voiced 0.66, 0.64, 0.65) |
+| sung | 15 | 0.328 to 0.695 | the vocal stem (2-cent bins), as before |
+
+The lowest sung track is 0.33, so 0.2 leaves a margin on both sides; it is
+one album, and a quieter sung track would need the minimum checked again.
+
+### Alternatives considered in the amendment
+
+- **A level floor on the stem** (its loud level against the mix's), which
+  the rerun also suggested. It was not measured; the voiced share is the
+  thing a reader of the melody needs, and it separated the album's groups.
+- **Falling back inside `melody.py`.** An extractor sees only the bits it is
+  given; it cannot measure the mix while measuring the stem, and an entry
+  that depended on another input would change what its key means.
+- **A new `melody` version.** No output changes, so it would only re-key
+  every melody entry.

@@ -34,14 +34,18 @@ content instead of the content itself: the runner makes the feature first if
 it is missing, then runs the named extractors with the stem as their input,
 its own digest as their content, and the content's directory as where their
 entries are filed (ADR 0075). An extractor never knows it measures a stem.
-With `all`, an extractor whose command names a program that is not
+With `all`, an extractor that makes a file it would accept itself (a
+separator) is left out, so a stem is not separated again; and one whose command names a program that is not
 configured (`${demucs-python}` on a machine without Demucs) is skipped, and
 said to be; named on its own, it fails.
 
 Without `--from`, an extractor whose manifest `prefers` a file feature
 (`melody` prefers `stems/vocals`) measures the first of those the bank
 already holds for the content, as `--from` would, after everything else has
-run; where the bank holds none, it measures the content. A preference never
+run; where the bank holds none, it measures the content. A preference may
+set minimums for scalars of its measure (`melody` asks a `voiced_fraction`
+of at least 0.2 on the vocal stem); a measure below one is kept but passed
+over, and the next default input is measured too. A preference never
 makes the feature, and an extractor run only because another needs it always
 measures the content. `--no-prefer` measures the content regardless.
 `Bank.default_entry` reads back what this made.
@@ -542,9 +546,12 @@ def run_default(catalog: bank.Catalog, root: Path, content: Path, media_type: st
     The targets that prefer no feature run first, with everything they need.
     Then each target that prefers one measures the first preferred feature
     the bank now holds (`Bank.default_input`), as `run_from` would, or the
-    content where it holds none. A preferring target's answer says which
-    feature it measured (`input`); what was run to measure that feature is
-    under `inputs`."""
+    content where it holds none. Where that measure falls short of the
+    preference's `at_least`, the target measures its next default input as
+    well (the mix, when its vocal stem is mostly unvoiced). A preferring
+    target's answer says which feature it measured (`input`) and the keys of
+    the measures it passed over (`passed_over`); what was run to measure a
+    feature is under `inputs`."""
     run = Run(catalog, root, content, media_type, digest, programs, parameters, timeout, optional=optional)
     preferring = [t for t in targets if catalog[t].prefers and catalog[t].accepts(media_type)]
     plain = [t for t in targets if t not in preferring]
@@ -552,24 +559,47 @@ def run_default(catalog: bank.Catalog, root: Path, content: Path, media_type: st
         "status": "ok", "content": run.content_digest(), "media_type": media_type, "bank": str(root),
         "extractors": {}}
     reader = bank.Bank(root, catalog, parameters)
-    on_content: list[str] = []
-    by_feature: dict[str, list[str]] = {}
-    for target in preferring:
-        feature = reader.default_input(run.content_digest(), target)
-        (by_feature.setdefault(feature, []) if feature else on_content).append(target)
-    if on_content:
-        more = run.execute(on_content, jobs, dry_run)
-        answer["extractors"].update(more["extractors"])
-        answer["status"] = "ok" if answer["status"] == more["status"] == "ok" else "failed"
-    for feature, group in by_feature.items():
-        made = run_from(catalog, root, content, media_type, run.content_digest(), programs, parameters, timeout,
-                        feature, group, jobs, dry_run, optional)
-        answer.setdefault("inputs", {})[feature] = {"content": made["content"], "extractors": made["extractors"],
-                                                    "from": made["from"]}
-        for target in group:
-            answer["extractors"][target] = {**made["extractors"][target], "input": feature}
-        answer["status"] = "ok" if answer["status"] == made["status"] == "ok" else "failed"
+    passed_over: dict[str, dict[str, str]] = {}
+    pending = list(preferring)
+    while pending:
+        on_content: list[str] = []
+        by_feature: dict[str, list[str]] = {}
+        for target in pending:
+            feature = reader.default_input(run.content_digest(), target)
+            (by_feature.setdefault(feature, []) if feature else on_content).append(target)
+        if on_content:
+            more = run.execute(on_content, jobs, dry_run)
+            answer["extractors"].update(more["extractors"])
+            answer["status"] = "ok" if answer["status"] == more["status"] == "ok" else "failed"
+        pending = []
+        for feature, group in by_feature.items():
+            made = run_from(catalog, root, content, media_type, run.content_digest(), programs, parameters,
+                            timeout, feature, group, jobs, dry_run, optional)
+            answer.setdefault("inputs", {})[feature] = {"content": made["content"],
+                                                        "extractors": made["extractors"], "from": made["from"]}
+            for target in group:
+                answer["extractors"][target] = {**made["extractors"][target], "input": feature}
+                # A measure that falls short of its preference's `at_least`
+                # moves the default on, to the next preference or the
+                # content: measure that too. Each round passes over one
+                # preference at least, so this ends.
+                if (not dry_run and answer["extractors"][target]["status"] in ("hit", "ran")
+                        and reader.default_input(run.content_digest(), target) != feature):
+                    passed_over.setdefault(target, {})[feature] = answer["extractors"][target]["key"]
+                    pending.append(target)
+            answer["status"] = "ok" if answer["status"] == made["status"] == "ok" else "failed"
+    for target, measures in passed_over.items():
+        answer["extractors"][target]["passed_over"] = measures
     return answer
+
+
+def makes_content(extractor: bank.Extractor) -> bool:
+    """Whether the extractor makes a file it would itself accept as content:
+    a separator, whose stems are audio. `run all --from` a feature leaves it
+    out, since it would make features of a feature (stems of a stem) that
+    nobody asked for; named on its own, it runs."""
+    return any(declared["kind"] == "file" and extractor.accepts(declared["media_type"])
+               for declared in extractor.outputs.values())
 
 
 def unconfigured(extractor: bank.Extractor, programs: dict[str, str]) -> str | None:
@@ -660,9 +690,11 @@ def main(argv: list[str] | None = None) -> int:
         media_type = arguments.media_type or media_type_of(content)
         if arguments.source is not None:
             if everything:
-                # Everything that can measure the feature; not what makes it.
+                # Everything that can measure the feature; not what makes it,
+                # and not what would make content of it (a separator would
+                # separate the stem again).
                 source = arguments.source.split("/", 1)[0]
-                targets = [t for t in targets if source not in catalog.order([t])]
+                targets = [t for t in targets if source not in catalog.order([t]) and not makes_content(catalog[t])]
             answer = run_from(catalog, root, content, media_type, arguments.digest, programs,
                               config.get("parameters", {}), arguments.timeout, arguments.source, targets,
                               arguments.jobs, arguments.dry_run, everything)

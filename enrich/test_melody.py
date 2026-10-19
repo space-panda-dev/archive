@@ -10,6 +10,7 @@ from __future__ import annotations
 import io
 import json
 import math
+import os
 import shutil
 import subprocess
 import sys
@@ -741,6 +742,52 @@ class VocalStem(unittest.TestCase):
         difference = sung.series("level_db")[voiced, 0] - mix.series("level_db")[voiced, 0]
         self.assertLess(abs(float(numpy.median(difference)) - 20 * math.log10(0.4)), 0.2)
         self.assertLess(abs(sung.scalar("loud_db") - mix.scalar("loud_db") - 20 * math.log10(0.4)), 0.2)
+
+    def test_a_mostly_unvoiced_vocal_stem_falls_back_to_the_mix(self) -> None:
+        """An instrumental's vocal stem is bleed: below a voiced fifth, the
+        mix's melody is the recording's (ADR 0076, amended)."""
+        import test_stems
+        directory = scratch(self)
+        notes = (60, 64, 67, 64, 62, 65, 69, 65)
+        samples = numpy.concatenate([silence(0.3)] + [tone(0.5, midi_hz(n), 0.8) for n in notes] + [silence(0.3)])
+        wav = support.write_wav(directory / "take.wav", samples, RATE)
+        support.ffmpeg("-i", str(wav), "-ac", "2", "-c:a", "flac", str(directory / "take.flac"))
+        source = directory / "take.flac"
+        fake = ["--program", f"demucs-python={test_stems.fake_python(directory)}"]
+        argv = configured(directory, LENIENT) + fake
+        out = io.StringIO()
+        with patch.dict(os.environ, {"STEMS_FAKE": "instrumental"}), redirect_stdout(out), \
+                redirect_stderr(io.StringIO()):
+            self.assertEqual(extract.main(["run", "stems", "--content", str(source), "--bank",
+                                           str(directory / "bank"), *fake]), 0, out.getvalue())
+        code, answer = run_melody(directory, source, *argv)
+        self.assertEqual(code, 0, answer)
+        recording = bank.file_digest(source)
+        reader = bank.Bank(directory / "bank", None, {"melody": LENIENT})
+        sung = reader.entry_from(recording, "stems/vocals", "melody")
+        mix = entry_of(directory, source, LENIENT)
+        self.assertLess(sung.scalar("voiced_fraction"), 0.2)
+        self.assertGreater(mix.scalar("voiced_fraction"), 0.2)  # anchor: the mix is not near empty
+        said = answer["extractors"]["melody"]
+        self.assertNotIn("input", said)
+        self.assertEqual(said["passed_over"], {"stems/vocals": sung.manifest["key"]})
+        self.assertEqual(said["key"], mix.manifest["key"])
+        entry, feature = reader.default_entry(recording, "melody")
+        self.assertIsNone(feature)
+        self.assertEqual((entry.manifest["key"], entry.manifest["parameters"]["bin_cents"]),
+                         (mix.manifest["key"], 5))
+
+    def test_the_melody_never_prefers_the_bass(self) -> None:
+        """Bass is its own category: no stem a melody prefers is a bass
+        part, and its preference falls back below a voiced fifth."""
+        catalog = bank.Catalog.load()
+        prefers = catalog["melody"].prefers
+        self.assertTrue(prefers)  # anchor: it prefers something
+        for preference in prefers:
+            source, output = preference["input"].split("/")
+            self.assertNotIn("bass", output)
+            self.assertEqual(catalog[source].outputs[output]["kind"], "file")
+            self.assertEqual(preference["at_least"], {"voiced_fraction": "0.2"})
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -152,9 +153,10 @@ SHIPPED = {
                 "outside": {}},
     # Version 2: 2-cent bins, a level gate on voicing, and level_db.
     # Version 3: only the rows within reach of the gate are measured; 5-cent bins,
-    # and 2 on the vocal stem it prefers; measured_fraction.
+    # and 2 on the vocal stem it prefers; measured_fraction. Still 3 when the
+    # preference gained at_least: no entry's bits change, only which is the default.
     "melody": {"version": "3",
-               "code": "sha256:3be4f467507e5ff1c15013adef5462aac25f798cf96d919e7c33e1e77679a7bd",
+               "code": "sha256:6945b72eaae40a85d24fd296a368d07eea89d6e4b41e8531ae070d7299255079",
                "outside": {}},
     # colour reads the peaks' format and decode from waveform.py, not the
     # derived-media tool media.py, so an edit to that tool's routes or
@@ -187,8 +189,10 @@ SHIPPED = {
     "beats-beatthis": {"version": "1",
                        "code": "sha256:68c308ce04c2874d4f73399fe44491f667de4387e4e5e8760425b8f8ac1abab0",
                        "outside": {}},
+    # chords-jiang stays 1 when it pins its repository's code: a clean checkout
+    # of the pinned commit, which made every entry, makes the same bits.
     "chords-jiang": {"version": "1",
-                     "code": "sha256:d51f91d82354af88e7ba8a6b3f6532e707d9d9e6a5d359580683efdd451a6e30",
+                     "code": "sha256:09b73beb0609bb1b62263370b8b2482c6ee79596131bddcfff021a738f81dc3c",
                      "outside": {}},
     "chords-chordino": {"version": "1",
                         "code": "sha256:e404cea891963fd123d5d865c8f58ece5191bb5d0ab729aaf3d87de4426881ba",
@@ -884,13 +888,19 @@ class Manifests(unittest.TestCase):
                "preferred parameters undeclared": {**good, "prefers": [{"input": "s/f", "parameters": {"x": 1}}]},
                "preferred parameters unencodable": {**good, "prefers": [{"input": "s/f",
                                                                         "parameters": {"mode": 0.5}}]},
-               "a feature preferred twice": {**good, "prefers": [{"input": "s/f"}, {"input": "s/f"}]}}
+               "a feature preferred twice": {**good, "prefers": [{"input": "s/f"}, {"input": "s/f"}]},
+               "minimum not decimal text": {**good, "prefers": [{"input": "s/f", "at_least": {"y": 0.2}}]},
+               "minimum not a number": {**good, "prefers": [{"input": "s/f", "at_least": {"y": "much"}}]},
+               "minimum of a series": {**good, "prefers": [{"input": "s/f", "at_least": {"x": "1"}}]},
+               "minimum of an undeclared output": {**good, "prefers": [{"input": "s/f", "at_least": {"z": "1"}}]},
+               "minimums not an object": {**good, "prefers": [{"input": "s/f", "at_least": ["y"]}]}}
         for name, value in bad.items():
             with self.subTest(name):
                 with self.assertRaises(bank.BankError):
                     bank.check_manifest(value, name)
         self.assertEqual(bank.check_manifest(good, "good"), good)
-        preferring = {**good, "prefers": [{"input": "s/f", "parameters": {"mode": "fine"}}, {"input": "t/f"}]}
+        preferring = {**good, "prefers": [{"input": "s/f", "parameters": {"mode": "fine"}, "at_least": {"y": "0.2"}},
+                                          {"input": "t/f"}]}
         self.assertEqual(bank.check_manifest(preferring, "preferring"), preferring)
 
 
@@ -1000,6 +1010,79 @@ class Preferences(unittest.TestCase):
         i.add("m", prefers=[{"input": "elsewhere/f"}])
         self.assertEqual(i.run("m")[0], 0)
         self.assertEqual(i.reader().default_entry(i.digest, "m")[1], None)
+
+    def falling_short(self, minimum: str) -> Fixture:
+        """`m` prefers `sep/f` while its `y` there reaches `minimum`; the
+        test program writes y = 0 (the number of its needs)."""
+        f = Fixture(self)
+        f.add("sep")
+        f.add("m", accepts=("audio/*", "application/*"),
+              prefers=[{"input": "sep/f", "parameters": {"mode": "preferred"}, "at_least": {"y": minimum}}])
+        return f
+
+    def test_a_measure_below_its_minimum_is_passed_over_for_the_content(self) -> None:
+        f = self.falling_short("1")
+        self.assertEqual(f.run("sep")[0], 0)
+        # Until the feature's measure is in the bank, the feature is the default.
+        self.assertEqual(f.reader().default_input(f.digest, "m"), "sep/f")
+        code, answer = f.run("m")
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(f.runs(), ["sep", "m", "m"])  # the stem's measure, then the content's
+        said = answer["extractors"]["m"]
+        self.assertNotIn("input", said)
+        reader = f.reader()
+        short = reader.entry_from(f.digest, "sep/f", "m")
+        self.assertEqual(short.scalar("y"), 0)
+        self.assertEqual(said["passed_over"], {"sep/f": short.manifest["key"]})
+        entry, feature = reader.default_entry(f.digest, "m")
+        self.assertIsNone(feature)
+        self.assertNotEqual(entry.manifest["key"], short.manifest["key"])  # anchor: two entries
+        self.assertEqual((entry.manifest["content"], entry.manifest["parameters"], entry.manifest["key"]),
+                         (f.digest, {"mode": "ok"}, said["key"]))
+        # The next run decides from the bank as it stands, and runs nothing.
+        with patch.object(extract, "run_program", side_effect=AssertionError("ran")):
+            code, again = f.run("m")
+        self.assertEqual((code, again["extractors"]["m"]["status"]), (0, "hit"))
+        self.assertNotIn("input", again["extractors"]["m"])
+        # --from still measures the feature, and a dry run names the content.
+        self.assertEqual(f.run("m", "--from", "sep/f")[1]["extractors"]["m"]["status"], "hit")
+        self.assertNotIn("input", f.run("m", "--dry-run")[1]["extractors"]["m"])
+
+    def test_all_falls_back_after_making_the_feature(self) -> None:
+        f = self.falling_short("1")
+        code, answer = f.run("all")
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(f.runs(), ["sep", "m", "m"])
+        self.assertIn("sep/f", answer["extractors"]["m"]["passed_over"])
+        self.assertIsNone(f.reader().default_entry(f.digest, "m")[1])
+
+    def test_a_measure_that_reaches_its_minimum_stays_the_default(self) -> None:
+        f = self.falling_short("0")
+        self.assertEqual(f.run("sep")[0], 0)
+        code, answer = f.run("m")
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(f.runs(), ["sep", "m"])
+        self.assertEqual(answer["extractors"]["m"]["input"], "sep/f")
+        self.assertNotIn("passed_over", answer["extractors"]["m"])
+        self.assertEqual(f.reader().default_entry(f.digest, "m")[1], "sep/f")
+
+    def test_a_failed_measure_of_the_feature_does_not_fall_back(self) -> None:
+        f = self.falling_short("1")
+        self.assertEqual(f.run("sep")[0], 0)
+        with patch.dict(os.environ, {"BANK_TEST_FAIL": "m"}):
+            code, answer = f.run("m")
+        self.assertEqual((code, answer["extractors"]["m"]["status"]), (1, "failed"))
+        self.assertEqual(answer["extractors"]["m"]["input"], "sep/f")
+        self.assertEqual(f.runs(), ["sep", "m"])  # tried once, on the feature
+
+    def test_a_minimum_read_from_what_is_not_a_number_is_refused(self) -> None:
+        f = self.falling_short("1")
+        self.assertEqual(f.run("sep")[0], 0)
+        self.assertEqual(f.run("m", "--from", "sep/f")[0], 0)
+        for value in (None, "0.1", True, math.nan):
+            with self.subTest(value=value), patch.object(bank.Entry, "scalar", return_value=value):
+                with self.assertRaisesRegex(bank.BankError, "not a number"):
+                    f.reader().default_input(f.digest, "m")
 
     def test_the_preferred_parameters_yield_to_the_operators(self) -> None:
         catalog = bank.Catalog([bank.Extractor(Path("."), manifest("sep")), bank.Extractor(

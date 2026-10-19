@@ -18,7 +18,7 @@ here writes a record: Door decides every revision.
 | [`windows.py`](windows.py) | The whole-recording window search: candidate pass, regions, snapping, claim rounds, and decisions, a standalone tool ([ADR 0072](../docs/decisions/0072-windowed-work-matches.md)) |
 | [`calibrate_windows.py`](calibrate_windows.py) | Checks the window matcher's thresholds against an archive's accepted occurrences; proposes nothing |
 | [`enrich.py`](enrich.py) | The `enrich` command that runs a tool against an archive's records |
-| [`bank.py`](bank.py), [`extract.py`](extract.py), [`remote.py`](remote.py), [`extractors/`](extractors/frames/extractor.json) | The feature bank's format and reader, the runner that fills it, the same run through Spool on another machine (proposed [ADR 0090](../docs/decisions/0090-extractor-runs-travel-through-spool.md)), and the extractors (one table under [`extract.py`: the feature bank](#extractpy-the-feature-bank) says what each writes): `frames`, `loudness-r128`, `rhythm`, `tonal`, `melody`, `structure`, `quality`, `colour`, `stems`, `stems-6s`, `beats-beatthis`, `chords-jiang`, `chords-chordino`, `notes-basic-pitch`, `f0-pesto`, and `f0-torchcrepe` ([ADR 0073](../docs/decisions/0073-feature-bank.md), [ADR 0074](../docs/decisions/0074-extractor-contract.md), [ADR 0075](../docs/decisions/0075-stems-as-content.md)) |
+| [`bank.py`](bank.py), [`extract.py`](extract.py), [`remote.py`](remote.py), [`extractors/`](extractors/frames/extractor.json) | The feature bank's format and reader, the runner that fills it, the same run through Spool on another machine ([ADR 0090](../docs/decisions/0090-extractor-runs-travel-through-spool.md)), and the extractors (one table under [`extract.py`: the feature bank](#extractpy-the-feature-bank) says what each writes): `frames`, `loudness-r128`, `rhythm`, `tonal`, `melody`, `structure`, `quality`, `colour`, `stems`, `stems-6s`, `beats-beatthis`, `chords-jiang`, `chords-chordino`, `notes-basic-pitch`, `f0-pesto`, and `f0-torchcrepe` ([ADR 0073](../docs/decisions/0073-feature-bank.md), [ADR 0074](../docs/decisions/0074-extractor-contract.md), [ADR 0075](../docs/decisions/0075-stems-as-content.md)) |
 | [`hue_range.py`](hue_range.py) | The `colour` extractor's centroid hue limits taken from a set of recordings' `frames` entries, printed as a `--config` ([its README](extractors/colour/README.md#the-hue-range)) |
 | [`media.py`](media.py), [`waveform.py`](waveform.py), [`derived.py`](derived.py) | Derived media, a standalone tool that never touches an archive; the waveform peaks' format and decode; and the layout ([ADR 0069](../docs/decisions/0069-derived-media.md)) |
 | [`requirements.txt`](requirements.txt) | The libraries: numpy (detector, matchers, derived media) and scipy (numpy matcher) |
@@ -737,7 +737,9 @@ Versions, needs, and outputs by kind are listed together in
 unchanged, keyed by the stem's own digest and filed with the recording, after
 the stems are made if they are missing. An extractor whose manifest `prefers`
 a stem (`melody` prefers `stems/vocals`) measures it without `--from` where
-the bank already holds it, and the content otherwise; `--no-prefer` measures
+the bank already holds it, and the content otherwise, or where its measure of
+the stem falls short of the preference's `at_least` (a vocal stem voicing
+less than a fifth of its rows falls back to the mix); `--no-prefer` measures
 the content, and `bank.Bank.default_entry` reads back whichever was made. `stems` runs only where the operator
 configures Demucs's interpreter (`--program demucs-python=<path>`, or
 `programs` in `--config`); `run all` elsewhere skips it and says so. The other

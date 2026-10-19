@@ -362,7 +362,7 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
     each read entry's `software`.)
   - How is the disclosure of content to a worker outside the operator's
     custody recorded before the put (the Spool adapter question above)?
-    [Proposed ADR 0090](decisions/0090-extractor-runs-travel-through-spool.md)
+    [ADR 0090](decisions/0090-extractor-runs-travel-through-spool.md)
     returns an extractor's files as Spool result attachments and runs only
     on the operator's own workers; it does not answer this.
   - A grid is a time base in integer samples, which covers video's
@@ -390,12 +390,6 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
     came from (a vocal line's level against the mix's `frames`). Should
     `needs` be able to name the source content's features, and how would the
     key hold them?
-  - An extractor's default input is the first file feature it prefers that
-    the bank holds ([ADR 0076](decisions/0076-preferred-inputs.md)), so on an
-    instrumental recording the default melody is the vocal stem's, nearly
-    empty, where the mix's follows the lead instrument. Should a default fall
-    back to the content when the preferred measure finds nothing, and by what
-    measure of nothing?
   - Stems are separated in 600-second chunks joined by crossfades. How far
     does a long recording's chunked separation differ from a whole-file run
     on real material, and does it matter to any measure?

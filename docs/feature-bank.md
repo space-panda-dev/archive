@@ -211,17 +211,25 @@ a word naming a file in the extractor's directory becomes its absolute path.
 
 ### Preferred inputs
 
-`prefers` ([ADR 0076](decisions/0076-preferred-inputs.md), proposed) lists file features of the content that the extractor measures by
+`prefers` ([ADR 0076](decisions/0076-preferred-inputs.md)) lists file features of the content that the extractor measures by
 default in place of the content, in order, each with parameters that replace
 its declared ones there (fields it declares; canonical JSON):
 
 ```json
-"prefers": [{"input": "stems/vocals", "parameters": {"bin_cents": 2}}]
+"prefers": [{"input": "stems/vocals", "parameters": {"bin_cents": 2},
+             "at_least": {"voiced_fraction": "0.2"}}]
 ```
 
 The default input of an extractor for a content is the first preferred
 feature whose entry the bank holds for that content, and the content itself
-when it holds none. Without `--from`, the runner runs every other target
+when it holds none. `at_least` (optional) maps scalar outputs of the
+extractor's own measure to minimums in decimal text: once that measure of
+the feature is in the bank and any of them is below its minimum, the
+preference is passed over for the next, or the content (`melody` falls back
+to the mix where the vocal stem voices less than a fifth of its rows, as on
+an instrumental). A measure passed over is kept; the runner measures the
+next default input too and names what it passed over in `passed_over`.
+`at_least` is not a parameter and changes no key. Without `--from`, the runner runs every other target
 first, then measures each preferring target on its default input as `--from`
 would (the feature's digest is the content, filed under the content's
 directory); a preference never makes the feature, and an extractor run only
@@ -288,8 +296,8 @@ file (perhaps the content itself). The runner replaces `result.json` with `entry
 ## Through Spool
 
 An extractor that needs no other feature can run on another machine as a
-Spool task ([ADR 0090](decisions/0090-extractor-runs-travel-through-spool.md),
-proposed); [`enrich/remote.py`](../enrich/remote.py) is the reference
+Spool task ([ADR 0090](decisions/0090-extractor-runs-travel-through-spool.md));
+[`enrich/remote.py`](../enrich/remote.py) is the reference
 requester, worker program, and collector. The task's ID is `bank-` and the
 key's 64 hexadecimal digits, its capability `archive-extractor.<id>@<version>`,
 its one attachment the content, and its payload:
