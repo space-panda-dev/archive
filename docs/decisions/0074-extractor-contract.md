@@ -124,18 +124,22 @@ spectral centroid, roll-off, flatness, and flux, an onset function, MFCCs,
 and mel bands. `loudness-r128` is a 31-line shell script around `ffmpeg`
 that writes one scalar, the worked example of
 [adding an extractor](../adding-an-extractor.md), and the proof that the
-runner does not care what an extractor is written in. Eight more measure
+runner does not care what an extractor is written in. Seven more measure
 from Essentia's standard algorithms or from what is already in the bank:
 `rhythm` (beats, tempo, onsets, how far onsets sit off the beat, and the
 tempo level, meter, and downbeats a musician would count),
 `tonal` (tuning and its drift, pitch-class profiles referenced to the
-tuning, note collection, key and mode, dissonance), `chords` (a chord per half beat from
-`tonal`'s profiles on `rhythm`'s beats, without decoding), `melody` (the
+tuning, note collection, key and mode, dissonance), `melody` (the
 mix's predominant melody with MELODIA), `structure` (playing, tuning,
 count-ins, false starts, endings, sections, and loops, from `frames` and
 `rhythm` without decoding), `quality` (how well the recording was captured),
 `colour` (a colour-coded waveform's data), and `stems` (Demucs, in an
-environment of its own; [ADR 0075](0075-stems-as-content.md)).
+environment of its own; [ADR 0075](0075-stems-as-content.md)). Three
+more run learned or plugin models in environments of their own, as `stems`
+does: `beats-beatthis` (beats and downbeats at the model's own metrical
+level), `chords-jiang` (large-vocabulary chord labels, each span with its
+three most probable readings and their weights), and `chords-chordino` (a
+second chord opinion that is not learned).
 Every shipped extractor's version, needs, and outputs are listed in one
 place, [the shipped extractors](../feature-bank.md#the-shipped-extractors)
 in the format, which a test holds to the manifests, with what each version
@@ -229,11 +233,13 @@ is applied by whoever reads both the melody and the tuning.
   (four times its 26 s for a quarter of an hour), and a review estimated
   13 minutes more at four hours.
 - What each shipped extractor decodes: `frames` the first audio stream
-  at 22,050 Hz mono, once; `structure` and `chords` nothing; `tonal` the
+  at 22,050 Hz mono, once; `structure` nothing; `tonal` the
   same twice more (above); `rhythm` and `melody` 44,100 Hz mono, which their algorithms
   are tuned for; `quality` the stream's own rate and channels (above);
   `colour` enough to learn the peaks' grid (ADR 0073); `loudness-r128`
-  and `stems` through `ffmpeg` at the rate they need. Run together by
+  and `stems` through `ffmpeg` at the rate they need; the learned beat and
+  chord extractors with their own libraries, as their models expect
+  (their manifests say how). Run together by
   `run all` on a synthesised three-minute 48 kHz stereo FLAC, on a shared
   development Mac (load average 13 to 15), one at a time, each took, in
   times real time: `structure` about 600, `loudness-r128` 450, `colour`
@@ -253,6 +259,17 @@ is applied by whoever reads both the melody and the tuning.
   stand-in for the model, so its time says nothing about Demucs. Real recordings have not been timed together.
 - A stem separator runs in its own environment, named by configuration, and
   its stems are `file` outputs that later extractors need like any feature.
+  So does any model with heavy dependencies (PyTorch, ONNX, TensorFlow):
+  they never enter the archive's environment; the manifest pins the model
+  files by digest and the packages by version, and the program refuses
+  files other than the pinned ones.
+- An extractor is retired by removing it from the catalog, not by a rule of
+  its own: `run all` stops making its entries, the entries stay readable
+  from their own `entry.json` and regenerable from its directory in the
+  history, and its id is not reused. The Essentia `chords` extractor (a
+  chord per half beat from `tonal`'s profiles) was the first, replaced by
+  `chords-jiang` and `chords-chordino`
+  ([retired extractors](../feature-bank.md#retired-extractors)).
 - The plugin and dependency-injection frameworks
   [left out on purpose](../boundaries.md#left-out-on-purpose) stay out: an
   extractor is a separate process with declared input and output, as

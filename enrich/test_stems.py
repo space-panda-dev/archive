@@ -32,6 +32,7 @@ import extract
 import support
 from support import needs_ffmpeg
 from test_cover import needs_essentia
+from test_beats_chords import stand_in_programs
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "extractors" / "stems"))
 import stems  # noqa: E402
@@ -518,8 +519,9 @@ class StemAsContent(unittest.TestCase):
         self.assertEqual(answer["from"]["extractors"]["stems"]["status"], "would_run")
         self.assertEqual(answer["extractors"], {})
         self.assertEqual(run(directory, audio, "stems", program=fake_python(directory))[0], 0)
+        # Every other extractor's interpreter configured, so none is skipped.
         code, answer = run(directory, audio, "all", "--from", "stems/other", "--dry-run",
-                           program=fake_python(directory))
+                           *stand_in_programs(directory), program=fake_python(directory))
         self.assertEqual(code, 0, answer)
         self.assertNotIn("stems", answer["extractors"])
         self.assertEqual(set(answer["extractors"]), set(bank.Catalog.load().extractors) - {"stems"})

@@ -1,0 +1,61 @@
+{
+ "contract": "archive-extractor/1",
+ "id": "chords-chordino",
+ "version": "1",
+ "description": "Chordino (Mauch and Dixon's NNLS Chroma Vamp plugin), the build bundled by chord-extractor 0.1.3, run through the vamp host: simple chord labels from a least-squares chroma and an HMM. Not learned from data, so a second opinion of another kind beside chords-jiang. Decodes the content again at 44,100 Hz mono with librosa. Runs under the operator's chordino-python. CPU, a single-threaded plugin with a fixed thread cap on numeric libraries.",
+ "command": [
+  "${chordino-python}",
+  "chordino.py"
+ ],
+ "accepts": [
+  "audio/*",
+  "video/*"
+ ],
+ "requires": [
+  "vamp==1.1.0",
+  "chord_extractor==0.1.3",
+  "librosa==0.11.0",
+  "numpy==1.26.4",
+  "soundfile==0.14.0",
+  "soxr==1.1.0",
+  "python==3.11.17",
+  "nnls-chroma.so sha256:022f18b7a0b922161bba5f292b916482fd04d9bad4c875292d25c141f98c7d99"
+ ],
+ "needs": [],
+ "parameters": {
+  "plugin": {
+   "name": "nnls-chroma:chordino",
+   "output": "simplechord",
+   "file": "chord_extractor/_lib/nnls-chroma.so",
+   "sha256": "sha256:022f18b7a0b922161bba5f292b916482fd04d9bad4c875292d25c141f98c7d99"
+  },
+  "decode": "librosa.load sr 44100 mono (soxr_hq)",
+  "plugin_parameters": {
+   "useNNLS": 1,
+   "rollon": 1,
+   "tuningmode": 0,
+   "whitening": 1,
+   "s": "0.7",
+   "boostn": "0.1"
+  },
+  "device": "cpu",
+  "threads": 3
+ },
+ "outputs": {
+  "chords": {
+   "kind": "spans",
+   "unit": "s",
+   "description": "Chordino's labels (its own spelling, N for no chord); each span ends where the next starts, the last at the decoded length"
+  },
+  "chord_count": {
+   "kind": "scalar",
+   "unit": "spans",
+   "description": "how many spans"
+  },
+  "seconds": {
+   "kind": "scalar",
+   "unit": "s",
+   "description": "decoded length"
+  }
+ }
+}
