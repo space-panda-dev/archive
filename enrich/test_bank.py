@@ -122,7 +122,7 @@ SHIPPED = {
     # windows; the tonic by the bass among the collection's notes, with a
     # calibrated confidence.
     "tonal": {"version": "5",
-              "code": "sha256:05b14296dc67836cb4700f76f0ef7a0afc35bb4aba9432061be478de62938f32",
+              "code": "sha256:48298eb5dd34f2f2a91b9c9a267fdc70ca001ace46784b4ac590ed113aacd1f3",
               "outside": {"cover.py": "sha256:1d3d8e48959d97ec6d633ab683eebea5bcb75616a1d29e218c25da30a7a4884c",
                           "extractors/frames/frames.py":
                               "sha256:acac662e87efbcafcebab714b858e8b42c287de7963156c7e2a14adfd860c565"}},

@@ -36,7 +36,7 @@ recording again for each frame's spectral peaks, and measures:
   the energy (squared magnitude) of the peaks within a semitone of its
   pitch class, weighted by a squared cosine of their distance, not
   normalised, so loud and quiet frames keep their difference; a frame below
-  the level gate is 0. The `chords` extractor reads them;
+  the level gate is 0;
 - `collection`, `collection_margin`, `key`, `mode`, `scale`, `scale_notes`,
   `key_strength`, `tonic_margin`, `tonic_confidence`, `tonic_named`: the
   note collection of the pitched frames, its tonic and mode, and how sure
