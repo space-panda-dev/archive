@@ -107,3 +107,4 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0090](0090-extractor-runs-travel-through-spool.md) | An extractor run travels through Spool, and its files come back as result attachments |
 | [0091](0091-talk-needs-level.md) | Talk needs level, and a studio preset never says talk (amends 0066's presets) |
 | [0092](0092-internet-exposure.md) | Internet exposure through Cloudflare Access; internet logins are members (proposed) |
+| [0093](0093-audiences.md) | A relay has several named audiences (proposed) |

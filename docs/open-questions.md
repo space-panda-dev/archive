@@ -152,6 +152,13 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
 - How does an operator declare, ahead of time, what happens to an archive
   after them: a successor, content destroyed or sealed, content that opens after
   a closure period? Time-limited grants would be new to policy.
+- How do separate archives relate (federation)? INV-3 makes concurrent
+  operators separate archives, and nothing yet lets one archive pin, cite, or
+  read another's objects: a friend's own sample library, say, kept in their
+  own archive. Until this is decided, someone else's content enters only by
+  the operator holding it in custody on their behalf, with the person
+  recorded as its origin and their own limits binding
+  ([ADR 0018](decisions/0018-people-in-the-archive.md)).
 - Door refuses a proposal written under a specification context the archive
   does not hold, and refuses a committed record written under a context only
   a later commit added. A committed record under a context the archive never
