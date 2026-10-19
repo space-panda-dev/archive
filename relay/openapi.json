@@ -8,7 +8,7 @@
       "name": "CC0-1.0",
       "identifier": "CC0-1.0"
     },
-    "description": "HTTP over Door's service and World's query (ADR 0056, ADR 0060), and derived media by content digest (ADR 0069). Every answer is JSON: {ok, archive, result} or {ok: false, error: {code, message}}, except a media route's success, which is the derivative's bytes. Codes are stable; messages are not. The archive block names the archive, its specification, the relay's role, and the World projection versions it serves."
+    "description": "HTTP over Door's service and World's query and named views (ADRs 0056, 0060, 0082), derived media and practice audio by content digest (ADRs 0069, 0089), document staging (ADR 0085), and exports (ADR 0089), for the operator and, on a relay with a circle, its members (ADR 0088). Every answer is JSON: {ok, archive, result} or {ok: false, error: {code, message}}, except a file route's success, which is the file's bytes. Codes are stable; messages are not. The archive block names the archive, its specification, the relay's role and writes, the World projection versions it serves, the caller and their capacity, and the circle."
   },
   "components": {
     "schemas": {
@@ -36,8 +36,20 @@
             "description": "Door (500): Door's configuration, such as its Git or git-annex executable, is wrong or changed. Nothing was written."
           },
           {
+            "const": "content_audio_or_video",
+            "description": "Relay (422): The bytes or the declared type are audio or video; the relay stages and serves documents only (ADR 0085)."
+          },
+          {
+            "const": "content_mismatch",
+            "description": "Relay (422): The bytes are not what their declared type says."
+          },
+          {
+            "const": "content_not_described",
+            "description": "Relay (422): An Artifact carrying staged bytes is not described, in the same batch, by a document source claim of the type it was staged as."
+          },
+          {
             "const": "content_not_relayed",
-            "description": "Relay (422): An admission lists content; content admission stays with operator tools."
+            "description": "Relay (422): The admission lists content the relay did not stage for this caller; other content admission stays with operator tools (ADRs 0056, 0085)."
           },
           {
             "const": "door_failed",
@@ -50,6 +62,26 @@
           {
             "const": "expected_head_stale",
             "description": "Door (409): An expected head no longer matches the archive. Read the current heads, rebuild the proposal, and send it again."
+          },
+          {
+            "const": "export_failed",
+            "description": "Relay (502): The exporter failed or wrote no file."
+          },
+          {
+            "const": "export_input_unknown",
+            "description": "Relay (404): World holds no revision an export renders or joins."
+          },
+          {
+            "const": "exporter_unknown",
+            "description": "Relay (422): No exporter of that id and version is installed on the relay's host."
+          },
+          {
+            "const": "feature_not_made",
+            "description": "Relay (404): The feature bank holds no entry with this feature for this content."
+          },
+          {
+            "const": "feature_not_served",
+            "description": "Relay (404): The relay's configuration does not serve this feature, or no installed extractor declares it as an audio file (ADR 0089)."
           },
           {
             "const": "forbidden_identity",
@@ -77,11 +109,15 @@
           },
           {
             "const": "media_forbidden",
-            "description": "Relay (403): Media are served only to the caller bound to the active operator's person, and World names that person once (ADR 0069)."
+            "description": "Relay (403): Content is served only to the active operator's person and to circle members the recording or document is disclosed to (ADRs 0069, 0088, 0089)."
           },
           {
             "const": "media_not_derived",
             "description": "Relay (404): The content is known but this derivative has not been made, or the relay has no derived-media root configured."
+          },
+          {
+            "const": "media_type_unsupported",
+            "description": "Relay (415): The declared media type is not a document type the relay stages."
           },
           {
             "const": "media_unknown_digest",
@@ -92,12 +128,20 @@
             "description": "Relay (405): The route answers another method, named in Allow."
           },
           {
+            "const": "not_disclosed",
+            "description": "Relay (403): A read or a draft names something the caller's circle cannot read, whether or not it exists (ADR 0088)."
+          },
+          {
             "const": "not_found",
             "description": "Relay (404): No such route."
           },
           {
             "const": "operation_failed",
             "description": "Door (500): The operation failed in a way that has no narrower code yet."
+          },
+          {
+            "const": "operator_only",
+            "description": "Relay (403): This route, request, or contract is the operator's (ADR 0088)."
           },
           {
             "const": "outcome_uncertain",
@@ -136,8 +180,20 @@
             "description": "Relay (416): The Range starts past the end of the derivative; Content-Range names its size."
           },
           {
+            "const": "render_failed",
+            "description": "Relay (502): The last render of these settings failed; the next request tries again."
+          },
+          {
+            "const": "renderer_unknown",
+            "description": "Relay (422): No renderer of that id and version is installed on the relay's host."
+          },
+          {
             "const": "request_malformed",
             "description": "Relay (400): The request is not a valid request for its route: its body, its Content-Length, or its fields. From Door: the relay sent Door an invalid request, which is a relay fault. Door (502): The service request itself is not a valid request. Fix the client."
+          },
+          {
+            "const": "stems_not_made",
+            "description": "Relay (404): The named stems entry is not in the bank, or is not the one the installed extractors give the recording."
           },
           {
             "const": "subprocess_failure",
@@ -146,6 +202,22 @@
           {
             "const": "unsupported_media_type",
             "description": "Relay (415): The body is not application/json."
+          },
+          {
+            "const": "view_not_served",
+            "description": "Relay (404): The view is named, but not at that version."
+          },
+          {
+            "const": "view_request_invalid",
+            "description": "Relay (400): The view request, its subject, or a parameter breaks the view's rules."
+          },
+          {
+            "const": "view_subject_not_found",
+            "description": "Relay (404): World holds no record the subject names."
+          },
+          {
+            "const": "view_unknown",
+            "description": "Relay (404): No view is named so (ADR 0082)."
           },
           {
             "const": "world_unavailable",
@@ -185,7 +257,9 @@
           "archive_id",
           "spec",
           "role",
-          "projections"
+          "projections",
+          "writes",
+          "caller"
         ],
         "description": "Present on every answer to an allowed caller.",
         "properties": {
@@ -203,7 +277,7 @@
               "scratch",
               "live"
             ],
-            "description": "Fixed in the relay's configuration. Commit only where it is scratch."
+            "description": "Fixed in the relay's configuration. A client commits only where it is scratch, or live with writes commit (ADR 0088's amendment of ADR 0060)."
           },
           "projections": {
             "type": "array",
@@ -212,6 +286,53 @@
               "minimum": 1
             },
             "description": "The World projection versions served."
+          },
+          "writes": {
+            "enum": [
+              "dry-run",
+              "commit"
+            ],
+            "description": "From the configuration."
+          },
+          "caller": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "agent",
+              "capacity"
+            ],
+            "description": "The person the caller's login is bound to, and whether they act as the operator or as a member of the circle (ADR 0088).",
+            "properties": {
+              "agent": {
+                "type": "string",
+                "pattern": "^urn:uuid:[0-9a-f-]{36}$"
+              },
+              "capacity": {
+                "enum": [
+                  "operator",
+                  "member"
+                ]
+              }
+            }
+          },
+          "circle": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "destination"
+            ],
+            "description": "Present on a relay configured with a circle: the destination's name and, when configured, the band's organisation.",
+            "properties": {
+              "destination": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "band": {
+                "type": "string",
+                "pattern": "^urn:uuid:[0-9a-f-]{36}$"
+              }
+            }
           }
         }
       },
@@ -645,6 +766,582 @@
             "$ref": "#/components/schemas/DoorResult"
           }
         }
+      },
+      "ViewRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "view",
+          "version",
+          "subject"
+        ],
+        "description": "A named view, its version, its subject, and optional parameters; world/views.py checks the rest, failing closed.",
+        "properties": {
+          "view": {
+            "type": "string",
+            "pattern": "^archive\\.view/[a-z_]+$"
+          },
+          "version": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]*$"
+          },
+          "subject": {
+            "type": "object"
+          },
+          "parameters": {
+            "type": "object"
+          }
+        }
+      },
+      "ViewResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "snapshot",
+          "projection",
+          "view",
+          "version",
+          "subject",
+          "parameters",
+          "answer",
+          "withheld"
+        ],
+        "properties": {
+          "snapshot": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
+            "description": "The archive commit the answer reflects."
+          },
+          "projection": {
+            "type": "integer"
+          },
+          "view": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "object"
+          },
+          "parameters": {
+            "type": "object",
+            "description": "Every parameter, defaults filled in."
+          },
+          "answer": {
+            "type": "object",
+            "description": "The view's answer; its version fixes its shape."
+          },
+          "withheld": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many records were kept from the caller (ADR 0082)."
+          }
+        }
+      },
+      "ViewAnswer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "archive",
+          "result"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "archive": {
+            "$ref": "#/components/schemas/Archive"
+          },
+          "result": {
+            "$ref": "#/components/schemas/ViewResult"
+          }
+        }
+      },
+      "ViewsResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "views"
+        ],
+        "properties": {
+          "views": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "view",
+                "version",
+                "question"
+              ],
+              "properties": {
+                "view": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": "string"
+                },
+                "question": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "ViewsAnswer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "archive",
+          "result"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "archive": {
+            "$ref": "#/components/schemas/Archive"
+          },
+          "result": {
+            "$ref": "#/components/schemas/ViewsResult"
+          }
+        }
+      },
+      "StageRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "media_type",
+          "content"
+        ],
+        "properties": {
+          "media_type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content": {
+            "type": "string",
+            "contentEncoding": "base64",
+            "description": "The document's bytes, at most 64 MiB."
+          },
+          "filename": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          }
+        }
+      },
+      "Staged": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "digest",
+          "size",
+          "annex_key",
+          "staging_remote",
+          "media_type",
+          "artifacts"
+        ],
+        "description": "The row an admission manifest's contents needs, the canonical media type, and the Artifacts already carrying these bytes.",
+        "properties": {
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "annex_key": {
+            "type": "string"
+          },
+          "staging_remote": {
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^urn:uuid:[0-9a-f-]{36}$"
+            }
+          }
+        }
+      },
+      "StagedAnswer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "archive",
+          "result"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "archive": {
+            "$ref": "#/components/schemas/Archive"
+          },
+          "result": {
+            "$ref": "#/components/schemas/Staged"
+          }
+        }
+      },
+      "BankListing": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "content",
+          "features",
+          "missing"
+        ],
+        "properties": {
+          "content": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,62}/[a-z][a-z0-9_]{0,62}$"
+            }
+          },
+          "features": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "media_type",
+                "bytes",
+                "sha256",
+                "key"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{0,62}/[a-z][a-z0-9_]{0,62}$"
+                },
+                "media_type": {
+                  "type": "string"
+                },
+                "bytes": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                "key": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                }
+              }
+            }
+          }
+        }
+      },
+      "BankAnswer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "archive",
+          "result"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "archive": {
+            "$ref": "#/components/schemas/Archive"
+          },
+          "result": {
+            "$ref": "#/components/schemas/BankListing"
+          }
+        }
+      },
+      "PracticeRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "content",
+          "stems",
+          "gains",
+          "renderer"
+        ],
+        "description": "ADR 0089's practice request; check_practice_request in world/exports.py is the rule.",
+        "properties": {
+          "content": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "stems": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "extractor",
+              "key"
+            ],
+            "properties": {
+              "extractor": {
+                "type": "string"
+              },
+              "key": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              }
+            }
+          },
+          "gains": {
+            "type": "object",
+            "minProperties": 1,
+            "maxProperties": 16,
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          "semitones": {
+            "type": "integer",
+            "minimum": -12,
+            "maximum": 12
+          },
+          "speed": {
+            "type": "integer",
+            "minimum": 25,
+            "maximum": 200
+          },
+          "renderer": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "version"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "PracticeStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key",
+          "status",
+          "media_type",
+          "speed",
+          "semitones"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "status": {
+            "enum": [
+              "ready",
+              "rendering"
+            ]
+          },
+          "media_type": {
+            "const": "audio/flac"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "speed": {
+            "type": "integer"
+          },
+          "semitones": {
+            "type": "integer"
+          }
+        }
+      },
+      "PracticeAnswer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "archive",
+          "result"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "archive": {
+            "$ref": "#/components/schemas/Archive"
+          },
+          "result": {
+            "$ref": "#/components/schemas/PracticeStatus"
+          }
+        }
+      },
+      "ExportRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "format",
+          "exporter",
+          "rendered"
+        ],
+        "description": "ADR 0089's export request; check_request in world/exports.py is the rule.",
+        "properties": {
+          "format": {
+            "enum": [
+              "pdf",
+              "musicxml",
+              "lilypond",
+              "jams"
+            ]
+          },
+          "exporter": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "version"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            }
+          },
+          "rendered": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "revision_id"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^urn:uuid:[0-9a-f-]{36}$"
+                },
+                "revision_id": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                }
+              }
+            }
+          },
+          "joined": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "revision_id"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^urn:uuid:[0-9a-f-]{36}$"
+                },
+                "revision_id": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                }
+              }
+            }
+          },
+          "options": {
+            "type": "object",
+            "maxProperties": 32
+          }
+        }
+      },
+      "ExportResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key",
+          "format",
+          "media_type",
+          "bytes",
+          "losses"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "format": {
+            "enum": [
+              "pdf",
+              "musicxml",
+              "lilypond",
+              "jams"
+            ]
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "losses": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        }
+      },
+      "ExportAnswer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "archive",
+          "result"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "archive": {
+            "$ref": "#/components/schemas/Archive"
+          },
+          "result": {
+            "$ref": "#/components/schemas/ExportResult"
+          }
+        }
       }
     },
     "securitySchemes": {
@@ -777,7 +1474,7 @@
             }
           },
           "403": {
-            "description": "forbidden_identity, forbidden_origin, agent_mismatch, or commits_disabled.",
+            "description": "forbidden_identity, forbidden_origin, agent_mismatch, or commits_disabled, or operator_only.",
             "content": {
               "application/json": {
                 "schema": {
@@ -931,7 +1628,7 @@
             }
           },
           "403": {
-            "description": "forbidden_identity, forbidden_origin, agent_mismatch, or commits_disabled.",
+            "description": "forbidden_identity, forbidden_origin, agent_mismatch, commits_disabled, operator_only, or not_disclosed.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1021,7 +1718,7 @@
             }
           },
           "422": {
-            "description": "proposal_refused, proposal_malformed, or content_not_relayed.",
+            "description": "proposal_refused, proposal_malformed, or content_not_relayed. Also content_not_relayed, content_not_described.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1041,7 +1738,17 @@
             }
           },
           "503": {
-            "description": "door_unreachable, archive_unreadable, or outcome_uncertain (send the identical proposal again).",
+            "description": "door_unreachable, archive_unreadable, or outcome_uncertain (send the identical proposal again). Also world_unavailable, for a member's readable set.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "query_timeout.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1083,7 +1790,7 @@
             }
           },
           "403": {
-            "description": "forbidden_identity, forbidden_origin, agent_mismatch, or commits_disabled.",
+            "description": "forbidden_identity, forbidden_origin, agent_mismatch, or commits_disabled, or operator_only.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1235,7 +1942,7 @@
             }
           },
           "403": {
-            "description": "forbidden_identity, forbidden_origin, agent_mismatch, or commits_disabled.",
+            "description": "forbidden_identity, forbidden_origin, agent_mismatch, commits_disabled, operator_only, or not_disclosed.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1325,7 +2032,7 @@
             }
           },
           "422": {
-            "description": "proposal_refused, proposal_malformed, or content_not_relayed.",
+            "description": "proposal_refused, proposal_malformed, or content_not_relayed. Also content_not_relayed, content_not_described.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1345,7 +2052,17 @@
             }
           },
           "503": {
-            "description": "door_unreachable, archive_unreadable, or outcome_uncertain (send the identical proposal again).",
+            "description": "door_unreachable, archive_unreadable, or outcome_uncertain (send the identical proposal again). Also world_unavailable, for a member's readable set.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "query_timeout.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1387,7 +2104,7 @@
             }
           },
           "403": {
-            "description": "forbidden_identity, forbidden_origin, agent_mismatch, or commits_disabled.",
+            "description": "forbidden_identity, forbidden_origin, agent_mismatch, or commits_disabled, or operator_only.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1512,7 +2229,7 @@
     "/media/{digest}/peaks": {
       "get": {
         "summary": "The waveform peaks (an audiowaveform binary file, version 2, 8-bit, every channel, about ten milliseconds a pixel) of an Artifact's content, by its digest",
-        "description": "Derived media are regenerable, made by enrich/media.py into the relay's derived-media root (ADR 0069). Served only for a digest that is an Artifact's content in World's selected generation and that no destroy transition names, and only to the caller bound to the active operator's person. One byte range is honoured; several ranges, another unit, or an unreadable Range header are ignored and the whole file is sent. If-Range is honoured with the entity tag.",
+        "description": "Derived media are regenerable, made by enrich/media.py into the relay's derived-media root (ADR 0069). Served only for a digest that is an Artifact's content in World's selected generation and that no destroy transition names, and only to the caller bound to the active operator's person or to a circle member the recording is disclosed to (ADRs 0088, 0089). One byte range is honoured; several ranges, another unit, or an unreadable Range header are ignored and the whole file is sent. If-Range is honoured with the entity tag.",
         "security": [
           {
             "tailnet": []
@@ -1723,7 +2440,7 @@
     "/media/{digest}/listen": {
       "get": {
         "summary": "The listening copy (AAC-LC at 192 kb/s in MP4, index first, at most two channels) of an Artifact's content, by its digest",
-        "description": "Derived media are regenerable, made by enrich/media.py into the relay's derived-media root (ADR 0069). Served only for a digest that is an Artifact's content in World's selected generation and that no destroy transition names, and only to the caller bound to the active operator's person. One byte range is honoured; several ranges, another unit, or an unreadable Range header are ignored and the whole file is sent. If-Range is honoured with the entity tag.",
+        "description": "Derived media are regenerable, made by enrich/media.py into the relay's derived-media root (ADR 0069). Served only for a digest that is an Artifact's content in World's selected generation and that no destroy transition names, and only to the caller bound to the active operator's person or to a circle member the recording is disclosed to (ADRs 0088, 0089). One byte range is honoured; several ranges, another unit, or an unreadable Range header are ignored and the whole file is sent. If-Range is honoured with the entity tag.",
         "security": [
           {
             "tailnet": []
@@ -1890,6 +2607,1668 @@
           },
           "422": {
             "description": "query_too_many_rows, from World's media lookup under a very small row limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error: World's answer or the derived-media root could not be read.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "world_unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "query_timeout, from World's media lookup.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/world/views": {
+      "get": {
+        "summary": "Every named view and version World serves (ADR 0082)",
+        "description": "From World's one registry, which the view route also dispatches through.",
+        "security": [
+          {
+            "tailnet": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A standard answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewsAnswer"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden_identity, forbidden_origin, operator_only, or not_disclosed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found, view_subject_not_found, or projection_not_served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "method_not_allowed; Allow names the method.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "world_unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "query_timeout: World took too long.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/world/view": {
+      "post": {
+        "summary": "Answer one named view from World's selected generation (ADR 0082)",
+        "description": "The caller's person is the default person or judge. A member's view reads only their readable set (ADR 0088), states how many records were withheld, and may name nothing outside it (not_disclosed); the readable set and reach views are the operator's. Answers are cached per generation, request, and caller.",
+        "security": [
+          {
+            "tailnet": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ViewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A standard answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request_malformed, or view_request_invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden_identity, forbidden_origin, operator_only, or not_disclosed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found, view_unknown, view_not_served, view_subject_not_found, or projection_not_served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "method_not_allowed; Allow names the method.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "411": {
+            "description": "length_required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "body_too_large.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "unsupported_media_type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "world_unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "query_timeout: World took too long.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/stage": {
+      "post": {
+        "summary": "Stage a document's bytes for admission (ADR 0085)",
+        "description": "The operator only. Refuses audio and video, types not on ADR 0085's list, and bytes that are not what their type says. Staging admits nothing: the client then sends an admission through /door/admit whose contents rows are the ones answered here, with a document source claim describing each Artifact. Staged bytes not admitted within seven days are removed.",
+        "security": [
+          {
+            "tailnet": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A standard answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StagedAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request_malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden_identity, forbidden_origin, operator_only, or not_disclosed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found, view_subject_not_found, or projection_not_served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "method_not_allowed; Allow names the method.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "411": {
+            "description": "length_required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "body_too_large: the document is over 64 MiB.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "unsupported_media_type, or media_type_unsupported.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "content_audio_or_video, or content_mismatch.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "world_unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "query_timeout: World took too long.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/{digest}": {
+      "get": {
+        "summary": "An admitted document's bytes (ADR 0085)",
+        "description": "For a digest that is the content of an Artifact a document source claim describes, with that claim's media type, to the operator and to members it is disclosed to. Never audio or video.",
+        "security": [
+          {
+            "tailnet": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "digest",
+            "in": "path",
+            "required": true,
+            "description": "The content digest, as World projects it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "One range of bytes, bytes=first-last, bytes=first-, or bytes=-suffix."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The entity tag the range was taken from; any other value sends the whole file."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The whole document.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "contentMediaType": "*/*"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "A strong entity tag naming what the bytes are.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "private, max-age=31536000, immutable.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Ranges": {
+                "description": "bytes.",
+                "schema": {
+                  "type": "string",
+                  "const": "bytes"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "The range asked for of document.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "contentMediaType": "*/*"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "A strong entity tag naming what the bytes are.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "private, max-age=31536000, immutable.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Ranges": {
+                "description": "bytes.",
+                "schema": {
+                  "type": "string",
+                  "const": "bytes"
+                }
+              },
+              "Content-Range": {
+                "description": "bytes first-last/size.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request_malformed (the digest is not sha256:<64 lowercase hex>), or query_invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden_identity, forbidden_origin, or media_forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found, media_unknown_digest, media_not_derived, or projection_not_served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "method_not_allowed; Allow names the method.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "range_not_satisfiable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "headers": {
+              "Content-Range": {
+                "description": "bytes */size.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "content_audio_or_video, or query_too_many_rows.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error: World's answer or the derived-media root could not be read.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "world_unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "query_timeout, from World's media lookup.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/media/{digest}/bank": {
+      "get": {
+        "summary": "Which configured practice features exist for this content (ADR 0089)",
+        "description": "Served under the recording's gate: the operator, or a member the recording is disclosed to.",
+        "security": [
+          {
+            "tailnet": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "digest",
+            "in": "path",
+            "required": true,
+            "description": "The content digest, as World projects it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A standard answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request_malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden_identity, forbidden_origin, or media_forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found, media_unknown_digest, or projection_not_served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "method_not_allowed; Allow names the method.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "query_too_many_rows.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "world_unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "query_timeout: World took too long.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/media/{digest}/bank/{extractor}/{output}": {
+      "get": {
+        "summary": "One configured audio feature of the content, such as a stem (ADR 0089)",
+        "description": "Answered only when the feature is configured and declared an audio file, the digest is an Artifact's content, and the caller may hear the recording; the relay never runs an extractor.",
+        "security": [
+          {
+            "tailnet": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "digest",
+            "in": "path",
+            "required": true,
+            "description": "The content digest, as World projects it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          {
+            "name": "extractor",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "output",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "One range of bytes, bytes=first-last, bytes=first-, or bytes=-suffix."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The entity tag the range was taken from; any other value sends the whole file."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The whole feature's file.",
+            "content": {
+              "audio/*": {
+                "schema": {
+                  "type": "string",
+                  "contentMediaType": "audio/*"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "A strong entity tag naming what the bytes are.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "private, max-age=31536000, immutable.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Ranges": {
+                "description": "bytes.",
+                "schema": {
+                  "type": "string",
+                  "const": "bytes"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "The range asked for of feature's file.",
+            "content": {
+              "audio/*": {
+                "schema": {
+                  "type": "string",
+                  "contentMediaType": "audio/*"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "A strong entity tag naming what the bytes are.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "private, max-age=31536000, immutable.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Ranges": {
+                "description": "bytes.",
+                "schema": {
+                  "type": "string",
+                  "const": "bytes"
+                }
+              },
+              "Content-Range": {
+                "description": "bytes first-last/size.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request_malformed (the digest is not sha256:<64 lowercase hex>), or query_invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden_identity, forbidden_origin, or media_forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found, feature_not_served, feature_not_made, media_unknown_digest, or projection_not_served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "method_not_allowed; Allow names the method.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "range_not_satisfiable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "headers": {
+              "Content-Range": {
+                "description": "bytes */size.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "query_too_many_rows, from World's lookup under a very small row limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error: World's answer or the derived-media root could not be read.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "world_unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "query_timeout, from World's media lookup.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/media/{digest}/practice": {
+      "post": {
+        "summary": "Ask for a practice render of a mix of the recording's stems (ADR 0089)",
+        "description": "Ready when the render exists; otherwise the relay begins it, one render at a time in the background with a renderer installed on its own host, and answers rendering, and the client asks again. Same gate as the stems.",
+        "security": [
+          {
+            "tailnet": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "digest",
+            "in": "path",
+            "required": true,
+            "description": "The recording's content digest.",
+            "schema": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PracticeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A standard answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticeAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request_malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden_identity, forbidden_origin, or media_forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found, feature_not_served, media_unknown_digest, media_not_derived, stems_not_made, or projection_not_served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "method_not_allowed; Allow names the method.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "411": {
+            "description": "length_required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "body_too_large.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "unsupported_media_type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "renderer_unknown, or query_too_many_rows.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "render_failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "world_unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "query_timeout: World took too long.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/media/{digest}/practice/{key}": {
+      "get": {
+        "summary": "A ready practice render's bytes (ADR 0089)",
+        "description": "16-bit FLAC; same gate as the stems.",
+        "security": [
+          {
+            "tailnet": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "digest",
+            "in": "path",
+            "required": true,
+            "description": "The recording's content digest.",
+            "schema": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "The practice key.",
+            "schema": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "One range of bytes, bytes=first-last, bytes=first-, or bytes=-suffix."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The entity tag the range was taken from; any other value sends the whole file."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The whole practice render.",
+            "content": {
+              "audio/flac": {
+                "schema": {
+                  "type": "string",
+                  "contentMediaType": "audio/flac"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "A strong entity tag naming what the bytes are.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "private, max-age=31536000, immutable.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Ranges": {
+                "description": "bytes.",
+                "schema": {
+                  "type": "string",
+                  "const": "bytes"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "The range asked for of practice render.",
+            "content": {
+              "audio/flac": {
+                "schema": {
+                  "type": "string",
+                  "contentMediaType": "audio/flac"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "A strong entity tag naming what the bytes are.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "private, max-age=31536000, immutable.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Ranges": {
+                "description": "bytes.",
+                "schema": {
+                  "type": "string",
+                  "const": "bytes"
+                }
+              },
+              "Content-Range": {
+                "description": "bytes first-last/size.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request_malformed (the digest is not sha256:<64 lowercase hex>), or query_invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden_identity, forbidden_origin, or media_forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found, feature_not_served, media_unknown_digest, media_not_derived, or projection_not_served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "method_not_allowed; Allow names the method.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "range_not_satisfiable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "headers": {
+              "Content-Range": {
+                "description": "bytes */size.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "query_too_many_rows, from World's lookup under a very small row limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error: World's answer or the derived-media root could not be read.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "world_unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "query_timeout, from World's media lookup.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/exports": {
+      "post": {
+        "summary": "Render an export of exact revisions, or answer the one already made (ADR 0089)",
+        "description": "Answered only to a caller who may read every rendered and joined revision. An export is a regenerable view, filed by its key; it is admitted only when a person sends it.",
+        "security": [
+          {
+            "tailnet": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A standard answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request_malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden_identity, forbidden_origin, operator_only, or not_disclosed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found, export_input_unknown, media_not_derived, or projection_not_served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "method_not_allowed; Allow names the method.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "411": {
+            "description": "length_required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "body_too_large.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "unsupported_media_type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "exporter_unknown.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "export_failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "world_unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "query_timeout: World took too long.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/exports/{key}": {
+      "get": {
+        "summary": "A made export's bytes (ADR 0089)",
+        "description": "Answered only to a caller who may read every revision it rendered and joined.",
+        "security": [
+          {
+            "tailnet": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "The export key.",
+            "schema": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "One range of bytes, bytes=first-last, bytes=first-, or bytes=-suffix."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The entity tag the range was taken from; any other value sends the whole file."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The whole export.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "contentMediaType": "*/*"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "A strong entity tag naming what the bytes are.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "private, max-age=31536000, immutable.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Ranges": {
+                "description": "bytes.",
+                "schema": {
+                  "type": "string",
+                  "const": "bytes"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "The range asked for of export.",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "contentMediaType": "*/*"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "A strong entity tag naming what the bytes are.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "private, max-age=31536000, immutable.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Ranges": {
+                "description": "bytes.",
+                "schema": {
+                  "type": "string",
+                  "const": "bytes"
+                }
+              },
+              "Content-Range": {
+                "description": "bytes first-last/size.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request_malformed (the digest is not sha256:<64 lowercase hex>), or query_invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden_identity, forbidden_origin, or not_disclosed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found, export_input_unknown, media_not_derived, or projection_not_served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "method_not_allowed; Allow names the method.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "range_not_satisfiable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "headers": {
+              "Content-Range": {
+                "description": "bytes */size.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "query_too_many_rows, from World's lookup under a very small row limit.",
             "content": {
               "application/json": {
                 "schema": {
