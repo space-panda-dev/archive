@@ -8,8 +8,8 @@ specification 0.0.9 an archive can hold each of those as its own claim, by
 its own asserter: chords as stacks on a recording or as a sequence about a
 Work ([ADR 0077](0077-chord-stacks-and-meter.md)), meter as layers of bars,
 and credits ([ADR 0078](0078-contributions.md)). Specification 0.0.10 adds
-form and untimed meter (ADR 0083), key (ADR 0080), timed lyric lines
-(ADR 0085), and melody (ADR 0086). Nothing says which of them, together, make
+form and untimed meter ([ADR 0083](0083-form-and-work-meter.md)), key ([ADR 0080](0080-key-and-tuning.md)), timed lyric lines
+([ADR 0085](0085-documents-lyrics-rights.md)), and melody (ADR 0086). Nothing says which of them, together, make
 someone's lead sheet. Two machine readings, a person's corrections, and a
 chart may all cover the same bars, and a lead sheet has to show one of them
 first.
@@ -22,7 +22,7 @@ given.
   and melody claim revisions it chose. An update is a new revision. Renders
   (PDF, MusicXML) are regenerable exports.
 - **D4.1.** On a co-written Work, both people's versions count. By default the
-  viewer picks whose version (the current rule takes a person, ADR 0082).
+  viewer picks whose version (the current rule takes a person, [ADR 0082](0082-views-and-current.md)).
   Optionally there is a band-adopted version: a lead sheet asserted with the
   band as agent, by its members ([ADR 0078](0078-contributions.md)'s
   membership). Personal versions stay beside it.
@@ -49,7 +49,7 @@ and provenance; the lead sheet copies none of them. Its references:
 | `work` | exactly 1 | an Entity revision of kind `musical_work`: what the lead sheet is of |
 | `source` | 0 or 1 | the Artifact revision of the recording's mix, for a lead sheet of one recording |
 | `recording` | 0 or 1, only with `source` | as ADR 0078's recording scope: a `recording` Entity, an `audio_selection` or `song_occurrence` version 2 Claim, or an Artifact |
-| `chords` | 0 to 16 | `chord_stacks` or `chord_sequence` Claim revisions, version 1 or 2 (ADR 0079) |
+| `chords` | 0 to 16 | `chord_stacks` or `chord_sequence` Claim revisions, version 1 or 2 ([ADR 0079](0079-machine-harmony-claims.md)) |
 | `meter` | 0 to 4 | `meter_layers` Claim revisions: version 1, or version 2 timed or untimed (ADRs 0079 and 0083) |
 | `form` | 0 to 4 | `form` (untimed) or `form_spans` (timed) version 1 Claim revisions (ADR 0083) |
 | `key` | 0 to 4 | `key_sequence` (untimed) or `key_regions` (timed) version 1 Claim revisions (ADR 0080) |
@@ -161,7 +161,7 @@ resolved view, and pinning a machine claim second does not reject it. To fix
 a chord in a lead sheet, a person asserts a correction (or a new sequence
 revision) and makes a new lead sheet revision that pins it. To say an input
 is wrong, a person judges it (`archive.assessment/judgment`, ADR 0048, or a
-scoped judgment, ADR 0081).
+scoped judgment, [ADR 0081](0081-judgments-and-annotations.md)).
 
 **Inputs stay pinned when they change.** When a pinned input is later
 revised, corrected by another claim, or judged, the lead sheet still pins
@@ -190,7 +190,7 @@ recording, chords, meter, form, key, lyrics, lyric timing, melody, and
 credits are what a render or a view shows. The relay checks each one's
 sensitivity and rights (ADR 0085) before it shows or sends any of them; the
 lead sheet's own disclosure never widens an input's. Sharing a co-written
-Work's lead sheet beyond the band needs each co-writer's consent (ADR 0088's
+Work's lead sheet beyond the band needs each co-writer's consent ([ADR 0088](0088-bandmates.md)'s
 sharing gate). Lineage, the band and its memberships, and the documents
 strings were read from are not shown.
 

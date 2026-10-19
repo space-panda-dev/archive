@@ -216,7 +216,7 @@ undercount; it is not made again for every range a player fetches.
 a practice render in derived media, regenerable and deletable at any time.
 A person who wants one kept as evidence, for example because it was sent to
 someone outside the relay, admits its bytes as an Artifact with an operator
-tool: the relay admits no content (ADR 0056), and ADR 0085's document route
+tool: the relay admits no content (ADR 0056), and [ADR 0085](0085-documents-lyrics-rights.md)'s document route
 refuses audio. ADR 0079 decides only that a chosen stem's digest is then the
 one its citations name; what claim records where an admitted stem or render
 came from (its mix, separator, and settings) is not decided by either
@@ -229,7 +229,7 @@ kept where it keeps its own (browser storage, or its own store). None goes
 through Door or into World; losing it loses nothing archival
 ([state model](../state-model.md)). A loop that a person wants others to
 find ("this bar is hard") is not practice state but an annotation on a span,
-a claim under ADR 0081.
+a claim under [ADR 0081](0081-judgments-and-annotations.md).
 
 ### Transposition is a view (D11.4)
 
@@ -284,7 +284,7 @@ An **export request** says everything that decides the file:
   output comes with a new version.
 - `rendered`: 1 to 64 distinct exact Claim revisions, in the export's order
   (a JAMS file's annotations, a score's parts). A lead sheet's export renders
-  the lead sheet's revision (ADR 0084), which already pins the exact chord,
+  the lead sheet's revision ([ADR 0084](0084-lead-sheets.md)), which already pins the exact chord,
   meter, form, lyric, and melody revisions it chose; an export of a single
   chord stacks claim to JAMS renders that claim.
 - `joined`: 0 to 16 distinct exact Artifact revisions whose bytes the

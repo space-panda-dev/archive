@@ -431,18 +431,18 @@ to what the relay shows), and hold no state outside the claims Door admits.
   of a chord sequence's line and word locators.
 - [ADR 0078](0078-contributions.md): the same document, URL, and retrieval
   fields.
-- ADR 0079: stems a run listened to
+- [ADR 0079](0079-machine-harmony-claims.md): stems a run listened to
   are cited by bank key in the run.
-- ADR 0082: the correction overlay and
+- [ADR 0082](0082-views-and-current.md): the correction overlay and
   named views of timed lyrics.
-- ADR 0084: a lead sheet pins timed lyrics claims and
+- [ADR 0084](0084-lead-sheets.md): a lead sheet pins timed lyrics claims and
   lyric documents.
-- ADR 0086: a melody note may later point
+- [ADR 0086](0086-notes-and-melody.md): a melody note may later point
   at a lyric word by the same locator.
-- ADR 0088: bandmates' logins, the
+- [ADR 0088](0088-bandmates.md): bandmates' logins, the
   readable set and the disclosure grant that reach is checked beside, and
   the co-writer consent (D12.2) this record leaves to it.
-- ADR 0089: bank audio is served under
+- [ADR 0089](0089-practice-audio-and-exports.md): bank audio is served under
   the recording's reach.
 
 ## Alternatives considered

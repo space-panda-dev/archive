@@ -129,7 +129,7 @@ and no ranking of asserters (ADR 0005, INV-8). A person who hears, over some
 seconds, a chart's chord and not a machine's affirms the chart claim over
 those samples and rejects the machine claim over the same samples. Each
 judgment is about one claim, can be revised alone, and stands as that
-person's view. Another person's view is their own judgments. ADR 0082's
+person's view. Another person's view is their own judgments. [ADR 0082](0082-views-and-current.md)'s
 first current rule reads them as "the chosen person's corrections and
 affirmations".
 
@@ -164,7 +164,7 @@ a person Entity, never a Package URL, and it pins no `run` and no
   `end_sample`, with `0 <= start_sample < end_sample <= sample_count`);
 - **entries of a chord sequence**: it pins exactly one `sequence`, an
   `archive.claim/chord_sequence` version 1 or 2 Claim revision (version 2,
-  ADR 0079, keeps version 1's entries), and at most one
+  [ADR 0079](0079-machine-harmony-claims.md), keeps version 1's entries), and at most one
   `work`, which must be the Work Entity revision that sequence pins; its
   payload has `entries` (`first` and `last`, with
   `0 <= first <= last` and `last` below the sequence's entry count). This is
@@ -237,12 +237,12 @@ admitted. A machine never asserts a span annotation. When a person wants to keep
 of their attention, and the difference itself stays computed.
 
 **Who may judge and mark.** Any person may judge any claim and mark any span,
-in their own name. ADR 0088 decides that a bandmate's judgments and marks
+in their own name. [ADR 0088](0088-bandmates.md) decides that a bandmate's judgments and marks
 are admitted under their own person agent; this record
 gives them nothing more and nothing less than the operator's. A judgment or
 a mark is about its subject and is shown with it, so it is never disclosed
 further than what it judges or marks; the sensitivity of a note's own text
-is ADR 0085's.
+is [ADR 0085](0085-documents-lyrics-rights.md)'s.
 
 **The rules live in World until a release installs them.**
 `world/judgments.py` holds every rule above as World would re-check it, and
@@ -301,8 +301,8 @@ subject; and the contract's name, `span_annotation`.
   regenerated, never accumulated.
 - Parts of claims with no position axis here (a Work's untimed meter or form,
   a Work-level melody, a key region over a Work's sections) can be judged
-  only whole until a later version adds their axis (ADRs 0080, 0083, and
-  0086).
+  only whole until a later version adds their axis (ADRs [0080](0080-key-and-tuning.md), [0083](0083-form-and-work-meter.md),
+  and [0086](0086-notes-and-melody.md)).
 - No invariant changes. INV-7 keeps every claim and judgment, INV-8 ranks no
   asserter, and INV-24 makes the standing say when it cannot choose.
 

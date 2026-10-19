@@ -106,7 +106,7 @@ A `source` subject pins the audio whose samples the chord claims count, as
 those claims pin it: `{"id": <object>, "revision_id": <revision>}`. The
 chord views read every head `archive.claim/chord_stacks` Claim, version 1
 or a later version that keeps its spans and readings
-(ADR 0079), whose `source` reference pins
+([ADR 0079](0079-machine-harmony-claims.md)), whose `source` reference pins
 that revision. Each also takes optional `start_sample` and `end_sample` (an
 integer of at least 0, and a later one) to answer for a window. In an
 answer, a reading is named by `{"claim": <revision>, "span": <index>,
@@ -135,7 +135,7 @@ above the bass and every computed name, in World's stated order (ADR 0077):
 `root`, `asserted_root`, `harte`, `symbol` (null when no lead-sheet quality
 matches exactly), and `distance`. The answer states `spelling`: `default`
 until a key claim's spelling rule is installed
-(ADR 0080). Readings are checked by ADR
+([ADR 0080](0080-key-and-tuning.md)). Readings are checked by ADR
 0077's rules first; a malformed one refuses the request. A client may send
 readings that no claim holds yet, such as a chord a person is typing into a
 lead sheet, so writing and reading use one set of names.
@@ -284,7 +284,7 @@ current rule; asking stays unsupported, and each needs its own named rule.
 
 **`archive.view/lead_sheet_current` version 1: whose lead sheet.** Its
 subject is a `work` (an object identifier) and, optionally, a `recording`;
-it reads head lead sheet claims (ADR 0084)
+it reads head lead sheet claims ([ADR 0084](0084-lead-sheets.md))
 about that Work, and for that recording when one is named, or for none when
 none is. Its one parameter `by` is exactly one of `{"person": <object>}`
 (by default the caller's person) or `{"band": <object>}`, an organisation
@@ -337,7 +337,7 @@ once.
 **Exchange and practice stay views.** An export of what a viewer sees
 (JAMS, MusicXML) renders a view's answer and the claim revisions it names;
 it is regenerable and stays unadmitted until it is sent to someone
-(ADR 0089). Loops and progress are the
+([ADR 0089](0089-practice-audio-and-exports.md)). Loops and progress are the
 application's state, not the archive's
 ([ADR 0054](0054-door-service-for-applications.md)).
 

@@ -145,9 +145,9 @@ caller's agent. A member's proposal is admitted only when every draft:
 - cites only member contracts: judgments (versions 1 and 2) and span
   annotations (ADR 0081); chord stacks, chord sequences, and meter layers
   ([ADR 0077](0077-chord-stacks-and-meter.md) and their 0.0.10 versions,
-  ADRs 0079 and 0083); key regions, key sequences, and tuning (ADR 0080);
-  form and form spans (ADR 0083); lead sheets (ADR 0084); timed lyrics
-  (ADR 0085, which never copy words); notes and melody (ADR 0086);
+  ADRs [0079](0079-machine-harmony-claims.md) and 0083); key regions, key sequences, and tuning ([ADR 0080](0080-key-and-tuning.md));
+  form and form spans ([ADR 0083](0083-form-and-work-meter.md)); lead sheets (ADR 0084); timed lyrics
+  (ADR 0085, which never copy words); notes and melody ([ADR 0086](0086-notes-and-melody.md));
   contributions and band membership ([ADR 0078](0078-contributions.md));
   the selection kind and title, and links of a take to a Work
   ([ADR 0048](0048-review-app-write-contracts.md)); and the sharing consent
@@ -362,16 +362,16 @@ claims Door admits.
 - [ADR 0060](0060-relay-interface-and-role.md): amended. Clients commit to
   `scratch`, or to `live` in `commit`; the answer names `writes` and the
   caller; two refusal codes are added.
-- ADR 0081: a member's judgments and
+- [ADR 0081](0081-judgments-and-annotations.md): a member's judgments and
   marks are admitted under their own person, with no more and no less than
   the operator's.
-- ADR 0082: members read only named views; the
+- [ADR 0082](0082-views-and-current.md): members read only named views; the
   current rule's chosen person may be a member.
-- ADR 0084: showing a lead sheet discloses its inputs;
+- [ADR 0084](0084-lead-sheets.md): showing a lead sheet discloses its inputs;
   a band's lead sheet is asserted by its members.
-- ADR 0085: sensitivity and rights cap the
+- [ADR 0085](0085-documents-lyrics-rights.md): sensitivity and rights cap the
   readable set and the gate; the document upload route stays the operator's.
-- ADR 0089: practice audio is served to
+- [ADR 0089](0089-practice-audio-and-exports.md): practice audio is served to
   members only for readable recordings; a shared export passes the gate.
 
 ## Alternatives considered

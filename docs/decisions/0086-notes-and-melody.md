@@ -30,14 +30,14 @@ given.
 - Implied, with no question needed: instrument tuning and capo per part ride
   on document-derived parts as optional fields; a mix and a part are separate
   claims, compared by a computed view labelled a difference, never a conflict
-  (D3.2, ADR 0081 and
-  ADR 0082); there is no weighting across claims
+  (D3.2, [ADR 0081](0081-judgments-and-annotations.md) and
+  [ADR 0082](0082-views-and-current.md)); there is no weighting across claims
   (ADR 0005, INV-8).
 
 The product these serve is learning songs as lead sheets, showing and
 correcting machine output, authoring lead sheets for the operator's own
 songs, and sharing them with bandmates
-(ADR 0084, ADR 0088).
+([ADR 0084](0084-lead-sheets.md), [ADR 0088](0088-bandmates.md)).
 
 ## Decision
 
@@ -72,11 +72,11 @@ stacks claim pins for its timeline, each an exact revision:
   file is cited by bank key instead (below); a claim does one or neither,
   never both;
 - at most one `tuning`, an `archive.claim/tuning` version 1 Claim revision
-  about the same `source` (ADR 0080): the grid its
+  about the same `source` ([ADR 0080](0080-key-and-tuning.md)): the grid its
   notes' cents are relative to;
 - zero to eight `corrects`, the notes version 1 Claim revisions it corrects;
 - zero to eight `derived_from`, the claims it was read from, in the role
-  ADR 0079 gives chord, meter and note
+  [ADR 0079](0079-machine-harmony-claims.md) gives chord, meter and note
   claims;
 - at most one `contribution`, an `archive.claim/contribution` version 1 Claim
   revision saying whose part this is, as ADR 0078 lets a chord stacks claim
@@ -143,7 +143,7 @@ A **written length** is `{"count": c, "unit": u}`: `c` notes of value 1/`u`
 of a whole note, `u` from 1 to 1,024. A dotted quarter is `{"count": 3,
 "unit": 8}` and a triplet eighth `{"count": 1, "unit": 12}`. A duration has
 `c` of at least 1; an offset from a downbeat may be 0. It reads the same as
-ADR 0083's `at` and allows any unit, because tuplets do not fall on powers of
+[ADR 0083](0083-form-and-work-meter.md)'s `at` and allows any unit, because tuplets do not fall on powers of
 two.
 
 ```json
@@ -355,7 +355,7 @@ three.
 JAMS `note_midi` (pitch with cents folded in, which needs the tuning claim
 to be absolute) and to a Standard MIDI File track; a Work-level melody maps
 to MusicXML `<note>` and LilyPond, through the exports of
-ADR 0089. JAMS keeps no velocity,
+[ADR 0089](0089-practice-audio-and-exports.md). JAMS keeps no velocity,
 locator, instrument or part, and float seconds instead of samples; a MIDI
 file keeps no cents beyond a pitch bend and no confidence; MusicXML has no
 samples. Each export lists what it dropped, as ADR 0077's do.

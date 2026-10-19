@@ -34,7 +34,7 @@ specification 0.0.10; this record states it as given.
 The product this serves is learning songs as lead sheets, correcting what
 machines heard, authoring lead sheets for the operator's own songs, and
 sharing them with bandmates. A lead sheet itself is a claim that pins the
-form, meter, chord, lyric and melody claims it chose (ADR 0084); this record
+form, meter, chord, lyric and melody claims it chose ([ADR 0084](0084-lead-sheets.md)); this record
 defines only the form and the untimed meter it pins.
 
 ## Decision
@@ -289,8 +289,8 @@ which order; a sequence says which chords come in which order; an untimed
 meter claim says how many bars each section has, what meter they are in, and
 which chords change where. Together they are the musical content of a lead
 sheet's chord chart; the lead sheet itself (ADR 0084) pins the exact
-revisions it chose, and a melody at Work level (ADR 0086) and lyrics placed
-by reference (ADR 0085) join it there. None of the three needs the others: a
+revisions it chose, and a melody at Work level ([ADR 0086](0086-notes-and-melody.md)) and lyrics placed
+by reference ([ADR 0085](0085-documents-lyrics-rights.md)) join it there. None of the three needs the others: a
 form alone is a road map, a sequence alone is a chart over lyrics, and a
 meter claim may pin neither.
 
@@ -305,9 +305,9 @@ other is an alignment, never implied by containment.
 through the same proposal path ADR 0079 gives machine harmony. A person's
 form of their own song is an untimed form claim with their agent; a
 bandmate's different form of the same Work is another claim beside it
-(ADR 0088). Which form a reader sees first is a view's rule (ADR 0082), never
+([ADR 0088](0088-bandmates.md)). Which form a reader sees first is a view's rule ([ADR 0082](0082-views-and-current.md)), never
 a property of the claims. A person who disagrees with one section of a
-machine's segmentation judges or annotates that span (ADR 0081) or asserts a
+machine's segmentation judges or annotates that span ([ADR 0081](0081-judgments-and-annotations.md)) or asserts a
 correcting form spans claim that cites it in `corrects`; the corrected claim
 stays.
 

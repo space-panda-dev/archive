@@ -160,7 +160,7 @@ stem it was read from:
 **Admitting a chosen stem.** A person who wants a stem kept as evidence, for
 example because it was sent to someone, admits its bytes as an Artifact
 through an operator tool (the relay admits no content, ADR 0056, and its
-document route refuses audio, ADR 0085). Its content digest is then the
+document route refuses audio, [ADR 0085](0085-documents-lyrics-rights.md)). Its content digest is then the
 citation's `sha256`, and later claims may pin it in `analysed`. This record
 decides only that much. A claim that states what an admitted stem was
 separated from, and by which method, is not defined: until a contract holds
@@ -406,7 +406,7 @@ state outside the claims Door admits.
   entirely loses no evidence: the claims, their runs, and their citations
   remain, and the stems can be made again and checked against their
   digests.
-- ADR 0082's slash-bass rule has its input: machines' bass-only claims from
+- [ADR 0082](0082-views-and-current.md)'s slash-bass rule has its input: machines' bass-only claims from
   the bass stem, beside the mix's chords.
 - A person's reading says what it was read from, so a later reader can
   follow it to the machine claims and documents behind it without a run.
@@ -439,18 +439,18 @@ state outside the claims Door admits.
   version 2 keeps every rule and adds the above.
 - [ADR 0078](0078-contributions.md): a chord stacks claim may still pin the
   contribution saying whose part it describes.
-- ADR 0080: key and tuning claims carry `derived_from` and `stem` as here;
+- [ADR 0080](0080-key-and-tuning.md): key and tuning claims carry `derived_from` and `stem` as here;
   the `key` and `tuning` proposers make them.
-- ADR 0081: a judgment may scope to one span or reading of a version 2
+- [ADR 0081](0081-judgments-and-annotations.md): a judgment may scope to one span or reading of a version 2
   claim, which keeps version 1's spans and readings.
-- ADR 0082: its views read chord stacks version 1 and 2; `bass_only` is a
+- [ADR 0082](0082-views-and-current.md): its views read chord stacks version 1 and 2; `bass_only` is a
   reading form, and the slash-bass rule reads bass-only claims.
-- ADR 0083: one meter layers version 2 is shared; form spans come through
+- [ADR 0083](0083-form-and-work-meter.md): one meter layers version 2 is shared; form spans come through
   the `sections` proposer.
-- ADR 0084: a lead sheet may pin chord stacks version 2.
-- ADR 0086: notes claims carry `derived_from` and `stem` as here; the
+- [ADR 0084](0084-lead-sheets.md): a lead sheet may pin chord stacks version 2.
+- [ADR 0086](0086-notes-and-melody.md): notes claims carry `derived_from` and `stem` as here; the
   `notes` proposer makes them.
-- ADR 0089: its practice request names a stems entry by the same
+- [ADR 0089](0089-practice-audio-and-exports.md): its practice request names a stems entry by the same
   extractor and key; a chosen stem or render is admitted as above, its
   origin open.
 

@@ -35,7 +35,7 @@ specification 0.0.10; this record states it as given.
 The product this serves is learning songs as lead sheets, correcting what
 machines heard, authoring lead sheets for the operator's own songs, and
 sharing them with bandmates. A lead sheet of a released song
-(ADR 0084) is of a Work, often for one recording; the
+([ADR 0084](0084-lead-sheets.md)) is of a Work, often for one recording; the
 contracts here let that recording be found on the release a bandmate owns,
 and let its credits come with it.
 
@@ -327,7 +327,7 @@ contract, the asserter fields), the release needs:
   it or affirm one by a judgment (ADR 0081).
 - Anyone the operator records can assert a tracklist or correspondence;
   disagreements are kept, not resolved. A bandmate's login does not send
-  these contracts in 0.0.10: they are not on ADR 0088's list of member
+  these contracts in 0.0.10: they are not on [ADR 0088](0088-bandmates.md)'s list of member
   contracts, which stays narrow until a need is shown.
 - Release groups, labels as catalogue entries, release events, and
   barcodes are still not held.
@@ -349,10 +349,10 @@ contract, the asserter fields), the release needs:
 - [ADR 0078](0078-contributions.md): the `release` and `recording` kinds, the
   scopes, and the asserter fields; its resolved view is unchanged, and the
   per-track view sits beside it.
-- ADR 0081 (judgment version 2) applies to these claims unchanged; ADR 0082's
+- [ADR 0081](0081-judgments-and-annotations.md) (judgment version 2) applies to these claims unchanged; [ADR 0082](0082-views-and-current.md)'s
   named views define no current tracklist or correspondence; ADR 0084's lead
   sheet may name a recording that `recording_audio` ties to a release;
-  ADR 0085's rights claims govern a saved catalogue response admitted as a
+  [ADR 0085](0085-documents-lyrics-rights.md)'s rights claims govern a saved catalogue response admitted as a
   document; ADR 0088's member contracts do not include these.
 
 ## Alternatives considered

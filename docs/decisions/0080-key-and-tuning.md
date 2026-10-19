@@ -365,17 +365,17 @@ state outside the claims Door admits.
   spelled by a key. Its contracts do not change.
 - [ADR 0078](0078-contributions.md): `part` means what it means there; a key
   sequence is the `work` scope and key regions the `span` scope.
-- ADR 0079: `derived_from` and the stem
+- [ADR 0079](0079-machine-harmony-claims.md): `derived_from` and the stem
   citation by bank key; the importer of the `tonal` extractor's key and
   tuning.
-- ADR 0081: a judgment may scope
+- [ADR 0081](0081-judgments-and-annotations.md): a judgment may scope
   to one region or one reading of a key claim.
-- ADR 0082: differences between a part's key and the
+- [ADR 0082](0082-views-and-current.md): differences between a part's key and the
   mix's are a computed view; any current key is a named rule there.
-- ADR 0083: the form claim whose sections a
+- [ADR 0083](0083-form-and-work-meter.md): the form claim whose sections a
   key sequence ranges over.
-- ADR 0084: a lead sheet pins the key it shows.
-- ADR 0086: a note's cents are relative to
+- [ADR 0084](0084-lead-sheets.md): a lead sheet pins the key it shows.
+- [ADR 0086](0086-notes-and-melody.md): a note's cents are relative to
   a tuning claim's grid.
 
 ## Alternatives considered
