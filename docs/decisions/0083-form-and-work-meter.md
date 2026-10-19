@@ -208,12 +208,15 @@ the difference, and no rule refuses it.
 
 Version 2 changes the shape, so it is a new version; version 1 stays
 admissible and unchanged, and every version 1 claim stays valid under its
-own contract. A version 2 claim is **timed** when it pins a `source`, and
-**untimed** otherwise.
+own contract. It is one version shared with
+[ADR 0079](0079-machine-harmony-claims.md), which adds `corrects`,
+`derived_from`, and (on a timed claim) a stem cited by bank key; this record
+adds what follows, and a claim may use the additions of both. A version 2
+claim is **timed** when it pins a `source`, and **untimed** otherwise.
 
 **A timed version 2 claim** is version 1's in every rule (references,
 `sample_rate`, bars layers, beat-only layers, roles, modulations, locators,
-alignment), with two additions:
+alignment), with ADR 0079's additions and two more:
 
 - at most one `meter` reference, the untimed `archive.claim/meter_layers`
   version 2 Claim revision an alignment placed on this recording. A claim
@@ -227,10 +230,11 @@ alignment), with two additions:
 
 **An untimed version 2 claim** pins at least one of a `work` (an Entity
 revision of kind `musical_work`) and a `document`, at most one `run`, at
-most one `form` (an `archive.claim/form` version 1 Claim revision) and at
-most one `sequence` (an `archive.claim/chord_sequence` version 1 Claim
-revision). It pins no `source`, `stream` or `analysed` audio, and has no
-`sample_rate` and no `alignment`.
+most one `form` (an `archive.claim/form` version 1 Claim revision), at most
+one `sequence` (an `archive.claim/chord_sequence` version 1 or 2 Claim
+revision), and ADR 0079's zero to eight `corrects` (untimed version 2
+claims) and `derived_from`. It pins no `source`, `stream` or `analysed`
+audio, cites no stem, and has no `sample_rate` and no `alignment`.
 
 ```json
 {
@@ -317,10 +321,10 @@ for a placement's section index; MusicXML has no sample time. No exporter is
 built by this record.
 
 **The rules live in World until a release installs them.** `world/form.py`
-holds every rule above as World will re-check it, the played-order views
-(`form_order`, `bar_order`), and nothing else; it uses only the standard
-library and reuses `world/harmony.py`'s shared checks, which it leaves
-unchanged. Door cannot admit any of the three until a specification release
+holds every rule above as World will re-check it, including ADR 0079's
+additions to meter layers version 2, so that the version has one check, and
+the played-order views (`form_order`, `bar_order`); it uses only the
+standard library and reuses `world/harmony.py`'s shared checks. Door cannot admit any of the three until a specification release
 installs their bundles with the profile rules this record needs: a form's
 subject; located sections in document order; repeats that nest; endings that
 tile the end of their repeat and give each pass exactly one ending; jumps at

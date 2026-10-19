@@ -60,22 +60,35 @@ claim and is never ranked above it by kind (INV-8).
 
 ## Decision
 
-**Two new versions, each a superset of version 1.** Version 1 of both
-contracts stays admissible and unchanged, and every version 1 claim stays
+**Three new versions, each a superset of version 1.** Version 1 of each
+contract stays admissible and unchanged, and every version 1 claim stays
 valid under its own contract. A version 1 payload with version 1 references
 is also a valid version 2 claim, so an importer that needs none of the
 additions may write either.
 
 | Contract | Version | Adds to version 1 |
 |---|---|---|
-| `archive.claim/chord_stacks` | 2 | `derived_from`; a `stem` cited by bank key; the bass-only reading; up to 100,000 spans; `corrects` may pin version 1 or 2 |
-| `archive.claim/meter_layers` | 2 | `derived_from`; a `stem` cited by bank key; `corrects` |
+| `archive.claim/chord_stacks` | 2 | `derived_from`; a `stem` cited by bank key; the bass-only reading; up to 100,000 spans; `corrects` may pin version 1 or 2; `sequence` may pin chord sequence version 1 or 2 |
+| `archive.claim/chord_sequence` | 2 | `derived_from`; the bass-only reading; `corrects` may pin version 1 or 2 |
+| `archive.claim/meter_layers` | 2 | `derived_from`; a `stem` cited by bank key (timed claims); `corrects` |
 
 Meter layers version 2 is one version shared with ADR 0083, which adds to it
 an untimed form (bars with no samples, about a Work), a `meter` reference to
 the untimed claim an alignment placed, and each placed bar's `placed`. The
 two records describe one contract version: a timed version 2 claim may use
-the additions of both, and the release installs one bundle.
+the additions of both, an untimed one takes `corrects` and `derived_from`
+from this record, and the release installs one bundle. World checks it in
+one place, `world/form.py`'s `check_meter_layers_v2`.
+
+**Chord sequence version 2 is chosen here, for the operator to confirm.**
+D1.2 puts `derived_from` on chord claims, and a chord sequence is the chord
+claim a lead sheet of a Work pins (ADR 0084). A chart's "/E" over a bar,
+with nothing above it written, is a bass-only reading as much as a bass
+stem's is. So version 2 of chord sequence adds `derived_from`, the
+bass-only reading, and `corrects` across versions, and nothing else: it has
+no samples, so it cites no stem and keeps version 1's 10,000 entries. A
+chord stacks version 2 claim may place a version 1 or a version 2 sequence;
+version 1 stays able to place only version 1.
 
 ### A stem is cited by bank key (D1.1)
 
@@ -146,12 +159,14 @@ stem it was read from:
 
 **Admitting a chosen stem.** A person who wants a stem kept as evidence, for
 example because it was sent to someone, admits its bytes as an Artifact
-through an operator tool (the relay admits no content, ADR 0056). Its
-content digest is then the citation's `sha256`, and later claims may pin it
-in `analysed`. A claim that states what an admitted stem was separated from,
-and by which method, is not defined here: until a contract holds it, the
-link from an admitted stem to its mix is the digest it shares with the
-claims that cited it by key. This is [open](../open-questions.md#claims-and-provenance).
+through an operator tool (the relay admits no content, ADR 0056, and its
+document route refuses audio, ADR 0085). Its content digest is then the
+citation's `sha256`, and later claims may pin it in `analysed`. This record
+decides only that much. A claim that states what an admitted stem was
+separated from, and by which method, is not defined: until a contract holds
+it, the link from an admitted stem to its mix is the digest it shares with
+the claims that cited it by key. How a chosen stem is admitted, and what
+records its origin, is [open](../open-questions.md#claims-and-provenance).
 
 ### `derived_from`: what a claim was read from (D1.2)
 
@@ -219,7 +234,8 @@ the claim states a `weight_scale`, a `weight`. Nothing else: no `tones`,
   compare it tone by tone and counts it as not compared; the slash-bass step
   of ADR 0082's first current rule reads machines' bass-only claims from the
   bass stem.
-- Only chord stacks version 2 holds it. A chord sequence version 1 does not.
+- Chord stacks version 2 and chord sequence version 2 hold it. Version 1
+  of either does not.
 
 ### 100,000 spans
 
@@ -352,20 +368,24 @@ under ADR 0061's standing approval for scratch archives.
 ### What Door and World need
 
 `world/harmony.py` holds every rule above as World re-checks it:
-`check_chord_stacks_v2`, `check_meter_layers_v2` (the timed form; ADR
-0083's `world/form.py` checks the untimed one), `check_reading_v2`,
-`is_bass_only`, `check_stem_citation`, and `check_derived_from`. Version 1's
+`check_chord_stacks_v2`, `check_chord_sequence_v2`, `check_reading_v2`,
+`is_bass_only`, `check_stem_citation`, `check_derived_from`, and
+`check_lineage` (the two together, with the rule that a stem and `analysed`
+exclude each other). Meter layers version 2, timed and untimed, is checked
+by `world/form.py`'s `check_meter_layers_v2`, which applies these. Version 1's
 checks are unchanged and refuse every addition. The module still uses only
 the standard library, so a proposer checks its claims before Door does.
 
-Door cannot admit either version 2 until a specification release installs
+Door cannot admit any version 2 until a specification release installs
 its bundle. The release adds these profile rules: a span cap of 100,000; a
 reading that is a stack, no chord, text only, or bass-only, and a bass-only
 reading's closed fields; the closed `stem` object with its patterns; a
 payload `stem` only when the `analysed` role is empty; `derived_from` of 0
 to 8 Claim revisions of the contracts listed above, distinct, and disjoint
-from `corrects`; `corrects` targets of chord stacks version 1 or 2, and of
-meter layers of the same form; and every rule of version 1. That a stem's
+from `corrects`; `corrects` targets of chord stacks version 1 or 2, of
+chord sequence version 1 or 2, and of meter layers of the same form; a
+chord stacks version 2 `sequence` of chord sequence version 1 or 2; and
+every rule of version 1. That a stem's
 file has the cited digest, and shares the mix's timeline, are not Door's to
 check: the bank is not in the archive.
 

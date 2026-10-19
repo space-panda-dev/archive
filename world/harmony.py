@@ -4,9 +4,10 @@ computed names, and lossy exchange views.
 The three contracts, `archive.claim/chord_stacks`,
 `archive.claim/chord_sequence`, and `archive.claim/meter_layers`, each
 version 1, are decided by ADR 0077 (amended by ADR 0078) and installed by
-specification 0.0.9 (D-17). Version 2 of chord stacks and of meter layers
-(ADR 0079, proposed) adds `derived_from`, a stem cited by bank key, a
-bass-only reading, and meter corrections; version 1 is unchanged. This module holds their rules as World re-checks
+specification 0.0.9 (D-17). Version 2 of chord stacks, chord sequence, and
+meter layers (ADR 0079, proposed) adds `derived_from`, a stem cited by bank
+key on timed claims, a bass-only reading, and meter corrections; version 1
+is unchanged. This module holds their rules as World re-checks
 them when it projects such a claim, the names a chord stack can be given,
 and the JAMS views. It uses only the standard library, so an importer or
 extractor can check a proposal with it before Door does; Door remains the
@@ -223,16 +224,18 @@ def check_chord_stacks(claim: dict[str, Any], stream_claim: dict[str, Any],
     Returns the spans; raises HarmonyError. No rule asks the spans to cover
     the recording: a claim of three spans in a long improvisation is whole."""
     return _check_chord_stacks(claim, stream_claim, sequence_claim, where="chord stacks", roles=CHORD_ROLES,
-                               extra=set(), max_spans=MAX_SPANS, reading=check_reading)
+                               extra=set(), max_spans=MAX_SPANS, reading=check_reading,
+                               sequence=check_chord_sequence)
 
 
 def _check_chord_stacks(claim: dict[str, Any], stream_claim: dict[str, Any],
                         sequence_claim: dict[str, Any] | None, *, where: str,
                         roles: dict[str, tuple[int, int]], extra: set[str], max_spans: int,
-                        reading: Any) -> list[dict[str, Any]]:
+                        reading: Any, sequence: Any) -> list[dict[str, Any]]:
     """The rules every version of chord stacks shares. A version passes its
-    reference roles, the payload fields it adds, its span cap, and its
-    reading check; version 1 passes exactly ADR 0077's."""
+    reference roles, the payload fields it adds, its span cap, its reading
+    check, and the check of the chord sequence it may place; version 1 passes
+    exactly ADR 0077's."""
     record = _closed(claim, {"payload", "refs"}, {"revision_id", "agent"}, where)
     by_role = _refs_by_role(record["refs"], roles, where)
     rate, count = _check_stream(by_role, stream_claim, where)
@@ -251,9 +254,9 @@ def _check_chord_stacks(claim: dict[str, Any], stream_claim: dict[str, Any],
         if sequence_claim.get("revision_id", by_role["sequence"][0]["revision_id"]) \
                 != by_role["sequence"][0]["revision_id"]:
             raise HarmonyError(f"{where} was given a sequence claim other than the one it pins")
-        entries = check_chord_sequence(sequence_claim)
+        entries = sequence(sequence_claim)
     if extra:
-        _check_lineage(payload, by_role, where)
+        check_lineage(payload, by_role, where)
     spans = _list(payload["spans"], f"{where} spans", 1, max_spans)
     previous_end, held = 0, False
     for index, span in enumerate(spans):
@@ -360,11 +363,21 @@ def check_chord_sequence(claim: dict[str, Any]) -> list[dict[str, Any]]:
     An entry's locator points into the document (a line, and optionally a
     word, syllable, or column of it), so a chord can sit over a lyric without
     the claim holding a word of the lyric."""
-    where = "chord sequence"
+    return _check_chord_sequence(claim, where="chord sequence", roles=SEQUENCE_ROLES, lineage=False,
+                                 reading=check_reading)
+
+
+def _check_chord_sequence(claim: dict[str, Any], *, where: str, roles: dict[str, tuple[int, int]],
+                          lineage: bool, reading: Any) -> list[dict[str, Any]]:
+    """The rules every version of chord sequence shares. A version passes its
+    reference roles, whether it checks `derived_from`, and its reading check;
+    version 1 passes exactly ADR 0077's."""
     record = _closed(claim, {"payload", "refs"}, {"revision_id", "agent"}, where)
-    by_role = _refs_by_role(record["refs"], SEQUENCE_ROLES, where)
+    by_role = _refs_by_role(record["refs"], roles, where)
     if not by_role["work"] and not by_role["document"]:
         raise HarmonyError(f"{where} needs a work or a document as its subject")
+    if lineage:
+        check_derived_from(by_role, where)
     payload = _closed(record["payload"], {"entries"},
                       {"part", "weight_scale", "document_url", "repeats"}, f"{where} payload")
     if "part" in payload:
@@ -393,9 +406,9 @@ def check_chord_sequence(claim: dict[str, Any]) -> list[dict[str, Any]]:
                 raise HarmonyError(f"{at} is located before the entry before it")
             previous = position
         readings = _list(entry["readings"], f"{at} readings", 1, MAX_READINGS)
-        for number, reading in enumerate(readings):
-            check_reading(reading, weighted, f"{at} reading {number}")
-        if len({_canonical(reading) for reading in readings}) != len(readings):
+        for number, candidate in enumerate(readings):
+            reading(candidate, weighted, f"{at} reading {number}")
+        if len({_canonical(candidate) for candidate in readings}) != len(readings):
             raise HarmonyError(f"{at} repeats a reading")
     ranges = []
     for index, repeat in enumerate(_list(payload.get("repeats", []), f"{where} repeats", 0, MAX_REPEATS)):
@@ -605,23 +618,15 @@ def note_value(value: Any, where: str) -> Fraction:
 def check_meter_layers(claim: dict[str, Any], stream_claim: dict[str, Any]) -> list[dict[str, Any]]:
     """Check an `archive.claim/meter_layers` version 1 claim against every rule
     of ADR 0077, with the `audio_stream` claim it pins. Returns the layers."""
-    return _check_meter_layers(claim, stream_claim, where="meter layers", roles=SOURCE_ROLES, extra=set())
-
-
-def _check_meter_layers(claim: dict[str, Any], stream_claim: dict[str, Any], *, where: str,
-                        roles: dict[str, tuple[int, int]], extra: set[str]) -> list[dict[str, Any]]:
-    """The rules every timed version of meter layers shares; version 1 passes
-    exactly ADR 0077's roles and fields."""
+    where = "meter layers"
     record = _closed(claim, {"payload", "refs"}, {"revision_id", "agent"}, where)
-    by_role = _refs_by_role(record["refs"], roles, where)
+    by_role = _refs_by_role(record["refs"], SOURCE_ROLES, where)
     rate, count = _check_stream(by_role, stream_claim, where)
     payload = _closed(record["payload"], {"sample_rate", "layers"},
-                      {"modulations", "document_url", "alignment"} | extra, f"{where} payload")
+                      {"modulations", "document_url", "alignment"}, f"{where} payload")
     if _int(payload["sample_rate"], f"{where} sample_rate", 1) != rate:
         raise HarmonyError(f"{where} sample_rate differs from the stream's")
     has_document = _check_source_fields(payload, by_role, where)
-    if extra:
-        _check_lineage(payload, by_role, where)
     layers = _list(payload["layers"], f"{where} layers", 1, MAX_LAYERS)
     for number, layer in enumerate(layers):
         at = f"{where} layer {number}"
@@ -764,7 +769,8 @@ def beat_positions(bar: dict[str, Any]) -> list[int]:
 # ---------------------------------------------------------------------------
 # Version 2: machine harmony as claims (ADR 0079)
 #
-# Version 2 of chord stacks and of meter layers is version 1 in every rule,
+# Version 2 of chord stacks, chord sequence, and meter layers is version 1
+# in every rule,
 # with these additions, and version 1 stays admissible and unchanged:
 #
 # - `derived_from`: 0 to 8 Claim revisions the asserter read this claim
@@ -774,17 +780,20 @@ def beat_positions(bar: dict[str, Any]) -> list[int]:
 # - `stem`: a separated stem cited by bank key, beside the `source` pin of
 #   the mix it was separated from, instead of admitting the stem. A claim
 #   cites a bank stem or pins `analysed` Artifacts, never both.
-# - chord stacks only: a bass-only reading (a bass and an optional root,
-#   nothing said above it), and up to 100,000 spans, as many as a beat-only
-#   layer has beats, so a bass per beat fits wherever the beats do.
+# - chord stacks and chord sequence: a bass-only reading (a bass and an
+#   optional root, nothing said above it); chord stacks also up to 100,000
+#   spans, as many as a beat-only layer has beats, so a bass per beat fits
+#   wherever the beats do. A sequence has no samples and cites no stem.
 # - meter layers only: `corrects`, the meter claims this one corrects.
 #
-# ADR 0083 adds an untimed form, a `meter` placement and `placed` bars to
-# the same meter layers version 2; `world/form.py` checks those, and this
-# module checks the timed claim's ADR 0079 additions.
+# Meter layers version 2 is one contract version shared with ADR 0083, which
+# adds an untimed form, a `meter` placement and `placed` bars. It is checked
+# in one place, `world/form.py`'s `check_meter_layers_v2`, which applies the
+# additions of both records with `check_derived_from` and the stem citation
+# from here; this module holds no second meter layers version 2 check.
 
 CHORD_STACKS_V2 = ("archive.claim/chord_stacks", "2")
-METER_LAYERS_V2 = ("archive.claim/meter_layers", "2")
+CHORD_SEQUENCE_V2 = ("archive.claim/chord_sequence", "2")
 MAX_SPANS_V2 = 100000
 MAX_DERIVED = 8
 # The feature bank's own names (enrich/bank.py: ID, OUTPUT, KEY), so a
@@ -795,16 +804,16 @@ BANK_DIGEST = REVISION_ID
 
 CHORD_ROLES_V2 = {
     **CHORD_ROLES,
+    "sequence": (0, 1),               # the chord_sequence v1 or v2 claim an alignment placed here
     "corrects": (0, 8),               # chord_stacks v1 or v2 claims this one corrects
     "derived_from": (0, MAX_DERIVED),  # claims this one was read from, with or without a run
 }
 
-METER_ROLES_V2 = {
-    **SOURCE_ROLES,
-    "corrects": (0, 8),               # timed meter_layers v1 or v2 claims this one corrects
+SEQUENCE_ROLES_V2 = {
+    **SEQUENCE_ROLES,
+    "corrects": (0, 8),               # chord_sequence v1 or v2 claims this one corrects
     "derived_from": (0, MAX_DERIVED),
 }
-
 
 def check_stem_citation(value: Any, where: str = "stem") -> dict[str, Any]:
     """A stem cited by bank key (ADR 0079, D1.1): the `extractor` that made
@@ -840,7 +849,7 @@ def check_derived_from(by_role: dict[str, list[dict[str, Any]]], where: str) -> 
     return derived
 
 
-def _check_lineage(payload: dict[str, Any], by_role: dict[str, list[dict[str, Any]]], where: str) -> None:
+def check_lineage(payload: dict[str, Any], by_role: dict[str, list[dict[str, Any]]], where: str) -> None:
     check_derived_from(by_role, where)
     if "stem" in payload:
         if by_role.get("analysed"):
@@ -881,18 +890,19 @@ def check_chord_stacks_v2(claim: dict[str, Any], stream_claim: dict[str, Any],
     raises HarmonyError. A version 1 payload and references are a valid
     version 2 claim; the reverse never holds when an addition is used."""
     return _check_chord_stacks(claim, stream_claim, sequence_claim, where="chord stacks v2", roles=CHORD_ROLES_V2,
-                               extra={"stem"}, max_spans=MAX_SPANS_V2, reading=check_reading_v2)
+                               extra={"stem"}, max_spans=MAX_SPANS_V2, reading=check_reading_v2,
+                               sequence=check_chord_sequence_v2)
 
 
-def check_meter_layers_v2(claim: dict[str, Any], stream_claim: dict[str, Any]) -> list[dict[str, Any]]:
-    """Check a timed `archive.claim/meter_layers` version 2 claim's ADR 0079
-    additions on version 1's rules: `corrects`, `derived_from`, and a bank
-    `stem`. A claim pinning no `source` is ADR 0083's untimed form, checked
-    by `world/form.py`, and is refused here rather than half-checked."""
-    refs = claim.get("refs") if isinstance(claim, dict) else None
-    if isinstance(refs, list) and not any(isinstance(r, dict) and r.get("role") == "source" for r in refs):
-        raise HarmonyError("meter layers v2 pins no source: an untimed claim is ADR 0083's form, not checked here")
-    return _check_meter_layers(claim, stream_claim, where="meter layers v2", roles=METER_ROLES_V2, extra={"stem"})
+def check_chord_sequence_v2(claim: dict[str, Any]) -> list[dict[str, Any]]:
+    """Check an `archive.claim/chord_sequence` version 2 claim: version 1's
+    rules (ADR 0077) with ADR 0079's `derived_from`, the bass-only reading (a
+    chart's "/E" over a bar with nothing above it written), and `corrects`
+    that may pin version 1 or 2. A sequence has no samples, so it cites no
+    stem and keeps version 1's entry cap. A version 1 payload and references
+    are a valid version 2 claim. Returns the entries; raises HarmonyError."""
+    return _check_chord_sequence(claim, where="chord sequence v2", roles=SEQUENCE_ROLES_V2, lineage=True,
+                                 reading=check_reading_v2)
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,8 @@
-"""Chord stacks and meter layers version 2 (ADR 0079): `derived_from`, a stem
-cited by bank key, the bass-only reading, meter corrections, and the larger
-span cap, with version 1 unchanged beside them.
+"""Chord stacks, chord sequence, and meter layers version 2 (ADR 0079):
+`derived_from`, a stem cited by bank key, the bass-only reading, meter
+corrections, and the larger span cap, with version 1 unchanged beside them.
+Meter layers version 2 is checked in one place with ADR 0083's additions
+(`world/form.py`), so these tests call that check.
 
 Run from the repository root: python3 -m unittest world.tests.test_machine_harmony.
 Every example is synthetic (INV-23). The stream claim is the fixture
@@ -16,18 +18,21 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from world.form import METER_LAYERS_V2, check_meter_layers_v2, is_untimed_meter
 from world.harmony import (
+    CHORD_SEQUENCE,
+    CHORD_SEQUENCE_V2,
     CHORD_STACKS,
     CHORD_STACKS_V2,
     MAX_SPANS,
     MAX_SPANS_V2,
     METER_LAYERS,
-    METER_LAYERS_V2,
     HarmonyError,
+    check_chord_sequence,
+    check_chord_sequence_v2,
     check_chord_stacks,
     check_chord_stacks_v2,
     check_meter_layers,
-    check_meter_layers_v2,
     check_reading_v2,
     check_stem_citation,
     is_bass_only,
@@ -106,8 +111,10 @@ class Anchors(unittest.TestCase):
 
     def test_the_versions_are_one_contract_with_two_versions(self) -> None:
         self.assertEqual(CHORD_STACKS[0], CHORD_STACKS_V2[0])
+        self.assertEqual(CHORD_SEQUENCE[0], CHORD_SEQUENCE_V2[0])
         self.assertEqual(METER_LAYERS[0], METER_LAYERS_V2[0])
         self.assertNotEqual(CHORD_STACKS[1], CHORD_STACKS_V2[1])
+        self.assertNotEqual(CHORD_SEQUENCE[1], CHORD_SEQUENCE_V2[1])
         self.assertNotEqual(METER_LAYERS[1], METER_LAYERS_V2[1])
 
     def test_a_bass_only_reading_differs_from_a_stack_with_empty_tones(self) -> None:
@@ -310,11 +317,65 @@ class MeterLayersV2(unittest.TestCase):
                 with self.assertRaisesRegex(HarmonyError, pattern):
                     check_meter_layers_v2(claim, STREAM_CLAIM)
 
-    def test_an_untimed_claim_is_not_half_checked_here(self) -> None:
-        untimed = {"payload": {"layers": [{"bars": [{"numerator": 4, "denominator": 4}]}]},
-                   "refs": [{"role": "work", **OTHER}]}
-        with self.assertRaisesRegex(HarmonyError, "ADR 0083"):
-            check_meter_layers_v2(untimed, STREAM_CLAIM)
+    def test_one_check_holds_both_records_additions(self) -> None:
+        """ADR 0079's and ADR 0083's additions are one version: an untimed
+        claim corrects and derives, and a timed placement may also cite a
+        stem and correct, in one claim checked by one function."""
+        untimed = {"revision_id": OTHER["revision_id"],
+                   "payload": {"layers": [{"bars": [{"numerator": 4, "denominator": 4}]}]},
+                   "refs": [{"role": "work", **SOURCE}, {"role": "corrects", **MACHINE},
+                            {"role": "derived_from", **STEM_ARTIFACT}]}
+        self.assertTrue(is_untimed_meter(untimed))
+        check_meter_layers_v2(untimed)
+        placed = meter_claim([{"bars": [{"start_sample": 0, "end_sample": SECOND, "numerator": 4,
+                                         "denominator": 4, "placed": {"layer": 0, "bar": 0}}]}],
+                             ("meter", OTHER), ("corrects", MACHINE), stem=real_stem_citation("drums"),
+                             alignment={"method": "manual"})
+        check_meter_layers_v2(placed, STREAM_CLAIM, untimed_claim=untimed)
+        with self.assertRaisesRegex(HarmonyError, "both corrects"):
+            check_meter_layers_v2({**untimed, "refs": untimed["refs"] + [{"role": "derived_from", **MACHINE}]})
+
+
+class ChordSequenceV2(unittest.TestCase):
+    """Chord sequence version 2: a chart's bass-only entry, lineage, and
+    corrections; version 1 is unchanged."""
+
+    @staticmethod
+    def sequence(entries: list[dict], *extra: tuple[str, dict]) -> dict:
+        return {"payload": {"entries": entries},
+                "refs": [{"role": "work", **SOURCE}] + [{"role": r, **v} for r, v in extra]}
+
+    def test_a_charts_slash_entry_with_nothing_above_it(self) -> None:
+        claim = self.sequence([{"readings": [CMAJ7]}, {"readings": [{"bass": E, "text": "/E"}]}],
+                              ("derived_from", MACHINE), ("corrects", OTHER))
+        self.assertEqual(len(check_chord_sequence_v2(claim)), 2)
+
+    def test_a_version_1_sequence_is_a_valid_version_2_sequence(self) -> None:
+        claim = self.sequence([{"readings": [CMAJ7]}, {"readings": [ONLY_E]}])
+        self.assertEqual(check_chord_sequence(claim), check_chord_sequence_v2(claim))
+
+    def test_version_1_refuses_the_additions(self) -> None:
+        with self.assertRaisesRegex(HarmonyError, "missing \\['tones'\\]"):
+            check_chord_sequence(self.sequence([{"readings": [BASS_E]}]))
+        with self.assertRaisesRegex(HarmonyError, "unknown role 'derived_from'"):
+            check_chord_sequence(self.sequence([{"readings": [CMAJ7]}], ("derived_from", MACHINE)))
+
+    def test_refused(self) -> None:
+        with self.assertRaisesRegex(HarmonyError, "both corrects"):
+            check_chord_sequence_v2(self.sequence([{"readings": [CMAJ7]}], ("corrects", MACHINE),
+                                                  ("derived_from", MACHINE)))
+        with self.assertRaisesRegex(HarmonyError, "unknown \\['stem'\\]"):
+            check_chord_sequence_v2({**self.sequence([{"readings": [CMAJ7]}]),
+                                     "payload": {"entries": [{"readings": [CMAJ7]}], "stem": real_stem_citation()}})
+
+    def test_chord_stacks_v2_places_a_version_2_sequence(self) -> None:
+        sequence = {**self.sequence([{"readings": [BASS_E]}]), "revision_id": OTHER["revision_id"]}
+        claim = chord_claim([span(0, 1, BASS_E, entry=0, end="held")], ("sequence", OTHER),
+                            alignment={"method": "manual"}, hold_rule="held to the next entry")
+        check_chord_stacks_v2(claim, STREAM_CLAIM, sequence)
+        with self.assertRaisesRegex(HarmonyError, "missing \\['tones'\\]"):
+            check_chord_stacks({**claim, "payload": {**claim["payload"], "spans": [span(0, 1, CMAJ7, entry=0)]}},
+                               STREAM_CLAIM, sequence)
 
 
 class Exchange(unittest.TestCase):

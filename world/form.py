@@ -13,7 +13,9 @@ specification release:
 - `archive.claim/meter_layers` version 2: version 1's timed claim, which may
   now cite the untimed claim it was placed from, or an untimed claim about a
   Work or a document whose bars have no samples and are tied to chord
-  sequence entries and form sections.
+  sequence entries and form sections. The same version carries ADR 0079's
+  `corrects`, `derived_from`, and (timed only) bank `stem` citation, checked
+  here too, so the version has one check.
 
 Version 1 of `meter_layers` is unchanged and still checked by
 `harmony.check_meter_layers`. The repeat shape `{first, last, times}` and its
@@ -54,7 +56,9 @@ from world.harmony import (
     _list,
     _refs_by_role,
     _text,
-    check_chord_sequence,
+    check_chord_sequence_v2,
+    check_derived_from,
+    check_lineage,
     note_value,
 )
 
@@ -96,9 +100,15 @@ FORM_SPANS_ROLES = {
     "corrects": (0, 8),   # form_spans v1 claims this one corrects
 }
 
+# Meter layers version 2 is one contract version decided by two records:
+# ADR 0079 adds `corrects`, `derived_from`, and a bank `stem` citation (timed
+# only); ADR 0083 adds the untimed form, `meter`, and `placed` bars. This
+# module checks every addition of both, in one place.
 TIMED_METER_ROLES = {
     **SOURCE_ROLES,
-    "meter": (0, 1),      # the untimed meter_layers v2 claim an alignment placed on this recording
+    "meter": (0, 1),         # the untimed meter_layers v2 claim an alignment placed on this recording
+    "corrects": (0, 8),      # timed meter_layers v1 or v2 claims this one corrects (ADR 0079)
+    "derived_from": (0, 8),  # claims this one was read from, with or without a run (ADR 0079)
 }
 
 UNTIMED_METER_ROLES = {
@@ -106,7 +116,9 @@ UNTIMED_METER_ROLES = {
     "document": (0, 1),
     "run": (0, 1),
     "form": (0, 1),       # form v1: the sections the bars' `section` index
-    "sequence": (0, 1),   # chord_sequence v1: the entries the bars' `chords` index
+    "sequence": (0, 1),   # chord_sequence v1 or v2: the entries the bars' `chords` index
+    "corrects": (0, 8),   # untimed meter_layers v2 claims this one corrects (ADR 0079)
+    "derived_from": (0, 8),  # claims this one was read from (ADR 0079)
 }
 
 
@@ -452,9 +464,10 @@ def _check_timed_meter(claim: dict[str, Any], stream_claim: dict[str, Any],
     by_role = _refs_by_role(record["refs"], TIMED_METER_ROLES, where)
     rate, count = _check_stream(by_role, stream_claim, where)
     payload = _closed(record["payload"], {"sample_rate", "layers"},
-                      {"modulations", "document_url", "alignment"}, f"{where} payload")
+                      {"modulations", "document_url", "alignment", "stem"}, f"{where} payload")
     if _int(payload["sample_rate"], f"{where} sample_rate", 1) != rate:
         raise FormError(f"{where} sample_rate differs from the stream's")
+    check_lineage(payload, by_role, where)
     has_document = _check_url(payload, by_role, where)
     placed = bool(by_role["meter"])
     _check_alignment(payload, has_document or placed, where)
@@ -514,6 +527,7 @@ def _check_untimed_meter(claim: dict[str, Any], form_claim: dict[str, Any] | Non
     record = _closed(claim, {"payload", "refs"}, {"revision_id", "agent"}, where)
     by_role = _refs_by_role(record["refs"], UNTIMED_METER_ROLES, where)
     payload = _closed(record["payload"], {"layers"}, {"modulations", "document_url"}, f"{where} payload")
+    check_derived_from(by_role, where)
     has_document = _check_untimed_subject(payload, by_role, where)
     sections = entries = None
     if by_role["form"] and form_claim is not None:
@@ -521,7 +535,7 @@ def _check_untimed_meter(claim: dict[str, Any], form_claim: dict[str, Any] | Non
         sections = check_form(form_claim)
     if by_role["sequence"] and sequence_claim is not None:
         _pinned(sequence_claim, by_role["sequence"][0], where, "sequence")
-        entries = check_chord_sequence(sequence_claim)
+        entries = check_chord_sequence_v2(sequence_claim)
     layers = _list(payload["layers"], f"{where} layers", 1, MAX_LAYERS)
     for number, layer in enumerate(layers):
         at = f"{where} layer {number}"
