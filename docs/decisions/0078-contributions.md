@@ -128,7 +128,9 @@ their MusicBrainz identifiers, and their attributes is in
 `world/contributions.py`, read from musicbrainz.org on 2026-10-18; the
 specification release ships it as a SKOS scheme whose concepts are each
 `skos:exactMatch` the MusicBrainz link type, so a renamed MusicBrainz type
-keeps its meaning by identifier.
+keeps its meaning by identifier. The attributes and vocal attributes are
+concepts of the same scheme, each `skos:exactMatch` its MusicBrainz
+relationship attribute; only the local `label` has no match.
 
 **The credit as written is kept.** `text` (1 to 1,000 characters) is the
 credit exactly as the source printed it, and `credited_as` (1 to 200) is the
@@ -229,7 +231,11 @@ joins connect it to a contributor:
   audio of its own: this record amends ADR 0077 so that `chord_stacks`
   version 1 may pin at most one `contribution`, an
   `archive.claim/contribution` version 1 Claim revision whose subject is the
-  stack's recording, before either contract is released.
+  stack's recording, before either contract is released. Specification 0.0.9
+  does not enforce that the pinned contribution is about the stack's
+  recording: Door checks only that it is a contribution version 1 Claim, and
+  the subject check is left to a later release
+  ([open questions](../open-questions.md#door)).
 
 `part_contributions` in `world/contributions.py` gives both joins, with why.
 
@@ -243,7 +249,8 @@ profile rules this record needs: references whose required roles depend on a
 payload value (`scope`), a target that may be an Entity of a kind, a Claim of
 a contract, or an Artifact, a role vocabulary per scope, the existing
 sequential-span and same-subject rules, and a partial-date order. How the
-first importers assert is in [contribution sources](../contribution-sources.md).
+first importers would assert is in [contribution sources](../contribution-sources.md);
+none is built, and no archive holds a claim from one.
 
 **New nouns.** Contribution, contributor, scope, role, credit text, refines,
 locates, finest, and band membership enter the

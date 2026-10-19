@@ -1,11 +1,15 @@
 # Contribution sources
 
-How the first importers turn a booklet, Discogs credits, and MusicBrainz
-relationships into `archive.claim/contribution` and
+How the first importers would turn a booklet, Discogs credits, and
+MusicBrainz relationships into `archive.claim/contribution` and
 `archive.claim/band_membership` claims
-([ADR 0078](decisions/0078-contributions.md)). This is a design for code not
-yet written; specification 0.0.9 installs the contracts (D-17), so Door admits
-what the importers will propose. Every example is invented.
+([ADR 0078](decisions/0078-contributions.md)).
+
+**Future work.** None of these importers is built, and no archive holds a
+claim from one. This is a design for code not yet written. Specification
+0.0.9 installs the contracts (D-17), so Door would admit what an importer
+proposed; until one exists, a contribution is made only by hand. Every
+example is invented.
 
 ## What every importer does
 
@@ -33,7 +37,7 @@ what the importers will propose. Every example is invented.
    as the source returned it; `credited_as` is the contributor's name as
    printed; `locator` says where in the document.
 6. **Check before proposing.** `world/contributions.py` checks every claim;
-   Door checks again once the contracts are installed.
+   Door checks it again on admission.
 7. **Stay quiet.** A rerun on the same document proposes nothing. Each claim's
    identity name is `contribution-` followed by the lowercase SHA-256 of the
    canonical JSON of the document's revision ID, the locator, the text, the

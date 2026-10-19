@@ -209,13 +209,45 @@ ROLE_TYPES: dict[str, dict[str, RoleType]] = {
     "channel": dict(ARTIST_RECORDING),
 }
 
-# MusicBrainz vocal attributes (the `vocal` tree), by name.
-VOCALS = frozenset({
-    "lead vocals", "alto vocals", "bass-baritone vocals", "contralto vocals", "treble vocals",
-    "baritone vocals", "bass vocals", "countertenor vocals", "mezzo-soprano vocals", "soprano vocals",
-    "tenor vocals", "meane vocals", "choir vocals", "background vocals", "other vocals",
-    "spoken vocals", "whistling",
-})
+# MusicBrainz relationship attributes that the role types above and band
+# membership take, by name, with their MusicBrainz attribute MBIDs. Each name
+# is an attribute at the top of MusicBrainz's tree; every one has an MBID.
+ATTRIBUTES: dict[str, str] = {
+    "additional": "0a5341f8-3b1d-4f99-a0c6-26b7f4e42c7f",
+    "assistant": "8c4196b1-7053-4b16-921a-f22b2898ed44",
+    "associate": "8d23d2dd-13df-43ea-85a0-d7eb38dc32ec",
+    "co": "ac6f6b4c-a4ec-4483-a04e-9f425a914573",
+    "eponymous": "15eea3b8-5655-43c8-b2c2-dd03c901a79b",
+    "executive": "e0039285-6667-4f94-80d6-aa6520c6d359",
+    "guest": "b3045913-62ac-433e-9211-ac683cdf6b5c",
+    "original": "4fd3b255-a7d7-4424-9a63-40fa543b601c",
+    "pre": "288b973a-26ea-4880-8eca-45af4b8e8665",
+    "re": "9b72452f-550e-4ace-93ed-fb8789cdc245",
+    "solo": "63daa0d3-9b63-4434-acff-4977c07808ca",
+    "translator": "25dfb08e-9b99-44db-b30c-1d6ec6747af8",
+}
+
+# MusicBrainz vocal attributes (the `vocal` tree), by name, with their MBIDs.
+VOCAL_IDS: dict[str, str] = {
+    "lead vocals": "8e2a3255-87c2-4809-a174-98cb3704f1a5",
+    "alto vocals": "9f63c4ba-b76f-40d5-9e99-2fb08bd4c286",
+    "bass-baritone vocals": "629763ee-3dc7-4225-b209-0ebb6d49bfab",
+    "contralto vocals": "80d94f2e-e38f-4561-add2-c866f083d276",
+    "treble vocals": "433631a2-68b7-49e6-90b4-5af19e26fc75",
+    "baritone vocals": "a40b43ed-2722-4b4a-98a5-478283cdf8df",
+    "bass vocals": "1bfdb77e-f339-4e8e-9627-331ca9d9e920",
+    "countertenor vocals": "435a19f5-55dc-4a08-8c59-4257680b4217",
+    "mezzo-soprano vocals": "f81325d7-593c-4197-b776-4f8a62c67a8e",
+    "soprano vocals": "e88f0be8-a07e-4c0d-bd06-e938eea4d5f6",
+    "tenor vocals": "122c11da-651f-46cc-9118-c523a14afa1d",
+    "meane vocals": "a31bdea5-7ef5-4a35-81c9-2abed9850d6d",
+    "choir vocals": "43427f08-837b-46b8-bc77-483453af6a7b",
+    "background vocals": "75052401-7340-4e5b-a71d-ea024a128849",
+    "other vocals": "c359be96-620a-435c-bd25-2eb0ce81a22e",
+    "spoken vocals": "d3a36e62-a7c4-4eb9-839f-adfebe87ac12",
+    "whistling": "ed220196-6250-456d-ab7b-465bee605b16",
+}
+VOCALS = frozenset(VOCAL_IDS)
 
 # "member of band" (5be4c609-9afa-4ea0-910b-12ffb71e3821), artist-artist.
 MEMBERSHIP_ATTRIBUTES = frozenset({"additional", "original", "eponymous"})
@@ -230,6 +262,7 @@ MEMBER_OF_BAND = RoleType("member of band", "artist-artist", "5be4c609-9afa-4ea0
 # vocal attribute by these IRIs; World's domain graph uses the same ones.
 ARCH = "urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#"
 MUSICBRAINZ_RELATIONSHIP = "https://musicbrainz.org/relationship/"
+MUSICBRAINZ_ATTRIBUTE = "https://musicbrainz.org/relationship-attribute/"
 
 
 def _scheme_iri(*parts: str) -> str:
@@ -247,10 +280,17 @@ def role_concept(kind: RoleType) -> str:
 
 
 VOCAL_SCHEME = _scheme_iri("vocals")
+ATTRIBUTE_SCHEME = _scheme_iri("attributes")
 
 
 def vocal_concept(name: str) -> str:
+    """A vocal attribute's concept: skos:exactMatch its MusicBrainz attribute."""
     return _scheme_iri("vocal", name)
+
+
+def attribute_concept(name: str) -> str:
+    """A relationship attribute's concept: skos:exactMatch its MusicBrainz attribute."""
+    return _scheme_iri("attribute", name)
 
 
 def role_type(scope: str, name: str) -> RoleType:

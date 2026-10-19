@@ -1251,6 +1251,9 @@ verbatim), and carries `weight`, exact decimal text, exactly when the payload
 states `weight_scale`. A weight compares readings within its own claim only.
 A chord stacks claim MAY also pin at most one `contribution`, a contribution
 version 1 Claim revision saying whose part the stacks describe (ADR 0078).
+That contribution is meant to be about the stack's recording, and an
+`analysed` Artifact to share the source's timeline; this release checks
+neither, so both rest on the asserter.
 A correction is its own claim citing in `corrects` what it corrects; it
 replaces nothing. Names (Harte strings, lead-sheet symbols) are computed
 views and never stored.
@@ -1452,6 +1455,11 @@ concept whose notation is its name, in the scheme of its entity pair, and
 `skos:exactMatch` the MusicBrainz relationship type with that identifier, so
 a renamed MusicBrainz type keeps its meaning. `arch:takesAttribute`,
 `arch:takesInstruments`, and `arch:takesVocals` say what each type accepts.
+Each attribute a type takes, and each vocal attribute, is a concept whose
+notation is its name, in the scheme `attributes` or `vocals`, and
+`skos:exactMatch` the MusicBrainz relationship attribute with that
+identifier; `arch:takesAttribute` names an attribute concept by its
+notation. The local type `label` has no MusicBrainz match.
 MusicBrainz's relationship types, attributes, and instruments are CC0 data,
 read from musicbrainz.org on 2026-10-18.
 
@@ -1459,6 +1467,7 @@ read from musicbrainz.org on 2026-10-18.
 @prefix arch: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#> .
 @prefix skos: <http://www.w3.org/2004/02/skos/core#> .
 @prefix mbrel: <https://musicbrainz.org/relationship/> .
+@prefix mbattr: <https://musicbrainz.org/relationship-attribute/> .
 
 arch:roles-artist-artist a skos:ConceptScheme ; skos:notation "artist-artist" .
 arch:role-artist-artist-member_of_band a skos:Concept ;
@@ -1905,24 +1914,67 @@ arch:role-place-release-remixed_at a skos:Concept ;
   skos:notation "remixed at" ;
   skos:exactMatch mbrel:32af03cf-8879-4d07-b7c2-68c6cbf060bd .
 
+arch:attributes a skos:ConceptScheme ; skos:notation "attributes" .
+arch:attribute-additional a skos:Concept ; skos:inScheme arch:attributes ; skos:notation "additional" ;
+  skos:exactMatch mbattr:0a5341f8-3b1d-4f99-a0c6-26b7f4e42c7f .
+arch:attribute-assistant a skos:Concept ; skos:inScheme arch:attributes ; skos:notation "assistant" ;
+  skos:exactMatch mbattr:8c4196b1-7053-4b16-921a-f22b2898ed44 .
+arch:attribute-associate a skos:Concept ; skos:inScheme arch:attributes ; skos:notation "associate" ;
+  skos:exactMatch mbattr:8d23d2dd-13df-43ea-85a0-d7eb38dc32ec .
+arch:attribute-co a skos:Concept ; skos:inScheme arch:attributes ; skos:notation "co" ;
+  skos:exactMatch mbattr:ac6f6b4c-a4ec-4483-a04e-9f425a914573 .
+arch:attribute-eponymous a skos:Concept ; skos:inScheme arch:attributes ; skos:notation "eponymous" ;
+  skos:exactMatch mbattr:15eea3b8-5655-43c8-b2c2-dd03c901a79b .
+arch:attribute-executive a skos:Concept ; skos:inScheme arch:attributes ; skos:notation "executive" ;
+  skos:exactMatch mbattr:e0039285-6667-4f94-80d6-aa6520c6d359 .
+arch:attribute-guest a skos:Concept ; skos:inScheme arch:attributes ; skos:notation "guest" ;
+  skos:exactMatch mbattr:b3045913-62ac-433e-9211-ac683cdf6b5c .
+arch:attribute-original a skos:Concept ; skos:inScheme arch:attributes ; skos:notation "original" ;
+  skos:exactMatch mbattr:4fd3b255-a7d7-4424-9a63-40fa543b601c .
+arch:attribute-pre a skos:Concept ; skos:inScheme arch:attributes ; skos:notation "pre" ;
+  skos:exactMatch mbattr:288b973a-26ea-4880-8eca-45af4b8e8665 .
+arch:attribute-re a skos:Concept ; skos:inScheme arch:attributes ; skos:notation "re" ;
+  skos:exactMatch mbattr:9b72452f-550e-4ace-93ed-fb8789cdc245 .
+arch:attribute-solo a skos:Concept ; skos:inScheme arch:attributes ; skos:notation "solo" ;
+  skos:exactMatch mbattr:63daa0d3-9b63-4434-acff-4977c07808ca .
+arch:attribute-translator a skos:Concept ; skos:inScheme arch:attributes ; skos:notation "translator" ;
+  skos:exactMatch mbattr:25dfb08e-9b99-44db-b30c-1d6ec6747af8 .
+
 arch:vocals a skos:ConceptScheme ; skos:notation "vocals" .
-arch:vocal-alto_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "alto vocals" .
-arch:vocal-background_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "background vocals" .
-arch:vocal-baritone_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "baritone vocals" .
-arch:vocal-bass_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "bass vocals" .
-arch:vocal-bass-baritone_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "bass-baritone vocals" .
-arch:vocal-choir_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "choir vocals" .
-arch:vocal-contralto_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "contralto vocals" .
-arch:vocal-countertenor_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "countertenor vocals" .
-arch:vocal-lead_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "lead vocals" .
-arch:vocal-meane_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "meane vocals" .
-arch:vocal-mezzo-soprano_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "mezzo-soprano vocals" .
-arch:vocal-other_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "other vocals" .
-arch:vocal-soprano_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "soprano vocals" .
-arch:vocal-spoken_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "spoken vocals" .
-arch:vocal-tenor_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "tenor vocals" .
-arch:vocal-treble_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "treble vocals" .
-arch:vocal-whistling a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "whistling" .
+arch:vocal-alto_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "alto vocals" ;
+  skos:exactMatch mbattr:9f63c4ba-b76f-40d5-9e99-2fb08bd4c286 .
+arch:vocal-background_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "background vocals" ;
+  skos:exactMatch mbattr:75052401-7340-4e5b-a71d-ea024a128849 .
+arch:vocal-baritone_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "baritone vocals" ;
+  skos:exactMatch mbattr:a40b43ed-2722-4b4a-98a5-478283cdf8df .
+arch:vocal-bass_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "bass vocals" ;
+  skos:exactMatch mbattr:1bfdb77e-f339-4e8e-9627-331ca9d9e920 .
+arch:vocal-bass-baritone_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "bass-baritone vocals" ;
+  skos:exactMatch mbattr:629763ee-3dc7-4225-b209-0ebb6d49bfab .
+arch:vocal-choir_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "choir vocals" ;
+  skos:exactMatch mbattr:43427f08-837b-46b8-bc77-483453af6a7b .
+arch:vocal-contralto_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "contralto vocals" ;
+  skos:exactMatch mbattr:80d94f2e-e38f-4561-add2-c866f083d276 .
+arch:vocal-countertenor_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "countertenor vocals" ;
+  skos:exactMatch mbattr:435a19f5-55dc-4a08-8c59-4257680b4217 .
+arch:vocal-lead_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "lead vocals" ;
+  skos:exactMatch mbattr:8e2a3255-87c2-4809-a174-98cb3704f1a5 .
+arch:vocal-meane_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "meane vocals" ;
+  skos:exactMatch mbattr:a31bdea5-7ef5-4a35-81c9-2abed9850d6d .
+arch:vocal-mezzo-soprano_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "mezzo-soprano vocals" ;
+  skos:exactMatch mbattr:f81325d7-593c-4197-b776-4f8a62c67a8e .
+arch:vocal-other_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "other vocals" ;
+  skos:exactMatch mbattr:c359be96-620a-435c-bd25-2eb0ce81a22e .
+arch:vocal-soprano_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "soprano vocals" ;
+  skos:exactMatch mbattr:e88f0be8-a07e-4c0d-bd06-e938eea4d5f6 .
+arch:vocal-spoken_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "spoken vocals" ;
+  skos:exactMatch mbattr:d3a36e62-a7c4-4eb9-839f-adfebe87ac12 .
+arch:vocal-tenor_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "tenor vocals" ;
+  skos:exactMatch mbattr:122c11da-651f-46cc-9118-c523a14afa1d .
+arch:vocal-treble_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "treble vocals" ;
+  skos:exactMatch mbattr:433631a2-68b7-49e6-90b4-5af19e26fc75 .
+arch:vocal-whistling a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "whistling" ;
+  skos:exactMatch mbattr:ed220196-6250-456d-ab7b-465bee605b16 .
 ```
 
 ## 7. Not yet defined

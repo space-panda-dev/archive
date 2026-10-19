@@ -150,6 +150,23 @@ unsupported rather than guess.
   a later commit added. A committed record under a context the archive never
   held still loads, because archives written before the proposal check may
   hold one. Should loading refuse it too? A census of the shadow comes first.
+- How does Door check the two rules specification 0.0.9 states but does not
+  enforce? The operator decided (2026-10-18) that a later release adds both
+  checks; until then Door admits a claim that breaks either, and only the
+  asserter stands behind it.
+  - A `contribution` that a chord stacks claim pins must be about the stack's
+    recording ([ADR 0078](decisions/0078-contributions.md)). Door checks only
+    that it is a contribution version 1 Claim. A check must compare the
+    pinned claim's subject (its `recording`, or the `source` of a span or
+    channel claim) with the stack's `source`; the target rules read a pinned
+    claim's payload but never compare its references with the record's own.
+    It must also say what counts as the same recording when the
+    contribution names a `recording` Entity rather than the Artifact.
+  - An `analysed` Artifact must share the mix's timeline: its sample n is the
+    source's sample n ([ADR 0077](decisions/0077-chord-stacks-and-meter.md)).
+    This is a fact about audio, not about records, so Door has nothing to
+    compare until some claim measures it (an alignment between the stem and
+    the mix, say); which claim, and what tolerance, is undecided.
 - How is operator succession verified? (Author and authorizer are agents in
   PROV roles: [ADR 0012](decisions/0012-inherited-meaning.md).) ADR 0026 defines
   only initial bootstrap; this succession question remains open.
@@ -232,8 +249,6 @@ unsupported rather than guess.
   bass?
 - Pitch classes assume twelve-tone equal temperament. How is a reading of a
   recording far from it (a detuned instrument, a microtonal passage) kept?
-- Does a stem's claim need a check that the stem shares the mix's timeline?
-  The `analysed` role asserts it; nothing measures it.
 - Which recordings does a release carry? No contract states a tracklist, so a
   release credit never reaches a recording in the resolved view of credits,
   and an importer cannot place a release-wide performer on each track
