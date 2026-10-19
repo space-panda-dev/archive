@@ -1,6 +1,7 @@
 # 0088. Bandmates read their circle and assert their own claims
 
-Status: accepted (operator, 2026-10-18)
+Status: accepted (operator, 2026-10-18); notes added 2026-10-19 (withheld
+counts, and from which specification the supersession rule applies)
 
 Only the operator can reach the relay. ADR 0056 maps each allowed tailnet
 login to the person it acts as, refuses every draft that names anyone else,
@@ -118,6 +119,9 @@ object whose furthest class is `private` is never readable, even when an
 approval covers or pins it, and a record pinning it is shown with that
 reference **withheld**, never dropped silently. A member always reads their
 own records; another member reads them only while what they pin is readable.
+A member's answer keeps counting what it withheld (INV-24), so a member
+sees that something was kept from them, never what; the operator confirmed
+this on 2026-10-19.
 The operator's own claims, judgments, and marks are never readable by
 inheritance: the operator's correction of a disclosed chord is disclosed only
 when an approval covers it. Withdrawing an approval shrinks the set at the
@@ -306,7 +310,10 @@ co-writer's consent.
 **Door's part.** Door admits a member's proposal as any other: the relay's
 checks run first, Door's own checks are unchanged, and a supersession must
 keep the agent of what it supersedes (D-3's supersession rule, now checked
-for these contracts). A specification release installs `work_origin` and
+for these contracts). The rule applies only to records under
+`archive/0.0.10` or later: a supersession admitted under an earlier
+specification is not re-judged by it (accepted by the operator,
+2026-10-19). A specification release installs `work_origin` and
 `sharing_consent` with the Door profile rules they need: role counts that
 depend on `origin`, an `agent` among the pinned origin's `writer`
 references and not the active operator, and the pinned origin's own

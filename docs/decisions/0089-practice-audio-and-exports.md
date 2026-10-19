@@ -1,6 +1,7 @@
 # 0089. Practice audio from the stems, transposition, and exports that are views until shared
 
-Status: accepted (operator, 2026-10-18)
+Status: accepted (operator, 2026-10-18); note added 2026-10-19 (sends beyond
+the circle, and what the 0.0.10 amendments add to exports)
 
 A person learning a song from a lead sheet wants to hear it without their
 own part: the recording minus the bass, for the bassist; the vocal alone, to
@@ -361,7 +362,14 @@ leave. The Artifact is what the recipient holds, whatever later revisions or
 exporter versions would render. Onward sharing is the operator's
 (ADR 0088), so the claim's `agent` is the operator; a co-written Work's lead
 sheet sent beyond the band needs every co-writer's consent first
-(decision D12.2, [ADR 0088](0088-bandmates.md)'s sharing gate). A PDF, MusicXML, LilyPond, or JAMS file is a
+(decision D12.2, [ADR 0088](0088-bandmates.md)'s sharing gate). Beyond
+the circle, the send needs a publication approval version 2, which Door
+checks against reach and the sharing gate, and the sender asks World's
+`may_publish` before the bytes leave
+([ADR 0085](0085-documents-lyrics-rights.md), amendment of 2026-10-19). The
+exporters write articulation, the bass line's own staff, and syllables
+under their notes as [ADR 0086](0086-notes-and-melody.md)'s and ADR 0085's
+amendments of 2026-10-19 say. A PDF, MusicXML, LilyPond, or JAMS file is a
 document, so ADR 0085's upload route can stage it; the relay itself still
 admits no content.
 

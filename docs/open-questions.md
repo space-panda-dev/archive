@@ -320,17 +320,17 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
   repeats and its grace notes written, and how does World join one asserter's
   split notes claims of a part and check that their ranges do not overlap
   ([ADR 0086](decisions/0086-notes-and-melody.md))?
-- For the proposed amendments of 2026-10-19 to
+- For the amendments of 2026-10-19 to
   [ADR 0086](decisions/0086-notes-and-melody.md) and
   [ADR 0085](decisions/0085-documents-lyrics-rights.md): when is staccato too
   dense to read (43% of one track's notes), and should the written rhythm
   view then say so rather than mark every note? Are its initial thresholds
-  (under 60% sounded, a beat for a breath, a bar for a gap) right? Is the
-  bass part known by its `part` name or stem output alone, or does a part
-  need a vocabulary? Does Door, or only World, refuse a machine's melody
-  span on the bass? Where does a view put the half of the syllables that no
-  note carries? What reference timings measure forced alignment well enough
-  to state its `max_error_samples`?
+  (under 60% sounded for staccato, at least a beat for a rest) right? Where
+  does a view put the half of the syllables that no note carries? What
+  reference timings measure forced alignment well enough to state its
+  `max_error_samples`? How is the operator's override past a sensitivity
+  limit (one destination, no further than service) recorded, so that Door's
+  check beyond the circle can honour it?
 - Can a lead sheet part say a partial or per-string capo? Is a band's
   adoption of a lead sheet checked against the members' membership dates,
   and does adoption need a quorum ([ADR 0084](decisions/0084-lead-sheets.md))?

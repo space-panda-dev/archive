@@ -1,7 +1,8 @@
 # 0085. Documents arrive through the relay; lyrics are timed by reference; sensitivity and rights are claims
 
-Status: accepted (operator, 2026-10-18); amendment proposed 2026-10-19
-(syllables, their notes, and forced alignment), awaiting the operator
+Status: accepted (operator, 2026-10-18); amended 2026-10-19 (syllables,
+their notes, and forced alignment; the check beyond the circle; both
+accepted by the operator, 2026-10-19)
 
 A lead sheet joins chords, meter, form, melody, and lyrics. Specification
 0.0.9 holds chords and meter ([ADR 0077](0077-chord-stacks-and-meter.md)),
@@ -494,12 +495,12 @@ to what the relay shows), and hold no state outside the claims Door admits.
   later version may add licences for the operator's own works when
   publication is built.
 
-## Amendment, 2026-10-19 (proposed): syllables, their notes, and forced alignment
+## Amendment, 2026-10-19: syllables, their notes, and forced alignment
 
-Status: proposed. Drafted at the operator's request on 2026-10-19 from the
-decisions they confirmed on 2026-10-18, for specification 0.0.10, which is
-unreleased, so `timed_lyrics` version 1 is amended in place. The operator
-decides acceptance. Until they do, the text above holds.
+Status: accepted (operator, 2026-10-19). Drafted from the decisions the
+operator confirmed on 2026-10-18, for specification 0.0.10, which is
+unreleased, so `timed_lyrics` version 1 is amended in place. Where this
+section and the text above differ, this section holds.
 
 ### Context of the amendment
 
@@ -524,11 +525,12 @@ laptop.
 optional `syllables`: 1 to 32 objects, each a `syllable` number (from 1)
 within the word, `start_char` and `end_char` (Unicode code point offsets
 into the word, from 0, end exclusive), `start_sample`, `end_sample`, and
-optional `end`, `confidence`, and `carried_by`. Syllables lie within their
-word's span, in order, never overlapping, with strictly increasing numbers
-and character ranges. The locator is line, word, syllable; the characters
-stay in the document, as words do, and `check_locators` checks that a
-syllable's offsets fall within its word.
+optional `confidence` and `carried_by`. Syllables lie within their word's
+span, in order, never overlapping, with strictly increasing numbers and
+character ranges. A syllable has no `end` of its own: a held word's hold is
+its last syllable's. The locator is line, word, syllable; the characters
+stay in the document, as words do, and World's `check_locators` checks that
+a syllable's offsets fall within its word. Door does not read content.
 
 ```json
 {"word": 2, "start_sample": 595200, "end_sample": 624000,
@@ -541,12 +543,14 @@ syllable's offsets fall within its word.
 ```
 
 **A syllable may name the notes that carry it.** A timed lyrics claim pins
-zero to 8 `notes`, notes version 1 Claim revisions (ADR 0086) about the same
-`source`. `carried_by` names one pinned claim's revision and 1 to 64
-strictly increasing `onsets`, each the `onset_sample` of a note in it; the
-highest note at an onset is meant. Several onsets are a melisma, and the
-extender is drawn to the last. Every pinned notes claim is named by at least
-one syllable. A syllable with no `carried_by` is placed on the samples only.
+zero to 8 distinct `notes`, notes version 1 Claim revisions (ADR 0086) about
+the same `source` revision. `carried_by` names one pinned claim's revision
+and 1 to 64 strictly increasing `onsets`, each the `onset_sample` of a note
+in it; of several notes at one onset, the highest is meant. Several onsets
+are a melisma, and the extender is drawn to the last. Every pinned notes
+claim is named by at least one syllable. A syllable with no `carried_by` is
+placed on the samples only. That each onset is a note of the named claim is
+World's check, since it reads the pinned claim's notes.
 
 **Machine timing is forced alignment, recorded as a run.** A machine's
 timed lyrics claim comes from aligning the known lyric document to the vocal
@@ -560,28 +564,31 @@ the language, and the syllabification rule. Its `alignment.method` is
 **Exports write syllables under their notes.** The MusicXML exporter of
 [ADR 0089](0089-practice-audio-and-exports.md) writes each carried syllable
 as a `<lyric>` on its first note, with `<syllabic>` `single`, `begin`,
-`middle`, or `end`, and `<extend>` to the last note of a melisma. The words
-are joined from the document only for a viewer who may see it, as
-`lyric_view` joins them, so an export with lyrics reaches no further than
-the lyric document.
+`middle`, or `end`, and `<extend>` to the last note of a melisma; LilyPond's
+writes `\lyricmode` with hyphens and extenders. The words are joined from
+the document only for a viewer who may see it, as `lyric_view` joins them,
+so an export with lyrics reaches no further than the lyric document.
 
-### Contract changes the amendment implies
+### Contract changes of the amendment
 
 1. `archive.claim/timed_lyrics` version 1: a word gains optional
    `syllables`; the claim gains zero to 8 `notes` references; a syllable
    gains optional `carried_by`.
-2. Door profile rules: syllables within the word's span, ordered, not
-   overlapping, numbers and character ranges increasing; `confidence` on
-   every line, word, and syllable exactly with a `confidence_scale`; `end`
-   and `hold_rule` as for words; `carried_by` names a pinned notes claim,
-   every pinned one is named, onsets increasing; the same-subject rule for
-   `notes`.
-3. World checks that each `carried_by` onset is a note of the named claim,
-   and `check_locators` checks syllable offsets.
+2. Door, by JSON Schema and profile rules: syllables ordered by number,
+   within their word's span, not overlapping in samples or in characters;
+   `confidence` on every line, word, and syllable exactly with a
+   `confidence_scale`; `carried_by` names exactly the pinned notes claims,
+   its onsets strictly increasing; pinned notes claims distinct and about
+   the same `source` revision. Two existing rules grow a form for this:
+   `x-archive-sequential-spans` and `x-archive-contained-spans` may each be
+   a list, and may name a path to nested arrays (specification 0.0.10,
+   D-18).
+3. World: `check_locators` checks syllable offsets; each `carried_by` onset
+   is a note of the named claim; `lyric_view` joins syllables and names
+   their notes.
 4. A forced-alignment extractor with a manifest (ADR 0074), whose run
    records the document, the stem, and its parameters.
-5. ADR 0089's MusicXML exporter writes `<lyric>`; LilyPond's writes
-   `\lyricmode` with hyphens and extenders.
+5. ADR 0089's MusicXML and LilyPond exporters write the syllables.
 
 ### Consequences of the amendment
 
@@ -594,8 +601,7 @@ the lyric document.
   against references better than those tried.
 - About 29 seconds of wall time per sung minute makes alignment a run by
   request, not part of every import.
-- Syllable and carried-by enter the [vocabulary](../vocabulary.md) when the
-  amendment is accepted.
+- Syllable and carried-by enter the [vocabulary](../vocabulary.md).
 - No invariant changes.
 
 ### Alternatives considered in the amendment
@@ -611,3 +617,98 @@ the lyric document.
 - **Linking a syllable to a Work-level melody item.** The timed claim is of
   one recording; the untimed tune has no samples to align. Syllables under
   a Work's melody wait on the note-by-note alignment already left open.
+
+## Amendment, 2026-10-19: Door checks an approval beyond the circle, and World says whether it may still publish
+
+Status: accepted (operator, 2026-10-19), from the review of the 0.0.10
+implementation, for specification 0.0.10, which is unreleased. Where this
+section and the text above differ, this section holds.
+
+### Context of the amendment
+
+The decision above computes reach and says the relay checks it "before
+admitting a publication approval, once publication is built". The review
+asked where that check lives. A publication approval version 1 names a
+destination and nothing about its class, and Door "records `destination`
+exactly and does not check it against policy" (D-13), so Door could admit
+an approval to a website for a copyrighted recording or a co-written song
+nobody consented to share. And a check made only at admission is stale by
+the time anything is sent: a rights claim's `until` passes, a co-writer
+supersedes their consent, a sensitivity label is added.
+
+### Decision of the amendment
+
+**The check lives in both places.**
+
+- **Door refuses at admission.** A publication approval version 2 states
+  the `class` of its destination (ADR 0010's exposure classes), which is the
+  furthest the approval reaches. When its `decision` is `approve` and its
+  class is `service`, `open`, or `distribution`, `door transition` refuses
+  it unless, for every covered revision: the reach of its object, computed
+  as this record computes it on the UTC date of the transition, allows the
+  class by sensitivity and by rights (the permit table, the strictest claim
+  winning); and ADR 0088's sharing gate passes for the destination, so every
+  co-written Work the covered revisions touch has every co-writer's head
+  `approve` consent naming the destination exactly and covering every
+  covered revision. The refusal is `proposal_refused`, naming each blocking
+  object, label, statement, writer, and revision. The operator's override
+  past a sensitivity limit (ADR 0016) is not defined; until it is, Door
+  refuses.
+- **World says whether it may still publish.** World serves `may_publish`:
+  given an approval revision and a date, whether that approval still
+  permits publication, and if not, everything that blocks it: the approval
+  is not the head, is withdrawn, holds back, is version 1, or is to the
+  circle or private; a covered object's reach no longer allows the class; a
+  consent is missing, refused, superseded, or for other revisions. A
+  publisher calls it at publish time, because rights can expire and
+  consents change. On reach and the sharing gate, Door's refusal and
+  World's answer for the same snapshot and date agree.
+
+**A version 1 approval reaches no further than the circle.** It states no
+class, so Door cannot check it; a fact that cannot be established must not
+widen disclosure (S-32). It stays admissible, and the circle (ADR 0088)
+reads it as before. Publishing beyond the circle needs a version 2
+approval. A publication withdrawal version 2 withdraws an approval of
+either version; no approval is withdrawn twice, by either version.
+
+**0.0.10 ships no publisher.** Nothing is sent beyond the circle by this
+release; the check and the view are in place for when a publisher is
+built, which must call `may_publish` and must not send when it says no.
+
+### Contract changes of the amendment
+
+1. `archive.transition/publication_approval` version 2: version 1 with a
+   required `class` (`private`, `circle`, `service`, `open`, or
+   `distribution`) and the profile rule `x-archive-beyond-circle`.
+2. `archive.transition/publication_withdrawal` version 2: version 1 whose
+   `withdraws` pins a publication approval of version 1 or 2.
+3. Door: the rule, enforced in `door transition`; both versions in the
+   transition dispatch table.
+4. World: the `may_publish` view; the circle's readable set reads a
+   version 2 approval to the circle's destination whose class is `circle`
+   as it reads version 1, and both withdrawal versions.
+
+### Consequences of the amendment
+
+- An approval Door admits for a destination beyond the circle was allowed
+  on the day it was made; `may_publish` says whether it still is.
+- Door's admission now reads rights, sensitivity, origin, consent, and
+  membership claims across the snapshot, as World does; a test holds Door
+  and World to the same answers.
+- The relay's circle disclosures need no change.
+- No invariant changes: this is how S-30 and S-32 are applied to an
+  approval.
+
+### Alternatives considered in the amendment
+
+- **Only World, at publish time.** An approval Door admits is a record that
+  the operator authorized a disclosure; admitting one the archive's own
+  claims forbid makes the record say something untrue.
+- **Only Door, at admission.** Rights expire and consents change; an
+  approval checked once can be stale before the first byte is sent.
+- **Class in policy instead of the approval.** ADR 0010 lets an approval's
+  scope name a class; stating it in the approval lets Door check what the
+  operator approved without reading configuration it does not hold.
+- **Refusing version 1 approvals from 0.0.10 on.** The circle and the
+  fixture use them, and reading them as circle-at-most closes the gap
+  without breaking either.

@@ -119,7 +119,7 @@
     {
       "id": "archive.claim/melody",
       "version": "1",
-      "digest": "sha256:cc374a1596d6715426de0cf8aedfff7b342e75b503c67bfa1236c2a5f2fc502a"
+      "digest": "sha256:ca6856bacff964e7e543eb85d0e5ceac352016150c86e5acf29e8f364cb33aad"
     },
     {
       "id": "archive.claim/melody_spans",
@@ -139,7 +139,7 @@
     {
       "id": "archive.claim/notes",
       "version": "1",
-      "digest": "sha256:a98395ffcf17f353a42e726c947d34828441a0274c1b6e373f1728e0dad37da9"
+      "digest": "sha256:de1cb0696ac75b368600b14cc385e3785d8f751b525043747b1bf5060995c6c6"
     },
     {
       "id": "archive.claim/performance_work",
@@ -214,7 +214,7 @@
     {
       "id": "archive.claim/timed_lyrics",
       "version": "1",
-      "digest": "sha256:118448bc123b8f835b98613b694668c7316297757fbe94d3c490c6c4e347916c"
+      "digest": "sha256:b32d0ee70b6bce86d246baf0167cf4b8d24f265c8b46cc3da54b79448be05bb8"
     },
     {
       "id": "archive.claim/tracklist",
@@ -282,9 +282,19 @@
       "digest": "sha256:94cf300d5bc808cd2a7512f76f1b391b7bf3420a243887113a24e7d1573f4759"
     },
     {
+      "id": "archive.transition/publication_approval",
+      "version": "2",
+      "digest": "sha256:1b4df7d0f573782d67bbc5080447f94714fcd8d97b351c63806cc5e8a6581c60"
+    },
+    {
       "id": "archive.transition/publication_withdrawal",
       "version": "1",
       "digest": "sha256:6e3a099927054b6091fa615d914916ba219b245f03f14d3946e7128f1ecbb378"
+    },
+    {
+      "id": "archive.transition/publication_withdrawal",
+      "version": "2",
+      "digest": "sha256:683f490c74473a7e3a6c468f974ebf19bfd3168284feb73d6139a29af7640e0c"
     },
     {
       "id": "archive.transition/retire",

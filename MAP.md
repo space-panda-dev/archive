@@ -84,11 +84,12 @@ kinds in `transitionDispatchTable`.
 
 ## Spec: what every archive must satisfy, copied into each
 
-- `spec/VERSION` (current `0.0.9`); `spec/archive-spec.md` (1997) is a byte
-  copy of `spec/0.0.9/archive-spec.md`. Navigate by heading:
-  `rg -n '^##' spec/archive-spec.md` (section 6, "Reading commands", runs
-  from line 744 to 1980).
-- `spec/<version>/contracts.json` (0.0.9: 185 lines, 36 contracts) lists
+- `spec/VERSION` (current `0.0.10`, unreleased); `spec/archive-spec.md`
+  (2620) is a byte copy of `spec/0.0.10/archive-spec.md`. Navigate by
+  heading: `rg -n '^##' spec/archive-spec.md` (section 6, "Reading
+  commands", runs from line 757 to 2602; D-18 holds 0.0.10's contracts).
+  Release notes: [docs/releases/0.0.10.md](docs/releases/0.0.10.md).
+- `spec/<version>/contracts.json` (0.0.10: 315 lines, 62 contracts) lists
   `{id, version, digest}`; each digest names `spec/contracts/sha256-<hex>.json`.
 - `spec/<version>/context.jsonld` is the JSON-LD context (ADR 0025).
 

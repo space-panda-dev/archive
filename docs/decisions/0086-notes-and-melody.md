@@ -1,7 +1,7 @@
 # 0086. Note events per part, and melody at two levels
 
-Status: accepted (operator, 2026-10-18); amendment proposed 2026-10-19
-(articulation, written rhythm, and the bass line), awaiting the operator
+Status: accepted (operator, 2026-10-18); amended 2026-10-19 (articulation,
+written rhythm, and the bass line; accepted by the operator, 2026-10-19)
 
 ## Context
 
@@ -444,12 +444,12 @@ invariant, and hold no authoritative state outside the claims Door admits.
 - **MusicXML or MIDI as the stored form.** Neither counts samples of a
   recording, neither pins provenance, and MIDI cannot say "this is the tune".
 
-## Amendment, 2026-10-19 (proposed): articulation, written rhythm, and the bass line
+## Amendment, 2026-10-19: articulation, written rhythm, and the bass line
 
-Status: proposed. Drafted at the operator's request on 2026-10-19 from the
-decisions they confirmed on 2026-10-18 and 2026-10-19, for specification
-0.0.10, which is unreleased, so the contracts are amended in place. The
-operator decides acceptance. Until they do, the text above holds.
+Status: accepted (operator, 2026-10-19). Drafted from the decisions the
+operator confirmed on 2026-10-18 and 2026-10-19, for specification 0.0.10,
+which is unreleased, so `notes` and `melody` version 1 are amended in place.
+Where this section and the text above differ, this section holds.
 
 ### Context of the amendment
 
@@ -472,39 +472,53 @@ vocal-line notes on the tracks tried.
 ### Decision of the amendment
 
 **Sounded timing and written rhythm are kept apart.** A note's
-`onset_sample` and `offset_sample` remain what sounded. How it is written is
-a named World view, **written rhythm**, computed and never stored:
+`onset_sample` and `offset_sample` remain what sounded, and are never
+rounded to a grid. How the notes are written is a named World view,
+**written rhythm**, computed and never stored:
 
-- Onsets are placed on the beat grid of the recording's meter claim
-  (ADR 0077); without one, the view writes nothing.
-- A note's written length fills the interval from its onset to the next
-  note's onset. When the sounded share of that interval is short (initially
-  under 60%), the note is marked `staccato` instead of being followed by a
-  rest.
-- A rest is written only for a silence with a reason, which the view states:
-  `line_end` (a timed-lyrics line ends on the note, ADR 0085), `breath` (a
-  silence of at least a beat between words of a line), or `gap` (a silence
-  of at least a bar anywhere).
+- Onsets are placed on the beat grid of a meter claim of the same recording
+  (ADR 0077) that the reader names; without one, the view writes nothing
+  and says why.
+- A note's written value fills the interval from its onset to the next
+  note's onset, on the grid. When the sounded share of that interval is
+  short (initially under 60%), the note is marked `staccato` instead of
+  being followed by a rest.
+- A rest is written only when the silence is long relative to the beat
+  (initially at least one beat) **and** falls at a phrase boundary: a
+  `line_end`, where a timed-lyrics line (ADR 0085) ends on the note before
+  it, or a `breath`, a silence between two words of a line, or between any
+  two notes that no timed-lyrics line covers. A long silence inside a word,
+  or a short one anywhere, is no rest. Each written rest states which
+  boundary it is.
 - The thresholds are the view's parameters, named by its version, so two
-  readings of one claim agree.
+  readings of one claim at one version agree.
 
-A person who writes it otherwise asserts a correction: a notes claim with
-their own articulation, or a Work-level melody with their own rests.
+A person who writes it otherwise asserts a correction: a notes claim citing
+the machine's in `corrects`, with their own articulation. The view writes a
+corrected claim like any other.
 
 **Notes carry articulation.** A note of a notes claim, and a pitch item of a
-Work-level melody, may carry `articulation`: one to four distinct names
-from `staccato`, `staccatissimo`, `tenuto`, `accent`, `strong-accent` (a
-marcato), and `fermata`, each as MusicXML names it. It is what the document
-or the person wrote, never what a machine measured; a machine's short note
-is short in its samples, and the written rhythm view marks it.
+Work-level melody, may carry `articulation`: one to six distinct names from
+`staccato`, `staccatissimo`, `tenuto`, `accent`, `marcato`, and `fermata`.
+Five are MusicXML's own element names; `marcato` is the mark MusicXML calls
+`strong-accent`, and an exporter writes it so. Articulation is what a
+document or a person wrote, never what a machine measured: a claim that
+pins a `run` and no `document` carries none. A machine's short note is short
+in its samples, and the written rhythm view marks it.
 
-**The bass line is a line of its own.** The bass part's notes (a notes claim
-of the `bass` part, read from the bass stem or a document's bass track) are
-served by a **bass line** view with its own written rhythm, and never merged
-into a melody. A recording-level melody never selects the bass part by
-default: no machine proposes a melody spans claim with a span on it, and
-World's default tune of a recording skips such spans. A person may assert
-one (a bass solo), and it is shown as they assert it.
+**The bass line is a line of its own.** A notes claim may say `bass: true`:
+its part is the bass line. Notes read from the bass stem (a `stem` whose
+`output` is `bass`) must say it; a person or a document's bass track says
+it by asserting it. World serves a **bass line** view: the recording's bass
+notes claims, written by the written rhythm view, for a bass clef staff of
+their own, never merged into a melody.
+
+A recording-level melody never selects the bass line by default. No machine
+proposes a melody spans claim that names a bass notes claim, and World's
+tune of a recording skips any span that a machine's melody spans claim (one
+whose agent is not a person) gives to a bass notes claim, and counts what it
+skipped (INV-24). A person may assert a melody spans claim with a span on the
+bass (a bass solo), and the tune shows it as they assert it.
 
 **A machine vocal line drops separation bleed.** Before proposing a vocal
 notes claim, the extractor drops a note that lies below the singer's range
@@ -515,24 +529,30 @@ and a person who wants a note back asserts it.
 
 **Exports give the bass its own staff.** The exporters of
 [ADR 0089](0089-practice-audio-and-exports.md) write the bass line on a bass
-clef staff of its own, and write articulation as MusicXML `<articulations>`
-(a fermata as `<fermata>` under `<notations>`) and LilyPond's marks. A rest's
-reason has no MusicXML or LilyPond form; the export lists it as dropped.
+clef staff of its own, articulation as MusicXML `<articulations>` (a
+fermata as `<fermata>` under `<notations>`, `marcato` as `<strong-accent>`)
+and LilyPond's marks, and the written rhythm view's notes and rests. A
+rest's boundary has no MusicXML or LilyPond form; the export lists it as
+dropped.
 
-### Contract changes the amendment implies
+### Contract changes of the amendment
 
-1. `archive.claim/notes` version 1: a note gains optional `articulation`.
+1. `archive.claim/notes` version 1: a note gains optional `articulation`;
+   the payload gains optional `bass` (`true`), required when `stem.output`
+   is `bass`; articulation never on a claim that pins a `run` and no
+   `document`.
 2. `archive.claim/melody` version 1: a pitch item gains optional
-   `articulation`; a rest item gains optional `reason`, one of `line_end`,
-   `breath`, `gap`.
-3. Door profile rules: `articulation` names known and distinct, one to four,
-   never on a rest; `reason` only on a rest.
-4. `world/notes.py`: the written rhythm and bass line views; the default
-   tune skips spans that select the bass part; the check that a machine's
-   melody spans claim selects no bass part.
-5. The `melody` extractor's manifest and parameters: the bleed filter.
+   `articulation`, under the same rule. A rest item is unchanged: a written
+   rest's boundary is the view's, never stored.
+3. Door: JSON Schema states all of it; no new profile rule.
+4. World (`world/notes.py`): the written rhythm and bass line views; the
+   tune of a recording skips, and counts, a machine's span on a bass notes
+   claim.
+5. The `melody` extractor's parameters: the bleed filter; the notes
+   proposer sets `bass` from the stem; the melody spans proposer never
+   names a bass notes claim.
 6. ADR 0089's MusicXML and LilyPond exporters: the bass staff and
-   articulation; the export's dropped-fields list gains a rest's reason.
+   articulation; the export's losses gain a rest's boundary.
 
 ### Consequences of the amendment
 
@@ -540,12 +560,13 @@ reason has no MusicXML or LilyPond form; the export lists it as dropped.
   above, rests fell from 295 to 20.
 - Staccato can be dense: 43% of one track's notes. Whether a view should
   stop marking it past some density, and say so instead, is
-  [open](../open-questions.md#claims-and-provenance).
+  [open](../open-questions.md#claims-and-provenance), as are the initial
+  thresholds.
 - A bassist's part is printable on its own staff from the bass stem alone.
 - The 0.0.10 bundles change before release; no released claim needs a
   second reading.
-- Written rhythm, articulation, bass line, and rest reason enter the
-  [vocabulary](../vocabulary.md) when the amendment is accepted.
+- Written rhythm, articulation, and bass line enter the
+  [vocabulary](../vocabulary.md).
 - No invariant changes.
 
 ### Rejected in the amendment
@@ -554,10 +575,20 @@ reason has no MusicXML or LilyPond form; the export lists it as dropped.
   claim and on thresholds that will be tuned; stored, every retuning would
   reissue every claim. A person's own writing is stored, as a correction.
 - **Writing every silence as a rest.** It is what produced 295 rests; a
-  reader cannot see the phrase for them.
+  reader cannot see the phrase for them. A long silence away from a phrase
+  boundary is a held or staccato note, as a musician writes it.
+- **A rest's boundary in the melody contract.** It is how the view chose to
+  write a rest; a person who writes their own rests needs no reason.
+- **Knowing the bass by its `part` text.** A part's name is free text; a
+  view or a check cannot rely on it. `bass` is one field, and the stem
+  output decides it for a machine.
 - **Merging the bass into the melody, or a bass flag on melody spans.** The
   bass is a part with a line of its own, and a bass solo is already a span a
   person can assert.
+- **Door refusing a machine's melody span on the bass.** What a tune
+  selects by default is a reading, which is World's; a record that names
+  the bass is still evidence of what a machine chose. World's tune skips
+  it, and the proposer never makes one.
 - **Leaving bleed to the reader.** Bleed notes are below the singer and
   under the bass: a view cannot tell them from a low sung note without the
   run's voicing, which only the run has.

@@ -99,8 +99,8 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0082](0082-views-and-current.md) | Named views: the first current rule, correction overlay, differences, and chord names over the relay |
 | [0083](0083-form-and-work-meter.md) | Form is a claim, and a Work can have meter without a recording |
 | [0084](0084-lead-sheets.md) | A lead sheet is a claim that pins the parts it chose |
-| [0085](0085-documents-lyrics-rights.md) | Documents arrive through the relay; lyrics are timed by reference; sensitivity and rights are claims |
-| [0086](0086-notes-and-melody.md) | Note events per part, and melody at two levels |
+| [0085](0085-documents-lyrics-rights.md) | Documents arrive through the relay; lyrics are timed by reference; sensitivity and rights are claims (amended 2026-10-19: syllables and their notes; Door checks an approval beyond the circle, World's `may_publish`) |
+| [0086](0086-notes-and-melody.md) | Note events per part, and melody at two levels (amended 2026-10-19: articulation, written rhythm, the bass line) |
 | [0087](0087-tracklists-and-correspondence.md) | Releases list their tracks; artists, releases and recordings correspond to MusicBrainz and Discogs |
 | [0088](0088-bandmates.md) | Bandmates read their circle and assert their own claims |
 | [0089](0089-practice-audio-and-exports.md) | Practice audio from the stems, transposition, and exports that are views until shared |

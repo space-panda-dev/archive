@@ -176,6 +176,8 @@ Protocol labels (RED, AMBER, GREEN, CLEAR). An application's three settings
 are three of them: operator (RED), circle (AMBER), and published (CLEAR).
 **Reach**: how far an object may be shown or shared, computed from the
 sensitivity and rights of everything it pins; a view, never stored.
+**May publish**: a view saying whether a publication approval still
+permits publication on a given day, and what blocks it if not.
 **Personal-use licence**: a rights statement that a subject was licensed to
 one person for their own use, as a bought tablature is; it keeps the subject,
 and what pins it, within the circle. No rights statement limits the circle,
@@ -292,7 +294,13 @@ count of note values. A part's **instrument fields** are its open
 **strings** and **capo**, as a document gives them. **Work-level melody**:
 the composition's tune, untimed. **Melody spans**: which notes claim
 carries a recording's tune over each span, a **selection**; a **hand-off**
-is where the tune moves to another part.
+is where the tune moves to another part. **Articulation**: how a written
+note is played (staccato, staccatissimo, tenuto, accent, marcato, fermata),
+as a document or a person wrote it. **Written rhythm**: a view writing a
+notes claim's sounded notes on a meter's beat grid, each to the next onset,
+short ones marked staccato and rests only at phrase boundaries. **Bass
+line**: a notes claim marked `bass`, served as a line and a staff of its
+own, never a recording's melody by default.
 ([ADR 0086](decisions/0086-notes-and-melody.md))
 
 ## Review and views
@@ -323,7 +331,10 @@ what a lead sheet pins; a view. ([ADR 0084](decisions/0084-lead-sheets.md))
 
 **Timed lyrics**: a claim placing a lyric document's lines and words at a
 recording's samples by line and word number, never copying a word, under a
-**locator scheme** (plain text or LRC). **Document source**: a claim of what
+**locator scheme** (plain text or LRC). A word may hold **syllables**, each
+by character offsets into the document's word, and a syllable may be
+**carried by** the notes it is sung on (several for a melisma).
+**Document source**: a claim of what
 kind of document an Artifact is and where, and when, it was retrieved.
 ([ADR 0085](decisions/0085-documents-lyrics-rights.md))
 

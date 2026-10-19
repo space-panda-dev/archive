@@ -199,7 +199,9 @@ block it. The circle is private: rights MUST NOT limit what may be disclosed to
 it, and only sensitivity does. A Work the operator wrote with others MUST NOT be
 disclosed beyond its band without each other writer's recorded consent for that
 destination and those exact revisions; inside the band the operator's approval
-suffices.
+suffices. Door MUST refuse an approval of publication beyond the circle
+that the archive's own sensitivity, rights, or consent claims forbid on the
+day it is made, and a publisher MUST check them again when it publishes.
 
 **S-31.** A withdrawal from an irreversible destination MUST be recorded as
 requested, with known outside copies reported.
@@ -2002,7 +2004,9 @@ Specification 0.0.10 installs version 2 of `archive.claim/chord_stacks`,
 `archive.claim/melody`, `archive.claim/melody_spans`,
 `archive.claim/tracklist`, `archive.claim/recording_audio`,
 `archive.claim/catalogue_correspondence`, `archive.claim/work_origin`,
-`archive.claim/sharing_consent`, and `archive.claim/export`. Every 0.0.9
+`archive.claim/sharing_consent`, and `archive.claim/export`, and version 2
+of `archive.transition/publication_approval` and
+`archive.transition/publication_withdrawal`. Every 0.0.9
 contract bundle remains installed with its exact bytes, and every version 1
 claim keeps its meaning under its own contract; a version 2 does not
 supersede its version 1, and an importer that needs none of a version 2's
@@ -2257,8 +2261,21 @@ has `line` (its number in the document, from 1), a span, an optional `end`,
 optional `words` (1 to 200), and `confidence` exactly with a scale. Lines are
 in order of start and may overlap. A word has `word` (its number in the
 line, from 1, strictly increasing), a span within its line's, after the word
-before it, an optional `end`, and `confidence` exactly with a scale. The
-document is UTF-8; a line ends at LF, CR LF, or a lone CR; a word is a
+before it, an optional `end`, `confidence` exactly with a scale, and optional
+`syllables` (1 to 32). A syllable has `syllable` (its number in the word,
+from 1, strictly increasing), `start_char` and `end_char` (Unicode code
+point offsets into the word, from 0, `start_char < end_char`), a span within
+its word's and at or after the syllable before it, character ranges at or
+after the syllable before it, `confidence` exactly with a scale, and
+optional `carried_by`: `notes`, the revision of one pinned notes Claim, and
+`onsets`, 1 to 64 strictly increasing `onset_sample` values of notes in it
+(several are a melisma; of notes sharing an onset, the highest is meant). A
+syllable has no `end`: a held word's hold is its last syllable's. The claim
+MAY pin 0 to 8 distinct `notes` (notes version 1 Claim revisions about the
+same `source` revision), and the revisions the syllables' `carried_by` name
+MUST be exactly those pinned. A machine's timed lyrics come from aligning
+the document's own words to the audio, never from transcribed text, under
+a `run`. The document is UTF-8; a line ends at LF, CR LF, or a lone CR; a word is a
 maximal run of characters without the Unicode `White_Space` property; under
 `lrc`, time tags are not words and line numbers count every line of the file.
 Door does not read content, so whether a numbered line or word exists is not
@@ -2303,16 +2320,24 @@ strictly ascending order of `onset_sample` and then `pitch`, each with
 integer `onset_sample` within the range, `offset_sample` after it and within
 the stream, `pitch` (a MIDI note number, 0 to 127, the nearest step of the
 grid), optional `cents` (from that step, in [-50, 50), only with a pinned
-tuning), optional `velocity` (1 to 127), and an optional `locator` (`bar`
-and optional `at` and `duration` written lengths, with a document). A longer
-part is split into claims by range.
+tuning), optional `velocity` (1 to 127), an optional `locator` (`bar`
+and optional `at` and `duration` written lengths, with a document), and
+optional `articulation`. A longer part is split into claims by range. An
+`articulation` is 1 to 6 distinct names from `staccato`, `staccatissimo`,
+`tenuto`, `accent`, `marcato` (MusicXML's `strong-accent`), and `fermata`,
+as a document or a person wrote them; a claim that pins a `run` and no
+`document` MUST NOT carry any. Optional `bass` (`true`) says the part is the
+bass line; a claim whose `stem` has `output` `bass` MUST say it. How sounded
+notes are written on a beat grid is a reading, never stored in the claim.
 
 **Melody** is a Work's or a document's tune, untimed: optional `run`, at most
 one `meter` (an untimed meter layers version 2 Claim revision whose bars it
 is laid on), zero to eight `corrects` (melody version 1), and
 `derived_from`. Its payload has `notes`, 1 to 10,000 items in written order,
 each a `pitch` (0 to 127) or a `rest` (`true`) with a `duration` and an
-optional `locator` (`bar`, with a document), at least one a pitch; optional
+optional `locator` (`bar`, with a document), at least one a pitch, and a
+pitch with optional `articulation` as a note's (none when the claim pins a
+`run` and no `document`); optional
 `part`; optional `document_url`; and optional `start`, `{layer, bar, at?}`,
 only with a `meter`. **Melody spans** says which part carries a recording's
 tune: a timed claim pinning 1 to 16 distinct `notes` Claims about the same
@@ -2320,7 +2345,10 @@ tune: a timed claim pinning 1 to 16 distinct `notes` Claims about the same
 version 1), and `derived_from`; its payload has only `sample_rate` and
 `spans`, 1 to 10,000 ordered, non-overlapping spans, each naming in `notes`
 the revision of one pinned notes claim, with optional `select` (`all`,
-`highest`, or `lowest`). Every pinned notes claim is named by some span.
+`highest`, or `lowest`). Every pinned notes claim is named by some span. A
+span MAY name a `bass` notes claim; a reader's tune of a recording leaves
+out such a span when the melody spans claim's `agent` is not a person, and
+says what it left out.
 
 **Tracklist** says what is on a release. It pins exactly one `release`
 Entity and one `track`, a `recording` Entity, per listed track, in order. Its
@@ -2384,6 +2412,33 @@ canonical JSON of `{format, exporter: {id, version}, options, rendered,
 joined}`, where `options` is the payload's (or `{}`) and `rendered` and
 `joined` are the pinned revisions in reference order, each `[id,
 revision_id]`.
+
+**Publication beyond the circle.** A publication approval version 2 is
+version 1 (D-13) with a required `class`, the exposure class of its
+destination (`private`, `circle`, `service`, `open`, or `distribution`),
+which is the furthest it reaches. When its `decision` is `approve` and its
+class is `service`, `open`, or `distribution`, Door MUST refuse it unless,
+for every `covers` revision, on the UTC date of the transition: the
+object's furthest class by sensitivity, over everything it pins
+transitively and every revision of each, reaches the class (S-32); every
+Artifact and every `musical_work`, `recording`, and `release` Entity in that
+closure has a rights claim permitting the class, the strictest claim about
+each object winning (S-30); and every co-written Work the covered revisions
+touch has, from each of its writers other than the active operator, a head
+sharing consent whose `decision` is `approve`, whose `destination` is the
+approval's exactly, and whose `covers` include every covered revision. A
+rights statement permits: `InC` or `InC-*` with the active operator among
+its holders, and `NoC-US`, distribution; `NoC-NC`, open; a
+`personal-use-licence`, the circle; any other statement, or any statement
+outside its `from` and `until`, service. Door names each object, label,
+statement, writer, and revision that blocks the approval. No override past
+a sensitivity limit is defined, so Door makes none. A publication approval
+version 1 states no class and authorizes disclosure no further than the
+circle. A publication withdrawal version 2 is version 1 whose `withdraws`
+pins a publication approval of version 1 or 2; no approval is withdrawn
+twice by withdrawals of either version. A reader MUST check again, when
+publishing, that the approval is the head, not withdrawn, and still passes
+these checks on that day.
 
 **Terms.** Each fragment maps its payload fields and roles; `derived_from`
 maps to `prov:wasDerivedFrom`, `run` to `prov:wasGeneratedBy`, `document` to
@@ -2486,13 +2541,26 @@ D-13 names.
   active operator's person.
 - `x-archive-export-key` names the payload `key` and the `rendered` and
   `joined` roles, and recomputes the key as stated above.
+- `x-archive-sequential-spans` and `x-archive-contained-spans` MAY each be a
+  nonempty list of rule objects, each checked as if it stood alone. Their
+  `within` and `outer` MAY be a path, a nonempty list of payload field
+  names each reaching an array inside the elements of the one before it;
+  the rule then applies within each element the whole path reaches.
+- `x-archive-beyond-circle` names the payload `class`, the classes it
+  checks (`beyond`), the payload `decision` and its `approve` value, the
+  payload `destination`, and the `covers` role, and checks a publication
+  approval as stated above. Unlike the other rules it reads the snapshot's
+  sensitivity, rights, work origin, sharing consent, band membership, and
+  performance/work claims.
 
 A reference target of chord stacks `sequence`, a lead sheet's inputs, and the
 other roles that accept several contracts use D-17's `any`. Whether a
 section or entry index is within a pinned form or sequence, a placed bar's
 time signature, a tune that fits its meter, and a melody span within its
 notes claim's range read a pinned claim's payload in ways no rule here
-states; they are World's checks, and Door does not refuse them.
+states; they are World's checks, and Door does not refuse them. So are a
+syllable's character offsets within its word and each `carried_by` onset
+being a note of the named claim.
 
 **The rights statements.** This is the vocabulary a rights claim's
 `statement` draws from, as SKOS. Each RightsStatements.org statement is a
