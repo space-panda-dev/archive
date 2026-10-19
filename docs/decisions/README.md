@@ -111,3 +111,4 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0094](0094-peoples-writes.md) | People's writes: grants are transitions, and members set their own limits (proposed) |
 | [0095 proposed](0095-participation.md) | Participation is a contribution at session scope, and only the operator counts it |
 | [0096 proposed](0096-origin-of-recordings.md) | Recordings and Artifacts have an origin |
+| [0097 proposed](0097-rights-by-use.md) | Rights say which use they permit, and a clearance permits one use |
