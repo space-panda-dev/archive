@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -93,10 +94,13 @@ OUTPUTS = {"x": {"kind": "series", "dtype": "f32", "columns": 2, "grid": "g", "u
 
 
 def manifest(extractor_id: str, needs: tuple[str, ...] = (), version: str = "1", mode: str = "ok",
-             accepts: tuple[str, ...] = ("audio/*",)) -> dict:
-    return {"contract": "archive-extractor/1", "id": extractor_id, "version": version,
-            "command": ["${python}", "program.py"], "accepts": list(accepts), "needs": list(needs),
-            "parameters": {"mode": mode}, "outputs": OUTPUTS}
+             accepts: tuple[str, ...] = ("audio/*",), prefers: list | None = None) -> dict:
+    declared = {"contract": "archive-extractor/1", "id": extractor_id, "version": version,
+                "command": ["${python}", "program.py"], "accepts": list(accepts), "needs": list(needs),
+                "parameters": {"mode": mode}, "outputs": OUTPUTS}
+    if prefers is not None:
+        declared["prefers"] = prefers
+    return declared
 
 
 # Spool's capability grammar, from spool/spec/protocol.md ("Tasks"): name@version,
@@ -115,23 +119,23 @@ SHIPPED = {
     # Version 3: the tuning from a histogram of the windows, profiles
     # referenced to it, the key as a mode; chords move to their own extractor.
     # Version 4: mains hum left out; a tonic named only where it leads; key
-    # regions by note collection.
-    "tonal": {"version": "4",
-              "code": "sha256:9f5bcc7ef500abf52da8b909e97a8a63a560718c8fee9391639abf7508622e11",
+    # regions by note collection. Version 5: the tuning only from enough
+    # windows; the tonic by the bass among the collection's notes, with a
+    # calibrated confidence.
+    "tonal": {"version": "5",
+              "code": "sha256:48298eb5dd34f2f2a91b9c9a267fdc70ca001ace46784b4ac590ed113aacd1f3",
               "outside": {"cover.py": "sha256:1d3d8e48959d97ec6d633ab683eebea5bcb75616a1d29e218c25da30a7a4884c",
                           "extractors/frames/frames.py":
                               "sha256:acac662e87efbcafcebab714b858e8b42c287de7963156c7e2a14adfd860c565"}},
-    # Version 2: the six-note m11 priced above the five-note chords.
-    "chords": {"version": "2",
-               "code": "sha256:fdfc361ef79a5e0841630078bb3a5799f9ab78185f8dc153d94521e44011200c",
-               "outside": {}},
     "loudness-r128": {"version": "1",
                       "code": "sha256:37384ca259e5a38d61a4f09891b496bfeba339e5a10791aea2dc6b401aed0898",
                       "outside": {}},
     # Version 2: the primary tempo level, its alternatives, meter, downbeats, spans and changes (meter.py).
     # Version 3: each take on its own, a preference for the tracker's octave, downbeats with a margin.
-    "rhythm": {"version": "3",
-               "code": "sha256:5f66bb145f6264da8b2973d847de7d679b6a697296641a50bbcfb23dc67ccf6b",
+    # Version 4: bar lines from the low accent less the backbeat's and the beat-synchronous chroma, published
+    # from a margin of 1; 5 preferred to 4 in a song that changes meter; an unmeasurable level is no evidence.
+    "rhythm": {"version": "4",
+               "code": "sha256:f16c19ac0501d0353ef63313e854c8db118ec92efc7b716e334ffefbbcf7c086",
                "outside": {}},
     # structure imports the span detector for its novelty curve, and the detector imports probe.
     # Version 2: the threshold is measured from a noise floor only when the recording has one
@@ -148,8 +152,11 @@ SHIPPED = {
                 "code": "sha256:43d3e0007efc65b10ccb5aa90de85b6477e8f71f50a0bd33c7b47c40e8769ea3",
                 "outside": {}},
     # Version 2: 2-cent bins, a level gate on voicing, and level_db.
-    "melody": {"version": "2",
-               "code": "sha256:01f55b00ca8fd0112841091c4fc3ffcdae7165e8c8303f2744415eb042d00f2c",
+    # Version 3: only the rows within reach of the gate are measured; 5-cent bins,
+    # and 2 on the vocal stem it prefers; measured_fraction. Still 3 when the
+    # preference gained at_least: no entry's bits change, only which is the default.
+    "melody": {"version": "3",
+               "code": "sha256:6945b72eaae40a85d24fd296a368d07eea89d6e4b41e8531ae070d7299255079",
                "outside": {}},
     # colour reads the peaks' format and decode from waveform.py, not the
     # derived-media tool media.py, so an edit to that tool's routes or
@@ -159,7 +166,37 @@ SHIPPED = {
                "code": "sha256:37bdd43515505b256e90c06f859c2e10797a569183717515c5eca0fb31e6fcc1",
                "outside": {"waveform.py": "sha256:353aceedf74c7a1c2bbaa330fe03847440f1e74213146bcf6bc0b863db39a424",
                            "derived.py": "sha256:d1da556693ea266247cbac481f17672578d5cc90043b3f28730e899cd3c28132"}},
-    "stems": {"version": "1", "code": "sha256:235a4c30a38d1f897958ef1354441011e435709c34732cfe4aad503ab1481c3e", "outside": {}},
+    # The code was made to serve stems-6s too (a Separation names the model and stems); no output changed.
+    # Version 1 also runs on Apple's GPU when `apply.device` is "mps": another
+    # parameter, so another key; the CPU's stems are the same bits as before.
+    "stems": {"version": "1", "code": "sha256:df389c5a797d6d7d79ee57d34d17f2a99ae9fb1a68e62c93dd82e5f7c51042b4", "outside": {}},
+    # stems-6s is the stems program with another model and six stems.
+    "stems-6s": {"version": "1",
+                 "code": "sha256:23494ee6838986398b491f243a017b1687921f655db1c51693275931ebf892a2",
+                 "outside": {"extractors/stems/stems.py":
+                                 "sha256:649708bb68316a9c33b94a9fa273ca3bfb45c2e1dcc6b310a960371fe0191586"}},
+    "notes-basic-pitch": {"version": "1",
+                          "code": "sha256:b81ad3ab4528b6c557e4a3ad254c5262754689efcbd157ac5bff976f28d40133",
+                          "outside": {}},
+    "f0-pesto": {"version": "1",
+                 "code": "sha256:a627f3b3f63d03e2f953707fa39653da0582168bfa714c0b40afeb82d7f928cc",
+                 "outside": {}},
+    "f0-torchcrepe": {"version": "1",
+                      "code": "sha256:3ea7b08895a262f9c175bcadb49fdf1ad59c6a8c69d6492aa5341e6abcafa4e7",
+                      "outside": {}},
+    # The learned beat and chord extractors keep the album trial's id, version, and
+    # parameters, so their keys are the trial's (test_beats_chords checks one).
+    "beats-beatthis": {"version": "1",
+                       "code": "sha256:68c308ce04c2874d4f73399fe44491f667de4387e4e5e8760425b8f8ac1abab0",
+                       "outside": {}},
+    # chords-jiang stays 1 when it pins its repository's code: a clean checkout
+    # of the pinned commit, which made every entry, makes the same bits.
+    "chords-jiang": {"version": "1",
+                     "code": "sha256:09b73beb0609bb1b62263370b8b2482c6ee79596131bddcfff021a738f81dc3c",
+                     "outside": {}},
+    "chords-chordino": {"version": "1",
+                        "code": "sha256:e404cea891963fd123d5d865c8f58ece5191bb5d0ab729aaf3d87de4426881ba",
+                        "outside": {}},
 }
 
 
@@ -768,6 +805,32 @@ class Manifests(unittest.TestCase):
                 self.assertEqual({p.relative_to(enrich).as_posix() for p in reached},
                                  set(SHIPPED[extractor.id]["outside"]))
 
+    def test_a_retired_extractors_entries_stay_readable_and_regenerable(self) -> None:
+        """Retiring an extractor removes it from the catalog
+        (docs/feature-bank.md, retired extractors): `run all` no longer
+        makes or reads its entries, but they stay, read_entry reads them
+        without a catalog, and its directory from history makes the same key."""
+        f = Fixture(self)
+        retired = f.add("retired")
+        f.add("kept")
+        self.assertEqual(f.run()[0], 0)
+        made = f.reader().entry(f.digest, "retired")
+        self.assertIsNotNone(made)
+        kept_aside = f.dir / "history" / "retired"
+        kept_aside.parent.mkdir()
+        shutil.move(str(retired), str(kept_aside))
+        self.assertNotIn("retired", bank.Catalog.load([f.extractors]).extractors)
+        code, answer = f.run()
+        self.assertEqual((code, f.statuses(answer)), (0, {"kept": "hit"}))
+        found = bank.read_entry(made.path)
+        self.assertIsNotNone(found)
+        self.assertEqual(found.manifest, made.manifest)
+        self.assertEqual(found.scalar("y"), made.scalar("y"))
+        before = f.runs()
+        code, answer = f.run("all", "--extractors", str(kept_aside.parent))
+        self.assertEqual((code, f.statuses(answer)), (0, {"kept": "hit", "retired": "hit"}))
+        self.assertEqual(f.runs(), before)
+
     def test_a_code_digest_sees_every_file_but_byte_code(self) -> None:
         f = Fixture(self)
         directory = f.add("a")
@@ -782,7 +845,10 @@ class Manifests(unittest.TestCase):
         catalog = bank.Catalog.load()
         self.assertIn("frames", catalog.extractors)
         self.assertIn("loudness-r128", catalog.extractors)
-        programs = {"python": sys.executable, "sh": "/bin/sh", "demucs-python": sys.executable}
+        programs = {name: sys.executable for name in ("python", "demucs-python", "stems-6s-python",
+                                                      "basic-pitch-python", "f0-python", "beatthis-python",
+                                                      "jiang-python", "chordino-python")}
+        programs.update({"sh": "/bin/sh", "beatthis-checkpoint": "/model.ckpt", "jiang-repo": "/jiang"})
         for extractor in catalog.extractors.values():
             command = extract.resolve_command(extractor, programs)
             self.assertTrue(any(Path(word).is_file() and Path(word).parent == extractor.directory
@@ -814,12 +880,216 @@ class Manifests(unittest.TestCase):
                "unknown kind": {**good, "outputs": {"x": {"kind": "video"}}},
                "file without suffix": {**good, "outputs": {"x": {"kind": "file", "media_type": "audio/flac"}}},
                "wrong contract": {**good, "contract": "archive-extractor/2"},
-               "bad need": {**good, "needs": ["x"]}}
+               "bad need": {**good, "needs": ["x"]},
+               "preference not a list": {**good, "prefers": {"input": "s/f"}},
+               "preference not a feature": {**good, "prefers": [{"input": "s"}]},
+               "preference without input": {**good, "prefers": [{"parameters": {}}]},
+               "preference with other fields": {**good, "prefers": [{"input": "s/f", "when": "always"}]},
+               "preferred parameters undeclared": {**good, "prefers": [{"input": "s/f", "parameters": {"x": 1}}]},
+               "preferred parameters unencodable": {**good, "prefers": [{"input": "s/f",
+                                                                        "parameters": {"mode": 0.5}}]},
+               "a feature preferred twice": {**good, "prefers": [{"input": "s/f"}, {"input": "s/f"}]},
+               "minimum not decimal text": {**good, "prefers": [{"input": "s/f", "at_least": {"y": 0.2}}]},
+               "minimum not a number": {**good, "prefers": [{"input": "s/f", "at_least": {"y": "much"}}]},
+               "minimum of a series": {**good, "prefers": [{"input": "s/f", "at_least": {"x": "1"}}]},
+               "minimum of an undeclared output": {**good, "prefers": [{"input": "s/f", "at_least": {"z": "1"}}]},
+               "minimums not an object": {**good, "prefers": [{"input": "s/f", "at_least": ["y"]}]}}
         for name, value in bad.items():
             with self.subTest(name):
                 with self.assertRaises(bank.BankError):
                     bank.check_manifest(value, name)
         self.assertEqual(bank.check_manifest(good, "good"), good)
+        preferring = {**good, "prefers": [{"input": "s/f", "parameters": {"mode": "fine"}, "at_least": {"y": "0.2"}},
+                                          {"input": "t/f"}]}
+        self.assertEqual(bank.check_manifest(preferring, "preferring"), preferring)
+
+
+class Preferences(unittest.TestCase):
+    """An extractor that prefers a file feature measures it by default where
+    the bank holds it, with the parameters it prefers there; the runner and
+    the reader decide which by one rule. `sep` stands in for a separator: its
+    file output `f` is the feature."""
+
+    def fixture(self) -> Fixture:
+        f = Fixture(self)
+        f.add("sep")
+        f.add("m", accepts=("audio/*", "application/*"),
+              prefers=[{"input": "sep/f", "parameters": {"mode": "preferred"}}])
+        return f
+
+    def test_without_the_feature_it_measures_the_content_and_never_makes_it(self) -> None:
+        f = self.fixture()
+        code, answer = f.run("m")
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(f.runs(), ["m"])
+        self.assertNotIn("input", answer["extractors"]["m"])
+        entry, feature = f.reader().default_entry(f.digest, "m")
+        self.assertIsNone(feature)
+        self.assertEqual((entry.manifest["content"], entry.manifest["parameters"]), (f.digest, {"mode": "ok"}))
+
+    def test_with_the_feature_it_measures_it_and_the_reader_finds_that(self) -> None:
+        f = self.fixture()
+        self.assertEqual(f.run("sep")[0], 0)
+        code, answer = f.run("m")
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(f.runs(), ["sep", "m"])  # sep made once, by its own run
+        said = answer["extractors"]["m"]
+        self.assertEqual((said["status"], said["input"]), ("ran", "sep/f"))
+        self.assertEqual(answer["inputs"]["sep/f"]["extractors"]["m"]["key"], said["key"])
+        reader = f.reader()
+        _, feature_digest, _ = reader.input_of(f.digest, "sep/f")
+        self.assertNotEqual(feature_digest, f.digest)  # anchor: the feature is other content
+        entry, feature = reader.default_entry(f.digest, "m")
+        self.assertEqual(feature, "sep/f")
+        self.assertEqual(entry.manifest["key"], said["key"])
+        self.assertEqual(entry.manifest["content"], feature_digest)
+        self.assertEqual(entry.manifest["parameters"], {"mode": "preferred"})
+        self.assertIsNone(reader.entry(f.digest, "m"))  # the content itself was not measured
+        # Measured --from the feature, it is the same entry: the preference's parameters apply there too.
+        with patch.object(extract, "run_program", side_effect=AssertionError("ran")):
+            code, again = f.run("m", "--from", "sep/f")
+        self.assertEqual((code, again["extractors"]["m"]["status"]), (0, "hit"))
+        # A reader that does not say which feature it reads is refused, not given nothing.
+        with self.assertRaisesRegex(bank.BankError, "which feature"):
+            reader.entry(feature_digest, "m", filed_under=f.digest)
+        # --no-prefer measures the content.
+        code, plain = f.run("m", "--no-prefer")
+        self.assertEqual((code, plain["extractors"]["m"]["status"]), (0, "ran"))
+        self.assertNotIn("input", plain["extractors"]["m"])
+        self.assertEqual(reader.entry(f.digest, "m").manifest["parameters"], {"mode": "ok"})
+
+    def test_all_measures_the_feature_it_has_just_made(self) -> None:
+        f = self.fixture()
+        f.add("other")
+        code, answer = f.run("all")
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(f.runs()[-1], "m")
+        self.assertEqual(sorted(f.runs()), ["m", "other", "sep"])
+        self.assertEqual(answer["extractors"]["m"]["input"], "sep/f")
+        self.assertEqual(f.reader().default_entry(f.digest, "m")[0].manifest["key"], answer["extractors"]["m"]["key"])
+        # A second run runs nothing.
+        with patch.object(extract, "run_program", side_effect=AssertionError("ran")):
+            code, again = f.run("all")
+        self.assertEqual(code, 0, again)
+        self.assertEqual(set(f.statuses(again).values()), {"hit"})
+
+    def test_a_failure_on_the_feature_fails_the_run(self) -> None:
+        f = self.fixture()
+        self.assertEqual(f.run("sep")[0], 0)
+        with patch.dict(os.environ, {"BANK_TEST_FAIL": "m"}):
+            code, answer = f.run("m")
+        self.assertEqual((code, answer["status"], answer["extractors"]["m"]["status"]), (1, "failed", "failed"))
+
+    def test_a_dry_run_names_the_input_and_runs_nothing(self) -> None:
+        f = self.fixture()
+        self.assertEqual(f.run("sep")[0], 0)
+        code, answer = f.run("m", "--dry-run")
+        self.assertEqual(code, 0, answer)
+        said = answer["extractors"]["m"]
+        self.assertEqual((said["status"], said["input"]), ("would_run", "sep/f"))
+        self.assertEqual(said["task"]["parameters"], {"mode": "preferred"})
+        self.assertEqual(f.runs(), ["sep"])
+
+    def test_what_cannot_be_preferred_is_refused(self) -> None:
+        f = Fixture(self)
+        f.add("sep")
+        f.add("m", prefers=[{"input": "sep/x"}])  # a series, not a file
+        with self.assertRaisesRegex(bank.BankError, "not a file feature"):
+            bank.Catalog.load([f.extractors])
+        g = Fixture(self)
+        g.add("sep")
+        g.add("m", needs=("sep/x",), prefers=[{"input": "sep/f"}])
+        with self.assertRaisesRegex(bank.BankError, "makes or needs"):
+            bank.Catalog.load([g.extractors])
+        h = Fixture(self)
+        h.add("m", prefers=[{"input": "m/f"}])
+        with self.assertRaisesRegex(bank.BankError, "makes or needs"):
+            bank.Catalog.load([h.extractors])
+        # A preference no extractor here can satisfy is never present: the content is measured.
+        i = Fixture(self)
+        i.add("m", prefers=[{"input": "elsewhere/f"}])
+        self.assertEqual(i.run("m")[0], 0)
+        self.assertEqual(i.reader().default_entry(i.digest, "m")[1], None)
+
+    def falling_short(self, minimum: str) -> Fixture:
+        """`m` prefers `sep/f` while its `y` there reaches `minimum`; the
+        test program writes y = 0 (the number of its needs)."""
+        f = Fixture(self)
+        f.add("sep")
+        f.add("m", accepts=("audio/*", "application/*"),
+              prefers=[{"input": "sep/f", "parameters": {"mode": "preferred"}, "at_least": {"y": minimum}}])
+        return f
+
+    def test_a_measure_below_its_minimum_is_passed_over_for_the_content(self) -> None:
+        f = self.falling_short("1")
+        self.assertEqual(f.run("sep")[0], 0)
+        # Until the feature's measure is in the bank, the feature is the default.
+        self.assertEqual(f.reader().default_input(f.digest, "m"), "sep/f")
+        code, answer = f.run("m")
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(f.runs(), ["sep", "m", "m"])  # the stem's measure, then the content's
+        said = answer["extractors"]["m"]
+        self.assertNotIn("input", said)
+        reader = f.reader()
+        short = reader.entry_from(f.digest, "sep/f", "m")
+        self.assertEqual(short.scalar("y"), 0)
+        self.assertEqual(said["passed_over"], {"sep/f": short.manifest["key"]})
+        entry, feature = reader.default_entry(f.digest, "m")
+        self.assertIsNone(feature)
+        self.assertNotEqual(entry.manifest["key"], short.manifest["key"])  # anchor: two entries
+        self.assertEqual((entry.manifest["content"], entry.manifest["parameters"], entry.manifest["key"]),
+                         (f.digest, {"mode": "ok"}, said["key"]))
+        # The next run decides from the bank as it stands, and runs nothing.
+        with patch.object(extract, "run_program", side_effect=AssertionError("ran")):
+            code, again = f.run("m")
+        self.assertEqual((code, again["extractors"]["m"]["status"]), (0, "hit"))
+        self.assertNotIn("input", again["extractors"]["m"])
+        # --from still measures the feature, and a dry run names the content.
+        self.assertEqual(f.run("m", "--from", "sep/f")[1]["extractors"]["m"]["status"], "hit")
+        self.assertNotIn("input", f.run("m", "--dry-run")[1]["extractors"]["m"])
+
+    def test_all_falls_back_after_making_the_feature(self) -> None:
+        f = self.falling_short("1")
+        code, answer = f.run("all")
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(f.runs(), ["sep", "m", "m"])
+        self.assertIn("sep/f", answer["extractors"]["m"]["passed_over"])
+        self.assertIsNone(f.reader().default_entry(f.digest, "m")[1])
+
+    def test_a_measure_that_reaches_its_minimum_stays_the_default(self) -> None:
+        f = self.falling_short("0")
+        self.assertEqual(f.run("sep")[0], 0)
+        code, answer = f.run("m")
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(f.runs(), ["sep", "m"])
+        self.assertEqual(answer["extractors"]["m"]["input"], "sep/f")
+        self.assertNotIn("passed_over", answer["extractors"]["m"])
+        self.assertEqual(f.reader().default_entry(f.digest, "m")[1], "sep/f")
+
+    def test_a_failed_measure_of_the_feature_does_not_fall_back(self) -> None:
+        f = self.falling_short("1")
+        self.assertEqual(f.run("sep")[0], 0)
+        with patch.dict(os.environ, {"BANK_TEST_FAIL": "m"}):
+            code, answer = f.run("m")
+        self.assertEqual((code, answer["extractors"]["m"]["status"]), (1, "failed"))
+        self.assertEqual(answer["extractors"]["m"]["input"], "sep/f")
+        self.assertEqual(f.runs(), ["sep", "m"])  # tried once, on the feature
+
+    def test_a_minimum_read_from_what_is_not_a_number_is_refused(self) -> None:
+        f = self.falling_short("1")
+        self.assertEqual(f.run("sep")[0], 0)
+        self.assertEqual(f.run("m", "--from", "sep/f")[0], 0)
+        for value in (None, "0.1", True, math.nan):
+            with self.subTest(value=value), patch.object(bank.Entry, "scalar", return_value=value):
+                with self.assertRaisesRegex(bank.BankError, "not a number"):
+                    f.reader().default_input(f.digest, "m")
+
+    def test_the_preferred_parameters_yield_to_the_operators(self) -> None:
+        catalog = bank.Catalog([bank.Extractor(Path("."), manifest("sep")), bank.Extractor(
+            Path("."), manifest("m", prefers=[{"input": "sep/f", "parameters": {"mode": "preferred"}}]))])
+        self.assertEqual(catalog.overrides_for("sep/f"), {"m": {"mode": "preferred"}})
+        self.assertEqual(catalog.overrides_for("sep/f", {"m": {"mode": "mine"}}), {"m": {"mode": "mine"}})
+        self.assertEqual(catalog.overrides_for("other/f", {"sep": {"mode": "x"}}), {"sep": {"mode": "x"}})
 
 
 @needs_ffmpeg

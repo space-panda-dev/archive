@@ -1,6 +1,9 @@
 # 0074. An extractor is any program with a manifest, run by request
 
-Status: accepted (proposed and accepted by the operator on 2026-10-18)
+Status: accepted (proposed and accepted by the operator on 2026-10-18);
+amended 2026-10-19, accepted the same day (seven model extractors join the
+catalog and `chords` is retired; heavy dependencies are pinned; runs travel
+through Spool by ADR 0090)
 
 The feature bank ([ADR 0073](0073-feature-bank.md)) needs writers,
 and the operator wants adding one to be easy and independent of language:
@@ -271,3 +274,52 @@ is applied by whoever reads both the melody and the tuning.
   once and checks the outputs first.
 - **Standard output as the result.** It mixes results with log lines, and
   binary series and stems do not belong on a pipe.
+
+## Amendment, 2026-10-19: model extractors, pins, retirement, and Spool
+
+Accepted by the operator with the merge of the extractor ports. The text
+above is left as it was accepted; where it disagrees with this section,
+this section holds.
+
+**The catalog.** The paragraph listing the shipped extractors now reads:
+seven measure from Essentia's standard algorithms or from what is already in
+the bank (`rhythm`, `tonal`, `melody`, `structure`, `quality`, `colour`, and
+`stems`, which runs Demucs in an environment of its own); `chords` is no
+longer among them (below). Seven more run learned or plugin models in
+environments of their own, as `stems` does: `stems-6s` (the `stems` program
+with a six-stem model), `notes-basic-pitch` (notes with their cents and
+bends), `f0-pesto` and `f0-torchcrepe` (one voice's pitch, two opinions),
+`beats-beatthis` (beats and downbeats at the model's own metrical level),
+`chords-jiang` (large-vocabulary chord labels, each span with its three most
+probable readings and their weights), and `chords-chordino` (a second chord
+opinion that is not learned). In the consequences' list of what each
+extractor decodes, `chords` decoded nothing, and the learned beat and chord
+extractors decode with their own libraries, as their models expect (their
+manifests say how).
+[The shipped extractors](../feature-bank.md#the-shipped-extractors) remains
+the one place that lists every version, held to the manifests by a test.
+
+**Heavy dependencies are pinned.** As a stem separator does, any model with
+heavy dependencies (PyTorch, ONNX, TensorFlow) runs in its own environment,
+named by configuration, and never enters the archive's environment. Its
+manifest pins the model files by digest and the packages by version, and the
+program refuses files other than the pinned ones. Where the program runs
+code from a checkout of another repository (`chords-jiang`), that code is
+pinned too, by a digest of its Python files, since the commit alone does not
+say what the checkout holds. (`stems` and `stems-6s` still list `torch` and
+`numpy` without versions, inherited from `stems` 1; pinning them would re-key
+every stems entry, and the [backlog](../backlog.md) keeps it.)
+
+**An extractor is retired by removing it from the catalog,** not by a rule
+of its own: `run all` stops making its entries, the entries stay readable
+from their own `entry.json`, and its id is not reused. They are regenerated
+from a checkout of the commit before its removal, since a key includes the
+keys of the entries it needs. The Essentia `chords` extractor (a chord per
+half beat from `tonal`'s profiles) was the first, replaced by `chords-jiang`
+and `chords-chordino`
+([retired extractors](../feature-bank.md#retired-extractors)).
+
+**Runs travel through Spool.** "Nothing is wired to Spool, and that return
+path is open" no longer holds: [ADR 0090](0090-extractor-runs-travel-through-spool.md)
+returns an extractor's files as Spool result attachments (`enrich/remote.py`),
+for an extractor that needs no other feature.

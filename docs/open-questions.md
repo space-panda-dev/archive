@@ -360,12 +360,11 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
     differs from its own, or should a key include a fingerprint of it? (A
     claim made from features keeps the software either way: its run copies
     each read entry's `software`.)
-  - Spool's results are JSON. How does a directory of binary outputs (series,
-    stems) return from a worker: Spool result attachments, a worker writing to
-    a shared bank, or something else? And how is the disclosure of content
-    to a worker recorded before the put (the Spool adapter question above)?
-    Either way a worker-side shim must turn Spool's payload on standard
-    input into a request file and attachments into the paths it names.
+  - How is the disclosure of content to a worker outside the operator's
+    custody recorded before the put (the Spool adapter question above)?
+    [ADR 0090](decisions/0090-extractor-runs-travel-through-spool.md)
+    returns an extractor's files as Spool result attachments and runs only
+    on the operator's own workers; it does not answer this.
   - A grid is a time base in integer samples, which covers video's
     fractional frame rates. How are spatial grids and regions of an image
     declared, since spans are one-dimensional?

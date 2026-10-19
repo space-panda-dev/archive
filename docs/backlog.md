@@ -34,8 +34,6 @@ scratch copy.
   could be added.
 - **Unpinned packages.** `stems` and `stems-6s` still list `torch` and `numpy`
   without versions (only the demucs version is checked when they run).
-- **Spool attachments.** `remote.py work` trusts Spool to have checked an
-  attachment's digest and does not hash it again.
 
 ## Matching and import
 

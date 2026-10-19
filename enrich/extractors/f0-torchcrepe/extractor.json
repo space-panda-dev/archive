@@ -1,0 +1,71 @@
+{
+ "contract": "archive-extractor/1",
+ "id": "f0-torchcrepe",
+ "version": "1",
+ "description": "A monophonic pitch track by torchcrepe's tiny CREPE model (pinned by digest; 50 to 1,100 Hz) at a 10 ms step on 16 kHz mono: the pitch, decoded here without torchcrepe's random dither (its Viterbi path, then the probability-weighted mean of the 9 bins around it), and the model's periodicity. A second opinion beside f0-pesto, meant for a vocal stem by --from stems/vocals. Runs under the operator's f0-python, so the archive's environment never imports PyTorch.",
+ "command": [
+  "${f0-python}",
+  "f0_crepe.py"
+ ],
+ "accepts": [
+  "audio/*",
+  "video/*"
+ ],
+ "requires": [
+  "ffmpeg",
+  "torchcrepe==0.0.24",
+  "torch==2.14.1+cpu",
+  "numpy==2.5.4",
+  "python==3.12.15",
+  "tiny.pth sha256:d4993eea36ed1a0ad9ac549c740dae5265b049ce72004f00c2f59e01c0be8432 (shipped in the torchcrepe wheel)"
+ ],
+ "needs": [],
+ "parameters": {
+  "tracker": "torchcrepe==0.0.24",
+  "model": "tiny",
+  "weights": "sha256:d4993eea36ed1a0ad9ac549c740dae5265b049ce72004f00c2f59e01c0be8432",
+  "decoder": "viterbi path; pitch the probability-weighted mean of the 9 bins around it; no dither",
+  "fmin_hz": 50,
+  "fmax_hz": 1100,
+  "batch_size": 512,
+  "pad": true,
+  "confidence": "periodicity",
+  "decode_arguments": [
+   "-nostdin",
+   "-hide_banner",
+   "-nostats",
+   "-loglevel",
+   "error",
+   "-i",
+   "{input}",
+   "-map",
+   "0:a:0",
+   "-ac",
+   "1",
+   "-ar",
+   "16000",
+   "-c:a",
+   "pcm_f32le",
+   "-f",
+   "f32le",
+   "-"
+  ],
+  "rate": 16000,
+  "hop": 160
+ },
+ "outputs": {
+  "f0": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 2,
+   "grid": "f0",
+   "unit": "Hz, 0-1",
+   "description": "one row every 160 samples at 16 kHz (10 ms), columns the pitch in Hz (0 where the tracker gives none) and the model's periodicity, 0 to 1"
+  },
+  "rows_from_tracker": {
+   "kind": "scalar",
+   "unit": "rows",
+   "description": "rows the tracker returned before the track was cut, or padded with zeros, to the grid: n // 160 + 1 rows for n samples"
+  }
+ }
+}

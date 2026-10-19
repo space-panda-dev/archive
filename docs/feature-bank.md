@@ -55,7 +55,9 @@ An entry's key is `sha256:` and the SHA-256 of the canonical JSON of:
 ```
 
 `parameters` are the extractor's declared parameters with the operator's
-configured values replacing them field by field. `needs` has one member for
+configured values replacing them field by field; where the extractor measures
+a file feature it [prefers](#preferred-inputs), the preference's parameters
+replace the declared ones first. `needs` has one member for
 every feature the extractor's manifest needs, so the keys are computed
 upstream first. The test `test_a_key_is_the_digest_of_its_canonical_description`
 in [`enrich/test_bank.py`](../enrich/test_bank.py) writes one key out in full.
@@ -105,8 +107,8 @@ Its failure record and lock sit beside it there. Nothing is ever filed under
 a stem's own digest, so a content's directory holds everything made from it.
 A reader that knows the recording finds the stem in the recording's entry
 and then the measure by the stem's digest in the recording's directory
-(`Bank.input_of` and `Bank.entry(..., filed_under=...)` in
-[`enrich/bank.py`](../enrich/bank.py)). The request an extractor receives
+(`Bank.input_of` and `Bank.entry(..., filed_under=..., feature=...)`, or
+`Bank.entry_from`, in [`enrich/bank.py`](../enrich/bank.py)). The request an extractor receives
 is the same as for any content: `input` names the stem's path, digest, and
 media type.
 
@@ -194,8 +196,8 @@ audio, and `n` decoded samples make `ceil(n / 2048) + 1` rows.
 ```
 
 `contract`, `id`, `version`, `command`, `accepts`, and `outputs` are
-required; `description`, `requires`, `needs`, and `parameters` may be
-given; nothing else is allowed. `version` matches
+required; `description`, `requires`, `needs`, `prefers`, and `parameters` may
+be given; nothing else is allowed. `version` matches
 `[A-Za-z0-9][A-Za-z0-9.]{0,39}`, so that `archive-extractor.<id>@<version>`
 is a Spool capability. Output names match `[a-z][a-z0-9_]{0,62}`.
 A series declares `dtype`, `columns`, and optionally `grid`; a file declares
@@ -206,6 +208,45 @@ for either part.
 In `command`, `${name}` is the program the operator configured under that
 name (`python` defaults to the runner's interpreter, `sh` to `/bin/sh`), and
 a word naming a file in the extractor's directory becomes its absolute path.
+
+### Preferred inputs
+
+`prefers` ([ADR 0076](decisions/0076-preferred-inputs.md)) lists file features of the content that the extractor measures by
+default in place of the content, in order, each with parameters that replace
+its declared ones there (fields it declares; canonical JSON):
+
+```json
+"prefers": [{"input": "stems/vocals", "parameters": {"bin_cents": 2},
+             "at_least": {"voiced_fraction": "0.2"}}]
+```
+
+The default input of an extractor for a content is the first preferred
+feature whose entry the bank holds for that content, and the content itself
+when it holds none. `at_least` (optional) maps scalar outputs of the
+extractor's own measure to minimums in decimal text: once that measure of
+the feature is in the bank and any of them is below its minimum, the
+preference is passed over for the next, or the content (`melody` falls back
+to the mix where the vocal stem voices less than a fifth of its rows, as on
+an instrumental). A measure passed over is kept; the runner measures the
+next default input too and names what it passed over in `passed_over`.
+`at_least` is not a parameter and changes no key. Without `--from`, the runner runs every other target
+first, then measures each preferring target on its default input as `--from`
+would (the feature's digest is the content, filed under the content's
+directory); a preference never makes the feature, and an extractor run only
+because another needs it measures the content. A reader asks
+`Bank.default_entry(content, extractor)` for that entry and the feature it
+measured. A preference is not a need: no entry's meaning depends on it,
+since each entry is keyed by the bits it measured and says which in
+`content`, and nothing waits for a feature that cannot be made here.
+
+The preference's parameters apply whenever the extractor measures that
+feature, by preference or by `--from`, and the operator's configured fields
+replace them in turn, so a reader of a measure of a feature names the
+feature (`Bank.entry_from`); `Bank.entry` refuses to look up, under another
+content's directory, an extractor that prefers a feature with parameters
+without being told which feature it reads. A preferred feature must be a
+`file` output of an extractor in the catalog, not one the extractor makes or
+needs; one that no extractor in the catalog declares is never present.
 
 ## The request
 
@@ -252,6 +293,38 @@ a regular file with one link: a symbolic or hard link is refused, since the
 runner makes every file owner-only and a hard link would change the linked
 file (perhaps the content itself). The runner replaces `result.json` with `entry.json` when it files the entry.
 
+## Through Spool
+
+An extractor that needs no other feature can run on another machine as a
+Spool task ([ADR 0090](decisions/0090-extractor-runs-travel-through-spool.md));
+[`enrich/remote.py`](../enrich/remote.py) is the reference
+requester, worker program, and collector. The task's ID is `bank-` and the
+key's 64 hexadecimal digits, its capability `archive-extractor.<id>@<version>`,
+its one attachment the content, and its payload:
+
+```json
+{"contract": "archive-extractor-task/1",
+ "extractor": {"id": "stems", "version": "1"},
+ "key": "sha256:...",
+ "parameters": {...every declared parameter, with the operator's values...},
+ "input": {"digest": "sha256:...", "media_type": "audio/flac"}}
+```
+
+A worker computes the key from its own manifest and these parameters and
+refuses the task (exit 65) unless it is the one named. It runs the extractor
+as the runner does, leaves each output's file in `outputs/` named by its
+SHA-256 (Spool's result attachments, Spool 0.0.4), and answers:
+
+```json
+{"contract": "archive-extractor-task-result/1", "entry": {...the entry.json it filed...}}
+```
+
+The bank files the entry only after taking each file by the digest the entry
+gives it, under the name its own manifest gives that output, and checking
+the directory as a result of its own run (the key, every file's size and
+digest, shapes, and finite values). The entry it files is the worker's
+`entry.json` unchanged.
+
 ## The shipped extractors
 
 The extractors in [`enrich/extractors/`](../enrich/extractors/), each after
@@ -265,16 +338,33 @@ parameters are in the manifest's descriptions and in the
 
 | Extractor | Version | Needs | Outputs |
 |---|---|---|---|
+| `beats-beatthis` | 1 | none | scalars `beat_count`, `downbeat_count`, `median_bpm`; events `beats`, `downbeats` |
+| `chords-chordino` | 1 | none | scalars `chord_count`, `seconds`; spans `chords` |
+| `chords-jiang` | 1 | none | scalars `chord_count`, `decoded_in_top3`; spans `chords`; files `readings` |
 | `frames` | 1 | none | series `hpcp`, `rms_db`, `centroid`, `rolloff`, `flatness`, `flux`, `onset_hfc`, `mfcc`, `melbands`; scalars `samples`, `seconds` |
-| `rhythm` | 3 | none | series `tempo`, `onset_count`, `onset_deviation`, `offgrid`, `chunk_bpm`, `chunk_confidence`, `primary_tempo`, `tempo_support`, `downbeat_margin`; scalars `bpm`, `confidence`, `onset_rate`, `seconds`, `primary_bpm`, `meter`; events `beats`, `onsets`, `pulse`, `downbeats`, `tempo_changes`; spans `tempo_spans` |
-| `tonal` | 4 | `frames`: rms_db | series `pitched`, `tuning_windows`, `chroma`, `bass_chroma`, `dissonance`; scalars `tuning_frequency`, `tuning_cents`, `tuning_confidence`, `tuning_window_count`, `drift_spread_cents`, `detuned`, `key`, `scale`, `mode`, `scale_notes`, `key_strength`, `key_margin`, `collection`, `collection_margin`, `tonic_margin`, `tonic_named`; spans `tuning_drift`, `detuned_spans`, `keys`, `key_regions` |
-| `chords` | 2 | `frames`: samples; `rhythm`: beats; `tonal`: bass_chroma, chroma, pitched | scalars `changes_per_minute`, `beat_share`; spans `chords`, `chord_candidates` |
 | `colour` | 3 | `frames`: centroid, hpcp, rms_db | series `colour`; files `palette`, `preview` |
+| `f0-pesto` | 1 | none | series `f0`; scalars `rows_from_tracker` |
+| `f0-torchcrepe` | 1 | none | series `f0`; scalars `rows_from_tracker` |
 | `loudness-r128` | 1 | none | scalars `integrated` |
-| `melody` | 2 | none | series `pitch`, `confidence`, `voiced`, `midi`, `cents`, `level_db`; scalars `voiced_fraction`, `melodia_voiced_fraction`, `loud_db`, `gate_db`, `reference_hz`, `samples`; spans `notes` |
+| `melody` | 3 | none | series `pitch`, `confidence`, `voiced`, `midi`, `cents`, `level_db`; scalars `voiced_fraction`, `melodia_voiced_fraction`, `measured_fraction`, `loud_db`, `gate_db`, `reference_hz`, `samples`; spans `notes` |
+| `notes-basic-pitch` | 1 | none | scalars `note_count`, `seconds`; files `notes` |
 | `quality` | 3 | `frames`: samples | series `correlation`, `peak_db`; scalars `sample_rate`, `channels`, `seconds`, `integrated`, `loudness_range`, `true_peak`, `sample_peak`, `full_scale_samples`, `clipped_seconds`, `dc_offset`, `whole_correlation`, `anti_phase`, `false_stereo`, `noise_floor`, `snr`, `bandwidth`, `band_limited`, `hum_examined`; events `clicks`, `discontinuities`; spans `clipping`, `overs`, `gaps`, `noise_bursts`, `hum` |
+| `rhythm` | 4 | none | series `tempo`, `onset_count`, `onset_deviation`, `offgrid`, `chunk_bpm`, `chunk_confidence`, `primary_tempo`, `tempo_support`, `downbeat_margin`; scalars `bpm`, `confidence`, `onset_rate`, `seconds`, `primary_bpm`, `meter`; events `beats`, `onsets`, `pulse`, `downbeats`, `tempo_changes`; spans `tempo_spans` |
 | `stems` | 1 | none | series `levels`; scalars `vocals_rms_db`, `vocals_peak_db`, `vocals_clamped`, `drums_rms_db`, `drums_peak_db`, `drums_clamped`, `bass_rms_db`, `bass_peak_db`, `bass_clamped`, `other_rms_db`, `other_peak_db`, `other_clamped`, `mix_rms_db`, `samples`, `seconds`; files `vocals`, `drums`, `bass`, `other` |
+| `stems-6s` | 1 | none | series `levels`; scalars `vocals_rms_db`, `vocals_peak_db`, `vocals_clamped`, `drums_rms_db`, `drums_peak_db`, `drums_clamped`, `bass_rms_db`, `bass_peak_db`, `bass_clamped`, `guitar_rms_db`, `guitar_peak_db`, `guitar_clamped`, `piano_rms_db`, `piano_peak_db`, `piano_clamped`, `other_rms_db`, `other_peak_db`, `other_clamped`, `mix_rms_db`, `samples`, `seconds`; files `vocals`, `drums`, `bass`, `guitar`, `piano`, `other` |
 | `structure` | 2 | `frames`: hpcp, rms_db, mfcc, seconds; `rhythm`: onsets, beats | series `novelty`; scalars `floor_db`, `floor`, `reference_db`, `threshold_db`; spans `playing`, `tuning`, `count_ins`, `false_starts`, `endings`, `sections`, `loops` |
+| `tonal` | 5 | `frames`: rms_db | series `pitched`, `tuning_windows`, `chroma`, `bass_chroma`, `dissonance`; scalars `tuning_frequency`, `tuning_cents`, `tuning_confidence`, `tuning_window_count`, `drift_spread_cents`, `detuned`, `key`, `scale`, `mode`, `scale_notes`, `key_strength`, `collection`, `collection_margin`, `tonic_margin`, `tonic_confidence`, `tonic_named`; spans `tuning_drift`, `detuned_spans`, `keys`, `key_regions` |
+
+Eight of them run a model in an environment of the operator's, never the
+archive's, each under a program name the operator configures, so `run all`
+skips any that is not configured: `stems` (`${demucs-python}`), `stems-6s`
+(`${stems-6s-python}`, which can be the same interpreter, so that a second
+separation is made only where it is asked for), `notes-basic-pitch`
+(`${basic-pitch-python}`), `f0-pesto` and `f0-torchcrepe`
+(`${f0-python}`), `beats-beatthis` (`${beatthis-python}` with
+`${beatthis-checkpoint}`), `chords-jiang` (`${jiang-python}` with
+`${jiang-repo}`), and `chords-chordino` (`${chordino-python}`). Each checks
+its model files against the digests in its parameters before loading them.
 
 A version changes whenever an extractor's code or outputs do, so an older
 entry is never read as a newer one (ADR 0073). The versions above 1, and
@@ -285,7 +375,11 @@ what each changed:
   meter, downbeats, spans of one level and meter, and changes that say
   `meter` where the beat persists; 3 decides each take on its own, prefers
   the tracker's own octave, and publishes downbeats only where
-  `downbeat_margin` is clear.
+  `downbeat_margin` is clear; 4 places bar lines by the low accent less the
+  backbeat's and by the beat-synchronous chroma, publishes them from a
+  margin of 1 (on 17 of 18 tracks of a test album, where 3 published them
+  on 8), prefers bars of 5 to 4 in a song that changes meter, and takes a
+  second whose window cannot lay every level as no evidence.
 - `tonal` 1 and 2 measured tuning, key, and chords with Essentia's
   `TuningFrequency`, `Key`, and `ChordsDetection` (2 records its second
   decode and blanks harmony on a detuned recording); 3 takes the tuning as a
@@ -293,10 +387,12 @@ what each changed:
   it (`chroma`, `bass_chroma`), reports the key as a note collection with
   a tonic and mode while keeping `key` and `scale`, and moves chords to
   `chords`; 4 leaves mains hum out of the tuning and profiles, names a
-  tonic only where it leads, and draws `key_regions` by note collection.
-- `chords` 1 named a chord per half beat from `tonal`'s profiles by a
-  Viterbi path, with a bass of its own and three candidates a span; 2
-  prices the six-note m11 above the five-note chords.
+  tonic only where it leads, and draws `key_regions` by note collection; 5
+  reports a recording's tuning only from enough confident windows (four,
+  and half of those at least half pitched), chooses the tonic among the
+  collection's notes by their share of the bass, favouring the major or
+  minor tonic, adds a calibrated `tonic_confidence` that decides
+  `tonic_named`, and drops `key_margin`.
 - `structure` 2 measures the playing threshold from a noise floor only
   when the recording has one (steady or unpitched quiet), so a master is
   all playing, and says which in `floor`.
@@ -306,9 +402,43 @@ what each changed:
   peak, overs on their own, events that stand out from the music around
   them or stand alone, and hum only at mains frequencies.
 - `melody` 2 resolves pitch in 2-cent bins, gates voicing by level, and
-  adds `level_db`.
+  adds `level_db`; 3 runs MELODIA only within a second of a row that reaches
+  the gate (`measured_fraction`), prefers the vocal stem where the bank holds
+  it, and resolves pitch in 5-cent bins, 2 on that stem.
 - `colour` 2 stopped copying the peaks into the bank and checks its
   palette; 3 sets the centroid hue's
   default range to 500 Hz to 4 kHz, which
   [`enrich/hue_range.py`](../enrich/hue_range.py) can replace with a
   collection's own.
+
+`stems` 1 runs on the CPU, or on Apple's GPU when `apply.device` is `mps`: a
+parameter, and so another key. Its stems there differ from the CPU's by at
+most one 16-bit step in a few samples in a thousand.
+
+### Retired extractors
+
+An extractor is retired by removing it from the catalog: `run all` no longer
+makes its entries, and nothing that ships reads them. Its entries stay where
+they are and stay readable, since an entry is described by its own
+`entry.json` (`bank.read_entry` on its directory needs no catalog), and they
+are regenerable from a checkout of the commit before its removal, run there
+as it was. A key includes the keys of the entries it needs, so the same key
+needs the same upstream versions too: `chords` 2 read `frames` 1, `rhythm` 3,
+and `tonal` 4, and over today's `rhythm` and `tonal` it would be another key
+(and `--extractors` replaces the catalog, so its directory alone has nothing
+to read). A retired id is not reused for another method, so an old entry is
+never read as a new one.
+
+- `chords` (Essentia profiles, retired after version 2). Version 1 named a
+  chord per half beat from `tonal`'s profiles by a Viterbi path, with a bass
+  of its own and three candidates a span; 2 priced the six-note m11 above
+  the five-note chords. On an album of 18 adversarial jazz and soul masters
+  it was the worst of five chord tools on every measure: in practice it
+  named only major and minor triads, 53% of its spans were shorter than
+  half a second, its bass matched three transcribed bass lines 18 to 53% of
+  the time where `chords-jiang`'s matched 47 to 63%, and its roots matched
+  another machine's labels on ten tracks 40% of the time where
+  `chords-chordino`'s matched 53%.
+  `chords-jiang` (a learned large vocabulary, with weighted readings) and
+  `chords-chordino` (a second opinion of another kind) replace it. Its last
+  source is `enrich/extractors/chords/` at the commit before its removal.
