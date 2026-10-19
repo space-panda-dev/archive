@@ -61,6 +61,8 @@ entry is a recording's default, and the reader is told which.
   checks the field and gains `overrides_for`, `entry_from`, `default_input`,
   and `default_entry`; `extract.py run` gains the default inputs and
   `--no-prefer`. A manifest without `prefers` behaves exactly as before.
+- `melody` 3 is the first to prefer: the vocal stem in 2-cent bins, the mix
+  in 5-cent bins, which cost about as much as Essentia's default of 10.
 - On an instrumental recording the vocal stem holds bleed, and its melody is
   nearly empty (three instrumental tracks of the album voiced 3 to 20 % of
   their rows on the stem) where the mix's would follow the lead instrument.
@@ -73,6 +75,30 @@ entry is a recording's default, and the reader is told which.
   measures the stem it has just made.
 - A Spool worker's task for a preferred measure is the `--from` task: the
   runner, not the worker, decides the input.
+
+## Evidence
+
+`melody` 2 and 3 on that album (eighteen tracks, 4,166 s), on an eight-core
+x86-64 laptop at low priority with one BLAS thread, each track measured by
+both versions in turn so that both saw the same load. Version 3 measures the
+mix in 5-cent bins and, by default, the vocal stem in 2-cent bins within a
+second of the gate:
+
+| | `melody` 2 | `melody` 3 |
+|---|---|---|
+| CPU seconds, mixes | 360 (11.6 times real time) | 268 (15.6 times) |
+| CPU seconds, vocal stems | 366 (11.4 times) | 271 (15.4 times) |
+| rows measured on the stem (median) | all | 82 % |
+| mix agrees with the stem within 50 cents, of the rows the stem voices (median) | 55 % (60 % allowing octaves) | 58 % (62 %) |
+| stem: rows voiced alike, 2 against 3 (median) | | 95 %; of the rows both voice, 98 % within 5 cents |
+
+The mix's agreement with the stem was the same in 5-cent bins as in 2 (55 %).
+The rows the stem's melody no longer voices were all within the gate's
+reach, about 10 dB quieter than the rows both versions voice, at a third of
+their confidence, and the mix agreed with them on 0 to 22 % against 14 to
+85 %: MELODIA's voicing is relative to the contours in the audio it is given,
+and without the stem's long stretches of bleed it voices less of what is
+left.
 
 ## Alternatives considered
 

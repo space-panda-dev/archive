@@ -95,6 +95,11 @@ class Manifest(unittest.TestCase):
         # It reads no feature, whatever else the catalog holds (ADR 0074: a need is fixed).
         self.assertEqual(extractor.needs, [])
         self.assertNotIn("optional", extractor.manifest)
+        # It prefers the vocal stem, in finer bins, where the bank holds one (never making it).
+        self.assertEqual(extractor.prefers, [{"input": "stems/vocals", "parameters": {"bin_cents": 2}}])
+        self.assertEqual(melody.settings({**melody.parameters(), **extractor.prefers[0]["parameters"]})
+                         ["predominant"]["binResolution"], 2.0)
+        self.assertEqual(melody.settings(melody.parameters())["predominant"]["binResolution"], 5.0)
         series = {name: out for name, out in extractor.outputs.items() if out["kind"] == "series"}
         self.assertEqual(set(series), set(melody.SERIES))
         for name, out in series.items():
@@ -112,12 +117,15 @@ class Settings(unittest.TestCase):
 
     def test_what_can_vary_is_accepted(self) -> None:
         chosen = melody.settings(self.given(hop_size=512, chunk_seconds=0, reference_hz="442.5",
-                                            voicing_gate={"floor_db": "-70.5", "range_db": "0"}))
+                                            voicing_gate={"floor_db": "-70.5", "range_db": "0",
+                                                          "reach_seconds": "0.5"}))
         self.assertEqual((chosen["hop"], chosen["chunk"], chosen["reference"]), (512, 0, 442.5))
         self.assertEqual((chosen["gate_floor"], chosen["gate_range"]), (-70.5, 0.0))
+        self.assertEqual(chosen["reach"], round(0.5 * RATE / 512))
+        self.assertEqual(melody.settings(self.given())["reach"], round(RATE / 128))
         for resolution in (1, "2.5", 10):
-            given = self.given(predominant={**melody.PREDOMINANT, "binResolution": resolution})
-            self.assertEqual(melody.settings(given)["predominant"]["binResolution"], float(resolution))
+            self.assertEqual(melody.settings(self.given(bin_cents=resolution))["predominant"]["binResolution"],
+                             float(resolution))
         # A chunk is a whole number of hops, rounded down.
         self.assertEqual(melody.settings(self.given(chunk_seconds=7, margin_seconds=1))["chunk"],
                          7 * RATE // 128 * 128)
@@ -145,14 +153,19 @@ class Settings(unittest.TestCase):
                                                                  "pitchDistanceThreshold": "60.9"}),
             "float for an integer": self.given(segmentation={**melody.SEGMENTATION, "rmsThreshold": -2.5}),
             "unknown": {**melody.parameters(), "colour": "blue"},
-            "bins too fine": self.given(predominant={**melody.PREDOMINANT, "binResolution": "0.5"}),
-            "bins too coarse": self.given(predominant={**melody.PREDOMINANT, "binResolution": 11}),
-            "gate fields": self.given(voicing_gate={"floor_db": "-60"}),
-            "gate number": self.given(voicing_gate={"floor_db": -60, "range_db": "35"}),
-            "gate above full scale": self.given(voicing_gate={"floor_db": "6", "range_db": "35"}),
-            "gate below the level floor": self.given(voicing_gate={"floor_db": "-130", "range_db": "35"}),
-            "negative range": self.given(voicing_gate={"floor_db": "-60", "range_db": "-5"}),
-            "gate text": self.given(voicing_gate={"floor_db": "loud", "range_db": "35"}),
+            "bins too fine": self.given(bin_cents="0.5"),
+            "bins too coarse": self.given(bin_cents=11),
+            "boolean bins": self.given(bin_cents=True),
+            "bins among MELODIA's options": self.given(predominant={**melody.PREDOMINANT, "binResolution": 2}),
+            "gate fields": self.given(voicing_gate={"floor_db": "-60", "range_db": "35"}),
+            "gate number": self.given(voicing_gate={**melody.GATE, "floor_db": -60}),
+            "gate above full scale": self.given(voicing_gate={**melody.GATE, "floor_db": "6"}),
+            "gate below the level floor": self.given(voicing_gate={**melody.GATE, "floor_db": "-130"}),
+            "negative range": self.given(voicing_gate={**melody.GATE, "range_db": "-5"}),
+            "gate text": self.given(voicing_gate={**melody.GATE, "floor_db": "loud"}),
+            "reach number": self.given(voicing_gate={**melody.GATE, "reach_seconds": 1}),
+            "negative reach": self.given(voicing_gate={**melody.GATE, "reach_seconds": "-1"}),
+            "reach too far": self.given(voicing_gate={**melody.GATE, "reach_seconds": "11"}),
         }
         for name, given in refused.items():
             with self.subTest(name), self.assertRaises(melody.MelodyError):
@@ -207,44 +220,78 @@ class Settings(unittest.TestCase):
                 melody.essentia_standard()
 
 
-class Chunks(unittest.TestCase):
-    def test_chunks_keep_exactly_the_whole_recordings_rows(self) -> None:
-        """For lengths around the chunk and margin edges and blocks that split
-        them, the kept rows are 0 to ceil(n / hop) with none twice, and each
-        chunk's audio is the recording's samples from its start."""
+class Pieces(unittest.TestCase):
+    def check(self, measured: numpy.ndarray, length: int, chunk: int, margin: int, hop: int,
+              audio: numpy.ndarray, block: int) -> list:
+        """Every measured row is kept once and no other; each piece's audio is
+        the recording's samples from its start, within its run of rows, and
+        holds the rows it keeps."""
+        pieces = melody.plan(measured, length, chunk, margin, hop)
+        cut = list(melody.cut([audio[i:i + block] for i in range(0, length, block)], pieces, length))
+        self.assertEqual(len(cut), len(pieces))
+        kept = numpy.zeros(len(measured), dtype=int)
+        runs = melody.spans(measured)
+        for (start, end, first, count), samples in zip(pieces, cut):
+            self.assertEqual(start % hop, 0)
+            self.assertGreater(count, 0)
+            self.assertEqual(samples.tobytes(), audio[start:end].tobytes())
+            self.assertGreater(end, start)
+            low, high = next((a, b) for a, b in runs if a <= first < b)
+            self.assertLessEqual(first + count, high)
+            self.assertGreaterEqual(start, min(low * hop, (end - 1) // hop * hop))
+            self.assertLessEqual(end, min(length, high * hop))
+            local = -(-len(samples) // hop) + 1
+            self.assertLessEqual(first - start // hop + count, local)
+            self.assertGreaterEqual(first - start // hop, 0)
+            kept[first:first + count] += 1
+        self.assertEqual(kept.tolist(), measured.astype(int).tolist())
+        return pieces
+
+    def test_every_measured_row_is_kept_once_from_its_own_audio(self) -> None:
+        """For lengths around the chunk and margin edges, runs of measured
+        rows anywhere (the last rows, past the last sample, included), and
+        blocks that split them."""
         hop, chunk, margin = 4, 40, 8
         generator = numpy.random.default_rng(3)
         for length in (1, 3, 4, 5, 39, 40, 41, 47, 48, 49, 79, 80, 81, 88, 89, 200, 1001):
             audio = generator.uniform(-1, 1, length).astype(numpy.float32)
             rows = -(-length // hop) + 1
-            for block in (1, 7, 40, 5000):
-                with self.subTest(length=length, block=block):
-                    kept = 0
-                    pieces = list(melody.chunks([audio[i:i + block] for i in range(0, length, block)],
-                                                chunk, margin, hop))
-                    for number, (start, samples, first, count) in enumerate(pieces):
-                        self.assertEqual(first, kept)
-                        self.assertEqual(start % hop, 0)
-                        self.assertEqual(start, max(0, first * hop - margin))
-                        self.assertEqual(samples.tobytes(), audio[start:start + len(samples)].tobytes())
-                        local = -(-len(samples) // hop) + 1
-                        last = number == len(pieces) - 1
-                        self.assertEqual(count is None, last)
-                        taken = local - (first - start // hop) if last else count
-                        self.assertLessEqual(first - start // hop + taken, local)
-                        # The audio runs a margin past the kept rows, or to the recording's end.
-                        end = length if last else min(length, (first + count) * hop + margin)
-                        self.assertEqual(start + len(samples), end)
-                        kept += taken
-                    self.assertEqual(kept, rows)
-        self.assertEqual(list(melody.chunks([], 40, 8, 4)), [])
+            masks = {"all": numpy.ones(rows, bool), "last": numpy.arange(rows) == rows - 1,
+                     "random": generator.uniform(size=rows) < 0.4}
+            for name, measured in masks.items():
+                for block in (1, 7, 40, 5000):
+                    with self.subTest(length=length, rows=name, block=block):
+                        self.check(measured, length, chunk, margin, hop, audio, block)
+                        self.check(measured, length, 0, 0, hop, audio, block)
 
-    def test_no_chunking_is_one_piece(self) -> None:
-        audio = numpy.arange(1000, dtype=numpy.float32)
-        pieces = list(melody.chunks([audio[:300], audio[300:]], 0, 0, 128))
-        self.assertEqual(len(pieces), 1)
-        self.assertEqual(pieces[0][0:1] + pieces[0][2:], (0, 0, None))
-        self.assertEqual(pieces[0][1].tobytes(), audio.tobytes())
+    def test_every_row_measured_is_the_whole_recording_in_chunks(self) -> None:
+        hop, chunk, margin = 4, 40, 8
+        audio = numpy.arange(1001, dtype=numpy.float32)
+        rows = -(-1001 // hop) + 1
+        pieces = melody.plan(numpy.ones(rows, bool), 1001, chunk, margin, hop)
+        self.assertEqual([p[0] for p in pieces], [max(0, i * chunk - margin) for i in range(len(pieces))])
+        self.assertEqual(pieces[-1][1], 1001)
+        whole = melody.plan(numpy.ones(rows, bool), 1001, 0, 0, hop)
+        self.assertEqual(whole, [(0, 1001, 0, rows)])
+        self.assertEqual(melody.plan(numpy.zeros(rows, bool), 1001, chunk, margin, hop), [])
+        self.assertEqual(list(melody.cut([audio], [], 1001)), [])
+
+    def test_a_decode_that_differs_from_the_first_is_refused(self) -> None:
+        audio = numpy.zeros(1000, dtype=numpy.float32)
+        pieces = melody.plan(numpy.ones(-(-1000 // 4) + 1, bool), 1000, 40, 8, 4)
+        with self.assertRaisesRegex(melody.MelodyError, "not the 1000"):
+            list(melody.cut([audio[:900]], pieces, 1000))
+        with self.assertRaisesRegex(melody.MelodyError, "not the 1000"):
+            list(melody.cut([audio, audio[:5]], pieces, 1000))
+
+    def test_reach_and_spans(self) -> None:
+        rows = numpy.zeros(20, bool)
+        rows[[3, 10, 11, 19]] = True
+        self.assertEqual(melody.spans(rows), [(3, 4), (10, 12), (19, 20)])
+        self.assertEqual(melody.spans(melody.reach(rows, 2)), [(1, 6), (8, 14), (17, 20)])
+        self.assertEqual(melody.spans(melody.reach(rows, 3)), [(0, 15), (16, 20)])  # runs that meet join
+        self.assertEqual(melody.reach(rows, 0).tolist(), rows.tolist())
+        self.assertEqual(melody.spans(numpy.zeros(4, bool)), [])
 
 
 class Intonation(unittest.TestCase):
@@ -298,7 +345,8 @@ class Gate(unittest.TestCase):
         # Noise run on from the note without a gap: a jump of a semitone is another contour.
         pitch[20:30] = 440 * 2 ** (1 / 12)
         voiced = pitch > 0
-        kept, loud, threshold = melody.gate(pitch, level, floor_db=-60.0, range_db=35.0, step_cents=80)
+        loud, threshold = melody.loudness(level, floor_db=-60.0, range_db=35.0)
+        kept = melody.gate(pitch, level, threshold, step_cents=80)
         self.assertEqual(loud, float(numpy.percentile(level, 99)))
         self.assertAlmostEqual(threshold, loud - 35)
         self.assertGreater(threshold, -50)  # anchor: the relative gate is the higher here
@@ -309,7 +357,8 @@ class Gate(unittest.TestCase):
         self.assertFalse(kept[60:65].any())  # voiced in silence
         self.assertFalse(kept[70:72].any())  # loud, but MELODIA did not voice it
         # Where the recording is quiet throughout, the floor is the gate.
-        kept, loud, threshold = melody.gate(pitch, level - 30, floor_db=-60.0, range_db=35.0, step_cents=80)
+        loud, threshold = melody.loudness(level - 30, floor_db=-60.0, range_db=35.0)
+        kept = melody.gate(pitch, level - 30, threshold, step_cents=80)
         self.assertEqual(threshold, -60.0)
         self.assertTrue(kept[10:20].all())
         self.assertFalse(kept[40:50].any())
@@ -354,13 +403,14 @@ class Melody(unittest.TestCase):
         entry = entry_of(directory, source, fields)
         es = melody.essentia_standard()
         audio = decoded(source)
-        pitch, confidence = es.PredominantPitchMelodia(binResolution=melody.PREDOMINANT["binResolution"])(
+        pitch, confidence = es.PredominantPitchMelodia(binResolution=melody.parameters()["bin_cents"])(
             es.EqualLoudness()(audio))
         # Anchor: the contour says something, so equality is not two empty arrays.
         self.assertGreater(float(numpy.mean(numpy.asarray(pitch) > 0)), 0.6)
         # A loud tune with nothing under it: the gate keeps every voiced run,
         # so the bits are MELODIA's.
         self.assertEqual(entry.scalar("voiced_fraction"), entry.scalar("melodia_voiced_fraction"))
+        self.assertEqual(entry.scalar("measured_fraction"), 1.0)  # its 0.3 s of silence is within reach
         self.assertEqual(entry.series("pitch")[:, 0].tobytes(), numpy.asarray(pitch, dtype="<f4").tobytes())
         self.assertEqual(entry.series("confidence")[:, 0].tobytes(),
                          numpy.asarray(confidence, dtype="<f4").tobytes())
@@ -514,13 +564,14 @@ class Melody(unittest.TestCase):
         self.assertIn("hop_size", answer["extractors"]["melody"]["log"])
 
     def test_cents_are_resolved_finer_than_ten(self) -> None:
-        """A tone 13 cents sharp reads 13 within 1.5 cents; at Essentia's
-        default 10-cent bins it would read 10 or 20."""
+        """A tone 13 cents sharp reads 13 within 1.5 cents in the 2-cent bins
+        the vocal stem is measured in; in the default 5-cent bins it reads 15,
+        and at Essentia's default of 10, 10 or 20."""
         directory = scratch(self)
         source = support.write_wav(directory / "sharp.wav", tone(2.0, midi_hz(69.13)), RATE)
-        coarse = {"predominant": {**LENIENT["predominant"], "binResolution": 10}}
-        for fields, close in ((LENIENT, True), (coarse, False)):
-            with self.subTest(bins=fields["predominant"]["binResolution"]):
+        for bins, close in ((2, True), (5, False), (10, False)):
+            fields = {**LENIENT, "bin_cents": bins}
+            with self.subTest(bins=bins):
                 self.assertEqual(run_melody(directory, source, *configured(directory, fields))[0], 0)
                 entry = entry_of(directory, source, fields)
                 voiced = entry.series("voiced")[:, 0].astype(bool)
@@ -577,6 +628,49 @@ class Melody(unittest.TestCase):
         frame = numpy.concatenate([numpy.zeros(1024), audio])[row * 128:row * 128 + 2048]
         self.assertAlmostEqual(float(a.series("level_db")[row, 0]), 10 * math.log10(numpy.mean(frame ** 2)), places=4)
 
+    def test_rows_out_of_the_gates_reach_are_not_measured(self) -> None:
+        """Two tones with 6 s of a quiet floor (about -75 dBFS, under the gate)
+        between them: MELODIA is given only the tones and a second either
+        side, and the tones come out as they do when every row is measured."""
+        directory = scratch(self)
+        rng = numpy.random.default_rng(4)
+        samples = numpy.concatenate([tone(1.5, 440.0), silence(6.0), tone(1.5, midi_hz(72))])
+        samples = samples + 0.0002 * rng.standard_normal(len(samples))
+        source = support.write_wav(directory / "two.wav", samples, RATE)
+        es = melody.essentia_standard()
+        given: list[int] = []
+        measure = melody.Melody.measure
+
+        def counted(self, audio):
+            given.append(len(audio))
+            return measure(self, audio)
+
+        results = {}
+        everything = {**melody.GATE, "floor_db": "-120", "range_db": "120"}
+        for name, fields in (("gated", {}), ("everything", {"voicing_gate": everything})):
+            out = directory / name
+            out.mkdir()
+            request = {"parameters": {**melody.parameters(), **LENIENT, **fields},
+                       "input": {"path": str(source)}, "output_dir": str(out)}
+            given.clear()
+            with patch.object(melody.Melody, "measure", counted):
+                result = melody.run(request, es)
+            results[name] = (result, numpy.fromfile(out / "pitch.f32", dtype="<f4"), sum(given))
+        result, pitch, analysed = results["gated"]
+        _, everywhere, all_analysed = results["everything"]
+        n = len(decoded(source))
+        self.assertEqual(all_analysed, n)  # anchor: with every row in reach, all of it is measured
+        self.assertLess(analysed, n - 3.9 * RATE)  # the floor between, less a second of reach either side
+        self.assertGreater(analysed, 4.9 * RATE)  # the tones and their reach
+        rows = len(pitch)
+        self.assertAlmostEqual(result["outputs"]["measured_fraction"]["value"], (n - 4 * RATE) / 128 / rows, delta=0.03)
+        seconds = numpy.arange(rows) * 128 / RATE
+        middle = (seconds > 2.6) & (seconds < 6.4)
+        self.assertTrue(numpy.all(pitch[middle] == 0))
+        tones = ((seconds > 0.2) & (seconds < 1.3)) | ((seconds > 7.7) & (seconds < 8.8))
+        self.assertGreater(float(numpy.mean(pitch[tones] > 0)), 0.95)
+        self.assertGreater(float(numpy.mean(pitch[tones] == everywhere[tones])), 0.95)
+
     def test_the_stride_thins_the_rows(self) -> None:
         directory = scratch(self)
         source = support.write_wav(directory / "tone.wav", numpy.concatenate([silence(0.5), tone(2.0, 440.0)]), RATE)
@@ -614,18 +708,33 @@ class VocalStem(unittest.TestCase):
         reader = bank.Bank(directory / "bank", None, {"melody": LENIENT})
         stem_path, stem_digest, _ = reader.input_of(recording, "stems/vocals")
         self.assertNotEqual(stem_digest, recording)  # anchor: the stem is other content
-        sung = reader.entry(stem_digest, "melody", filed_under=recording)
+        sung = reader.entry_from(recording, "stems/vocals", "melody")
         self.assertEqual(sung.manifest["content"], stem_digest)
+        # On the stem it prefers, it measures in 2-cent bins; asked without the feature, the reader refuses.
+        self.assertEqual(sung.manifest["parameters"]["bin_cents"], 2)
+        with self.assertRaisesRegex(bank.BankError, "which feature"):
+            reader.entry(stem_digest, "melody", filed_under=recording)
+        # Now that the bank holds the stem, the stem's melody is the recording's by default:
+        # run plainly, nothing runs, and the reader finds the same entry.
+        with patch.object(extract, "run_program", side_effect=AssertionError("ran")):
+            code, again = run_melody(directory, source, *argv)
+        self.assertEqual(code, 0, again)
+        self.assertEqual(again["extractors"]["melody"]["status"], "hit")
+        self.assertEqual(again["extractors"]["melody"]["input"], "stems/vocals")
+        self.assertEqual(again["extractors"]["melody"]["key"], sung.manifest["key"])
+        self.assertEqual(reader.default_entry(recording, "melody")[0].manifest["key"], sung.manifest["key"])
+        self.assertEqual(reader.default_entry(recording, "melody")[1], "stems/vocals")
         self.assertEqual(sung.path.parents[2].name, recording.split(":")[1])
         sung_notes = [round(n["value"]) for n in sung.items("notes")]
         # MELODIA's relative voicing can pass over one of a few pure tones
         # (see LENIENT); the notes it finds are the tune's.
         self.assertGreaterEqual(len(sung_notes), 3)
         self.assertLessEqual(set(sung_notes), set(notes))
-        # The mix, measured too, is another entry; the stem is 0.4 of it, about 8 dB down.
-        self.assertEqual(run_melody(directory, source, *argv)[0], 0)
+        # The mix, measured too (asked for), is another entry; the stem is 0.4 of it, about 8 dB down.
+        self.assertEqual(run_melody(directory, source, "--no-prefer", *argv)[0], 0)
         mix = entry_of(directory, source, LENIENT)
         self.assertNotEqual(mix.manifest["key"], sung.manifest["key"])
+        self.assertEqual(mix.manifest["parameters"]["bin_cents"], 5)
         self.assertEqual([round(n["value"]) for n in mix.items("notes")], sung_notes)
         voiced = sung.series("voiced")[:, 0].astype(bool) & mix.series("voiced")[:, 0].astype(bool)
         self.assertGreater(int(voiced.sum()), 500)

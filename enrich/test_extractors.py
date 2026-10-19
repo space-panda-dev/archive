@@ -154,7 +154,21 @@ class EveryExtractor(unittest.TestCase):
         digest = answer["content"]
         entries = check_bank(self, root, catalog)
         self.assertEqual(sorted(e.manifest["extractor"]["id"] for e in entries), sorted(everything))
-        self.assertTrue(all(e.manifest["content"] == digest for e in entries))
+        # Every entry is of the recording, but an extractor that prefers a file
+        # feature this run made (melody, the vocal stem) measured that feature,
+        # filed with the recording; the answer and the reader agree on which.
+        reader = bank.Bank(root, catalog)
+        preferring = {e.id for e in catalog.extractors.values() if e.prefers}
+        self.assertTrue(preferring)  # anchor: some shipped extractor prefers a feature
+        for e in entries:
+            extractor_id = e.manifest["extractor"]["id"]
+            feature = reader.default_input(digest, extractor_id)
+            self.assertEqual(answer["extractors"][extractor_id].get("input"), feature, extractor_id)
+            expected = digest if feature is None else reader.input_of(digest, feature)[1]
+            self.assertEqual(e.manifest["content"], expected, extractor_id)
+            self.assertEqual(e.path.parents[2].name, digest.split(":")[1], extractor_id)
+            self.assertEqual(reader.default_entry(digest, extractor_id)[0].manifest["key"], e.manifest["key"])
+        self.assertTrue(any(answer["extractors"][i].get("input") for i in preferring))
         # Each need an entry recorded is the entry the bank holds now.
         current = {e.manifest["extractor"]["id"]: e.manifest["key"] for e in entries}
         for e in entries:

@@ -39,7 +39,7 @@ configured (`${demucs-python}` on a machine without Demucs) is skipped, and
 said to be; named on its own, it fails.
 
 Without `--from`, an extractor whose manifest `prefers` a file feature
-(a stem) measures the first of those the bank
+(`melody` prefers `stems/vocals`) measures the first of those the bank
 already holds for the content, as `--from` would, after everything else has
 run; where the bank holds none, it measures the content. A preference never
 makes the feature, and an extractor run only because another needs it always

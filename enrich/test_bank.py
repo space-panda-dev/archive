@@ -151,8 +151,10 @@ SHIPPED = {
                 "code": "sha256:43d3e0007efc65b10ccb5aa90de85b6477e8f71f50a0bd33c7b47c40e8769ea3",
                 "outside": {}},
     # Version 2: 2-cent bins, a level gate on voicing, and level_db.
-    "melody": {"version": "2",
-               "code": "sha256:01f55b00ca8fd0112841091c4fc3ffcdae7165e8c8303f2744415eb042d00f2c",
+    # Version 3: only the rows within reach of the gate are measured; 5-cent bins,
+    # and 2 on the vocal stem it prefers; measured_fraction.
+    "melody": {"version": "3",
+               "code": "sha256:3be4f467507e5ff1c15013adef5462aac25f798cf96d919e7c33e1e77679a7bd",
                "outside": {}},
     # colour reads the peaks' format and decode from waveform.py, not the
     # derived-media tool media.py, so an edit to that tool's routes or

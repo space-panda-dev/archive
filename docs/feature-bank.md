@@ -216,7 +216,7 @@ default in place of the content, in order, each with parameters that replace
 its declared ones there (fields it declares; canonical JSON):
 
 ```json
-"prefers": [{"input": "stems/vocals", "parameters": {"binResolution": 2}}]
+"prefers": [{"input": "stems/vocals", "parameters": {"bin_cents": 2}}]
 ```
 
 The default input of an extractor for a content is the first preferred
@@ -304,7 +304,7 @@ parameters are in the manifest's descriptions and in the
 | `chords` | 2 | `frames`: samples; `rhythm`: beats; `tonal`: bass_chroma, chroma, pitched | scalars `changes_per_minute`, `beat_share`; spans `chords`, `chord_candidates` |
 | `colour` | 3 | `frames`: centroid, hpcp, rms_db | series `colour`; files `palette`, `preview` |
 | `loudness-r128` | 1 | none | scalars `integrated` |
-| `melody` | 2 | none | series `pitch`, `confidence`, `voiced`, `midi`, `cents`, `level_db`; scalars `voiced_fraction`, `melodia_voiced_fraction`, `loud_db`, `gate_db`, `reference_hz`, `samples`; spans `notes` |
+| `melody` | 3 | none | series `pitch`, `confidence`, `voiced`, `midi`, `cents`, `level_db`; scalars `voiced_fraction`, `melodia_voiced_fraction`, `measured_fraction`, `loud_db`, `gate_db`, `reference_hz`, `samples`; spans `notes` |
 | `quality` | 3 | `frames`: samples | series `correlation`, `peak_db`; scalars `sample_rate`, `channels`, `seconds`, `integrated`, `loudness_range`, `true_peak`, `sample_peak`, `full_scale_samples`, `clipped_seconds`, `dc_offset`, `whole_correlation`, `anti_phase`, `false_stereo`, `noise_floor`, `snr`, `bandwidth`, `band_limited`, `hum_examined`; events `clicks`, `discontinuities`; spans `clipping`, `overs`, `gaps`, `noise_bursts`, `hum` |
 | `stems` | 1 | none | series `levels`; scalars `vocals_rms_db`, `vocals_peak_db`, `vocals_clamped`, `drums_rms_db`, `drums_peak_db`, `drums_clamped`, `bass_rms_db`, `bass_peak_db`, `bass_clamped`, `other_rms_db`, `other_peak_db`, `other_clamped`, `mix_rms_db`, `samples`, `seconds`; files `vocals`, `drums`, `bass`, `other` |
 | `structure` | 2 | `frames`: hpcp, rms_db, mfcc, seconds; `rhythm`: onsets, beats | series `novelty`; scalars `floor_db`, `floor`, `reference_db`, `threshold_db`; spans `playing`, `tuning`, `count_ins`, `false_starts`, `endings`, `sections`, `loops` |
@@ -339,7 +339,9 @@ what each changed:
   peak, overs on their own, events that stand out from the music around
   them or stand alone, and hum only at mains frequencies.
 - `melody` 2 resolves pitch in 2-cent bins, gates voicing by level, and
-  adds `level_db`.
+  adds `level_db`; 3 runs MELODIA only within a second of a row that reaches
+  the gate (`measured_fraction`), prefers the vocal stem where the bank holds
+  it, and resolves pitch in 5-cent bins, 2 on that stem.
 - `colour` 2 stopped copying the peaks into the bank and checks its
   palette; 3 sets the centroid hue's
   default range to 500 Hz to 4 kHz, which
