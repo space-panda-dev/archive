@@ -47,7 +47,7 @@ JUDGMENT = ("archive.assessment/judgment", "1")
 from world.documents import TIMED_LYRICS                     # noqa: E402  ADR 0085
 from world.form import FORM, FORM_SPANS, METER_LAYERS_V2     # noqa: E402  ADR 0083 (meter v2 shared with 0079)
 from world.harmony import CHORD_SEQUENCE_V2, CHORD_STACKS_V2  # noqa: E402  ADR 0079
-from world.notes import MELODY, MELODY_SPANS                 # noqa: E402  ADR 0086
+from world.notes import MELODY, MELODY_SPANS, NotesError, check_strings_and_capo  # noqa: E402  ADR 0086
 from world.tonality import KEY_REGIONS, KEY_SEQUENCE         # noqa: E402  ADR 0080
 
 OBJECT_ID = re.compile(r"urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
@@ -321,22 +321,18 @@ def _check_parts(value: Any, documents: int, where: str) -> None:
     names = []
     for index, part in enumerate(parts):
         at = f"{where} part {index}"
-        _closed(part, {"name"}, {"instrument", "tuning", "capo", "document"}, at)
+        _closed(part, {"name"}, {"instrument", "strings", "capo", "document"}, at)
         names.append(_text(part["name"], f"{at} name", MAX_PART_NAME))
         if "instrument" in part:
             if not isinstance(part["instrument"], str) or not INSTRUMENT.fullmatch(part["instrument"]):
                 raise LeadSheetError(f"{at} instrument must be a https://musicbrainz.org/instrument/<MBID> URI")
-        if "tuning" in part:
-            strings = _list(part["tuning"], f"{at} tuning", 1, MAX_STRINGS)
-            for number, note in enumerate(strings):
-                _int(note, f"{at} tuning[{number}]", 0, 127)
-        if "capo" in part:
-            if "tuning" not in part:
-                raise LeadSheetError(f"{at} gives a capo without the tuning of the strings it stops")
-            _int(part["capo"], f"{at} capo", 1, MAX_CAPO)
+        try:
+            check_strings_and_capo(part, at)  # ADR 0086's instrument fields, one definition
+        except NotesError as error:
+            raise LeadSheetError(str(error)) from None
         if "document" in part:
-            if "tuning" not in part:
-                raise LeadSheetError(f"{at} cites a document for a tuning it does not give")
+            if "strings" not in part:
+                raise LeadSheetError(f"{at} cites a document for strings it does not give")
             if not documents:
                 raise LeadSheetError(f"{at} cites a document, but the lead sheet pins none")
             _int(part["document"], f"{at} document", 0, documents - 1)

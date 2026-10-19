@@ -223,7 +223,7 @@ def work_sheet(agent: dict = ANN, n: int = 0x30) -> dict:
     her lyrics, her bars, her form, her tune, and her guitar part."""
     return {"revision_id": pin(n)["revision_id"], "agent": agent["id"],
             "payload": {"label": "Full chart", "parts": [
-                {"name": "Guitar", "instrument": GUITAR, "tuning": [38, 45, 50, 55, 59, 64], "capo": 2,
+                {"name": "Guitar", "instrument": GUITAR, "strings": [38, 45, 50, 55, 59, 64], "capo": 2,
                  "document": 0},
                 {"name": "Voice"}]},
             "refs": [ref("work", WORK), ref("chords", SEQUENCE), ref("meter", WORK_METER), ref("form", WORK_FORM),
@@ -440,18 +440,18 @@ class LeadSheets(unittest.TestCase):
 
     def test_part_rules(self):
         sheet = work_sheet()
-        self.check(with_part(sheet, tuning=[40, 45, 50, 55, 59, 64]))
+        self.check(with_part(sheet, strings=[40, 45, 50, 55, 59, 64]))
         # A re-entrant tuning is not ascending, and is allowed.
-        self.check(with_part(sheet, tuning=[67, 60, 64, 69], capo=5))
-        self.refused(with_part(sheet, capo=2), "capo without the tuning")
-        self.refused(with_part(sheet, tuning=[40], capo=0), "capo must be an integer in 1..24")
-        self.refused(with_part(sheet, tuning=[40], capo=25), "capo must be an integer in 1..24")
-        self.refused(with_part(sheet, tuning=[40, 128]), r"tuning\[1\] must be an integer in 0..127")
-        self.refused(with_part(sheet, tuning=[40, True]), r"tuning\[1\]")
-        self.refused(with_part(sheet, tuning=[]), "tuning must be a list of 1 to 12")
-        self.refused(with_part(sheet, tuning=[40], document=1), "document must be an integer in 0..0")
-        self.refused(with_part(sheet, document=0), "document for a tuning it does not give")
-        self.refused(with_part(without(sheet, "document"), tuning=[40], document=0), "pins none")
+        self.check(with_part(sheet, strings=[67, 60, 64, 69], capo=5))
+        self.refused(with_part(sheet, capo=2), "capo without the strings")
+        self.refused(with_part(sheet, strings=[40], capo=0), "capo must be an integer in 1..24")
+        self.refused(with_part(sheet, strings=[40], capo=25), "capo must be an integer in 1..24")
+        self.refused(with_part(sheet, strings=[40, 128]), r"strings\[1\] must be an integer in 0..127")
+        self.refused(with_part(sheet, strings=[40, True]), r"strings\[1\]")
+        self.refused(with_part(sheet, strings=[]), "strings must be a list of 1 to 12")
+        self.refused(with_part(sheet, strings=[40], document=1), "document must be an integer in 0..0")
+        self.refused(with_part(sheet, document=0), "document for strings it does not give")
+        self.refused(with_part(without(sheet, "document"), strings=[40], document=0), "pins none")
         self.refused(with_part(sheet, instrument="https://example.org/guitar"), "instrument must be")
         self.refused(with_part(sheet, string_count=6), "unknown \\['string_count'\\]")
         dup = copy.deepcopy(sheet)

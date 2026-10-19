@@ -83,7 +83,7 @@ stacks claim pins for its timeline, each an exact revision:
   pin one.
 
 Its payload has `sample_rate`, `part`, `notes`, and optional `stem`, `range`,
-`unpitched`, `confidence_scale`, `instrument`, `alignment`, and
+`unpitched`, `confidence_scale`, `strings`, `capo`, `alignment`, and
 `document_url`:
 
 - `part`, required, 1 to 100 characters: the stem or document track the
@@ -127,11 +127,15 @@ Its payload has `sample_rate`, `part`, `notes`, and optional `stem`, `range`,
 - `unpitched`: `true` for a part whose `pitch` is a General MIDI percussion
   key (a drum track), not a pitch. Such a claim has no `cents` and pins no
   `tuning`.
-- `instrument`, only when a `document` is pinned: what the document says of
-  the instrument, `strings` (1 to 16 MIDI numbers, the open strings in the
-  document's order) and `capo` (1 to 24), at least one of them. They say how
-  the part was fingered; `pitch` is still what sounds. A recording's own
-  tuning is ADR 0080's claim, never this.
+- `strings` and `capo`, the **instrument fields**, only when a `document` is
+  pinned: what the document says of the instrument. `strings` is 1 to 12
+  open strings as MIDI note numbers in the order the instrument's tablature
+  lists them, lowest staff line first, so a re-entrant tuning keeps its
+  order; `capo` is the fret 1 to 24 a capo stops every string at, only with
+  `strings`. They say how the part was fingered; `pitch` is still what
+  sounds. A recording's own tuning is ADR 0080's claim, never this. This
+  record defines the two fields once; a lead sheet's parts reuse them
+  (ADR 0084).
 - `alignment`, exactly when a `document` is pinned, and `document_url`, only
   then, as ADR 0077 states them.
 
@@ -164,14 +168,14 @@ two.
 ```
 
 A transcription's track placed on a recording is its own notes claim, with
-the `document`, its `alignment`, `instrument`, and each note's bar locator:
+the `document`, its `alignment`, instrument fields, and each note's bar locator:
 
 ```json
 {
   "payload": {
     "sample_rate": 44100, "part": "guitar 2",
     "alignment": {"method": "manual"},
-    "instrument": {"strings": [64, 59, 55, 50, 45, 40], "capo": 2},
+    "strings": [40, 45, 50, 55, 59, 64], "capo": 2,
     "notes": [
       {"onset_sample": 88200, "offset_sample": 99225, "pitch": 54, "velocity": 96,
        "locator": {"bar": 5, "duration": {"count": 1, "unit": 8}}},

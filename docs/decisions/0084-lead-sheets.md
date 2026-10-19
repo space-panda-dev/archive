@@ -98,14 +98,14 @@ sequence's.
   identity and never a quoted lyric line.
 - `parts`, 1 to 16 objects, each with `name` (1 to 100 characters, distinct;
   an input whose `part` text equals it is shown in that part), and optional
-  `instrument`, a MusicBrainz instrument URI as in ADR 0078; `tuning`, 1 to 12
-  open-string pitches as MIDI note numbers 0 to 127 in the order the
-  instrument's tablature lists its strings, lowest staff line first, so a
-  re-entrant tuning keeps its order; `capo`, the fret 1 to 24 a capo stops
-  every string at, given only with a `tuning`; and `document`, the 0-based
-  index of the `document` reference the tuning was read from, given only
-  with a `tuning`. A tuning with no `document` is the asserter's own
-  statement, as a songwriter knows how they tune.
+  `instrument`, a MusicBrainz instrument URI as in ADR 0078; `strings` and
+  `capo`, the instrument fields of a document-derived part exactly as
+  [ADR 0086](0086-notes-and-melody.md) defines them for a notes claim (1 to
+  12 open strings as MIDI note numbers in tablature order, lowest staff line
+  first; a capo fret 1 to 24, only with `strings`); and `document`, the
+  0-based index of the `document` reference the strings were read from,
+  given only with `strings`. Strings with no `document` are the asserter's
+  own statement, as a songwriter knows how they tune.
 
 ```json
 {
@@ -114,7 +114,7 @@ sequence's.
     "label": "Full chart",
     "parts": [
       {"name": "Guitar", "instrument": "https://musicbrainz.org/instrument/63021302-86cd-4aee-80df-2270d54f4978",
-       "tuning": [38, 45, 50, 55, 59, 64], "capo": 2, "document": 0},
+       "strings": [38, 45, 50, 55, 59, 64], "capo": 2, "document": 0},
       {"name": "Voice"}
     ]
   },

@@ -48,7 +48,7 @@ MAX_MELODY_NOTES = 10000
 MAX_SPANS = 10000
 MAX_PARTS = 16              # notes claims one melody spans claim may cite
 MAX_UNIT = 1024             # the finest note value, as 1/unit of a whole note
-MAX_STRINGS = 16
+MAX_STRINGS = 12
 MAX_CAPO = 24
 MAX_TEXT = 200
 MAX_LABEL = 100
@@ -183,6 +183,23 @@ def check_stem_citation(value: Any, where: str = "stem") -> dict[str, Any]:
         raise NotesError(str(error)) from error
 
 
+def check_strings_and_capo(fields: dict[str, Any], where: str) -> None:
+    """The instrument fields of a part read from a document (decided here,
+    and reused by ADR 0084's lead sheet parts): `strings`, 1 to 12 open
+    strings as MIDI note numbers in the order the instrument's tablature
+    lists them, lowest staff line first, so a re-entrant tuning keeps its
+    order; and `capo`, the fret 1 to 24 a capo stops every string at, only
+    with `strings`. They say how a part is fingered; a pitch is still what
+    sounds."""
+    if "strings" in fields:
+        for index, string in enumerate(_list(fields["strings"], f"{where} strings", 1, MAX_STRINGS)):
+            _int(string, f"{where} strings[{index}]", 0, 127)
+    if "capo" in fields:
+        if "strings" not in fields:
+            raise NotesError(f"{where} gives a capo without the strings it stops")
+        _int(fields["capo"], f"{where} capo", 1, MAX_CAPO)
+
+
 def _check_derived_from(by_role: dict[str, list[dict[str, Any]]], where: str) -> None:
     """ADR 0079's `derived_from` rule: distinct revisions, none also corrected."""
     try:
@@ -228,7 +245,7 @@ def check_notes(claim: dict[str, Any], stream_claim: dict[str, Any],
         _about_source(_given(tuning_claim, by_role["tuning"][0], f"{where} tuning claim"),
                       by_role["source"][0], "source", f"{where} tuning")
     payload = _closed(record["payload"], {"sample_rate", "part", "notes"},
-                      {"stem", "range", "unpitched", "confidence_scale", "instrument",
+                      {"stem", "range", "unpitched", "confidence_scale", "strings", "capo",
                        "document_url", "alignment"}, f"{where} payload")
     if _int(payload["sample_rate"], f"{where} sample_rate", 1) != rate:
         raise NotesError(f"{where} sample_rate differs from the stream's")
@@ -246,17 +263,9 @@ def check_notes(claim: dict[str, Any], stream_claim: dict[str, Any],
         if "max_error_samples" in alignment:
             _int(alignment["max_error_samples"], f"{where} alignment max_error_samples", 0)
     _check_document_url(payload, has_document, where)
-    if "instrument" in payload:
-        if not has_document:
-            raise NotesError(f"{where} gives an instrument's tuning or capo, which only a document states")
-        instrument = _closed(payload["instrument"], set(), {"strings", "capo"}, f"{where} instrument")
-        if not instrument:
-            raise NotesError(f"{where} instrument must give its strings, its capo, or both")
-        if "strings" in instrument:
-            for index, string in enumerate(_list(instrument["strings"], f"{where} instrument strings", 1, MAX_STRINGS)):
-                _int(string, f"{where} instrument strings[{index}]", 0, 127)
-        if "capo" in instrument:
-            _int(instrument["capo"], f"{where} instrument capo", 1, MAX_CAPO)
+    if ("strings" in payload or "capo" in payload) and not has_document:
+        raise NotesError(f"{where} gives an instrument's strings or capo, which only a document states")
+    check_strings_and_capo(payload, where)
     unpitched = "unpitched" in payload
     if unpitched and payload["unpitched"] is not True:
         raise NotesError(f"{where} unpitched must be true when present")

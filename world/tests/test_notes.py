@@ -125,7 +125,7 @@ class NotesAccepted(unittest.TestCase):
              note(0.75, 1, 59, locator={"bar": 1, "at": length(3, 8), "duration": length(1, 12)})],
             ref("document", DOCUMENT), part="guitar 2",
             alignment={"method": "manual"}, document_url="https://example.org/tab.gp",
-            instrument={"strings": [64, 59, 55, 50, 45, 40], "capo": 2})
+            strings=[40, 45, 50, 55, 59, 64], capo=2)
         check_notes(claim, fixture_stream())
 
     def test_split_by_range_and_confidence_on_its_own_scale(self):
@@ -187,7 +187,7 @@ class NotesRefused(unittest.TestCase):
     def test_locator_alignment_instrument_need_a_document(self):
         self.refused(notes_claim([note(0, 1, 60, locator={"bar": 1})]))
         self.refused(notes_claim([note(0, 1, 60)], alignment={"method": "manual"}))
-        self.refused(notes_claim([note(0, 1, 60)], instrument={"capo": 2}))
+        self.refused(notes_claim([note(0, 1, 60)], strings=[40], capo=2))
         self.refused(notes_claim([note(0, 1, 60)], ref("document", DOCUMENT)))  # no alignment
         with_document = (ref("document", DOCUMENT),)
         for bad in ({"bar": 0}, {"bar": 1, "at": length(-1, 4)}, {"bar": 1, "duration": length(0, 4)},
@@ -195,7 +195,10 @@ class NotesRefused(unittest.TestCase):
             with self.subTest(locator=bad):
                 self.refused(notes_claim([note(0, 1, 60, locator=bad)], *with_document,
                                          alignment={"method": "manual"}))
-        self.refused(notes_claim([note(0, 1, 60)], *with_document, alignment={"method": "manual"}, instrument={}))
+        self.refused(notes_claim([note(0, 1, 60)], *with_document, alignment={"method": "manual"}, capo=2))
+        self.refused(notes_claim([note(0, 1, 60)], *with_document, alignment={"method": "manual"}, strings=[]))
+        self.refused(notes_claim([note(0, 1, 60)], *with_document, alignment={"method": "manual"},
+                                 instrument={"strings": [40]}))  # the old nested shape is gone
 
     def test_range_bounds_and_onsets(self):
         self.refused(notes_claim([note(0, 1, 60)], range={"start_sample": SECOND, "end_sample": 2 * SECOND}))
