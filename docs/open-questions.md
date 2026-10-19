@@ -8,6 +8,9 @@ decision record (or a specification change) that a person accepts, and then an
 update here. Code that depends on an open answer should fail loudly as
 unsupported rather than guess.
 
+Known gaps that need work rather than a decision (measured weaknesses,
+follow-ups, clean-ups) are in the [backlog](backlog.md).
+
 ## The archive contract
 
 - Specification 0.0.5 installs the V2 migration route contracts after the
