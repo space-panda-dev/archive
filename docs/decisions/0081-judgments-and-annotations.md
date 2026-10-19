@@ -163,7 +163,8 @@ a person Entity, never a Package URL, and it pins no `run` and no
   `sample_rate` (equal to the stream's) and `span` (`start_sample` and
   `end_sample`, with `0 <= start_sample < end_sample <= sample_count`);
 - **entries of a chord sequence**: it pins exactly one `sequence`, an
-  `archive.claim/chord_sequence` version 1 Claim revision, and at most one
+  `archive.claim/chord_sequence` version 1 or 2 Claim revision (version 2,
+  ADR 0079, keeps version 1's entries), and at most one
   `work`, which must be the Work Entity revision that sequence pins; its
   payload has `entries` (`first` and `last`, with
   `0 <= first <= last` and `last` below the sequence's entry count). This is

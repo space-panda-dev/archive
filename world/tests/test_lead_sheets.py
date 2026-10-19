@@ -25,10 +25,11 @@ from world.lead_sheets import (
     CHORD_STACKS,
     CONTRIBUTION,
     FORM,
-    KEY,
+    KEY_SEQUENCE,
     LEAD_SHEET,
-    LYRIC_TIMING,
+    TIMED_LYRICS,
     MELODY,
+    MELODY_SPANS,
     METER_LAYERS,
     METER_LAYERS_V2,
     JUDGMENT,
@@ -203,13 +204,13 @@ TARGETS = {
     WORK_METER["revision_id"]: {"shape": "claim", "contract": METER_LAYERS_V2, "refs": [ref("work", WORK)]},
     WORK_FORM["revision_id"]: {"shape": "claim", "contract": FORM, "refs": [ref("work", WORK)]},
     WORK_MELODY["revision_id"]: {"shape": "claim", "contract": MELODY, "refs": [ref("work", WORK)]},
-    TAKE_MELODY["revision_id"]: {"shape": "claim", "contract": MELODY,
+    TAKE_MELODY["revision_id"]: {"shape": "claim", "contract": MELODY_SPANS,
                                  "refs": [ref("source", MIX), ref("stream", MIX_STREAM)]},
-    KEY_CLAIM["revision_id"]: {"shape": "claim", "contract": KEY, "refs": [ref("work", WORK)]},
-    LYRIC_TIMING_CLAIM["revision_id"]: {"shape": "claim", "contract": LYRIC_TIMING,
+    KEY_CLAIM["revision_id"]: {"shape": "claim", "contract": KEY_SEQUENCE, "refs": [ref("work", WORK)]},
+    LYRIC_TIMING_CLAIM["revision_id"]: {"shape": "claim", "contract": TIMED_LYRICS,
                                         "refs": [ref("source", MIX), ref("stream", MIX_STREAM),
                                                  ref("document", LYRICS)]},
-    STRAY_TIMING["revision_id"]: {"shape": "claim", "contract": LYRIC_TIMING,
+    STRAY_TIMING["revision_id"]: {"shape": "claim", "contract": TIMED_LYRICS,
                                   "refs": [ref("source", MIX), ref("stream", MIX_STREAM),
                                            ref("document", OTHER_LYRICS)]},
 }
@@ -387,7 +388,7 @@ class LeadSheets(unittest.TestCase):
         # A timing that names no document is refused, never taken as agreeing.
         unplaced = pin(0x43)
         targets = dict(TARGETS)
-        targets[unplaced["revision_id"]] = {"shape": "claim", "contract": LYRIC_TIMING,
+        targets[unplaced["revision_id"]] = {"shape": "claim", "contract": TIMED_LYRICS,
                                             "refs": [ref("source", MIX), ref("stream", MIX_STREAM)]}
         with self.assertRaisesRegex(LeadSheetError, "exactly the lyric document"):
             check_lead_sheet(plus(take_sheet(), "lyric_timing", unplaced), targets, AGENTS)

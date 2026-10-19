@@ -49,13 +49,13 @@ and provenance; the lead sheet copies none of them. Its references:
 | `work` | exactly 1 | an Entity revision of kind `musical_work`: what the lead sheet is of |
 | `source` | 0 or 1 | the Artifact revision of the recording's mix, for a lead sheet of one recording |
 | `recording` | 0 or 1, only with `source` | as ADR 0078's recording scope: a `recording` Entity, an `audio_selection` or `song_occurrence` version 2 Claim, or an Artifact |
-| `chords` | 0 to 16 | `chord_stacks` or `chord_sequence` Claim revisions (version 1, and the versions ADR 0079 adds) |
-| `meter` | 0 to 4 | `meter_layers` Claim revisions (version 1 on a recording; ADR 0083's untimed version on a Work) |
-| `form` | 0 to 4 | ADR 0083's form Claim revisions |
-| `key` | 0 to 4 | ADR 0080's key Claim revisions |
+| `chords` | 0 to 16 | `chord_stacks` or `chord_sequence` Claim revisions, version 1 or 2 (ADR 0079) |
+| `meter` | 0 to 4 | `meter_layers` Claim revisions: version 1, or version 2 timed or untimed (ADRs 0079 and 0083) |
+| `form` | 0 to 4 | `form` (untimed) or `form_spans` (timed) version 1 Claim revisions (ADR 0083) |
+| `key` | 0 to 4 | `key_sequence` (untimed) or `key_regions` (timed) version 1 Claim revisions (ADR 0080) |
 | `lyrics` | 0 or 1 | the lyric document's Artifact revision; its words are never copied |
-| `lyric_timing` | 0 to 4, only with `lyrics` | ADR 0085's timed lyric-line Claim revisions, each placing exactly that document |
-| `melody` | 0 to 4 | ADR 0086's melody Claim revisions, Work-level or recording-level |
+| `lyric_timing` | 0 to 4, only with `lyrics` | `timed_lyrics` version 1 Claim revisions (ADR 0085), each placing exactly that document |
+| `melody` | 0 to 4 | `melody` (Work level) or `melody_spans` (recording level) version 1 Claim revisions (ADR 0086) |
 | `credits` | 0 to 32 | `contribution` version 1 Claim revisions of scope `work` about the same Work |
 | `document` | 0 to 8 | Artifact revisions a part's tuning or capo was read from |
 | `derived_from` | 0 to 8 | `lead_sheet` version 1 Claim revisions of the same Work it started from |

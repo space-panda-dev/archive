@@ -29,7 +29,8 @@ JUDGMENT = "archive.assessment/judgment"
 JUDGMENT_V1 = (JUDGMENT, "1")
 JUDGMENT_V2 = (JUDGMENT, "2")
 SPAN_ANNOTATION = ("archive.claim/span_annotation", "1")
-CHORD_SEQUENCE = ("archive.claim/chord_sequence", "1")
+CHORD_SEQUENCE = "archive.claim/chord_sequence"
+CHORD_SEQUENCE_VERSIONS = ("1", "2")  # ADR 0077, and ADR 0079's version 2 (same entries)
 AUDIO_STREAM = ("archive.claim/audio_stream", "1")
 
 VERDICTS = ("affirmed", "rejected", "withdrawn")
@@ -450,8 +451,9 @@ def check_span_annotation(claim: dict[str, Any], stream: dict[str, Any] | None =
                     AnnotationError)
             _same_revision(sequence, pinned, f"{where} sequence", AnnotationError)
             if "contracts" in sequence \
-                    and _cited(sequence, CHORD_SEQUENCE[0], f"{where} sequence", AnnotationError) != CHORD_SEQUENCE[1]:
-                raise AnnotationError(f"{where} sequence must be a chord sequence version 1")
+                    and _cited(sequence, CHORD_SEQUENCE, f"{where} sequence", AnnotationError) \
+                    not in CHORD_SEQUENCE_VERSIONS:
+                raise AnnotationError(f"{where} sequence must be a chord sequence version 1 or 2")
             held = sequence["payload"].get("entries") if isinstance(sequence["payload"], dict) else None
             if not isinstance(held, list) or end > len(held):
                 raise AnnotationError(f"{where} names an entry past the sequence's last")

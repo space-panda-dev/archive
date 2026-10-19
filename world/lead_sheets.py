@@ -43,15 +43,12 @@ AUDIO_SELECTION = ("archive.claim/audio_selection", "2")
 SONG_OCCURRENCE = ("archive.claim/song_occurrence", "2")
 JUDGMENT = ("archive.assessment/judgment", "1")
 
-# ASSUMED identifiers of contracts defined by the parallel 0.0.10 records.
-# Each is a one-line change once those records settle their names.
-CHORD_STACKS_V2 = ("archive.claim/chord_stacks", "2")      # ADR 0079: the bass-only reading form
-CHORD_SEQUENCE_V2 = ("archive.claim/chord_sequence", "2")  # ADR 0079: the bass-only reading form
-METER_LAYERS_V2 = ("archive.claim/meter_layers", "2")      # ADR 0083: untimed meter on a Work
-FORM = ("archive.claim/form", "1")                         # ADR 0083
-KEY = ("archive.claim/key", "1")                           # ADR 0080
-LYRIC_TIMING = ("archive.claim/lyric_timing", "1")         # ADR 0085
-MELODY = ("archive.claim/melody", "1")                     # ADR 0086: Work-level and recording-level
+# The contracts of the other 0.0.10 records, by the names those records define.
+from world.documents import TIMED_LYRICS                     # noqa: E402  ADR 0085
+from world.form import FORM, FORM_SPANS, METER_LAYERS_V2     # noqa: E402  ADR 0083 (meter v2 shared with 0079)
+from world.harmony import CHORD_SEQUENCE_V2, CHORD_STACKS_V2  # noqa: E402  ADR 0079
+from world.notes import MELODY, MELODY_SPANS                 # noqa: E402  ADR 0086
+from world.tonality import KEY_REGIONS, KEY_SEQUENCE         # noqa: E402  ADR 0080
 
 OBJECT_ID = re.compile(r"urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 REVISION_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
@@ -88,10 +85,10 @@ ROLES: dict[str, tuple[int, int]] = {
 INPUT_CONTRACTS: dict[str, set[tuple[str, str]]] = {
     "chords": {CHORD_STACKS, CHORD_SEQUENCE, CHORD_STACKS_V2, CHORD_SEQUENCE_V2},
     "meter": {METER_LAYERS, METER_LAYERS_V2},
-    "form": {FORM},
-    "key": {KEY},
-    "lyric_timing": {LYRIC_TIMING},
-    "melody": {MELODY},
+    "form": {FORM, FORM_SPANS},
+    "key": {KEY_SEQUENCE, KEY_REGIONS},
+    "lyric_timing": {TIMED_LYRICS},
+    "melody": {MELODY, MELODY_SPANS},
 }
 # Every role a render reads, so every revision a render discloses.
 RENDERED_ROLES = ("work", "source", "recording", "chords", "meter", "form", "key",

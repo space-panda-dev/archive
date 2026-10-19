@@ -59,7 +59,7 @@ MEMBER_CONTRACTS = frozenset({
     ("archive.claim/chord_stacks", "1"),           # ADR 0077
     ("archive.claim/chord_stacks", "2"),           # ADR 0079
     ("archive.claim/chord_sequence", "1"),         # ADR 0077
-    ("archive.claim/chord_sequence", "2"),         # ADR 0083
+    ("archive.claim/chord_sequence", "2"),         # ADR 0079
     ("archive.claim/meter_layers", "1"),           # ADR 0077
     ("archive.claim/meter_layers", "2"),           # ADR 0083
     ("archive.claim/key_regions", "1"),            # ADR 0080

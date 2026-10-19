@@ -385,6 +385,13 @@ class SpanAnnotations(unittest.TestCase):
             check_span_annotation(entry_mark(), sequence=not_a_sequence)
         with self.assertRaises(AnnotationError):
             check_span_annotation(entry_mark(), sequence=CHORDS)
+        # ADR 0079's chord sequence version 2 keeps the entries a mark ranges over; a version 3 is unknown.
+        version_2 = copy.deepcopy(SEQUENCE)
+        version_2["contracts"] = [{"id": "archive.claim/chord_sequence", "version": "2"}]
+        check_span_annotation(entry_mark(), sequence=version_2)
+        version_2["contracts"][0]["version"] = "3"
+        with self.assertRaises(AnnotationError):
+            check_span_annotation(entry_mark(), sequence=version_2)
 
 
 if __name__ == "__main__":
