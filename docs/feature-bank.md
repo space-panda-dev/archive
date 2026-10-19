@@ -276,7 +276,7 @@ parameters are in the manifest's descriptions and in the
 | `melody` | 2 | none | series `pitch`, `confidence`, `voiced`, `midi`, `cents`, `level_db`; scalars `voiced_fraction`, `melodia_voiced_fraction`, `loud_db`, `gate_db`, `reference_hz`, `samples`; spans `notes` |
 | `notes-basic-pitch` | 1 | none | scalars `note_count`, `seconds`; files `notes` |
 | `quality` | 3 | `frames`: samples | series `correlation`, `peak_db`; scalars `sample_rate`, `channels`, `seconds`, `integrated`, `loudness_range`, `true_peak`, `sample_peak`, `full_scale_samples`, `clipped_seconds`, `dc_offset`, `whole_correlation`, `anti_phase`, `false_stereo`, `noise_floor`, `snr`, `bandwidth`, `band_limited`, `hum_examined`; events `clicks`, `discontinuities`; spans `clipping`, `overs`, `gaps`, `noise_bursts`, `hum` |
-| `rhythm` | 3 | none | series `tempo`, `onset_count`, `onset_deviation`, `offgrid`, `chunk_bpm`, `chunk_confidence`, `primary_tempo`, `tempo_support`, `downbeat_margin`; scalars `bpm`, `confidence`, `onset_rate`, `seconds`, `primary_bpm`, `meter`; events `beats`, `onsets`, `pulse`, `downbeats`, `tempo_changes`; spans `tempo_spans` |
+| `rhythm` | 4 | none | series `tempo`, `onset_count`, `onset_deviation`, `offgrid`, `chunk_bpm`, `chunk_confidence`, `primary_tempo`, `tempo_support`, `downbeat_margin`; scalars `bpm`, `confidence`, `onset_rate`, `seconds`, `primary_bpm`, `meter`; events `beats`, `onsets`, `pulse`, `downbeats`, `tempo_changes`; spans `tempo_spans` |
 | `stems` | 1 | none | series `levels`; scalars `vocals_rms_db`, `vocals_peak_db`, `vocals_clamped`, `drums_rms_db`, `drums_peak_db`, `drums_clamped`, `bass_rms_db`, `bass_peak_db`, `bass_clamped`, `other_rms_db`, `other_peak_db`, `other_clamped`, `mix_rms_db`, `samples`, `seconds`; files `vocals`, `drums`, `bass`, `other` |
 | `stems-6s` | 1 | none | series `levels`; scalars `vocals_rms_db`, `vocals_peak_db`, `vocals_clamped`, `drums_rms_db`, `drums_peak_db`, `drums_clamped`, `bass_rms_db`, `bass_peak_db`, `bass_clamped`, `guitar_rms_db`, `guitar_peak_db`, `guitar_clamped`, `piano_rms_db`, `piano_peak_db`, `piano_clamped`, `other_rms_db`, `other_peak_db`, `other_clamped`, `mix_rms_db`, `samples`, `seconds`; files `vocals`, `drums`, `bass`, `guitar`, `piano`, `other` |
 | `structure` | 2 | `frames`: hpcp, rms_db, mfcc, seconds; `rhythm`: onsets, beats | series `novelty`; scalars `floor_db`, `floor`, `reference_db`, `threshold_db`; spans `playing`, `tuning`, `count_ins`, `false_starts`, `endings`, `sections`, `loops` |
@@ -300,7 +300,11 @@ what each changed:
   meter, downbeats, spans of one level and meter, and changes that say
   `meter` where the beat persists; 3 decides each take on its own, prefers
   the tracker's own octave, and publishes downbeats only where
-  `downbeat_margin` is clear.
+  `downbeat_margin` is clear; 4 places bar lines by the low accent less the
+  backbeat's and by the beat-synchronous chroma, publishes them from a
+  margin of 1 (on 17 of 18 tracks of a test album, where 3 published them
+  on 8), prefers bars of 5 to 4 in a song that changes meter, and takes a
+  second whose window cannot lay every level as no evidence.
 - `tonal` 1 and 2 measured tuning, key, and chords with Essentia's
   `TuningFrequency`, `Key`, and `ChordsDetection` (2 records its second
   decode and blanks harmony on a detuned recording); 3 takes the tuning as a

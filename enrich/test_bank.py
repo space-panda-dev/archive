@@ -126,8 +126,10 @@ SHIPPED = {
                       "outside": {}},
     # Version 2: the primary tempo level, its alternatives, meter, downbeats, spans and changes (meter.py).
     # Version 3: each take on its own, a preference for the tracker's octave, downbeats with a margin.
-    "rhythm": {"version": "3",
-               "code": "sha256:5f66bb145f6264da8b2973d847de7d679b6a697296641a50bbcfb23dc67ccf6b",
+    # Version 4: bar lines from the low accent less the backbeat's and the beat-synchronous chroma, published
+    # from a margin of 1; 5 preferred to 4 in a song that changes meter; an unmeasurable level is no evidence.
+    "rhythm": {"version": "4",
+               "code": "sha256:f16c19ac0501d0353ef63313e854c8db118ec92efc7b716e334ffefbbcf7c086",
                "outside": {}},
     # structure imports the span detector for its novelty curve, and the detector imports probe.
     # Version 2: the threshold is measured from a noise floor only when the recording has one

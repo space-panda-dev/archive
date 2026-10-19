@@ -138,27 +138,34 @@ at least `window_seconds` plus that), the path starts afresh, so a take's
 level does not depend on the take before it.
 
 The meter is how far apart the beat-by-beat pattern (where the harmony
-moves, the accents and the low accents) repeats; the downbeats are where a
-low accent and a move of the harmony fall, through a bar-position model in
-which a bar may end early (a bar of 2/4 in 4/4). On the album, beats per
-bar agreed with Spotify's time signature on 15 of 17 tracks, where always
-answering 4 agrees on 14, and with a transcription's bars on 96 to 100% of
-three 4/4 songs' bars (always 4: the same) but only 60% of one with a 5/4
-section (always 4: 57%; 10 of its 24 bars of 5/4 found). Same-tempo
-changes between 4/4 and 12/8 on three tracks are unverified.
+moves, the accents and the low accents) repeats; in a song whose bars are
+not all of one length, a bar of 5 is preferred to one of 4 where the two
+repeat about as well. On the album, beats per bar agreed with Spotify's
+time signature on 16 of 17 tracks (15 before that preference; always
+answering 4 agrees on 14), and with a transcription's bars on 99 to 100%
+of three 4/4 songs' bars but 62% of one whose 4/4 turns to 5/4 (38%
+before). Same-tempo changes between 4/4 and 12/8 on three tracks are
+unverified.
 
-Downbeats are the weakest estimate. On that album they fell within a
-quarter-beat of a transcription's bar line on 0, 12, 21 and 25% of four
-tracks' bars, where chance is about 13%: dense playing puts low accents and
-harmonic moves on every beat. So each bar also gets a
-margin: over the four bars either side, the mean downbeat evidence on the
-bars' first beats less the largest on any other beat (robust z units). On
-the synthetic band, whose bar lines carry a kick and a chord change, it is
-2 to 4; over four-on-the-floor and a held chord it stays below 2, and on
-the album below 2 for 92% of bars. Only bars with a margin of at least
-`downbeat_margin` are published as downbeats or give their pulses a place;
-at the default the album keeps 145 of 1,842, still not reliably on bar
-lines, which a reader should treat as a hint.
+The downbeats are where the bar-position model puts the evidence of a bar
+line, at every beat: the low accent, less half the whole accent (the
+backbeat's snare is loud but not low), and half each of how far the
+beat-synchronous chroma moves at the beat and across a bar (see
+`meter.downbeat_evidence`); a bar may end early (a bar of 2/4 in 4/4) at a
+cost. Dense playing puts low accents and moves of the harmony on every
+beat, so each bar also gets a margin: over the four bars either side, the
+mean evidence on the bars' first beats less the largest on any other beat
+(robust z units). On the synthetic band, whose bar lines carry a kick and
+a chord change, it is 2 to 4; over four-on-the-floor and a held chord it
+stays below 1. Only bars with a margin of at least `downbeat_margin` are
+published as downbeats or give their pulses a place. Measured on the
+album against a neural tracker's downbeats (Beat This), where our
+downbeat falls on one of its beats: at the default of 1, 452 downbeats on
+17 of 18 tracks, 81% on its downbeats (version 3: 145 on 8 tracks at a
+margin of 2, 94%); at 2, 165 on 9 tracks, 96%; every bar, 63% (version 3:
+56%). The rest are about as often one beat off as half a bar off (beat 3
+for beat 1), so a reader wanting fewer and surer bar lines sets
+`downbeat_margin` to 2.
 
 Invoked by the runner as `rhythm.py <request.json>`. The settings in
 `TUNABLE` may be configured; any other differing setting is refused.
@@ -210,7 +217,7 @@ def parameters() -> dict[str, Any]:
             "beat_gate_seconds": 2, "beat_align_ms": 50, "edge_onset_ms": 25,
             "window_seconds": 10, "subdivisions": 4, "accents": "spectral flux", "accent_frame": meter.FRAME,
             "accent_hop": meter.HOP, "prior_bpm": 120, "prior_octaves": 1, "tracker_octaves": 2,
-            "level_switch_cost": 20, "downbeat_margin": 2,
+            "level_switch_cost": 20, "downbeat_margin": 1,
             "meters": list(meter.METERS)}
 
 
