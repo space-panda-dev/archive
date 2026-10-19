@@ -579,28 +579,110 @@ def tune_notes(payload: dict[str, Any], notes_claims: dict[str, dict[str, Any]],
 
 # ---------------------------------------------------------------------------
 # Written rhythm: sounded notes written on a meter's beat grid (ADR 0086,
-# amended 2026-10-19). A view, computed and never stored; its thresholds are
-# named by the view's version, so two readings at one version agree.
+# amended 2026-10-19). A view, computed and never stored; its parameters are
+# named by its version, so two readings at one version agree.
+#
+# Version 2 is the measured rule of 0.0.10 (it replaced version 1, which no
+# release served): the recording's constant onset offset from the eighth grid
+# is removed, swung eighths are found and written straight, each phrase's
+# onsets are placed by the cheapest sum of timing error and notation cost
+# (the eighth is the norm; sixteenths, dots, and triplets cost more), a rest
+# is written only at a lyric line's end or a breath, staccato only for a
+# clearly detached short note, every syllable of timed lyrics gets a note,
+# octave errors are folded against their neighbours, and a clef is suggested.
+# Measured on 22 sung recordings: notes needing a sixteenth, dot, or triplet
+# fell from 61-100% to 0-33%, staccato from 24-46% to almost none, lyric
+# words without a note to none.
+
+TICKS = 192                 # ticks per whole note: every DENOMINATORS beat, and a triplet eighth, is whole
+EIGHTH, SIXTEENTH, TRIPLET = TICKS // 8, TICKS // 16, TICKS // 12
+QUARTER = TICKS // 4
+LOW_TREBLE, HIGH_TREBLE_8VB = 64, 67   # E4, the treble staff's lowest line; G4, above the treble-8vb staff
 
 
 @dataclass(frozen=True)
 class RhythmRule:
-    """The thresholds of one version of the written rhythm view: `divisions`
-    grid points per beat, a note `staccato` when it sounds less than
-    `staccato_below` of the interval to the next onset, and a rest only for a
-    silence of at least `rest_beats` beats at a phrase boundary."""
+    """The parameters of one version of the written rhythm view, by name,
+    as exact decimals: seconds end `_s`, beats end `_beats`, semitones end
+    `_st`, and costs are in units of one squared timing error."""
 
     version: str
-    divisions: int
-    staccato_below: Fraction
-    rest_beats: Fraction
+    parameters: dict[str, Fraction]
+
+    def __getattr__(self, name: str) -> float:
+        try:
+            return float(self.__dict__["parameters"][name])
+        except KeyError:
+            raise AttributeError(name) from None
 
     def describe(self) -> dict[str, Any]:
-        return {"version": self.version, "divisions": self.divisions,
-                "staccato_below": _decimal_text(self.staccato_below), "rest_beats": _decimal_text(self.rest_beats)}
+        return {"version": self.version,
+                "parameters": {name: _decimal_text(value) for name, value in sorted(self.parameters.items())}}
 
 
-RHYTHM_RULES = {"1": RhythmRule("1", 4, Fraction(3, 5), Fraction(1))}
+RHYTHM_RULES = {"2": RhythmRule("2", {name: Fraction(value) for name, value in {
+    # Notes starting within this of the first are one chord.
+    "chord_within_s": "0.03",
+    # The constant onset offset: the median distance of onsets from the
+    # nearest eighth, over at least `offset_min_onsets` within
+    # `offset_within_beats` of one (so swung offbeats do not count); removed
+    # when at least `offset_min_s`, and never by more than `offset_max_s`.
+    "offset_min_onsets": "10", "offset_within_beats": "0.125", "offset_min_s": "0.01", "offset_max_s": "0.08",
+    # Swing: the median position in the beat of offbeat onsets (between
+    # `offbeat_from` and `offbeat_to`), over at least `swing_min_onsets`;
+    # swung, and written straight, between `swing_min` and `swing_max`.
+    "offbeat_from": "0.35", "offbeat_to": "0.8", "swing_min_onsets": "20",
+    "swing_min": "0.62", "swing_max": "0.72",
+    # A phrase starts at a lyric line's first syllable, or after a silence
+    # of `phrase_gap_beats` or of `phrase_silence_s`.
+    "phrase_gap_beats": "1", "phrase_silence_s": "0.3", "line_start_near_s": "0.2",
+    # Placing each phrase's onsets: candidates within `search_beats`; timing
+    # cost ((written - sounded) / sigma_beats)^2; notation costs by position
+    # in the beat; between consecutive onsets, a sixteenth-long gap, an odd
+    # (dotted) gap under `dotted_below_beats`, a beat mixing triplets and
+    # sixteenths, and `gap_weight` x ((written gap - sounded gap) /
+    # sigma_gap_beats)^2. A swung beat's sixteenths and triplets cost
+    # `cost_swung_fine` more; an onset no candidate can take is forced a
+    # sixteenth after the last at `cost_forced`.
+    "search_beats": "0.6", "sigma_beats": "0.2",
+    "cost_eighth": "0.5", "cost_sixteenth": "3.0", "cost_triplet": "3.5", "cost_swung_fine": "1.5",
+    "cost_sixteenth_gap": "2.0", "cost_dotted_gap": "0.6", "dotted_below_beats": "2",
+    "cost_mixed_beat": "6.0", "gap_weight": "0.25", "sigma_gap_beats": "0.15", "cost_forced": "50",
+    # A rest: a silence of `rest_beats` at a phrase boundary, or of
+    # `breath_rest_beats` and `breath_rest_s` there; the note before it ends
+    # on the nearest eighth, and a rest under an eighth is held instead.
+    "rest_beats": "1", "breath_rest_beats": "0.5", "breath_rest_s": "0.2",
+    # Staccato only for a clearly detached note: sounding at most
+    # `staccato_max_s` and `staccato_max_share` of a written value of at
+    # least `staccato_min_beats`, with silence after it.
+    "staccato_max_s": "0.15", "staccato_max_share": "0.35", "staccato_min_beats": "1",
+    # Tenuto on a phrase's last note written at least `tenuto_min_beats`
+    # and sounding at least `tenuto_min_share` of it.
+    "tenuto_min_beats": "2", "tenuto_min_share": "0.8",
+    # Syllables onto notes: cost ((onset - syllable start) / syllable_sigma_s)^2,
+    # capped; skipping a syllable costs `syllable_skip`; notes within
+    # `syllable_window_s`; the cheapest `syllable_states` kept. A skipped
+    # syllable splits the note sounding at it (at least `split_margin_s`
+    # inside it, and `split_min_s` after its onset if it carries the
+    # syllable before), else gets a note at the pitch of the note before it
+    # (or after it), at least `inferred_min_s` long and ending
+    # `inferred_gap_s` before the next.
+    "syllable_sigma_s": "0.12", "syllable_cap": "30", "syllable_skip": "40", "syllable_window_s": "0.7",
+    "syllable_states": "60", "split_margin_s": "0.06", "split_min_s": "0.1",
+    "inferred_min_s": "0.08", "inferred_gap_s": "0.01",
+    # A note after a syllable's note, starting within `melisma_gap_s` and
+    # starting no phrase, continues the syllable.
+    "melisma_gap_s": "0.25",
+    # Octave folding: a note at least `octave_from_st` from the median of its
+    # neighbours within `octave_context_s` (at least `octave_min_context` of
+    # them) moves an octave when that brings it `octave_gain_st` closer;
+    # `octave_passes` passes.
+    "octave_from_st": "9", "octave_gain_st": "6", "octave_context_s": "2", "octave_min_context": "3",
+    "octave_passes": "2",
+    # The clef: treble-8vb when at least `clef_below_share` of the sounded
+    # time is under E4 and at most `clef_above_share` at G4 or above.
+    "clef_below_share": "0.6", "clef_above_share": "0.1",
+}.items()})}
 
 
 def _decimal_text(value: Fraction) -> str:
@@ -674,29 +756,6 @@ def beat_grid(meter_payload: dict[str, Any], layer: int = 0) -> tuple[list[Beat]
     return beats, [], last
 
 
-def _written_at(sample: float, beats: list[Beat], end: int) -> Fraction:
-    """The written position of a sample: linear within its beat."""
-    index = max(0, bisect_right([b.sample for b in beats], sample) - 1)
-    beat = beats[index]
-    following = beats[index + 1].sample if index + 1 < len(beats) else end
-    span = max(following - beat.sample, 1)
-    return beat.position + beat.value * Fraction(round(sample) - beat.sample, span)
-
-
-def _snap(position: Fraction, beats: list[Beat], divisions: int) -> Fraction:
-    """A written position moved to the nearest grid point of its beat."""
-    index = max(0, bisect_right([b.position for b in beats], position) - 1)
-    beat = beats[index]
-    step = beat.value / divisions
-    return beat.position + step * round((position - beat.position) / step)
-
-
-def _beat_samples(sample: int, beats: list[Beat], end: int) -> int:
-    index = max(0, bisect_right([b.sample for b in beats], sample) - 1)
-    following = beats[index + 1].sample if index + 1 < len(beats) else end
-    return max(following - beats[index].sample, 1)
-
-
 def _boundary(onset: int, silence: tuple[int, int], lines: list[dict[str, Any]]) -> str | None:
     """The phrase boundary a silence falls at, or None (ADR 0086, amended):
     `line_end` where a timed lyrics line ends on the note before it; `breath`
@@ -717,77 +776,488 @@ def _boundary(onset: int, silence: tuple[int, int], lines: list[dict[str, Any]])
     return "breath"
 
 
-def written_rhythm(notes: list[dict[str, Any]], meter_payload: dict[str, Any], *, layer: int = 0,
-                   lyrics: list[dict[str, Any]] | None = None, version: str = "1") -> dict[str, Any]:
-    """Sounded notes written on a meter's beat grid. `notes` are notes as a
-    notes claim holds them (or a tune's), `meter_payload` a checked timed
-    meter claim's payload, and `lyrics` the `lines` of timed lyrics claims of
-    the same recording, whose line ends and words say where phrases end.
+class _Grid:
+    """A layer's beats in ticks (TICKS per whole note), with the maps between
+    a sample and a written position, linear within each beat."""
 
-    Notes starting together are one chord. Each chord's onset moves to the
-    nearest grid point (`divisions` per beat), and its written value fills
-    the interval to the next chord's onset, on the grid. A chord that sounds
-    less than `staccato_below` of that interval is marked `staccato` rather
-    than followed by a rest. A rest is written only when the silence after
-    it is at least `rest_beats` beats long and falls at a phrase boundary
-    (`line_end` or `breath`); each rest says which. A note keeps the
+    def __init__(self, beats: list[Beat], end: int, rate: int):
+        self.samples = [b.sample for b in beats]
+        self.starts, self.values = [], []
+        for beat in beats:
+            start, value = beat.position * TICKS, beat.value * TICKS
+            if start.denominator != 1 or value.denominator != 1:
+                raise NotesError(f"a beat of {beat.value} whole notes is finer than the written rhythm writes")
+            self.starts.append(int(start))
+            self.values.append(int(value))
+        self.ends = self.samples[1:] + [end]
+        self.total = self.starts[-1] + self.values[-1]
+        self.end = end
+        self.rate = rate
+
+    def beat_of_sample(self, sample: float) -> int:
+        return max(0, bisect_right(self.samples, sample) - 1)
+
+    def beat_of_tick(self, tick: float) -> int:
+        return max(0, min(len(self.starts) - 1, bisect_right(self.starts, tick) - 1))
+
+    def tick(self, sample: float) -> float:
+        """The written position of a sample, in ticks."""
+        i = self.beat_of_sample(sample)
+        span = max(self.ends[i] - self.samples[i], 1)
+        return self.starts[i] + self.values[i] * (sample - self.samples[i]) / span
+
+    def sample(self, tick: float) -> float:
+        """The sample a written position sounds at."""
+        i = self.beat_of_tick(tick)
+        return self.samples[i] + (self.ends[i] - self.samples[i]) * (tick - self.starts[i]) / self.values[i]
+
+    def beat_seconds(self, sample: float) -> float:
+        i = self.beat_of_sample(sample)
+        return max(self.ends[i] - self.samples[i], 1) / self.rate
+
+
+def _position_cost(offset: int, value: int, rule: RhythmRule, swung: bool) -> float | None:
+    """The notation cost of an onset `offset` ticks into a beat of `value`
+    ticks: the beat 0, an eighth, a sixteenth, a triplet eighth of a quarter
+    beat; None for any other position."""
+    if offset == 0:
+        return 0.0
+    fine = rule.cost_swung_fine if swung else 0.0
+    if offset % EIGHTH == 0:
+        return rule.cost_eighth
+    if offset % SIXTEENTH == 0:
+        return rule.cost_sixteenth + fine
+    if value == QUARTER and offset % TRIPLET == 0:
+        return rule.cost_triplet + fine
+    return None
+
+
+def _is_triplet(tick: int, grid: _Grid) -> bool:
+    offset = tick - grid.starts[grid.beat_of_tick(tick)]
+    return offset % SIXTEENTH != 0
+
+
+def _swung(tick: float, grid: _Grid, ratio: float) -> float:
+    """A quarter beat's sounded position mapped so its offbeat eighth, heard
+    at `ratio` of the beat, is written at the half."""
+    i = grid.beat_of_tick(tick)
+    if ratio <= 0.5 or grid.values[i] != QUARTER:
+        return tick
+    f = (tick - grid.starts[i]) / QUARTER
+    written = 0.5 * f / ratio if f <= ratio else 0.5 + 0.5 * (f - ratio) / (1 - ratio)
+    return grid.starts[i] + written * QUARTER
+
+
+def _place_phrase(sounded: list[float], grid: _Grid, rule: RhythmRule, swing: float) -> list[int]:
+    """The written ticks of one phrase's onsets (sounded ticks, offset
+    removed and swing mapped): the cheapest strictly increasing choice, at
+    least a sixteenth apart, of timing error plus notation cost."""
+    options: list[list[tuple[int, float]]] = []
+    for x in sounded:
+        i = grid.beat_of_tick(x)
+        reach = rule.search_beats * grid.values[i]
+        sigma = rule.sigma_beats * grid.values[i]
+        found = []
+        for b in range(grid.beat_of_tick(x - reach), grid.beat_of_tick(x + reach) + 1):
+            start, value = grid.starts[b], grid.values[b]
+            for offset in range(0, value, SIXTEENTH if value % SIXTEENTH == 0 and value != QUARTER else 1):
+                tick = start + offset
+                if abs(tick - x) > reach or tick >= grid.total:
+                    continue
+                cost = _position_cost(offset, value, rule, swing > 0.5 and value == QUARTER)
+                if cost is not None:
+                    found.append((tick, ((tick - x) / sigma) ** 2 + cost))
+        options.append(found)
+    best: list[dict[int, tuple[float, int | None]]] = []
+    for n, found in enumerate(options):
+        here: dict[int, tuple[float, int | None]] = {}
+        if n == 0:
+            here = {tick: (cost, None) for tick, cost in found}
+        else:
+            for tick, cost in found:
+                chosen: tuple[float, int | None] = (float("inf"), None)
+                for before, (total, _) in best[-1].items():
+                    gap = tick - before
+                    if gap < SIXTEENTH:
+                        continue
+                    beat = grid.values[grid.beat_of_tick(before)]
+                    step = 0.0
+                    if gap < EIGHTH:
+                        step += rule.cost_sixteenth_gap
+                    elif gap % EIGHTH and gap < rule.dotted_below_beats * beat:
+                        step += rule.cost_dotted_gap
+                    if grid.beat_of_tick(before) == grid.beat_of_tick(tick) and \
+                            before != grid.starts[grid.beat_of_tick(before)] and \
+                            tick != grid.starts[grid.beat_of_tick(tick)] and \
+                            _is_triplet(before, grid) != _is_triplet(tick, grid):
+                        step += rule.cost_mixed_beat
+                    step += rule.gap_weight * ((gap - (sounded[n] - sounded[n - 1])) /
+                                               (rule.sigma_gap_beats * beat)) ** 2
+                    if total + step < chosen[0]:
+                        chosen = (total + step, before)
+                if chosen[1] is not None:
+                    here[tick] = (chosen[0] + cost, chosen[1])
+        if not here:        # nothing fits (too dense, or past the grid): a sixteenth after the cheapest
+            if n == 0:
+                here = {max(0, min(grid.total - 1, round(sounded[0] / SIXTEENTH) * SIXTEENTH)): (rule.cost_forced, None)}
+            else:
+                before = min(best[-1], key=lambda t: best[-1][t][0])
+                here = {before + SIXTEENTH: (best[-1][before][0] + rule.cost_forced, before)}
+        best.append(here)
+    tick = min(best[-1], key=lambda t: (best[-1][t][0], t))
+    placed = []
+    for here in reversed(best):
+        placed.append(tick)
+        tick = here[tick][1]
+    return placed[::-1]
+
+
+def _units(lines: list[dict[str, Any]], low: int, high: int) -> list[dict[str, Any]]:
+    """The sung units of timed lyrics lines inside [low, high): each word's
+    syllables, or the word where it gives none; `first` marks a line's
+    first unit."""
+    units = []
+    for line in sorted(lines, key=lambda l: (l["start_sample"], l["line"])):
+        first = True
+        for word in line.get("words", []):
+            for syllable in word.get("syllables") or [None]:
+                span = syllable or word
+                if low <= span["start_sample"] < high:
+                    units.append({"line": line["line"], "word": word["word"],
+                                  **({"syllable": syllable["syllable"]} if syllable else {}),
+                                  "start": span["start_sample"], "end": span["end_sample"], "first": first})
+                first = False
+    units.sort(key=lambda u: u["start"])
+    return units
+
+
+def _align(units: list[dict[str, Any]], onsets: list[int], rule: RhythmRule, rate: int) -> list[int | None]:
+    """Each unit's chord (strictly increasing), or None where skipping it is
+    cheaper: a dynamic programme over units, keeping the cheapest states."""
+    sigma, window = rule.syllable_sigma_s * rate, rule.syllable_window_s * rate
+    states: dict[int, float] = {-1: 0.0}
+    back: list[dict[int, tuple[float, int, bool]]] = []
+    for unit in units:
+        here: dict[int, tuple[float, int, bool]] = {}
+        ordered = sorted(states.items())
+        prefix, low_cost, low_key = [], float("inf"), -1
+        for key, cost in ordered:
+            if cost < low_cost:
+                low_cost, low_key = cost, key
+            prefix.append((key, low_cost, low_key))
+        keys = [key for key, _, _ in prefix]
+        for chord in range(bisect_right(onsets, unit["start"] - window - 1), len(onsets)):
+            if onsets[chord] > unit["start"] + window:
+                break
+            at = bisect_right(keys, chord - 1) - 1
+            if at < 0:
+                continue
+            _, cost, key = prefix[at]
+            error = (onsets[chord] - unit["start"]) / sigma
+            total = cost + min(error * error, rule.syllable_cap)
+            if total < here.get(chord, (float("inf"),))[0]:
+                here[chord] = (total, key, False)
+        for key, cost in states.items():
+            if cost + rule.syllable_skip < here.get(key, (float("inf"),))[0]:
+                here[key] = (cost + rule.syllable_skip, key, True)
+        kept = sorted(here.items(), key=lambda item: (item[1][0], item[0]))[:int(rule.syllable_states)]
+        here = dict(kept)
+        back.append(here)
+        states = {key: value[0] for key, value in here.items()}
+    key = min(states, key=lambda k: (states[k], k))
+    chosen: list[int | None] = [None] * len(units)
+    for n in range(len(units) - 1, -1, -1):
+        _, before, skipped = back[n][key]
+        chosen[n] = None if skipped else key
+        key = before
+    return chosen
+
+
+def _fill(units: list[dict[str, Any]], chosen: list[int | None], chords: list[dict[str, Any]],
+          rule: RhythmRule, rate: int, counts: dict[str, int]) -> None:
+    """Give every skipped unit a note: split the chord sounding at its start,
+    or add one at its neighbours' pitch, marked `from`."""
+    for n, unit in enumerate(units):
+        if chosen[n] is not None:
+            continue
+        t = unit["start"]
+        low = max((c for c in chosen[:n] if c is not None), default=-1)
+        high = min((c for c in chosen[n + 1:] if c is not None), default=len(chords))
+        margin = rule.split_margin_s * rate
+        hit = next((j for j in range(max(0, low), high)
+                    if chords[j]["onset"] + margin <= t <= chords[j]["offset"] - margin), None)
+        if hit is not None and (hit != low or t - chords[hit]["onset"] > rule.split_min_s * rate):
+            old = chords[hit]
+            new = {**old, "onset": t, "notes": list(old["notes"]), "pitches": list(old["pitches"]),
+                   "from": "syllable split"}
+            old["offset"] = t
+            chords.insert(hit + 1, new)
+            at = hit + 1
+            counts["syllables_split"] += 1
+        else:
+            near = [chords[j]["pitches"][-1] for j in (low, high) if 0 <= j < len(chords)]
+            if not near:
+                counts["syllables_unplaced"] += 1
+                continue
+            pitch = near[0]         # the note before it carries on; else the note after
+            at = max(bisect_right([c["onset"] for c in chords], t), low + 1)
+            following = chords[at]["onset"] if at < len(chords) else t + int(0.4 * rate)
+            offset = int(max(t + rule.inferred_min_s * rate,
+                             min(unit["end"], following - rule.inferred_gap_s * rate)))
+            if at > 0 and chords[at - 1]["offset"] > t:
+                chords[at - 1]["offset"] = max(chords[at - 1]["onset"] + 1, t)
+            chords.insert(at, {"onset": t, "offset": offset, "pitches": [pitch], "notes": [], "marks": [],
+                               "folded": 0, "from": "syllable inferred"})
+            counts["syllables_inferred"] += 1
+        for m in range(len(chosen)):
+            if chosen[m] is not None and chosen[m] >= at:
+                chosen[m] += 1
+        chosen[n] = at
+
+
+def _fold_octaves(chords: list[dict[str, Any]], rule: RhythmRule, rate: int) -> int:
+    """Move a single note an octave when it lies far from the median of its
+    neighbours and the octave brings it near; returns how many moved."""
+    folded = 0
+    onsets = [c["onset"] for c in chords]
+    reach = rule.octave_context_s * rate
+    for _ in range(int(rule.octave_passes)):
+        for i, chord in enumerate(chords):
+            if len(chord["pitches"]) != 1:
+                continue
+            low = bisect_right(onsets, chord["onset"] - reach - 1)
+            high = bisect_right(onsets, chord["onset"] + reach)
+            context = sorted(chords[j]["pitches"][-1] for j in range(low, high) if j != i)
+            if len(context) < rule.octave_min_context:
+                continue
+            middle = len(context) // 2
+            median = context[middle] if len(context) % 2 else (context[middle - 1] + context[middle]) / 2
+            distance = chord["pitches"][0] - median
+            octave = 12 if distance > 0 else -12
+            if abs(distance) >= rule.octave_from_st and \
+                    abs(distance - octave) <= abs(distance) - rule.octave_gain_st and \
+                    0 <= chord["pitches"][0] - octave <= 127:
+                chord["pitches"] = [chord["pitches"][0] - octave]
+                chord["folded"] -= octave
+                folded += 1
+    return folded
+
+
+def _median(values: list[float]) -> float:
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    return ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def _onset_offset(onsets: list[int], grid: _Grid, rule: RhythmRule) -> int:
+    """The recording's constant onset offset from the eighth grid, in samples:
+    the median of each onset's distance from its nearest eighth, removed when
+    large enough and clamped."""
+    distances = []
+    for onset in onsets:
+        tick = grid.tick(onset)
+        i = grid.beat_of_tick(tick)
+        nearest = grid.starts[i] + round((tick - grid.starts[i]) / EIGHTH) * EIGHTH
+        if abs(tick - nearest) <= rule.offset_within_beats * grid.values[i]:
+            distances.append(onset - grid.sample(nearest))
+    if len(distances) < rule.offset_min_onsets:
+        return 0
+    median = _median(distances)
+    if abs(median) < rule.offset_min_s * grid.rate:
+        return 0
+    limit = rule.offset_max_s * grid.rate
+    return int(round(max(-limit, min(limit, median))))
+
+
+def _swing(ticks: list[float], grid: _Grid, rule: RhythmRule) -> tuple[float, float | None]:
+    """Where offbeat onsets sit in quarter beats, and the swing ratio used:
+    that position when it is a swung eighth's, else 0.5 (straight)."""
+    positions = []
+    for tick in ticks:
+        i = grid.beat_of_tick(tick)
+        if grid.values[i] == QUARTER:
+            f = (tick - grid.starts[i]) / QUARTER
+            if rule.offbeat_from <= f <= rule.offbeat_to:
+                positions.append(f)
+    if len(positions) < rule.swing_min_onsets:
+        return 0.5, None
+    found = _median(positions)
+    return (found if rule.swing_min <= found <= rule.swing_max else 0.5), found
+
+
+def _eighth_at_or_after(tick: float, after: int) -> int:
+    return max(int(round(tick / EIGHTH)) * EIGHTH, after + EIGHTH)
+
+
+def written_rhythm(notes: list[dict[str, Any]], meter_payload: dict[str, Any], *, sample_rate: int,
+                   layer: int = 0, lyrics: list[list[dict[str, Any]]] | None = None,
+                   version: str = "2") -> dict[str, Any]:
+    """Sounded notes written on a meter's beat grid, as a musician would
+    write them. `notes` are notes as a notes claim holds them (or a tune's),
+    at `sample_rate`; `meter_payload` a checked timed meter claim's payload;
+    `lyrics` the `lines` of timed lyrics claims of the same recording, whose
+    syllables are put on notes and whose line ends and words say where
+    phrases end. Without lyrics, phrases end at silences.
+
+    Notes starting within `chord_within_s` are one chord. A note keeps the
     articulation its claim writes. Notes outside the meter's beats are left
-    out and counted, never moved (INV-24). Returns {rule, written,
-    left_out}; `written` items are `{kind, position, duration, bar, at}`
-    with, for a chord, its notes' indices, pitches, onset, sounded share,
-    and articulation, and for a rest its boundary."""
+    out and counted, never moved (INV-24); so is a chord the grid has no
+    room for. Returns {rule, feel, offbeat_position, onset_offset_samples,
+    clef, clef_basis, written, left_out, counts}; `written` items are `{kind,
+    position, duration, bar, at}` with, for a chord, its notes' indices
+    (none for a note given to a syllable no note carried), its written
+    `pitches` (with `folded`, the semitones an octave fold added), onset,
+    sounded share, articulation, and where they apply `from`, `lyric`
+    ({line, word, syllable, extend}) and `melisma`; for a rest its
+    boundary."""
     if version not in RHYTHM_RULES:
         raise NotesError(f"no written rhythm rule has version {version}")
     rule = RHYTHM_RULES[version]
+    rate = sample_rate
     beats, bar_starts, end = beat_grid(meter_payload, layer)
+    grid = _Grid(beats, end, rate)
     lines = [line for claim in (lyrics or []) for line in claim]
-    inside = [(i, n) for i, n in enumerate(notes) if beats[0].sample <= n["onset_sample"] < end]
+    inside = sorted(((i, n) for i, n in enumerate(notes) if beats[0].sample <= n["onset_sample"] < end),
+                    key=lambda pair: (pair[1]["onset_sample"], pair[1]["pitch"]))
     left_out = len(notes) - len(inside)
-    groups: list[tuple[Fraction, list[tuple[int, dict[str, Any]]]]] = []
-    for index, note in sorted(inside, key=lambda pair: (pair[1]["onset_sample"], pair[1]["pitch"])):
-        at = _snap(_written_at(note["onset_sample"], beats, end), beats, rule.divisions)
-        if groups and groups[-1][0] == at:
-            groups[-1][1].append((index, note))
-        else:
-            groups.append((at, [(index, note)]))
+    counts = {"octave_folded": 0, "syllables": 0, "syllables_on_notes": 0, "syllables_split": 0,
+              "syllables_inferred": 0, "syllables_unplaced": 0}
 
-    def place(position: Fraction) -> dict[str, Any]:
+    chords: list[dict[str, Any]] = []
+    for index, note in inside:
+        if chords and note["onset_sample"] - chords[-1]["onset"] <= rule.chord_within_s * rate:
+            chord = chords[-1]
+            chord["notes"].append(index)
+            chord["pitches"].append(note["pitch"])
+            chord["offset"] = max(chord["offset"], note["offset_sample"])
+            chord["marks"] = sorted(set(chord["marks"]) | set(note.get("articulation", [])))
+        else:
+            chords.append({"onset": note["onset_sample"], "offset": note["offset_sample"], "notes": [index],
+                           "pitches": [note["pitch"]], "marks": sorted(note.get("articulation", [])), "folded": 0})
+    for chord in chords:
+        chord["pitches"].sort()
+    counts["octave_folded"] = _fold_octaves(chords, rule, rate)
+
+    units = _units(lines, beats[0].sample, end)
+    counts["syllables"] = len(units)
+    chosen: list[int | None] = []
+    if units and chords:
+        chosen = _align(units, [c["onset"] for c in chords], rule, rate)
+        _fill(units, chosen, chords, rule, rate, counts)
+    elif units:
+        counts["syllables_unplaced"] = len(units)
+    unit_of = {chord: n for n, chord in enumerate(chosen) if chord is not None}
+
+    clef, basis = "treble", {"below_treble_staff": "0", "above_treble_8vb_staff": "0"}
+    if not chords:
+        return {"rule": rule.describe(), "feel": "straight", "offbeat_position": None, "onset_offset_samples": 0,
+                "clef": clef, "clef_basis": basis, "written": [], "left_out": left_out, "counts": counts}
+
+    shift = _onset_offset([c["onset"] for c in chords], grid, rule)
+    sounded = [grid.tick(c["onset"] - shift) for c in chords]
+    swing, offbeat = _swing(sounded, grid, rule)
+    sounded = [_swung(t, grid, swing) for t in sounded]
+
+    line_starts = [line["start_sample"] for line in lines if not line.get("words")]
+    phrase = [True] * len(chords)
+    for i in range(1, len(chords)):
+        before, here = chords[i - 1], chords[i]
+        gap = here["onset"] - max(c["offset"] for c in chords[max(0, i - 4):i])
+        unit = units[unit_of[i]] if i in unit_of else None
+        near = rule.line_start_near_s * rate
+        phrase[i] = bool((unit is not None and unit["first"])
+                         or any(before["offset"] - near <= s <= here["onset"] + near for s in line_starts)
+                         or gap >= rule.phrase_gap_beats * grid.beat_seconds(before["offset"]) * rate
+                         or gap >= rule.phrase_silence_s * rate)
+    ticks: list[int] = []
+    starts = [i for i in range(len(chords)) if phrase[i]] + [len(chords)]
+    for a, z in zip(starts, starts[1:]):
+        ticks += _place_phrase(sounded[a:z], grid, rule, swing)
+    for i in range(1, len(ticks)):
+        if ticks[i] <= ticks[i - 1]:
+            ticks[i] = ticks[i - 1] + SIXTEENTH
+    keep = [i for i in range(len(chords)) if ticks[i] < grid.total]
+    left_out += sum(len(chords[i]["notes"]) for i in range(len(chords)) if ticks[i] >= grid.total)
+    counts["syllables_on_notes"] = sum(1 for i in keep if i in unit_of)
+    counts["syllables_unplaced"] += sum(1 for i in unit_of if ticks[i] >= grid.total)
+
+    def place(tick: int) -> dict[str, Any]:
+        position = Fraction(tick, TICKS)
         if not bar_starts:
             return {"bar": None, "at": _length(position)}
         bar = max(0, bisect_right(bar_starts, position) - 1)
         return {"bar": bar, "at": _length(position - bar_starts[bar])}
 
+    def span(start: int, stop: int) -> dict[str, Any]:
+        return {"position": _length(Fraction(start, TICKS)), "duration": _length(Fraction(stop - start, TICKS)),
+                **place(start)}
+
     written: list[dict[str, Any]] = []
-    for number, (at, chord) in enumerate(groups):
-        onset = chord[0][1]["onset_sample"]
-        offset = max(n["offset_sample"] for _, n in chord)
-        if number + 1 < len(groups):
-            next_at, next_onset = groups[number + 1][0], groups[number + 1][1][0][1]["onset_sample"]
-        else:
-            next_at = _snap(_written_at(offset, beats, end), beats, rule.divisions)
-            next_onset = max(offset, onset + 1)
-        step = beats[max(0, bisect_right([b.position for b in beats], at) - 1)].value / rule.divisions
-        if next_at <= at:
-            next_at = at + step
-        marks = sorted({m for _, n in chord for m in n.get("articulation", [])})
-        share = Fraction(min(offset, next_onset) - onset, max(next_onset - onset, 1))
+    last_syllable: dict[str, Any] | None = None
+    for n, i in enumerate(keep):
+        chord, k = chords[i], ticks[i]
+        onset, offset = chord["onset"], chord["offset"]
+        following = keep[n + 1] if n + 1 < len(keep) else None
+        marks = set(chord["marks"])
         rest = None
-        silence = (offset, next_onset)
-        if number + 1 < len(groups) and next_onset - offset >= rule.rest_beats * _beat_samples(offset, beats, end):
-            boundary = _boundary(onset, silence, lines)
-            if boundary is not None:
-                note_end = _snap(_written_at(offset, beats, end), beats, rule.divisions)
-                note_end = min(max(note_end, at + step), next_at)
-                if note_end < next_at:
-                    rest = {"kind": "rest", "position": _length(note_end), "duration": _length(next_at - note_end),
-                            **place(note_end), "boundary": boundary}
-                    next_at = note_end
-        if rest is None and number + 1 < len(groups) and share < rule.staccato_below and "staccato" not in marks \
-                and "staccatissimo" not in marks:
-            marks = sorted(set(marks) | {"staccato"})
-        written.append({"kind": "chord", "notes": [i for i, _ in chord], "pitches": [n["pitch"] for _, n in chord],
-                        "onset_sample": onset, "position": _length(at), "duration": _length(next_at - at),
-                        **place(at), "sounded_share": _decimal_text(share), "articulation": marks})
+        if following is None:
+            stop = min(grid.total, _eighth_at_or_after(grid.tick(offset - shift), k))
+            next_onset = max(offset, onset + 1)
+        else:
+            stop, next_onset = ticks[following], chords[following]["onset"]
+            gap = next_onset - offset
+            beat_s = grid.beat_seconds(offset)
+            boundary = _boundary(onset, (offset, next_onset), lines) if gap > 0 else None
+            if boundary is not None and (gap >= rule.rest_beats * beat_s * rate or
+                                         (gap >= rule.breath_rest_beats * beat_s * rate and
+                                          gap >= rule.breath_rest_s * rate)):
+                end_tick = min(_eighth_at_or_after(grid.tick(offset - shift), k), stop)
+                if stop - end_tick >= EIGHTH:
+                    rest = {"kind": "rest", **span(end_tick, stop), "boundary": boundary}
+                    written_s = (grid.sample(end_tick) + shift - onset) / rate
+                    beat_ticks = grid.values[grid.beat_of_tick(k)]
+                    if end_tick - k >= rule.tenuto_min_beats * beat_ticks and \
+                            (offset - onset) / rate >= rule.tenuto_min_share * written_s:
+                        marks.add("tenuto")
+                    stop = end_tick
+            if rest is None:
+                sounded_s = (offset - onset) / rate
+                beat_ticks = grid.values[grid.beat_of_tick(k)]
+                if gap > 0 and stop - k >= rule.staccato_min_beats * beat_ticks and \
+                        sounded_s <= rule.staccato_max_s and \
+                        sounded_s <= rule.staccato_max_share * (next_onset - onset) / rate and \
+                        not marks & {"staccatissimo", "tenuto"}:
+                    marks.add("staccato")
+        share = Fraction(max(0, min(offset, next_onset) - onset), max(next_onset - onset, 1))
+        item: dict[str, Any] = {"kind": "chord", "notes": chord["notes"], "pitches": chord["pitches"],
+                                "onset_sample": onset, **span(k, stop), "sounded_share": _decimal_text(share),
+                                "articulation": sorted(marks)}
+        if chord["folded"]:
+            item["folded"] = chord["folded"]
+        if chord.get("from"):
+            item["from"] = chord["from"]
+        if i in unit_of:
+            unit = units[unit_of[i]]
+            last_syllable = item["lyric"] = {key: unit[key] for key in ("line", "word", "syllable") if key in unit}
+        elif last_syllable is not None and n > 0 and not phrase[i] and \
+                onset - chords[keep[n - 1]]["offset"] < rule.melisma_gap_s * rate:
+            last_syllable["extend"] = True
+            item["melisma"] = True
+        else:
+            last_syllable = None
+        written.append(item)
         if rest is not None:
             written.append(rest)
-    return {"rule": rule.describe(), "written": written, "left_out": left_out}
+            last_syllable = None
+
+    sung = [c for c in (chords[i] for i in keep)]
+    total = sum(c["offset"] - c["onset"] for c in sung) or 1
+    below = Fraction(sum(c["offset"] - c["onset"] for c in sung if c["pitches"][-1] < LOW_TREBLE), total)
+    above = Fraction(sum(c["offset"] - c["onset"] for c in sung if c["pitches"][-1] >= HIGH_TREBLE_8VB), total)
+    if below >= rule.parameters["clef_below_share"] and above <= rule.parameters["clef_above_share"]:
+        clef = "treble-8vb"
+    basis = {"below_treble_staff": _decimal_text(below), "above_treble_8vb_staff": _decimal_text(above)}
+    return {"rule": rule.describe(), "feel": "swing" if swing > 0.5 else "straight",
+            "offbeat_position": None if offbeat is None else _decimal_text(Fraction(offbeat).limit_denominator(10000)),
+            "onset_offset_samples": shift, "clef": clef, "clef_basis": basis, "written": written,
+            "left_out": left_out, "counts": counts}

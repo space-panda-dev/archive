@@ -13,8 +13,10 @@ Each is a question World answers by a rule its own module states
 module only reads the request and the records, as `world/views.py` does,
 and its registry joins that one, so a view is listed exactly when it is
 answered. Every answer is computed when asked and never stored (S-18). Each
-view is version 1; the written rhythm's thresholds are its version's
-(`notes.RHYTHM_RULES`); `world/views.py` says how versions change.
+view is version 1 but the written rhythm and the bass line, version 2: their
+parameters are the written rhythm rule's of that version
+(`notes.RHYTHM_RULES`), and version 1, which no release served, is replaced;
+`world/views.py` says how versions change.
 
 Records are given as `world/views.py` takes them, with `object_id`, `at`,
 `supersedes`, and an Entity's `kind` as well. Standard library only.
@@ -38,6 +40,7 @@ MELODY_SPANS = ("archive.claim/melody_spans", "1")
 NOTES = ("archive.claim/notes", "1")
 TIMED_LYRICS = ("archive.claim/timed_lyrics", "1")
 METER_TIMED = {("archive.claim/meter_layers", "1"), ("archive.claim/meter_layers", "2")}
+RHYTHM = "2"        # the written rhythm and bass line views' version, and their rule's (`notes.RHYTHM_RULES`)
 APPROVALS = {("archive.transition/publication_approval", "1"), ("archive.transition/publication_approval", "2")}
 LEAD_SHEET = ("archive.claim/lead_sheet", "1")
 TRACKLIST = ("archive.claim/tracklist", "1")
@@ -349,7 +352,7 @@ def _is_person(world: list[dict[str, Any]], agent: Any) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# archive.view/written_rhythm version 1
+# archive.view/written_rhythm version 2
 
 
 def _rhythm_subject(subject: Any) -> dict[str, Any]:
@@ -370,9 +373,10 @@ def _rhythm_parameters(params: dict[str, Any], caller: str | None) -> dict[str, 
             "lyrics": [_pin(pin, f"parameters lyrics {n}") for n, pin in enumerate(lyrics)]}
 
 
-def _write(world: list[dict[str, Any]], sounded: list[dict[str, Any]], params: dict[str, Any]) -> dict[str, Any]:
+def _write(world: list[dict[str, Any]], sounded: list[dict[str, Any]], sample_rate: int,
+           params: dict[str, Any]) -> dict[str, Any]:
     """Sounded notes written on the named meter's grid, or why nothing is."""
-    rule = notes.RHYTHM_RULES["1"].describe()
+    rule = notes.RHYTHM_RULES[RHYTHM].describe()
     if params["meter"] is None:
         return {"rule": rule, "written": [], "left_out": len(sounded),
                 "why": "no meter claim was named, so there is no beat grid to write on"}
@@ -380,31 +384,36 @@ def _write(world: list[dict[str, Any]], sounded: list[dict[str, Any]], params: d
     lines = [_record(world, pin, {TIMED_LYRICS}, "a timed lyrics claim")["payload"]["lines"]
              for pin in params["lyrics"]]
     try:
-        return notes.written_rhythm(sounded, meter["payload"], layer=params["layer"], lyrics=lines)
+        return notes.written_rhythm(sounded, meter["payload"], sample_rate=sample_rate, layer=params["layer"],
+                                    lyrics=lines, version=RHYTHM)
     except (ValueError, KeyError, TypeError, IndexError) as error:
         raise _fail(ValueError(str(error))) from None
 
 
 def written_rhythm(world: list[dict[str, Any]], subject: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
-    """Sounded notes written on a meter's beat grid (ADR 0086, amended
-    2026-10-19): a notes claim's notes, or a recording's tune. Each note
-    fills to the next onset; a short one is marked staccato; a rest is
-    written only for a long silence at a lyric line's end or a breath."""
+    """Sounded notes written on a meter's beat grid as a musician writes them
+    (ADR 0086, amended 2026-10-19; `notes.written_rhythm`): a notes claim's
+    notes, or a recording's tune. Onsets are placed by timing error plus a
+    notation cost, each note fills to the next onset, a rest is written
+    only at a lyric line's end or a breath, staccato only for a clearly
+    detached note, and every syllable of the named timed lyrics is sung on
+    a note."""
     if "notes" in subject:
         claim = _record(world, subject["notes"], {NOTES}, "a notes claim")
-        sounded = claim["payload"]["notes"]
+        sounded, rate = claim["payload"]["notes"], claim["payload"]["sample_rate"]
         left: list[dict[str, Any]] = []
     else:
+        spans = _record(world, subject["melody_spans"], {MELODY_SPANS}, "a melody spans claim")
         played = tune(world, {"melody_spans": subject["melody_spans"]}, {})
-        sounded, left = played["notes"], played["left_out"]
-    answer = _write(world, sounded, params)
+        sounded, left, rate = played["notes"], played["left_out"], spans["payload"]["sample_rate"]
+    answer = _write(world, sounded, rate, params)
     if left:
         answer["tune_left_out"] = left
     return answer
 
 
 # ---------------------------------------------------------------------------
-# archive.view/bass_line version 1
+# archive.view/bass_line version 2
 
 
 def _bass_subject(subject: Any) -> dict[str, Any]:
@@ -421,9 +430,10 @@ def _bass_parameters(params: dict[str, Any], caller: str | None) -> dict[str, An
 def bass_line(world: list[dict[str, Any]], subject: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
     """A recording's bass line, a line of its own (ADR 0086, amended
     2026-10-19): every head notes claim about the recording that says
-    `bass`, each written by the written rhythm view for a bass clef staff,
-    never merged into a melody. Nothing is chosen between two asserters'
-    bass lines; both are listed."""
+    `bass`, each written by the written rhythm view's rule for a bass clef
+    staff, never merged into a melody. No lyrics: its phrases end at its
+    silences. Nothing is chosen between two asserters' bass lines; both are
+    listed."""
     if not any(r.get("object_id") == subject["source"] for r in world):
         raise ViewError("view_subject_not_found", f"no record is of {subject['source']}")
     lines = []
@@ -432,9 +442,11 @@ def bass_line(world: list[dict[str, Any]], subject: dict[str, Any], params: dict
         sources = [ref["id"] for ref in claim.get("refs", []) if ref.get("role") == "source"]
         if payload.get("bass") is not True or sources != [subject["source"]]:
             continue
+        written = _write(world, payload["notes"], payload["sample_rate"], params)
+        written.pop("clef_basis", None)          # the staff is the bass clef's, never suggested
         lines.append({"claim": claim["revision_id"], "agent": claim.get("agent"), "part": payload.get("part"),
                       **({"range": payload["range"]} if "range" in payload else {}),
-                      "clef": "bass", **_write(world, payload["notes"], params)})
+                      **written, "clef": "bass"})
     return {"lines": lines}
 
 
@@ -514,10 +526,10 @@ VIEWS: dict[tuple[str, str], dict[str, Any]] = {
     (VIEW + "track_credits", "1"): {
         "question": "Which credits apply to this recording, and why?",
         "subject": _recording_subject, "parameters": _no_parameters},
-    (VIEW + "written_rhythm", "1"): {
+    (VIEW + "written_rhythm", RHYTHM): {
         "question": "How are these sounded notes written on this meter's beats?",
         "subject": _rhythm_subject, "parameters": _rhythm_parameters},
-    (VIEW + "bass_line", "1"): {
+    (VIEW + "bass_line", RHYTHM): {
         "question": "What is this recording's bass line, written on its beats?",
         "subject": _bass_subject, "parameters": _bass_parameters},
     (VIEW + "may_publish", "1"): {
@@ -534,7 +546,7 @@ HANDLERS: dict[tuple[str, str], Callable[[list, dict, dict], dict]] = {
     (VIEW + "played_bars", "1"): played_bars,
     (VIEW + "tune", "1"): tune,
     (VIEW + "track_credits", "1"): track_credits,
-    (VIEW + "written_rhythm", "1"): written_rhythm,
-    (VIEW + "bass_line", "1"): bass_line,
+    (VIEW + "written_rhythm", RHYTHM): written_rhythm,
+    (VIEW + "bass_line", RHYTHM): bass_line,
     (VIEW + "may_publish", "1"): may_publish,
 }

@@ -16,7 +16,8 @@ from world.world import build_projection, rebuild_store
 
 
 def request(name, subject, **parameters):
-    return {"view": "archive.view/" + name, "version": "1", "subject": subject, "parameters": parameters}
+    version = record_views.RHYTHM if name in ("written_rhythm", "bass_line") else "1"
+    return {"view": "archive.view/" + name, "version": version, "subject": subject, "parameters": parameters}
 
 
 class RecordViews(unittest.TestCase):
@@ -134,19 +135,22 @@ class RecordViews(unittest.TestCase):
         bass = self.pin("archive.claim/notes", "world-w-notes-bass")
         meter = self.pin("archive.claim/meter_layers", "world-fixture-meter-placed")
         written = self.answer(request("written_rhythm", {"notes": bass}, meter=meter))["answer"]
-        # Two 4/4 bars of 2000 samples: a beat is 500. The first note sounds
-        # 200 of its 500 and is staccato, keeping its written accent; the
-        # long silence after the second, with no lyrics, is a breath.
+        # Two 4/4 bars of 2000 samples: a beat is 500. Each note is written
+        # on its beat, keeping its written accent; none sounds briefly enough
+        # to be staccato; the long silence after the second, with no lyrics,
+        # is a breath, and the note before it ends on its nearest eighth.
         self.assertEqual([(w["kind"], w["duration"], w.get("articulation"), w.get("boundary"))
                           for w in written["written"]],
-                         [("chord", {"count": 1, "unit": 4}, ["accent", "staccato"], None),
-                          ("chord", {"count": 3, "unit": 16}, [], None),
-                          ("rest", {"count": 17, "unit": 16}, None, "breath"),
-                          ("chord", {"count": 3, "unit": 16}, [], None)])
-        self.assertEqual(written["rule"]["version"], "1")
+                         [("chord", {"count": 1, "unit": 4}, ["accent"], None),
+                          ("chord", {"count": 1, "unit": 4}, [], None),
+                          ("rest", {"count": 1, "unit": 1}, None, "breath"),
+                          ("chord", {"count": 1, "unit": 4}, [], None)])
+        self.assertEqual(written["rule"]["version"], "2")
         lyrics = self.pin("archive.claim/timed_lyrics", "world-fixture-timed-lyrics")
         sung = self.answer(request("written_rhythm", {"notes": bass}, meter=meter, lyrics=[lyrics]))["answer"]
         self.assertEqual(sung["written"][2]["boundary"], "line_end")     # the lyric's first line ends there
+        self.assertEqual([w.get("lyric") for w in sung["written"]],      # each word on a note
+                         [{"line": 1, "word": 1}, {"line": 1, "word": 2}, None, None])
         nothing = self.answer(request("written_rhythm", {"notes": bass}))["answer"]
         self.assertEqual((nothing["written"], nothing["left_out"]), ([], 3))
         self.assertIn("no meter", nothing["why"])
@@ -161,6 +165,8 @@ class RecordViews(unittest.TestCase):
         self.assertIn(bass["revision_id"], claims)
         self.assertNotIn(other["revision_id"], claims)
         self.assertEqual(claims[bass["revision_id"]]["clef"], "bass")
+        self.assertNotIn("clef_basis", claims[bass["revision_id"]])         # a bass staff, never suggested
+        self.assertEqual(claims[bass["revision_id"]]["rule"]["version"], record_views.RHYTHM)
         self.assertEqual(len(claims[bass["revision_id"]]["written"]), 4)
 
     def test_may_publish_answers_on_the_day_asked(self):
