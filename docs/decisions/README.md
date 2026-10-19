@@ -92,3 +92,4 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0075](0075-stems-as-content.md) | Stems are separated outside the archive's environment, and a stem is content to every extractor |
 | [0077](0077-chord-stacks-and-meter.md) | Chords are stacks and meter is a timeline, each asserted by someone |
 | [0078](0078-contributions.md) | A contribution names who did what, in which role, to how much of the music |
+| [0079](0079-extractor-runs-travel-through-spool.md) | An extractor run travels through Spool, and its files come back as result attachments (proposed) |

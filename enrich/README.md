@@ -18,7 +18,7 @@ here writes a record: Door decides every revision.
 | [`windows.py`](windows.py) | The whole-recording window search: candidate pass, regions, snapping, claim rounds, and decisions, a standalone tool ([ADR 0072](../docs/decisions/0072-windowed-work-matches.md)) |
 | [`calibrate_windows.py`](calibrate_windows.py) | Checks the window matcher's thresholds against an archive's accepted occurrences; proposes nothing |
 | [`enrich.py`](enrich.py) | The `enrich` command that runs a tool against an archive's records |
-| [`bank.py`](bank.py), [`extract.py`](extract.py), [`extractors/`](extractors/frames/extractor.json) | The feature bank's format and reader, the runner that fills it, and the extractors (one table under [`extract.py`: the feature bank](#extractpy-the-feature-bank) says what each writes): `frames`, `loudness-r128`, `rhythm`, `tonal`, `chords`, `melody`, `structure`, `quality`, `colour`, and `stems` ([ADR 0073](../docs/decisions/0073-feature-bank.md), [ADR 0074](../docs/decisions/0074-extractor-contract.md), [ADR 0075](../docs/decisions/0075-stems-as-content.md)) |
+| [`bank.py`](bank.py), [`extract.py`](extract.py), [`remote.py`](remote.py), [`extractors/`](extractors/frames/extractor.json) | The feature bank's format and reader, the runner that fills it, the same run through Spool on another machine (proposed [ADR 0079](../docs/decisions/0079-extractor-runs-travel-through-spool.md)), and the extractors (one table under [`extract.py`: the feature bank](#extractpy-the-feature-bank) says what each writes): `frames`, `loudness-r128`, `rhythm`, `tonal`, `chords`, `melody`, `structure`, `quality`, `colour`, and `stems` ([ADR 0073](../docs/decisions/0073-feature-bank.md), [ADR 0074](../docs/decisions/0074-extractor-contract.md), [ADR 0075](../docs/decisions/0075-stems-as-content.md)) |
 | [`hue_range.py`](hue_range.py) | The `colour` extractor's centroid hue limits taken from a set of recordings' `frames` entries, printed as a `--config` ([its README](extractors/colour/README.md#the-hue-range)) |
 | [`media.py`](media.py), [`waveform.py`](waveform.py), [`derived.py`](derived.py) | Derived media, a standalone tool that never touches an archive; the waveform peaks' format and decode; and the layout ([ADR 0069](../docs/decisions/0069-derived-media.md)) |
 | [`requirements.txt`](requirements.txt) | The libraries: numpy (detector, matchers, derived media) and scipy (numpy matcher) |
@@ -725,7 +725,7 @@ Versions, needs, and outputs by kind are listed together in
 | `quality` | Python, Essentia 2.1b6.dev1438, ffmpeg | how well a recording was captured, from one more decode at the stream's own rate with every channel: EBU R 128 `integrated`, `loudness_range`, and `true_peak`; `sample_peak`, `full_scale_samples`, `clipped_seconds`, `dc_offset`, `whole_correlation`, `anti_phase`, `false_stereo`, `noise_floor`, `snr`, `bandwidth`, `band_limited`; per channel, `clipping` (flat tops at full scale, or long ones at the recording's own peak), `overs` (0 dBTP reached between samples, 4x oversampled), `gaps`, `noise_bursts` (spans) and `clicks`, `discontinuities` (events), each of the last three kept only where it stands out from the transients around it or (clicks and discontinuities) stands alone among the steps of the 150 ms around it, so that drums and limiters on a finished master are not defects while crackle still is; `hum` (spans: narrow, steady peaks at 50 or 60 Hz and their harmonics that persist through the quiet or sound in it); on the `frames` grid, `correlation` and `peak_db` |
 | `melody` | Python, Essentia 2.1b6.dev1438 | on a grid of 2,048-sample frames every 128 (the `hop_size` stride) at 44,100 Hz: `pitch` (MELODIA, in 2-cent bins), `confidence`, `voiced`, `midi`, `cents`, `level_db`; `notes` spans; scalars `voiced_fraction`, `melodia_voiced_fraction`, `loud_db`, `gate_db`, `reference_hz`, `samples`. The predominant melody of whatever audio is the content (`--from stems/vocals` for the sung line); `voiced` is MELODIA's decision kept where a contour is mostly above a gate relative to the recording's loud level |
 | `colour` | Python, numpy, ffmpeg | for each waveform pixel of [`media.py`](media.py)'s derived-media peaks (about 10 ms; the peaks stay derived media and are not copied into the bank): series `colour` (`u8` red, green, blue, on grid `peaks`) coloured from `frames/centroid` (hue between limits that [`hue_range.py`](hue_range.py) can take from a set of recordings) or `frames/hpcp` (hue) and `frames/rms_db` (lightness), interpolated to each pixel's centre; file `palette` (the mapping and legend stops, JSON, fields in [its README](extractors/colour/README.md)); file `preview` (a PNG of the whole recording). The mapping is its parameters |
-| `stems` | Python under `${demucs-python}` (Demucs 4.1.0, PyTorch), ffmpeg | `vocals`, `drums`, `bass`, `other`: 44.1 kHz stereo 16-bit FLAC from pinned htdemucs weights; `levels` (each stem's RMS every 4,096 samples); each stem's `_rms_db`, `_peak_db`, `_clamped`; `mix_rms_db`, `samples`, `seconds` ([ADR 0075](../docs/decisions/0075-stems-as-content.md)) |
+| `stems` | Python under `${demucs-python}` (Demucs 4.1.0, PyTorch), ffmpeg | `vocals`, `drums`, `bass`, `other`: 44.1 kHz stereo 16-bit FLAC from pinned htdemucs weights; `levels` (each stem's RMS every 4,096 samples); each stem's `_rms_db`, `_peak_db`, `_clamped`; `mix_rms_db`, `samples`, `seconds` ([ADR 0075](../docs/decisions/0075-stems-as-content.md)). On the CPU, or on Apple's GPU with `apply.device` `mps` (another key) |
 
 `--from stems/vocals` measures a stem as content: every extractor runs on it
 unchanged, keyed by the stem's own digest and filed with the recording, after
@@ -736,6 +736,53 @@ configures Demucs's interpreter (`--program demucs-python=<path>`, or
 The format is [docs/feature-bank.md](../docs/feature-bank.md); adding an
 extractor is [docs/adding-an-extractor.md](../docs/adding-an-extractor.md).
 Entries are readable by their owner only: a stem carries the recording.
+
+### `remote.py`: the same run on another machine, through Spool
+
+```sh
+enrich/remote.py put <extractor> --content <file> --bank <dir> --spool "<spool> --dir <spool dir>" [--config <file>]
+enrich/remote.py work [--config <file>]          # the Spool capability program, on the worker
+enrich/remote.py collect --bank <dir> --spool "<spool> --dir <spool dir>" [--config <file>]
+```
+
+For a machine that runs an extractor better than the bank's own, such as
+`stems` on a Mac's GPU (proposed
+[ADR 0079](../docs/decisions/0079-extractor-runs-travel-through-spool.md);
+the task format is in [the feature bank format](../docs/feature-bank.md#through-spool)).
+`put` puts one task per missing entry, keyed as a local run would be, with
+the content attached; `collect` takes the files each result names, checks
+them as the runner checks its own, files the entry, and collects the task.
+Both use the spool locally (`--spool` is the command and its leading
+arguments; prefix `sudo -u <account>` for a spool another account owns),
+because Spool's remote `put` carries no attachments. They need Spool 0.0.4
+(result attachments) on the spool's host and on the worker, and a grant made
+with `--max-result-bytes` (a recording-hour's stems are about 1 GB). Only an
+extractor that needs no other feature travels.
+
+On the worker, `work` runs under any Python 3 (it uses only the standard
+library), with a configuration naming the programs as `extract.py`'s does;
+the parameters come from the task. The bank's side names the device:
+
+```json
+{"parameters": {"stems": {"apply": {"shifts": 0, "split": true, "overlap": "0.25", "segment": null,
+  "device": "mps", "normalise": "chunk mean and standard deviation, as demucs.api.Separator.separate_tensor"}}}}
+```
+
+and the worker's Spool configuration offers the capability:
+
+```json
+{"max_concurrent": 1, "renew_seconds": 30,
+ "env": {"PATH": "<ffmpeg's directory>:/usr/bin:/bin", "HOME": "<home, for the model cache>", "HF_HUB_OFFLINE": "1"},
+ "capabilities": {"archive-extractor.stems@1": {
+   "exec": "<Demucs's python>", "args": ["<archive>/enrich/remote.py", "work", "--config", "<worker.json>"],
+   "timeout_seconds": 7200, "max_payload_bytes": 65536, "max_output_bytes": 1048576,
+   "max_result_attachment_bytes": 2000000000}}}
+```
+
+where `worker.json` is `{"programs": {"demucs-python": "<Demucs's python>"}}`.
+`spool work --via "ssh <spool host>" --config <that file> --follow` then
+separates whatever the bank puts. The worker's copy of the extractor must be
+the bank's version; a task it would key otherwise is refused for good.
 
 ## Test
 
@@ -748,3 +795,8 @@ python -m unittest discover -s enrich -p 'test_*.py'
 The tests make their audio with numpy and ffmpeg's lavfi sources. Without
 ffmpeg the derived-media tests are skipped, unless
 `ARCHIVE_REQUIRE_INTEGRATION` is set.
+
+`test_remote.py` runs the worker program and the runner for real against a
+stand-in spool; with `ARCHIVE_TEST_SPOOL` naming a Spool 0.0.4 binary it
+also puts, works, and collects through Spool itself. No test needs a GPU or
+PyTorch: `ARCHIVE_TEST_DEMUCS_PYTHON` adds real separation on the CPU.

@@ -252,6 +252,38 @@ a regular file with one link: a symbolic or hard link is refused, since the
 runner makes every file owner-only and a hard link would change the linked
 file (perhaps the content itself). The runner replaces `result.json` with `entry.json` when it files the entry.
 
+## Through Spool
+
+An extractor that needs no other feature can run on another machine as a
+Spool task ([ADR 0079](decisions/0079-extractor-runs-travel-through-spool.md),
+proposed); [`enrich/remote.py`](../enrich/remote.py) is the reference
+requester, worker program, and collector. The task's ID is `bank-` and the
+key's 64 hexadecimal digits, its capability `archive-extractor.<id>@<version>`,
+its one attachment the content, and its payload:
+
+```json
+{"contract": "archive-extractor-task/1",
+ "extractor": {"id": "stems", "version": "1"},
+ "key": "sha256:...",
+ "parameters": {...every declared parameter, with the operator's values...},
+ "input": {"digest": "sha256:...", "media_type": "audio/flac"}}
+```
+
+A worker computes the key from its own manifest and these parameters and
+refuses the task (exit 65) unless it is the one named. It runs the extractor
+as the runner does, leaves each output's file in `outputs/` named by its
+SHA-256 (Spool's result attachments, Spool 0.0.4), and answers:
+
+```json
+{"contract": "archive-extractor-task-result/1", "entry": {...the entry.json it filed...}}
+```
+
+The bank files the entry only after taking each file by the digest the entry
+gives it, under the name its own manifest gives that output, and checking
+the directory as a result of its own run (the key, every file's size and
+digest, shapes, and finite values). The entry it files is the worker's
+`entry.json` unchanged.
+
 ## The shipped extractors
 
 The extractors in [`enrich/extractors/`](../enrich/extractors/), each after
@@ -312,3 +344,7 @@ what each changed:
   default range to 500 Hz to 4 kHz, which
   [`enrich/hue_range.py`](../enrich/hue_range.py) can replace with a
   collection's own.
+
+`stems` 1 runs on the CPU, or on Apple's GPU when `apply.device` is `mps`: a
+parameter, and so another key. Its stems there differ from the CPU's by at
+most one 16-bit step in a few samples in a thousand.
