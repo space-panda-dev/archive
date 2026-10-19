@@ -340,6 +340,55 @@ class MatchWindowsClaims(MatchWindowsCommand):
         self.assertEqual(one["windows"], two["windows"])
         self.assertTrue(any(w["proposed"] for w in one["windows"]))
 
+    def hashed_while(self, *extra: str, measure=None) -> tuple[int, dict, list[str]]:
+        """The command run here, and the Artifacts whose bytes it hashed."""
+        hashed, real = [], enrich.content_path
+
+        def content_path(root, artifact):
+            hashed.append(artifact["object_id"])
+            return real(root, artifact)
+        with patch.object(enrich, "content_path", content_path), \
+                patch.object(cover.Comparer, "measure_corpus", measure or cover.Comparer.measure_corpus):
+            code, answer = self.enrich_here(*extra)
+        return code, answer, hashed
+
+    def test_a_second_run_reads_the_corpus_profiles_and_answers_the_same(self) -> None:
+        cache = self.tmp / "profile-cache"
+        code, plain, _ = self.hashed_while("--dry-run")
+        self.assertEqual((code, plain["status"]), (0, "predicted"), plain)
+        code, first, hashed = self.hashed_while("--dry-run", "--profile-cache", str(cache))
+        self.assertEqual((code, first["status"]), (0, "predicted"), first)
+        # Anchor: the first run measured the corpus and kept it.
+        self.assertIn(self.pin("x1")["object_id"], hashed)
+        self.assertEqual(len(list(cache.glob("*/*/entry.json"))), 4)
+        code, again, hashed = self.hashed_while("--dry-run", "--profile-cache", str(cache), measure=_bomb)
+        self.assertEqual((code, again["status"]), (0, "predicted"), again)
+        # Only the searched recording's own bytes are read.
+        self.assertEqual(hashed, [self.pin("query")["object_id"]])
+        self.assertTrue(any(w["proposed"] for w in plain["windows"]))
+        for answer in (first, again):
+            for field in ("windows", "skipped", "hits", "regions"):
+                self.assertEqual(answer.get(field), plain.get(field), field)
+
+    def test_each_corpus_file_is_hashed_once_however_many_occurrences_cut_it(self) -> None:
+        code, answer, hashed = self.hashed_while("--dry-run")
+        self.assertEqual((code, answer["status"]), (0, "predicted"), answer)
+        # Anchor: the short occurrence was measured (and refused), so two
+        # occurrences, y1's and the short one, needed y1's file.
+        self.assertIn(self.pin("short-occurrence")["object_id"], [s.get("occurrence") for s in answer["skipped"]])
+        self.assertEqual(len(hashed), len(set(hashed)))
+        self.assertEqual(sorted(hashed), sorted({self.pin(k)["object_id"] for k in ("query", "x1", "x2", "y1")}))
+
+    def test_a_damaged_cache_entry_refuses_the_run(self) -> None:
+        cache = self.tmp / "profile-cache"
+        code, first = self.enrich("--dry-run", "--profile-cache", str(cache))
+        self.assertEqual((code, first["status"]), (0, "predicted"), first)
+        damaged = next(cache.glob("*/*/profiles.bin"))
+        damaged.write_bytes(damaged.read_bytes()[:-4])
+        code, answer = self.enrich("--dry-run", "--profile-cache", str(cache))
+        self.assertEqual(code, 1, answer)
+        self.assertIn("is damaged", answer["detail"])
+
     def test_a_window_crosses_a_talk_span_inside_a_song(self) -> None:
         a, b = self.p[0] + 10 * RATE, self.p[0] + 13 * RATE
         crossing = self.suggest([self.spans[0], (self.p[0], a, "music"), (a, b, "talk"), (b, self.p[1], "music"),
