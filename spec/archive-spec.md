@@ -1,6 +1,6 @@
 # Archive Specification
 
-Version: 0.0.8
+Version: 0.0.9
 Status: draft
 
 This is the contract an archive is governed by. It is copied into every archive
@@ -274,8 +274,9 @@ record directly in `records/` and every content path directly in
 `content/sha256/`. Specification 0.0.6 changes only the layout: it installs
 the same contract bundles and the same core context as 0.0.5. Specification
 0.0.7 keeps layout `archive/2` and the 0.0.6 core context and adds contract
-bundles (D-15), and specification 0.0.8 keeps them again and adds one more
-(D-16).
+bundles (D-15), specification 0.0.8 keeps them again and adds one more
+(D-16), and specification 0.0.9 keeps layout `archive/2`, adds two Entity
+kinds to the core context, and adds five bundles (D-17).
 
 `archive.json` MUST contain only the layout version, archive identifier, and
 governing specification identifier. Its layout MUST be `archive/2`. The specification directory and contract
@@ -568,7 +569,12 @@ supply identity. The core context MUST define `person`, `organisation`,
 accept that later kind. Specification 0.0.5 also defines `recording_session`,
 a local kind with no Library Reference Model equivalent; a context for an
 earlier version MUST NOT accept it. Specifications 0.0.6, 0.0.7, and 0.0.8
-keep the 0.0.5 kinds and core context unchanged. This Archive-owned term does not establish an RDF
+keep the 0.0.5 kinds and core context unchanged. Specification 0.0.9 also
+defines `release` (one edition of music as issued, after MusicBrainz's
+Release) and `recording` (after MusicBrainz's Recording), mapped to
+`arch:Release` and `arch:Recording`; a context for an earlier version MUST NOT
+accept them, and their identities are opaque, never a title or an external
+identifier. This Archive-owned term does not establish an RDF
 equivalence between Archive and MusicBrainz Work types or settle the open LRM
 mapping question.
 
@@ -596,7 +602,7 @@ match. Missing, changed, unknown, or remotely dependent contracts MUST be
 refused on admission and reported as incomplete on read.
 
 Adding contracts outside a specification release, domain assessment
-contracts, enrichment contracts other than those of D-15 and D-16, and current rules
+contracts, enrichment contracts other than those of D-15 to D-17, and current rules
 remain unsupported until separately defined.
 
 ### D-9. Transition proposals and dispatch (ADR 0028)
@@ -1173,6 +1179,751 @@ rules: an unknown or malformed rule MUST be refused when the bundle loads,
 and a generic schema success MUST NOT bypass it. The existing
 `x-archive-ordered-distinct-refs` rule keeps the `corpus` references
 distinct. This section defines no `current` rule.
+
+### D-17. Chords, meter, contributions, and band membership (ADRs 0077 and 0078)
+
+Specification 0.0.9 installs version 1 of `archive.claim/chord_stacks`,
+`archive.claim/chord_sequence`, `archive.claim/meter_layers`,
+`archive.claim/contribution`, and `archive.claim/band_membership`. Every 0.0.8 contract bundle remains
+installed with its exact bytes, and the layout is `archive/2`. The core
+context is that of 0.0.8 with the Entity kinds `release` and `recording`
+added (D-8); it drops and changes no term, so the release is additive and a
+0.0.8 archive adopts it by the specification upgrade of D-15. None of these
+contracts defines a `current` rule, and none is current by kind or asserter.
+
+**Asserted from the audio and from documents.** A chord stacks or meter
+layers Claim is one asserter's reading of one audio stream. It MUST pin
+exactly one `source` Artifact revision, the audio whose samples it counts;
+exactly one `stream`, an audio stream version 1 Claim revision whose
+`artifact` reference pins that same Artifact object and revision; at most one
+`run`, a derivation run version 1 Claim revision, which a machine's claim
+pins; at most one `document`, the Artifact revision of an outside source's
+bytes; and zero to eight `analysed` Artifact revisions, audio the asserter
+analysed in place of the source, such as a separated stem, whose samples
+share the source's timeline. A chord stacks Claim MAY also pin at most one
+`sequence`, a chord sequence version 1 Claim revision an alignment placed on
+this recording, and zero to eight `corrects`, chord stacks version 1 Claim
+revisions it corrects. Its payload's `sample_rate` MUST equal the stream's,
+and no span, bar, or beat ends after the stream's `sample_count`. A claim
+that pins a `document` or a `sequence` MUST state `alignment`, an object of
+`method` (1 to 200 characters; `manual` for a person's placement) and
+optional integer `max_error_samples` of at least 0, and any other MUST NOT. A
+claim that pins a `document` MAY give `document_url`, an `http` or
+`https` URL of at most 2,000 characters drawn from the characters RFC 3986
+allows (letters, digits, and `-._~:/?#[]@!$&'()*+,;=%`); and its spans or
+bars MAY carry a `locator`, the document's own numbering. A claim that pins
+no document MUST NOT have either. The URL says where the document came
+from; the pinned Artifact is the evidence. Pitch classes are integers 0 to
+11, C = 0, in twelve-tone equal temperament.
+
+**Chord stacks.** The payload MUST contain `sample_rate` and `spans`, and MAY
+contain `part` (1 to 100 characters naming the part described),
+`weight_scale` (1 to 200 characters naming what weights mean), `hold_rule`,
+`alignment`, and `document_url`. `spans` holds 1 to 10,000 objects of
+integer `start_sample` and `end_sample`, `readings`, and optional `end`,
+`entry`, and `locator` (integer `bar` and optional `beat`, each at least 1);
+every span MUST satisfy `0 <= start_sample < end_sample` and start at or
+after the previous span's end. A span's `end` is `asserted` (also when
+absent) or `held`: the source gave only a start and the asserter held the
+chord by its own rule, which the payload states as `hold_rule` (1 to 500
+characters) exactly when some span is held. A held end is weaker evidence of
+where the chord stops than an asserted one. A span's `entry`, allowed only
+when the claim pins a `sequence`, is the 0-based position of the sequence
+entry it was placed from and MUST be a position in that sequence's
+`entries`. `readings` holds 1 to 16 distinct readings in the asserter's order
+of preference, each exactly one of:
+
+- a stack: `bass`, a pitch class; `tones`, 0 to 12 pitch classes in strictly
+  ascending order, the classes sounding above the bass; optional `root`, a
+  pitch class that need not sound; optional `uncertain`, 1 to 4 groups of
+  `pitch_classes` (strictly ascending) and `present`, where `exactly_one`
+  needs 2 to 12 classes and `maybe` 1 to 12; and optional `voicing`, 1 to 32
+  strictly ascending MIDI note numbers 0 to 127. No uncertain class is the
+  bass, a tone, or in another group, and the groups are in ascending order of
+  their `pitch_classes` compared item by item. The voicing's lowest note's
+  class is the bass, and the classes of its other notes include every tone
+  and nothing outside the tones and uncertain classes;
+- no chord: `no_chord`, which MUST be `true`;
+- text only: the source's `text`, uninterpreted.
+
+Every form MAY carry `text` (1 to 200 characters, the source's symbol
+verbatim), and carries `weight`, exact decimal text, exactly when the payload
+states `weight_scale`. A weight compares readings within its own claim only.
+A chord stacks claim MAY also pin at most one `contribution`, a contribution
+version 1 Claim revision saying whose part the stacks describe (ADR 0078).
+A correction is its own claim citing in `corrects` what it corrects; it
+replaces nothing. Names (Harte strings, lead-sheet symbols) are computed
+views and never stored.
+
+**Chord sequences.** A chord sequence Claim holds chords in a source's
+written order with no times. It MUST pin at least one of a `work`, a
+`musical_work` Entity revision, and a `document` Artifact revision, and MAY
+pin at most one `run` and zero to eight `corrects`, chord sequence version 1
+Claim revisions it corrects. It pins no audio and its payload has no
+`sample_rate` and no `alignment`. Its payload MUST contain `entries` and MAY
+contain `part`, `weight_scale`, `document_url` (with a document only), and
+`repeats`. `entries` holds 1 to 10,000 objects of `readings` (as a chord
+span's, with the same weight rule), optional `section` (1 to 100 characters,
+the source's section label), and optional `locator` (with a document only):
+an integer `line` and at most one of integer `word`, `syllable`, or `column`,
+each at least 1. Located entries MUST NOT go backwards in the document,
+compared by line and then by the word, syllable, or column given (0 when
+none). `repeats` holds 0 to 1,000 objects of integer `first` and `last`,
+positions in `entries` with `first <= last`, and `times` (2 to 999); they
+MUST be distinct and in order of `first`, the longer of two with the same
+`first` first, and two ranges MUST nest or be apart, never cross. A sequence
+holds no lyric text: a locator points into the document.
+
+**Meter layers.** The payload MUST contain `sample_rate` and `layers`, and MAY
+contain `modulations`, `alignment`, and `document_url`. `layers` holds 1 to 8
+simultaneous layers, none primary, each of optional `label` (1 to 100
+characters), optional `role` (`written` or `felt`; a claim with a `felt`
+layer MUST have a `written` one), and exactly one of `bars` and `beats`. A
+bars layer holds 1 to 10,000 bars, each starting at or after the end of the
+previous bar of its layer. A bar has integer `start_sample` and `end_sample`
+with `0 <= start_sample < end_sample`, `numerator` (1 to 64), `denominator`
+(1, 2, 4, 8, 16, 32, or 64), optional `grouping` (1 to 64 positive integers
+whose sum MUST equal the numerator), optional `beats`, and optional `locator`
+(integer `bar` of at least 1). A bar's `beats` holds the sample of each
+counted beat, one per group, or one per numerator unit without a grouping;
+the first MUST equal the bar's `start_sample`, each MUST be later than the
+one before, and every one MUST be before `end_sample`. A beat-only layer
+asserts no meter: `beats` holds 1 to 100,000 strictly ascending samples, each
+before the stream's `sample_count`; optional `downbeats` holds strictly
+ascending samples, each one of its `beats`; and optional `beat_unit` is a
+note value. `modulations` holds 0 to 10,000 links, distinct and in ascending
+order of `layer` and then `bar`, each of `layer` (the 0-based position of a
+bars layer), `bar` (the 0-based position of a bar in it, at least 1), and
+`kind`: an `equation` has `before` and `after` note values (`denominator`
+from the bar denominators and optional `dots`, 0 to 2), saying the note value
+before under the old tempo lasts as long as the one after under the new; a
+`regrouping` has `pulse_before` and `pulse_after`, note values of different
+lengths, saying every note value keeps its length and the felt pulse moves.
+The bar before `bar` MUST end where `bar` starts. The tempo ratio and tempo
+are derived, never stored.
+
+**Contributions.** A contribution Claim says that one contributor took part in
+one role in one scope. Its payload MUST contain `scope`, one of `work`,
+`release`, `recording`, `span`, or `channel`, and MAY contain `role`, `text`
+(1 to 1,000 characters, the credit exactly as the source printed it),
+`credited_as` (1 to 200 characters, the contributor's name as printed), the
+scope's fields below, and the asserter fields. It MAY pin at most one
+`contributor`, a `person` or `organisation` Entity revision, at most one
+`run`, a derivation run version 1 Claim revision, and at most one `document`
+Artifact revision. A `recording` reference MAY pin a `recording` Entity, an
+audio selection version 2 or song occurrence version 2 Claim, or an Artifact.
+Each scope MUST have exactly these other references and fields:
+
+| Scope | References | Payload |
+|---|---|---|
+| `work` | one `work`, a `musical_work` Entity | nothing more |
+| `release` | one `release`, a `release` Entity | nothing more |
+| `recording` | one `recording` | nothing more |
+| `span` | one `source` Artifact, one `stream`, at most one `recording` | `sample_rate` and `spans` |
+| `channel` | one `source` Artifact, at most one `stream`, at most one `recording` | optional `channel` |
+
+A `stream` MUST be an audio stream version 1 Claim revision whose `artifact`
+reference pins the `source` Artifact object and revision. A span claim's
+`sample_rate` MUST equal the stream's, and its `spans` hold 1 to 1,000 objects
+of exactly integer `start_sample` and `end_sample`, ordered and not
+overlapping as chord spans are, none ending after the stream's
+`sample_count`. A span claim that pins a document MUST state `alignment` as a
+chord stacks claim does, and one that pins none MUST NOT. A channel claim's
+`channel` is the 1-based index of one channel of a multichannel source; it
+needs a `stream`, and it MUST NOT exceed the stream's `channel_count`.
+
+`role` is a closed object of `type`, the name of a MusicBrainz relationship
+type for the entity pair the scope implies (artist-work for `work`;
+artist-release and place-release for `release`; artist-recording and
+place-recording for `recording` and `span`; artist-recording for `channel`),
+or the local type `label` for a release; and, as the type takes them,
+`attributes` (its MusicBrainz attributes, distinct and in ascending code
+point order), `instruments` (1 to 16 distinct
+`https://musicbrainz.org/instrument/<MBID>` URIs, required by `instrument`),
+and `vocals` (distinct MusicBrainz vocal attributes). The types, their
+attributes, and which take instruments or vocals are the scheme at the end
+of this section; the contract bundle encodes the same table. A claim without
+`role` MUST keep `text`. A claim without a contributor MUST have a `role`. A
+place type (`recorded at`, `mastered at`, and the other `... at` types) MUST
+NOT pin a contributor and MUST keep `text`, because no Entity kind holds a
+place yet. `credited_as` needs a contributor or a place type.
+
+The asserter fields are `confidence` (exactly `scale`, 1 to 200 characters,
+and `value`, exact decimal text, compared only within its scale),
+`document_url` (as above), `retrieved_at` (an RFC 3339 full date or a UTC
+instant with a `Z` suffix whose date is a calendar date), and `locator` (1 to
+200 characters naming where in the document). A claim that pins a document
+MUST keep `text`; `document_url`, `retrieved_at`, and `locator` MUST NOT
+appear without a document.
+
+**Band membership.** A band membership Claim states MusicBrainz's `member of
+band`. It MUST pin exactly one `band`, an `organisation` Entity revision, and
+exactly one `member`, a `person` Entity revision of a different object, and
+at most one `run` and one `document` as a contribution does. Its payload is a
+closed object that MAY contain `attributes` (distinct, ascending, from
+`additional`, `eponymous`, and `original`), `instruments` and `vocals` as a
+role's, `from` and `to` (partial dates `YYYY`, `YYYY-MM`, or `YYYY-MM-DD`
+naming a calendar year, month, or day from year 1), `ended` (`true`, only
+when `to` is absent), `text`, `credited_as`, and the asserter fields with the
+same document rules. The last day `to` can mean MUST NOT be before the first
+day `from` can mean.
+
+**Terms.** Each fragment maps its payload fields and roles; `run` maps to
+`prov:wasGeneratedBy`, `document` to `dcterms:source`, and `stream` to
+`arch:measured_stream` as in D-15. The roles `source`, `release`, and
+`recording` are core terms (`release` and `recording` also name the new
+kinds); no fragment redefines a core term. A meter layer's `role` and a
+modulation's `kind` are payload fields that share a core term's name; no
+fragment maps them.
+
+**JSON Schema keywords.** The evaluator also supports `anyOf` (a nonempty
+array of schemas, at least one of which the instance satisfies), `not`,
+`if` with optional `then` and `else` (a `then` or `else` without `if` is
+refused when the bundle loads), and `uniqueItems` (JSON equality). Every
+branch is evaluated, so a malformed branch is refused even when it does not
+decide the result.
+
+**Profile rules.** A path is a nonempty array of payload field names; every
+array met on the way is entered element by element, and a missing field
+reaches nothing.
+
+- A reference target rule MAY name `any`, at least two distinct ordinary
+  target rules, none naming `any` or `many`; a reference in the role MUST
+  satisfy one of them. `many` then belongs to the role.
+- `x-archive-sequential-spans` and `x-archive-target-measure` MAY name
+  `within`, a payload array whose elements each hold the rule's `payload`
+  array; order is then checked within each element, never across them,
+  every element of every such array is measured, and an element without the
+  array has nothing to check. They and
+  `x-archive-same-subject` MAY say `optional: true` (no other value): the
+  span rules then apply only when the payload has their array (or `within`),
+  and the same-subject rule only when the record has a reference in `role`.
+- `x-archive-ascending-items` names `paths` to arrays whose items MUST be all
+  integers in strictly ascending numeric order, or all strings in strictly
+  ascending code point order.
+- `x-archive-pitch-stacks` names a `payload` path to readings and the fields
+  `bass`, `tones`, `uncertain`, `classes`, and `voicing`; every reading with
+  a `bass` MUST satisfy the uncertain-tone and voicing rules stated for chord
+  stacks above.
+- `x-archive-bar-beats` names a `payload` path to bars and the fields
+  `start`, `end`, `numerator`, `grouping`, and `beats`, with the grouping and
+  beat rules stated for meter layers above.
+- `x-archive-metric-modulations` names the `payload` array of links, the
+  `layers` and `bars` arrays they address, the bar's `start` and `end`, the
+  link's `layer`, `bar`, `pulse_before`, and `pulse_after`, and the note
+  value's `denominator` and `dots`: each link addresses a bar after the first
+  of a layer that holds `bars`, that bar's predecessor ends where it starts,
+  links are distinct and in order, and a link with both pulses names note
+  values of different lengths.
+- `x-archive-subset` names a `payload` path and two arrays, `items` and
+  `of`: on every object reached, each value of `items` MUST be a value of
+  `of`.
+- `x-archive-target-samples` names a `role` whose one reference pins a Claim,
+  that Claim's integer `count`, and `paths`: every integer reached MUST be
+  less than `count`.
+- `x-archive-target-index` names a `role` whose one reference pins a Claim, a
+  `path`, and that Claim's payload array `array`: when the path reaches an
+  integer, the record MUST pin exactly one reference in `role`, and every
+  integer reached MUST be a position in `array`.
+- `x-archive-document-order` names a payload array `payload`, its elements'
+  `locator`, the locator's integer `line`, and `within`, the fields compared
+  after the line: elements with a locator MUST NOT go backwards.
+- `x-archive-nested-ranges` names a payload array `payload` of ranges with
+  integer `first` and `last` over the positions of the payload array `of`,
+  with the order and nesting rules stated for repeats above.
+- `x-archive-target-bound` names a `role` whose one reference pins a Claim, a
+  payload `field`, and that Claim's payload field `bound`: when the payload
+  has `field`, the record MUST pin exactly one reference in `role`, and
+  `field` MUST NOT exceed `bound`.
+- `x-archive-partial-dates` names payload `fields` whose values, when present,
+  begin with a calendar date written `YYYY`, `YYYY-MM`, or `YYYY-MM-DD` with a
+  year of at least 1 (what follows a `T` is the schema's to check), and
+  optionally `start` and `end`, two of those fields: the last day `end` can
+  mean MUST NOT be before the first day `start` can mean.
+
+Each rule names distinct fields, is closed and root-only like the earlier
+profile rules, and an unknown or malformed rule MUST be refused when the
+bundle loads; a generic schema success MUST NOT bypass it. No earlier
+bundle's rules change meaning: `within`, `optional`, and `any` are new keys.
+
+**The role scheme.** This is the vocabulary a contribution's `role` and a band
+membership's attributes and vocals draw from, as SKOS. Each role type is a
+concept whose notation is its name, in the scheme of its entity pair, and
+`skos:exactMatch` the MusicBrainz relationship type with that identifier, so
+a renamed MusicBrainz type keeps its meaning. `arch:takesAttribute`,
+`arch:takesInstruments`, and `arch:takesVocals` say what each type accepts.
+MusicBrainz's relationship types, attributes, and instruments are CC0 data,
+read from musicbrainz.org on 2026-10-18.
+
+```turtle
+@prefix arch: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix mbrel: <https://musicbrainz.org/relationship/> .
+
+arch:roles-artist-artist a skos:ConceptScheme ; skos:notation "artist-artist" .
+arch:role-artist-artist-member_of_band a skos:Concept ;
+  skos:inScheme arch:roles-artist-artist ;
+  skos:notation "member of band" ;
+  skos:exactMatch mbrel:5be4c609-9afa-4ea0-910b-12ffb71e3821 ;
+  arch:takesAttribute "additional", "eponymous", "original" ;
+  arch:takesInstruments true ;
+  arch:takesVocals true .
+
+arch:roles-artist-recording a skos:ConceptScheme ; skos:notation "artist-recording" .
+arch:role-artist-recording-arranger a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "arranger" ;
+  skos:exactMatch mbrel:22661fb8-cdb7-4f67-8385-b2a8be6c9f0d ;
+  arch:takesAttribute "additional", "associate", "co" .
+arch:role-artist-recording-audio a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "audio" ;
+  skos:exactMatch mbrel:ca8d6d99-b847-439c-b0ec-33d8a1b942bc ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-recording-balance a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "balance" ;
+  skos:exactMatch mbrel:0748fa55-56b5-4ad5-8ce8-15b97f82a0c2 ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-recording-chorus_master a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "chorus master" ;
+  skos:exactMatch mbrel:45115945-597e-4cb9-852f-4e6ba583fcc8 ;
+  arch:takesAttribute "additional", "assistant" .
+arch:role-artist-recording-concertmaster a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "concertmaster" ;
+  skos:exactMatch mbrel:ffeaa74f-8295-45ee-a2f2-7c0cc1f73b1e ;
+  arch:takesAttribute "guest" .
+arch:role-artist-recording-conductor a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "conductor" ;
+  skos:exactMatch mbrel:234670ce-5f22-4fd0-921b-ef1662695c5d ;
+  arch:takesAttribute "additional", "assistant" .
+arch:role-artist-recording-editor a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "editor" ;
+  skos:exactMatch mbrel:40dff87a-e475-4aa6-b615-9935b564d756 ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-recording-engineer a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "engineer" ;
+  skos:exactMatch mbrel:5dcc52af-7064-4051-8d62-7d80f4c3c907 ;
+  arch:takesAttribute "additional", "assistant", "associate", "co", "executive" .
+arch:role-artist-recording-field_recordist a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "field recordist" ;
+  skos:exactMatch mbrel:fc9b963a-29fa-4949-b22a-3bffd2440024 .
+arch:role-artist-recording-instrument a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "instrument" ;
+  skos:exactMatch mbrel:59054b12-01ac-43ee-a618-285fd397e461 ;
+  arch:takesAttribute "additional", "guest", "solo" ;
+  arch:takesInstruments true .
+arch:role-artist-recording-instrument_arranger a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "instrument arranger" ;
+  skos:exactMatch mbrel:4820daa1-98d6-4f8b-aa4b-6895c5b79b27 ;
+  arch:takesAttribute "additional", "associate", "co" ;
+  arch:takesInstruments true .
+arch:role-artist-recording-instrument_technician a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "instrument technician" ;
+  skos:exactMatch mbrel:e88fefc3-042b-4f28-83af-6a79793b630b ;
+  arch:takesInstruments true .
+arch:role-artist-recording-mix a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "mix" ;
+  skos:exactMatch mbrel:3e3102e1-1896-4f50-b5b2-dd9824e46efe ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-recording-orchestrator a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "orchestrator" ;
+  skos:exactMatch mbrel:38fa7405-f9a5-48cb-827a-8ac601933ba0 ;
+  arch:takesAttribute "additional" .
+arch:role-artist-recording-performer a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "performer" ;
+  skos:exactMatch mbrel:628a9658-f54c-4142-b0c0-95f031b544da ;
+  arch:takesAttribute "additional", "guest", "solo" .
+arch:role-artist-recording-performing_orchestra a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "performing orchestra" ;
+  skos:exactMatch mbrel:3b6616c5-88ba-4341-b4ee-81ce1e6d7ebb ;
+  arch:takesAttribute "additional" .
+arch:role-artist-recording-producer a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "producer" ;
+  skos:exactMatch mbrel:5c0ceac3-feb4-41f0-868d-dc06f6e27fc0 ;
+  arch:takesAttribute "additional", "assistant", "associate", "co", "executive" .
+arch:role-artist-recording-programming a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "programming" ;
+  skos:exactMatch mbrel:36c50022-44e0-488d-994b-33f11d20301e ;
+  arch:takesAttribute "additional", "assistant", "associate" ;
+  arch:takesInstruments true .
+arch:role-artist-recording-recording a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "recording" ;
+  skos:exactMatch mbrel:a01ee869-80a8-45ef-9447-c59e91aa7926 ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-recording-remixer a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "remixer" ;
+  skos:exactMatch mbrel:7950be4d-13a3-48e7-906b-5af562e39544 ;
+  arch:takesAttribute "additional", "assistant" .
+arch:role-artist-recording-sound a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "sound" ;
+  skos:exactMatch mbrel:0cd6aa63-c297-42ed-8725-c16d31913a98 ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-recording-vocal a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "vocal" ;
+  skos:exactMatch mbrel:0fdbe3c6-7700-4a31-ae54-b53f06ae1cfa ;
+  arch:takesAttribute "additional", "guest", "solo" ;
+  arch:takesVocals true .
+arch:role-artist-recording-vocal_arranger a skos:Concept ;
+  skos:inScheme arch:roles-artist-recording ;
+  skos:notation "vocal arranger" ;
+  skos:exactMatch mbrel:8a2799e8-a7e2-41ce-a7da-b5f520687216 ;
+  arch:takesAttribute "additional", "associate", "co" ;
+  arch:takesVocals true .
+
+arch:roles-artist-release a skos:ConceptScheme ; skos:notation "artist-release" .
+arch:role-artist-release-arranger a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "arranger" ;
+  skos:exactMatch mbrel:34d5334e-a4c8-4b65-a5f8-bbcc9c81d13d ;
+  arch:takesAttribute "additional", "associate", "co" .
+arch:role-artist-release-art_direction a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "art direction" ;
+  skos:exactMatch mbrel:f3b80a09-5ebf-4ad2-9c46-3e6bce971d1b ;
+  arch:takesAttribute "additional", "assistant" .
+arch:role-artist-release-audio a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "audio" ;
+  skos:exactMatch mbrel:b04848d7-dbd9-4be0-9d8c-13df6d6e40db ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-release-balance a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "balance" ;
+  skos:exactMatch mbrel:97169e5e-c978-486e-a5ea-da353ca9ea42 ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-release-booklet_editor a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "booklet editor" ;
+  skos:exactMatch mbrel:74518a6b-589d-460e-8dd7-a8383851040a .
+arch:role-artist-release-chorus_master a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "chorus master" ;
+  skos:exactMatch mbrel:b9129850-73ec-4af5-803c-1c12b97e25d2 ;
+  arch:takesAttribute "additional", "assistant" .
+arch:role-artist-release-compiler a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "compiler" ;
+  skos:exactMatch mbrel:2f81887a-8674-4d8b-bd48-8bfd4c6fa332 .
+arch:role-artist-release-conductor a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "conductor" ;
+  skos:exactMatch mbrel:9ae9e4d0-f26b-42fb-ab5c-1149a47cf83b ;
+  arch:takesAttribute "additional", "assistant" .
+arch:role-artist-release-copyright a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "copyright" ;
+  skos:exactMatch mbrel:730b5251-7432-4896-8fc6-e1cba943bfe1 .
+arch:role-artist-release-design a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "design" ;
+  skos:exactMatch mbrel:9c02ea37-7680-4fb5-8555-e330c7aa885b ;
+  arch:takesAttribute "additional", "assistant" .
+arch:role-artist-release-editor a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "editor" ;
+  skos:exactMatch mbrel:f30c29d3-a3f1-420d-9b6c-a750fd6bc2aa ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-release-engineer a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "engineer" ;
+  skos:exactMatch mbrel:87e922ba-872e-418a-9f41-0a63aa3c30cc ;
+  arch:takesAttribute "additional", "assistant", "associate", "co", "executive" .
+arch:role-artist-release-graphic_design a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "graphic design" ;
+  skos:exactMatch mbrel:cf43b79e-3299-4b0c-9244-59ea06337107 ;
+  arch:takesAttribute "additional" .
+arch:role-artist-release-illustration a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "illustration" ;
+  skos:exactMatch mbrel:a6029157-d96b-4dc3-9f73-f99f76423d11 ;
+  arch:takesAttribute "additional" .
+arch:role-artist-release-instrument a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "instrument" ;
+  skos:exactMatch mbrel:67555849-61e5-455b-96e3-29733f0115f5 ;
+  arch:takesAttribute "additional", "guest", "solo" ;
+  arch:takesInstruments true .
+arch:role-artist-release-instrument_arranger a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "instrument arranger" ;
+  skos:exactMatch mbrel:18f159bb-44f0-4aef-b198-a4736ad9b659 ;
+  arch:takesAttribute "additional", "associate", "co" ;
+  arch:takesInstruments true .
+arch:role-artist-release-instrument_technician a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "instrument technician" ;
+  skos:exactMatch mbrel:bd780597-0b67-4b97-a4a0-671a70e1182d ;
+  arch:takesInstruments true .
+arch:role-artist-release-lacquer_cut a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "lacquer cut" ;
+  skos:exactMatch mbrel:904e57f3-cbbc-43ab-8798-13e710e400d3 .
+arch:role-artist-release-licensor a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "licensor" ;
+  skos:exactMatch mbrel:eaaf08cf-a698-4e3b-a871-f9570f8fdab1 .
+arch:role-artist-release-liner_notes a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "liner notes" ;
+  skos:exactMatch mbrel:01323b4f-7aba-410c-8c91-cb224b963a40 ;
+  arch:takesAttribute "additional", "translator" .
+arch:role-artist-release-mastering a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "mastering" ;
+  skos:exactMatch mbrel:84453d28-c3e8-4864-9aae-25aa968bcf9e ;
+  arch:takesAttribute "additional", "assistant", "associate", "co", "pre", "re" .
+arch:role-artist-release-mix a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "mix" ;
+  skos:exactMatch mbrel:6cc958c0-533b-4540-a281-058fbb941890 ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-release-orchestrator a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "orchestrator" ;
+  skos:exactMatch mbrel:04e1f0b6-ef40-4168-ba25-42a87729fe09 ;
+  arch:takesAttribute "additional" .
+arch:role-artist-release-performer a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "performer" ;
+  skos:exactMatch mbrel:888a2320-52e4-4fe8-a8a0-7a4c8dfde167 ;
+  arch:takesAttribute "additional", "guest", "solo" .
+arch:role-artist-release-performing_orchestra a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "performing orchestra" ;
+  skos:exactMatch mbrel:23a2e2e7-81ca-4865-8d05-2243848a77bf ;
+  arch:takesAttribute "additional" .
+arch:role-artist-release-phonographic_copyright a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "phonographic copyright" ;
+  skos:exactMatch mbrel:01d3488d-8d2a-4cff-9226-5250404db4dc .
+arch:role-artist-release-photography a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "photography" ;
+  skos:exactMatch mbrel:0b58dc9b-9c49-4b19-bb58-9c06d41c8fbf ;
+  arch:takesAttribute "additional" .
+arch:role-artist-release-producer a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "producer" ;
+  skos:exactMatch mbrel:8bf377ba-8d71-4ecc-97f2-7bb2d8a2a75f ;
+  arch:takesAttribute "additional", "assistant", "associate", "co", "executive" .
+arch:role-artist-release-programming a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "programming" ;
+  skos:exactMatch mbrel:617063ad-dbb5-4877-9ba0-ba2b9198d5a7 ;
+  arch:takesAttribute "additional", "assistant", "associate" ;
+  arch:takesInstruments true .
+arch:role-artist-release-recording a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "recording" ;
+  skos:exactMatch mbrel:023a6c6d-80af-4f88-ae69-f5f6213f9bf4 ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-release-remixer a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "remixer" ;
+  skos:exactMatch mbrel:ac6a86db-f757-4815-a07e-744428d2382b ;
+  arch:takesAttribute "additional", "assistant" .
+arch:role-artist-release-sound a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "sound" ;
+  skos:exactMatch mbrel:271306ca-c77f-4fe0-94bc-dd4b87ae0205 ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-release-transfer a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "transfer" ;
+  skos:exactMatch mbrel:9fe3ca27-f9df-4e06-ab2d-84947f3f897e ;
+  arch:takesAttribute "additional", "assistant", "associate", "co" .
+arch:role-artist-release-vocal a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "vocal" ;
+  skos:exactMatch mbrel:eb10f8a0-0f4c-4dce-aa47-87bcb2bc42f3 ;
+  arch:takesAttribute "additional", "guest", "solo" ;
+  arch:takesVocals true .
+arch:role-artist-release-vocal_arranger a skos:Concept ;
+  skos:inScheme arch:roles-artist-release ;
+  skos:notation "vocal arranger" ;
+  skos:exactMatch mbrel:d7d9128d-e676-4d8f-a353-f48a55a98501 ;
+  arch:takesAttribute "additional", "associate", "co" ;
+  arch:takesVocals true .
+
+arch:roles-artist-work a skos:ConceptScheme ; skos:notation "artist-work" .
+arch:role-artist-work-adapter a skos:Concept ;
+  skos:inScheme arch:roles-artist-work ;
+  skos:notation "adapter" ;
+  skos:exactMatch mbrel:89fff34a-2c51-4068-9709-50d6c6dd3d01 ;
+  arch:takesAttribute "additional" .
+arch:role-artist-work-arranger a skos:Concept ;
+  skos:inScheme arch:roles-artist-work ;
+  skos:notation "arranger" ;
+  skos:exactMatch mbrel:d3fd781c-5894-47e2-8c12-86cc0e2c8d08 ;
+  arch:takesAttribute "additional", "associate", "co" .
+arch:role-artist-work-composer a skos:Concept ;
+  skos:inScheme arch:roles-artist-work ;
+  skos:notation "composer" ;
+  skos:exactMatch mbrel:d59d99ea-23d4-4a80-b066-edca32ee158f ;
+  arch:takesAttribute "additional" .
+arch:role-artist-work-instrument_arranger a skos:Concept ;
+  skos:inScheme arch:roles-artist-work ;
+  skos:notation "instrument arranger" ;
+  skos:exactMatch mbrel:0084e70a-873e-4f7f-b3ff-635b9e863dae ;
+  arch:takesAttribute "additional", "associate", "co" ;
+  arch:takesInstruments true .
+arch:role-artist-work-librettist a skos:Concept ;
+  skos:inScheme arch:roles-artist-work ;
+  skos:notation "librettist" ;
+  skos:exactMatch mbrel:7474ab81-486f-40b5-8685-3a4f8ea624cb ;
+  arch:takesAttribute "additional" .
+arch:role-artist-work-lyricist a skos:Concept ;
+  skos:inScheme arch:roles-artist-work ;
+  skos:notation "lyricist" ;
+  skos:exactMatch mbrel:3e48faba-ec01-47fd-8e89-30e81161661c ;
+  arch:takesAttribute "additional" .
+arch:role-artist-work-orchestrator a skos:Concept ;
+  skos:inScheme arch:roles-artist-work ;
+  skos:notation "orchestrator" ;
+  skos:exactMatch mbrel:0a1771e1-8639-4740-8a43-bdafc050c3da ;
+  arch:takesAttribute "additional" .
+arch:role-artist-work-revised_by a skos:Concept ;
+  skos:inScheme arch:roles-artist-work ;
+  skos:notation "revised by" ;
+  skos:exactMatch mbrel:eeb9c319-9fde-4313-b76d-29db1576aad8 .
+arch:role-artist-work-translator a skos:Concept ;
+  skos:inScheme arch:roles-artist-work ;
+  skos:notation "translator" ;
+  skos:exactMatch mbrel:da6c5d8a-ce13-474d-9375-61feb29039a5 ;
+  arch:takesAttribute "additional" .
+arch:role-artist-work-vocal_arranger a skos:Concept ;
+  skos:inScheme arch:roles-artist-work ;
+  skos:notation "vocal arranger" ;
+  skos:exactMatch mbrel:6a88b92b-8fb5-41b3-aa1f-169ee7e05ed6 ;
+  arch:takesAttribute "additional", "associate", "co" ;
+  arch:takesVocals true .
+arch:role-artist-work-writer a skos:Concept ;
+  skos:inScheme arch:roles-artist-work ;
+  skos:notation "writer" ;
+  skos:exactMatch mbrel:a255bca1-b157-4518-9108-7b147dc3fc68 ;
+  arch:takesAttribute "additional" .
+
+arch:roles-label-release a skos:ConceptScheme ; skos:notation "label-release" .
+arch:role-label-release-label a skos:Concept ;
+  skos:inScheme arch:roles-label-release ;
+  skos:notation "label" .
+
+arch:roles-place-recording a skos:ConceptScheme ; skos:notation "place-recording" .
+arch:role-place-recording-arranged_at a skos:Concept ;
+  skos:inScheme arch:roles-place-recording ;
+  skos:notation "arranged at" ;
+  skos:exactMatch mbrel:ce8dbff2-0f07-45f3-8b7c-2ea40d82cbfe .
+arch:role-place-recording-edited_at a skos:Concept ;
+  skos:inScheme arch:roles-place-recording ;
+  skos:notation "edited at" ;
+  skos:exactMatch mbrel:069c1cf0-a9b2-448e-8486-1eced48b48f9 .
+arch:role-place-recording-engineered_at a skos:Concept ;
+  skos:inScheme arch:roles-place-recording ;
+  skos:notation "engineered at" ;
+  skos:exactMatch mbrel:f845a95e-b2b5-4a94-9645-fc8b031ab0bd .
+arch:role-place-recording-mixed_at a skos:Concept ;
+  skos:inScheme arch:roles-place-recording ;
+  skos:notation "mixed at" ;
+  skos:exactMatch mbrel:11d74801-1493-4a5d-bc0f-4ddc537acddb .
+arch:role-place-recording-produced_at a skos:Concept ;
+  skos:inScheme arch:roles-place-recording ;
+  skos:notation "produced at" ;
+  skos:exactMatch mbrel:6bc3827d-bc20-4621-ae14-9c3707ad140a .
+arch:role-place-recording-programmed_at a skos:Concept ;
+  skos:inScheme arch:roles-place-recording ;
+  skos:notation "programmed at" ;
+  skos:exactMatch mbrel:e9771fa3-57ce-41cd-895f-52e70ced99cd .
+arch:role-place-recording-recorded_at a skos:Concept ;
+  skos:inScheme arch:roles-place-recording ;
+  skos:notation "recorded at" ;
+  skos:exactMatch mbrel:ad462279-14b0-4180-9b58-571d0eef7c51 .
+arch:role-place-recording-remixed_at a skos:Concept ;
+  skos:inScheme arch:roles-place-recording ;
+  skos:notation "remixed at" ;
+  skos:exactMatch mbrel:88183045-b769-48ba-a55c-c58450903241 .
+
+arch:roles-place-release a skos:ConceptScheme ; skos:notation "place-release" .
+arch:role-place-release-edited_at a skos:Concept ;
+  skos:inScheme arch:roles-place-release ;
+  skos:notation "edited at" ;
+  skos:exactMatch mbrel:9b678c30-453a-47c4-8f69-9ba96b2c5e9c .
+arch:role-place-release-engineered_at a skos:Concept ;
+  skos:inScheme arch:roles-place-release ;
+  skos:notation "engineered at" ;
+  skos:exactMatch mbrel:b35aae66-5578-41d1-b34b-1c9b1897ad49 .
+arch:role-place-release-lacquer_cut_at a skos:Concept ;
+  skos:inScheme arch:roles-place-release ;
+  skos:notation "lacquer cut at" ;
+  skos:exactMatch mbrel:e87ae6d1-4453-4e73-aa29-86a6badc1f1d .
+arch:role-place-release-manufactured_at a skos:Concept ;
+  skos:inScheme arch:roles-place-release ;
+  skos:notation "manufactured at" ;
+  skos:exactMatch mbrel:3de9787f-c148-4b4f-b4bf-cb9a2616a092 .
+arch:role-place-release-mastered_at a skos:Concept ;
+  skos:inScheme arch:roles-place-release ;
+  skos:notation "mastered at" ;
+  skos:exactMatch mbrel:5d075afa-6bb8-4327-9528-e3e4d3d68f49 .
+arch:role-place-release-mixed_at a skos:Concept ;
+  skos:inScheme arch:roles-place-release ;
+  skos:notation "mixed at" ;
+  skos:exactMatch mbrel:8ebfc2f6-0ac7-40f6-b03e-67fe3428f5d4 .
+arch:role-place-release-pressed_at a skos:Concept ;
+  skos:inScheme arch:roles-place-release ;
+  skos:notation "pressed at" ;
+  skos:exactMatch mbrel:eabf5903-8467-4329-b905-7504336e8241 .
+arch:role-place-release-produced_at a skos:Concept ;
+  skos:inScheme arch:roles-place-release ;
+  skos:notation "produced at" ;
+  skos:exactMatch mbrel:1c73465d-9bf7-41f4-bcb6-fb1852ffa64c .
+arch:role-place-release-recorded_at a skos:Concept ;
+  skos:inScheme arch:roles-place-release ;
+  skos:notation "recorded at" ;
+  skos:exactMatch mbrel:3b1fae9f-5b22-42c5-a40c-d1e5c9b90251 .
+arch:role-place-release-remixed_at a skos:Concept ;
+  skos:inScheme arch:roles-place-release ;
+  skos:notation "remixed at" ;
+  skos:exactMatch mbrel:32af03cf-8879-4d07-b7c2-68c6cbf060bd .
+
+arch:vocals a skos:ConceptScheme ; skos:notation "vocals" .
+arch:vocal-alto_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "alto vocals" .
+arch:vocal-background_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "background vocals" .
+arch:vocal-baritone_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "baritone vocals" .
+arch:vocal-bass_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "bass vocals" .
+arch:vocal-bass-baritone_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "bass-baritone vocals" .
+arch:vocal-choir_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "choir vocals" .
+arch:vocal-contralto_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "contralto vocals" .
+arch:vocal-countertenor_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "countertenor vocals" .
+arch:vocal-lead_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "lead vocals" .
+arch:vocal-meane_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "meane vocals" .
+arch:vocal-mezzo-soprano_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "mezzo-soprano vocals" .
+arch:vocal-other_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "other vocals" .
+arch:vocal-soprano_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "soprano vocals" .
+arch:vocal-spoken_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "spoken vocals" .
+arch:vocal-tenor_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "tenor vocals" .
+arch:vocal-treble_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "treble vocals" .
+arch:vocal-whistling a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "whistling" .
+```
 
 ## 7. Not yet defined
 

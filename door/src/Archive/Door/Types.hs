@@ -550,8 +550,9 @@ validateEntityPayload specification (Object object) = do
   requireOnly ["kind", "label"] object "entity payload"
   kind <- requiredText "kind" object
   let installedKinds = ["person", "organisation", "software", "model", "process"]
-        <> (if specification `elem` ["archive/0.0.3", "archive/0.0.4", "archive/0.0.5", "archive/0.0.6", "archive/0.0.7", "archive/0.0.8"] then ["musical_work"] else [])
-        <> (if specification `elem` ["archive/0.0.5", "archive/0.0.6", "archive/0.0.7", "archive/0.0.8"] then ["recording_session"] else [])
+        <> (if specification `elem` ["archive/0.0.3", "archive/0.0.4", "archive/0.0.5", "archive/0.0.6", "archive/0.0.7", "archive/0.0.8", "archive/0.0.9"] then ["musical_work"] else [])
+        <> (if specification `elem` ["archive/0.0.5", "archive/0.0.6", "archive/0.0.7", "archive/0.0.8", "archive/0.0.9"] then ["recording_session"] else [])
+        <> (if specification `elem` ["archive/0.0.9"] then ["release", "recording"] else [])
   if kind `elem` installedKinds
     then pure ()
     else Left "entity kind is not defined by the core context"

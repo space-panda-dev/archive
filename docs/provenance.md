@@ -50,6 +50,45 @@ So there is no universal confidence scale. A classifier's 0.72 and a person's
 This is about belief. Who may *cause* something (publish, destroy, change
 policy) is a different question, and the answer is the operator.
 
+## Readings of music
+
+Chords and meter show why there is no ranking: careful analysts derive
+different stacks from the same audio, a transcription and a chart disagree, and
+a machine hears the mix where a stem would hear one part. Each is a claim
+with its own provenance
+([ADR 0077](decisions/0077-chord-stacks-and-meter.md)):
+
+- a machine's claim pins its run, and its configuration is the run's
+  parameters;
+- an outside source's claim pins the admitted document, keeps the source's
+  symbols verbatim, and says how the document was aligned to the recording
+  and by whom;
+- a person's claim names the person as its agent;
+- a claim from a separated stem pins the stem it analysed and stands beside
+  the mix's claim, never above it.
+
+Weights on readings are in each claim's own stated scale. A computed name or
+an export is a view of a claim, never a source of one.
+
+## Credits
+
+A credit's provenance is its asserter
+([ADR 0078](decisions/0078-contributions.md)):
+
+- a booklet, Discogs, or MusicBrainz credit pins the admitted document, keeps
+  the source's own wording and the name as credited, and may say where it was
+  retrieved and when;
+- the operator's credit ("this player played keys on this take") names the
+  operator as its agent;
+- an instrument detector's claim pins its run, keeps its confidence in its
+  own scale, and names no contributor: it can locate a person's credit, never
+  become one.
+
+Each source's credit is its own claim; none is merged into another or
+skipped because another source agrees. Sources that copy each other agree
+without being independent, so nothing counts agreement. A finer credit
+refines a coarser one whoever asserted either, and the resolved view says why.
+
 ## Disagreement is evidence
 
 The archive must be able to hold, at the same time:

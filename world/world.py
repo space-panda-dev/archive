@@ -39,6 +39,12 @@ except ImportError as exc:  # pragma: no cover - exercised by CLI installation
         "World needs pyoxigraph; install world/requirements.txt"
     ) from exc
 
+try:
+    from world import contributions, harmony
+except ImportError:  # run as world/world.py, with world/ on the path
+    import contributions  # type: ignore[no-redef]
+    import harmony  # type: ignore[no-redef]
+
 
 PROV = "http://www.w3.org/ns/prov#"
 OA = "http://www.w3.org/ns/oa#"
@@ -53,7 +59,7 @@ PROJECTION_VERSION = 6
 # build writes, so each addition raises the version's revision. A generation
 # built at an earlier revision is rebuilt in full rather than extended, or its
 # older records would lack what the addition projects.
-PROJECTION_REVISIONS = {6: 4}
+PROJECTION_REVISIONS = {6: 5}
 XSD = "http://www.w3.org/2001/XMLSchema#"
 UTC_INSTANT = re.compile(r"([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.([0-9]+))?Z\Z")
 DECIMAL = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?\Z")
@@ -66,6 +72,12 @@ SPAN_CLASSES = {"music", "talk", "quiet", "unknown"}
 # triple (projection 6, revision 3).
 ENVELOPE_TERMS = ("shape", "revision_id", "object_id", "by", "agent", "at", "payload", "refs", "source",
                   "contracts", "artifact", "entity", "claim", "assessment")
+# Core terms that name a class and are also reference roles (specification
+# 0.0.9's `release` and `recording`, ADR 0078): like `artifact`, a reference
+# in either keeps its reified statement but gets no direct triple.
+CLASS_ROLE_TERMS = ("release", "recording")
+OWL_RATIONAL = "http://www.w3.org/2002/07/owl#rational"
+ORG = "http://www.w3.org/ns/org#"
 class ProjectionError(Exception):
     status = "incomplete"
 
@@ -306,7 +318,8 @@ def _project(store: Store, data: ExportData, known_object: Any = None) -> None:
     supersedes_predicate = _predicate(context, "supersedes")
     source_predicate = _predicate(context, "source")
     contracts_predicate = _predicate(context, "contracts")
-    envelope_predicates = {_predicate(context, term) for term in ENVELOPE_TERMS}
+    envelope_predicates = {_predicate(context, term) for term in ENVELOPE_TERMS} \
+        | {_predicate(context, term) for term in CLASS_ROLE_TERMS if term in context.get("@context", context)}
 
     objects = {_required_text(record, "object_id", "record") for record in known_records}
     records_by_revision = {_required_text(record, "revision_id", "record"): record for record in known_records}
@@ -415,6 +428,8 @@ def _project(store: Store, data: ExportData, known_object: Any = None) -> None:
                               records_by_revision, domain_graph, kind_scheme)
         _project_derivation_claim(store, archive_id, core_terms, contract_contexts, claim, cited,
                                   records_by_revision)
+        _project_music_claim(store, archive_id, core_terms, contract_contexts, claim, cited,
+                             records_by_revision, domain_graph)
         if ("archive.claim/audio_selection", "1") in cited:
             payload = claim.get("payload")
             pieces = payload.get("pieces") if isinstance(payload, dict) and set(payload) == {"pieces"} else None
@@ -1045,6 +1060,388 @@ def _project_derivation_claim(store: Store, archive_id: str, core_terms: dict[st
         _add(store, claim_ref, window, term(contract, "start_sample"), Literal(start))
         _add(store, claim_ref, window, term(contract, "end_sample"), Literal(end))
         _add(store, claim_ref, window, term(contract, "sample_rate"), Literal(rate))
+
+
+def _targets(claim: dict[str, Any], records_by_revision: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """What each revision a claim pins is, as world/contributions.py reads
+    targets: shape, an Entity's kind, a Claim's contract, payload, and refs."""
+    targets = {}
+    for ref in claim.get("refs", []):
+        record = records_by_revision.get(ref.get("revision_id")) if isinstance(ref, dict) else None
+        if record is None:
+            continue
+        payload = record.get("payload")
+        contracts_cited = [(c.get("id"), c.get("version")) for c in record.get("contracts", []) if isinstance(c, dict)]
+        targets[record["revision_id"]] = {
+            "id": record["object_id"], "shape": record.get("shape"),
+            "kind": payload.get("kind") if isinstance(payload, dict) else None,
+            "contract": contracts_cited[0] if len(contracts_cited) == 1 else None,
+            "payload": payload, "refs": record.get("refs", [])}
+    return targets
+
+
+def _project_music_claim(store: Store, archive_id: str, core_terms: dict[str, Any],
+                         contract_contexts: dict[tuple[str, str], dict[str, Any]], claim: dict[str, Any],
+                         cited: set[tuple[Any, Any]], records_by_revision: dict[str, dict[str, Any]],
+                         domain_graph: NamedNode) -> None:
+    """Project specification 0.0.9's chord stacks, chord sequences, and meter
+    layers (ADR 0077)
+    and contributions and band membership (ADR 0078) inside each claim's own
+    graph, after re-checking each by the rules world/harmony.py and
+    world/contributions.py hold, which Door's checks agree with.
+
+    Every reading, bar, and credit stays its asserter's; nothing here is
+    current, ranked, or merged, and computed chord names are not projected
+    (they are views, never the claim)."""
+    revision = claim["revision_id"]
+    claim_ref = _record_uri(archive_id, revision)
+    payload = claim.get("payload")
+    refs = claim.get("refs", [])
+    record_view = {"payload": payload, "refs": refs, "revision_id": revision}
+
+    def context(contract: tuple[str, str]) -> dict[str, Any]:
+        return {"@context": {**core_terms, **contract_contexts[contract]}}
+
+    def term(contract: tuple[str, str], name: str) -> str:
+        return _predicate(context(contract), name)
+
+    def typed(contract: tuple[str, str], name: str, value: str) -> Literal:
+        entry = context(contract)["@context"].get(name)
+        datatype = entry.get("@type") if isinstance(entry, dict) else None
+        if not isinstance(datatype, str):
+            raise Unsupported(f"{contract[0]} version {contract[1]} does not declare the datatype of {name}")
+        return Literal(value, datatype=nn(_expand_iri(context(contract), datatype)))
+
+    def arch(name: str) -> str:
+        return _expand_iri({"@context": core_terms}, "arch:" + name)
+
+    def pin(ref: dict[str, Any], shape: str) -> NamedNode:
+        if not _valid_pinned_record(ref, records_by_revision, shape):
+            raise ProjectionError(f"claim {revision} has an invalid {ref.get('role')!r} pin")
+        return _record_uri(archive_id, ref["revision_id"])
+
+    def roles(name: str) -> list[dict[str, Any]]:
+        return [ref for ref in refs if isinstance(ref, dict) and ref.get("role") == name]
+
+    def provenance(contract: tuple[str, str], subject: NamedNode) -> None:
+        """The pins and fields every asserter's claim may have: its run, its
+        document, where the document came from, and how it was aligned."""
+        for ref in roles("run"):
+            _pinned_claim_citing(ref, records_by_revision, "archive.claim/derivation_run", "1", revision)
+            _add(store, claim_ref, subject, term(contract, "run"), _record_uri(archive_id, ref["revision_id"]))
+        for ref in roles("document"):
+            _add(store, claim_ref, subject, term(contract, "document"), pin(ref, "artifact"))
+        if "document_url" in payload:
+            _add(store, claim_ref, subject, term(contract, "document_url"),
+                 typed(contract, "document_url", payload["document_url"]))
+        if "alignment" in payload:
+            node = nn(claim_ref.value + ":alignment")
+            _add(store, claim_ref, subject, term(contract, "alignment"), node)
+            _add(store, claim_ref, node, term(contract, "method"), Literal(payload["alignment"]["method"]))
+            if "max_error_samples" in payload["alignment"]:
+                _add(store, claim_ref, node, term(contract, "max_error_samples"),
+                     Literal(payload["alignment"]["max_error_samples"]))
+
+    def stream_claim(kind: str) -> dict[str, Any]:
+        """The audio stream claim a reading of a recording pins, as
+        harmony.py reads it."""
+        if not isinstance(payload, dict) or len(roles("source")) != 1 or len(roles("stream")) != 1:
+            raise ProjectionError(f"{kind} {revision} must pin one source and one stream")
+        stream_record = _pinned_claim_citing(roles("stream")[0], records_by_revision,
+                                             "archive.claim/audio_stream", "1", revision)
+        return {"payload": stream_record.get("payload"), "refs": stream_record.get("refs", []),
+                "revision_id": stream_record["revision_id"]}
+
+    def audio(contract: tuple[str, str]) -> None:
+        """The source, stream, and analysed audio a checked reading of a
+        recording pins, and where it came from."""
+        [source], [stream] = roles("source"), roles("stream")
+        _add(store, claim_ref, claim_ref, PROV + "wasDerivedFrom", pin(source, "artifact"))
+        _add(store, claim_ref, claim_ref, term(contract, "stream"), _record_uri(archive_id, stream["revision_id"]))
+        for ref in roles("analysed"):
+            _add(store, claim_ref, claim_ref, term(contract, "analysed"), pin(ref, "artifact"))
+        provenance(contract, claim_ref)
+        _add(store, claim_ref, claim_ref, term(contract, "sample_rate"), Literal(payload["sample_rate"]))
+
+    def locator(contract: tuple[str, str], owner: NamedNode, value: dict[str, Any]) -> None:
+        node = nn(owner.value + ":locator")
+        _add(store, claim_ref, owner, term(contract, "locator"), node)
+        for key in ("bar", "beat"):
+            if key in value:
+                _add(store, claim_ref, node, term(contract, key), Literal(value[key]))
+
+    def readings(contract: tuple[str, str], owner: NamedNode, items: list[dict[str, Any]]) -> None:
+        """A span's or entry's readings, ranked: rdf:value is the rank."""
+        for rank, reading in enumerate(items):
+            node = nn(owner.value + ":reading=" + str(rank))
+            _add(store, claim_ref, owner, term(contract, "readings"), node)
+            _add(store, claim_ref, node, RDF + "value", Literal(rank))
+            if reading.get("no_chord") is True:
+                _add(store, claim_ref, node, term(contract, "no_chord"), Literal(True))
+            if "text" in reading:
+                _add(store, claim_ref, node, term(contract, "text"), Literal(reading["text"]))
+            if "weight" in reading:
+                _add(store, claim_ref, node, term(contract, "weight"), typed(contract, "weight", reading["weight"]))
+            if "bass" not in reading:
+                continue
+            _add(store, claim_ref, node, term(contract, "bass"), Literal(reading["bass"]))
+            if "root" in reading:
+                _add(store, claim_ref, node, term(contract, "root"), Literal(reading["root"]))
+            # Tones and voicing notes ascend and repeat nothing, so their
+            # values in order are the arrays.
+            for key in ("tones", "voicing"):
+                for value in reading.get(key, []):
+                    _add(store, claim_ref, node, term(contract, key), Literal(value))
+            for number, group in enumerate(reading.get("uncertain", [])):
+                unsure = nn(node.value + ":uncertain=" + str(number))
+                _add(store, claim_ref, node, term(contract, "uncertain"), unsure)
+                _add(store, claim_ref, unsure, RDF + "value", Literal(number))
+                _add(store, claim_ref, unsure, term(contract, "present"), Literal(group["present"]))
+                for value in group["pitch_classes"]:
+                    _add(store, claim_ref, unsure, term(contract, "pitch_classes"), Literal(value))
+
+    def corrects(contract: tuple[str, str], corrected: tuple[str, str]) -> None:
+        """The claims this one corrects: they stay, and the correction cites
+        them (ADR 0077); the resolved view follows the citation."""
+        for ref in roles("corrects"):
+            _pinned_claim_citing(ref, records_by_revision, corrected[0], corrected[1], revision)
+            _add(store, claim_ref, claim_ref, term(contract, "corrects"), _record_uri(archive_id, ref["revision_id"]))
+
+    def note(contract: tuple[str, str], owner: NamedNode, predicate: str, name: str, value: dict[str, Any]) -> None:
+        node = nn(owner.value + ":" + name)
+        _add(store, claim_ref, owner, predicate, node)
+        _add(store, claim_ref, node, term(contract, "denominator"), Literal(value["denominator"]))
+        if "dots" in value:
+            _add(store, claim_ref, node, term(contract, "dots"), Literal(value["dots"]))
+
+    if ("archive.claim/chord_sequence", "1") in cited:
+        # Chords in order with no times: about a Work or a document, never a
+        # recording's samples. Lyrics stay in the document; a locator points.
+        contract = ("archive.claim/chord_sequence", "1")
+        try:
+            harmony.check_chord_sequence(record_view)
+        except harmony.HarmonyError as exc:
+            raise ProjectionError(f"chord sequence {revision}: {exc}") from exc
+        for ref in roles("work"):
+            if not _valid_pinned_entity(ref, records_by_revision, "musical_work"):
+                raise ProjectionError(f"chord sequence {revision} must pin a musical_work")
+            # arch:work names a match's or link's Work elsewhere in a claim
+            # graph; a sequence's Work is the subject it describes.
+            _add(store, claim_ref, claim_ref, arch("described_work"), _record_uri(archive_id, ref["revision_id"]))
+        provenance(contract, claim_ref)
+        corrects(contract, contract)
+        for key in ("part", "weight_scale"):
+            if key in payload:
+                _add(store, claim_ref, claim_ref, term(contract, key), Literal(payload[key]))
+        for index, entry in enumerate(payload["entries"]):
+            node = nn(claim_ref.value + ":entry=" + str(index))
+            _add(store, claim_ref, claim_ref, term(contract, "entries"), node)
+            _add(store, claim_ref, node, RDF + "value", Literal(index))
+            if "section" in entry:
+                _add(store, claim_ref, node, term(contract, "section"), Literal(entry["section"]))
+            if "locator" in entry:
+                where = nn(node.value + ":locator")
+                _add(store, claim_ref, node, term(contract, "locator"), where)
+                for key in ("line", "word", "syllable", "column"):
+                    if key in entry["locator"]:
+                        _add(store, claim_ref, where, term(contract, key), Literal(entry["locator"][key]))
+            readings(contract, node, entry["readings"])
+        for index, repeat in enumerate(payload.get("repeats", [])):
+            node = nn(claim_ref.value + ":repeat=" + str(index))
+            _add(store, claim_ref, claim_ref, term(contract, "repeats"), node)
+            _add(store, claim_ref, node, RDF + "value", Literal(index))
+            _add(store, claim_ref, node, term(contract, "first"), nn(claim_ref.value + ":entry=" + str(repeat["first"])))
+            _add(store, claim_ref, node, term(contract, "last"), nn(claim_ref.value + ":entry=" + str(repeat["last"])))
+            _add(store, claim_ref, node, term(contract, "times"), Literal(repeat["times"]))
+
+    if ("archive.claim/chord_stacks", "1") in cited:
+        contract = ("archive.claim/chord_stacks", "1")
+        placed = roles("sequence")
+        sequence_view = None
+        if len(placed) == 1:
+            sequence = _pinned_claim_citing(placed[0], records_by_revision, "archive.claim/chord_sequence", "1", revision)
+            sequence_view = {"payload": sequence.get("payload"), "refs": sequence.get("refs", []),
+                             "revision_id": sequence["revision_id"]}
+        try:
+            harmony.check_chord_stacks(record_view, stream_claim("chord stacks"), sequence_view)
+        except harmony.HarmonyError as exc:
+            raise ProjectionError(f"chord stacks {revision}: {exc}") from exc
+        audio(contract)
+        for ref in roles("contribution"):
+            _pinned_claim_citing(ref, records_by_revision, "archive.claim/contribution", "1", revision)
+            _add(store, claim_ref, claim_ref, term(contract, "contribution"), _record_uri(archive_id, ref["revision_id"]))
+        for ref in placed:
+            _add(store, claim_ref, claim_ref, term(contract, "sequence"), _record_uri(archive_id, ref["revision_id"]))
+        corrects(contract, contract)
+        for key in ("part", "weight_scale", "hold_rule"):
+            if key in payload:
+                _add(store, claim_ref, claim_ref, term(contract, key), Literal(payload[key]))
+        for index, span in enumerate(payload["spans"]):
+            span_node = nn(claim_ref.value + ":span=" + str(index))
+            _add(store, claim_ref, claim_ref, term(contract, "spans"), span_node)
+            _add(store, claim_ref, span_node, RDF + "value", Literal(index))
+            _add(store, claim_ref, span_node, term(contract, "start_sample"), Literal(span["start_sample"]))
+            _add(store, claim_ref, span_node, term(contract, "end_sample"), Literal(span["end_sample"]))
+            # An absent end is asserted; projecting it says so explicitly.
+            _add(store, claim_ref, span_node, term(contract, "end"), Literal(span.get("end", "asserted")))
+            if "entry" in span:
+                _add(store, claim_ref, span_node, term(contract, "entry"),
+                     nn(_record_uri(archive_id, placed[0]["revision_id"]).value + ":entry=" + str(span["entry"])))
+            if "locator" in span:
+                locator(contract, span_node, span["locator"])
+            readings(contract, span_node, span["readings"])
+
+    if ("archive.claim/meter_layers", "1") in cited:
+        contract = ("archive.claim/meter_layers", "1")
+        try:
+            layers = harmony.check_meter_layers(record_view, stream_claim("meter layers"))
+        except harmony.HarmonyError as exc:
+            raise ProjectionError(f"meter layers {revision}: {exc}") from exc
+        audio(contract)
+        bar_nodes: dict[tuple[int, int], NamedNode] = {}
+        layer_nodes: dict[int, NamedNode] = {}
+        for number, layer in enumerate(layers):
+            layer_node = nn(claim_ref.value + ":layer=" + str(number))
+            layer_nodes[number] = layer_node
+            _add(store, claim_ref, claim_ref, term(contract, "layers"), layer_node)
+            _add(store, claim_ref, layer_node, RDF + "value", Literal(number))
+            if "label" in layer:
+                _add(store, claim_ref, layer_node, _predicate({"@context": core_terms}, "label"), Literal(layer["label"]))
+            if "role" in layer:
+                # `role` is a core term, so World mints the layer's own.
+                _add(store, claim_ref, layer_node, arch("layer_role"), Literal(layer["role"]))
+            if "beats" in layer:
+                # A beat-only layer: beats ascend, downbeats are among them.
+                for value in layer["beats"]:
+                    _add(store, claim_ref, layer_node, term(contract, "beats"), Literal(value))
+                for value in layer.get("downbeats", []):
+                    _add(store, claim_ref, layer_node, term(contract, "downbeats"), Literal(value))
+                if "beat_unit" in layer:
+                    note(contract, layer_node, term(contract, "beat_unit"), "beat_unit", layer["beat_unit"])
+                continue
+            for index, bar in enumerate(layer["bars"]):
+                bar_node = nn(layer_node.value + ":bar=" + str(index))
+                bar_nodes[(number, index)] = bar_node
+                _add(store, claim_ref, layer_node, term(contract, "bars"), bar_node)
+                _add(store, claim_ref, bar_node, RDF + "value", Literal(index))
+                for key in ("start_sample", "end_sample", "numerator", "denominator"):
+                    _add(store, claim_ref, bar_node, term(contract, key), Literal(bar[key]))
+                if "grouping" in bar:
+                    # A grouping repeats values (2+2+3), so it is one text in
+                    # its usual notation rather than a set of numbers.
+                    _add(store, claim_ref, bar_node, term(contract, "grouping"),
+                         Literal("+".join(str(group) for group in bar["grouping"])))
+                for value in bar.get("beats", []):
+                    _add(store, claim_ref, bar_node, term(contract, "beats"), Literal(value))
+                if "locator" in bar:
+                    locator(contract, bar_node, bar["locator"])
+        for index, link in enumerate(payload.get("modulations", [])):
+            node = nn(claim_ref.value + ":modulation=" + str(index))
+            _add(store, claim_ref, claim_ref, term(contract, "modulations"), node)
+            _add(store, claim_ref, node, RDF + "value", Literal(index))
+            # `kind` is a core term, so World mints the link's own.
+            _add(store, claim_ref, node, arch("modulation_kind"), Literal(link["kind"]))
+            _add(store, claim_ref, node, term(contract, "layer"), layer_nodes[link["layer"]])
+            _add(store, claim_ref, node, arch("modulated_bar"), bar_nodes[(link["layer"], link["bar"])])
+            sides = ("before", "after") if link["kind"] == "equation" else ("pulse_before", "pulse_after")
+            for side in sides:
+                note(contract, node, term(contract, side), side, link[side])
+
+    def role_concepts(kind: Any, role: dict[str, Any], subject: NamedNode, contract: tuple[str, str]) -> None:
+        """A role as its concept in the domain graph's role scheme, with its
+        attributes, instruments, and vocals."""
+        concept = nn(contributions.role_concept(kind))
+        scheme = nn(contributions.role_scheme(kind.pair))
+        _add(store, domain_graph, scheme, RDF + "type", nn(SKOS + "ConceptScheme"))
+        _add(store, domain_graph, concept, RDF + "type", nn(SKOS + "Concept"))
+        _add(store, domain_graph, concept, SKOS + "inScheme", scheme)
+        _add(store, domain_graph, concept, SKOS + "notation", Literal(kind.name))
+        if kind.gid:
+            _add(store, domain_graph, concept, SKOS + "exactMatch", nn(contributions.MUSICBRAINZ_RELATIONSHIP + kind.gid))
+        for value in role.get("attributes", []):
+            _add(store, claim_ref, subject, term(contract, "attributes"), Literal(value))
+        for value in role.get("instruments", []):
+            _add(store, claim_ref, subject, term(contract, "instruments"), nn(value))
+        for value in role.get("vocals", []):
+            vocal = nn(contributions.vocal_concept(value))
+            _add(store, domain_graph, nn(contributions.VOCAL_SCHEME), RDF + "type", nn(SKOS + "ConceptScheme"))
+            _add(store, domain_graph, vocal, RDF + "type", nn(SKOS + "Concept"))
+            _add(store, domain_graph, vocal, SKOS + "inScheme", nn(contributions.VOCAL_SCHEME))
+            _add(store, domain_graph, vocal, SKOS + "notation", Literal(value))
+            _add(store, claim_ref, subject, term(contract, "vocals"), vocal)
+
+    def credit_fields(contract: tuple[str, str]) -> None:
+        provenance(contract, claim_ref)
+        for key in ("text", "credited_as", "retrieved_at", "locator"):
+            if key in payload:
+                _add(store, claim_ref, claim_ref, term(contract, key), Literal(payload[key]))
+        if "confidence" in payload:
+            node = nn(claim_ref.value + ":confidence")
+            _add(store, claim_ref, claim_ref, term(contract, "confidence"), node)
+            _add(store, claim_ref, node, term(contract, "scale"), Literal(payload["confidence"]["scale"]))
+            _add(store, claim_ref, node, term(contract, "value"), typed(contract, "value", payload["confidence"]["value"]))
+
+    if ("archive.claim/contribution", "1") in cited:
+        # A contribution is a PROV qualified attribution of its subject: the
+        # attribution names the contributor and the MusicBrainz role (ADR 0078).
+        contract = ("archive.claim/contribution", "1")
+        try:
+            contributions.check_contribution(record_view, _targets(claim, records_by_revision))
+        except contributions.ContributionError as exc:
+            raise ProjectionError(f"contribution {revision}: {exc}") from exc
+        scope = payload["scope"]
+        _add(store, claim_ref, claim_ref, term(contract, "scope"), Literal(scope))
+        credit_fields(contract)
+        subject_role = {"work": "work", "release": "release", "recording": "recording"}.get(scope, "source")
+        [subject_ref] = roles(subject_role)
+        subject = _record_uri(archive_id, subject_ref["revision_id"])
+        attribution = nn(claim_ref.value + ":attribution")
+        _add(store, claim_ref, subject, PROV + "qualifiedAttribution", attribution)
+        _add(store, claim_ref, attribution, RDF + "type", nn(PROV + "Attribution"))
+        for ref in roles("contributor"):
+            _add(store, claim_ref, attribution, PROV + "agent", _record_uri(archive_id, ref["revision_id"]))
+        if "role" in payload:
+            kind = contributions.role_type(scope, payload["role"]["type"])
+            _add(store, claim_ref, attribution, PROV + "hadRole", nn(contributions.role_concept(kind)))
+            role_concepts(kind, payload["role"], attribution, contract)
+        if scope in ("span", "channel"):
+            for ref in roles("stream"):
+                _add(store, claim_ref, claim_ref, term(contract, "stream"), _record_uri(archive_id, ref["revision_id"]))
+            for ref in roles("recording"):
+                _add(store, claim_ref, claim_ref, arch("part_of_recording"), _record_uri(archive_id, ref["revision_id"]))
+        if scope == "span":
+            _add(store, claim_ref, claim_ref, term(contract, "sample_rate"), Literal(payload["sample_rate"]))
+            for index, span in enumerate(payload["spans"]):
+                node = nn(claim_ref.value + ":span=" + str(index))
+                _add(store, claim_ref, claim_ref, term(contract, "spans"), node)
+                _add(store, claim_ref, node, RDF + "value", Literal(index))
+                _add(store, claim_ref, node, term(contract, "start_sample"), Literal(span["start_sample"]))
+                _add(store, claim_ref, node, term(contract, "end_sample"), Literal(span["end_sample"]))
+        if "channel" in payload:
+            _add(store, claim_ref, claim_ref, term(contract, "channel"), Literal(payload["channel"]))
+
+    if ("archive.claim/band_membership", "1") in cited:
+        # A membership is a W3C Organization Ontology membership of a person
+        # in a band, in MusicBrainz's "member of band" role.
+        contract = ("archive.claim/band_membership", "1")
+        try:
+            contributions.check_band_membership(record_view, _targets(claim, records_by_revision))
+        except contributions.ContributionError as exc:
+            raise ProjectionError(f"band membership {revision}: {exc}") from exc
+        [band], [member] = roles("band"), roles("member")
+        band_uri, member_uri = _record_uri(archive_id, band["revision_id"]), _record_uri(archive_id, member["revision_id"])
+        membership = nn(claim_ref.value + ":membership")
+        credit_fields(contract)
+        _add(store, claim_ref, claim_ref, arch("membership"), membership)
+        _add(store, claim_ref, member_uri, ORG + "memberOf", band_uri)
+        _add(store, claim_ref, membership, RDF + "type", nn(ORG + "Membership"))
+        _add(store, claim_ref, membership, ORG + "member", member_uri)
+        _add(store, claim_ref, membership, ORG + "organization", band_uri)
+        _add(store, claim_ref, membership, ORG + "role", nn(contributions.role_concept(contributions.MEMBER_OF_BAND)))
+        role_concepts(contributions.MEMBER_OF_BAND, payload, membership, contract)
+        for key in ("from", "to", "ended"):
+            if key in payload:
+                _add(store, claim_ref, membership, term(contract, key), Literal(payload[key]))
 
 
 def _valid_pinned_entity(ref: Any, records_by_revision: dict[str, dict[str, Any]], kind: str) -> bool:

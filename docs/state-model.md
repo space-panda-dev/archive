@@ -16,16 +16,28 @@ Evidence arrives in two ways:
 - **as derived and deliberately kept**: machine claims, transcripts, analyses,
   derivatives, correspondences promoted from World.
 
+A chord stacks or meter layers claim is evidence however it arrived: a
+person's reading, a machine's run, or an outside document aligned to a
+recording. The document it cites is admitted first, as an Artifact.
+
 A derived result could in principle be recomputed, but a recomputation is a
 different result: a different model, a different day, different inputs. Once
 admitted, both kinds behave the same way. Do not build separate code paths for
 them unless their behaviour actually differs.
 
+A contribution or band membership claim is evidence whoever asserted it; the
+booklet scan or saved Discogs or MusicBrainz response it cites is admitted
+first, as an Artifact. The resolved view of credits, which places finer
+claims under coarser ones, is regenerable
+([ADR 0078](decisions/0078-contributions.md)).
+
 ## Regenerable state
 
 Loss costs time and computation, not history. Examples: indexes, query
 databases, the "current" projection, views, caches, thumbnails, World's store,
-the derived-media root of waveform peaks and listening copies
+the names computed from a chord stack and every JAMS or MusicXML export of a
+chord or meter claim ([ADR 0077](decisions/0077-chord-stacks-and-meter.md)),
+and the derived-media root of waveform peaks and listening copies
 ([ADR 0069](decisions/0069-derived-media.md)), which `enrich/media.py` makes
 again from the content, and the feature bank
 ([ADR 0073](decisions/0073-feature-bank.md)), whose

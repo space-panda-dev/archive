@@ -95,7 +95,10 @@ unsupported rather than guess.
   procedures ([ADR 0012](decisions/0012-inherited-meaning.md),
   [ADR 0013](decisions/0013-physical-collections.md)).
 - How exactly do MusicBrainz kinds map onto the Library Reference Model (for
-  example, whether a MusicBrainz Recording is an LRM Expression)?
+  example, whether a MusicBrainz Recording is an LRM Expression)? This now
+  covers the `release` and `recording` Entity kinds of
+  [ADR 0078](decisions/0078-contributions.md), which take MusicBrainz's
+  meaning and no LRM class yet.
 - What origin values mark the operator's own work across media (a recording, a
   book, a photograph), and how are co-authored works (a band's album) handled
   ([ADR 0010](decisions/0010-publication.md))?
@@ -204,6 +207,59 @@ unsupported rather than guess.
   occurrence passes along every recording, and an accepted occurrence makes the
   next run search each recording again
   ([ADR 0072](decisions/0072-windowed-work-matches.md)).
+
+- What is the first current rule for chord stacks and meter layers
+  ([ADR 0077](decisions/0077-chord-stacks-and-meter.md))? Candidates include
+  "a person's reading over a machine's for the same span", "the asserter's
+  first reading", and "agreement of two independent asserters", but each
+  ranks sources in a way INV-8 forbids as a universal rule, so a rule must be
+  per question and name why it chose. Until one is accepted, asking for a
+  current chord or meter is unsupported.
+- How are two asserters' beat grids matched? Two meter claims over the same
+  recording place the same beat a few milliseconds apart, and a chart's bar 17
+  may be a machine's bar 18. Comparing them needs a tolerance and a
+  correspondence between bars that no contract states; until then World shows
+  both and pairs nothing.
+- How are pitch names spelled? Stacks hold pitch classes, so a computed name
+  says Eb where a source wrote D#, and the G in Gm(maj13) has an F#, not a Gb.
+  The views use one fixed spelling; spelling from a key, or from the source's
+  own text, is undecided. A source's spelling survives only in its verbatim
+  text.
+- What contract holds a key or mode? JAMS `key_mode` has nothing to export
+  from until one exists, and the feature bank's key estimate is not a claim.
+- Are `exactly_one` and `maybe` enough to express uncertain tones, or does a
+  reading need ranked alternatives within a group, or uncertainty about the
+  bass?
+- Pitch classes assume twelve-tone equal temperament. How is a reading of a
+  recording far from it (a detuned instrument, a microtonal passage) kept?
+- Does a stem's claim need a check that the stem shares the mix's timeline?
+  The `analysed` role asserts it; nothing measures it.
+- Which recordings does a release carry? No contract states a tracklist, so a
+  release credit never reaches a recording in the resolved view of credits,
+  and an importer cannot place a release-wide performer on each track
+  ([ADR 0078](decisions/0078-contributions.md)). Is a tracklist a claim about
+  the release, and does a release credit then apply to every track, as
+  MusicBrainz's style guide reads it?
+- How is an Entity matched to a MusicBrainz artist, release, or recording, or
+  to a Discogs artist? ADR 0042's correspondence covers only Works; until a
+  contract covers the rest, an importer cannot recognise an Entity it made
+  before except by the operator's choice.
+- What Entity kind credits a place, such as a studio? MusicBrainz credits
+  places, but local place identity is open
+  ([ADR 0043](decisions/0043-geographic-evidence-and-route-handoff.md)), so a
+  place credit keeps the place as text and pins no contributor.
+- Which edition does a MusicBrainz release-group credit mean, and is a
+  release group an Entity kind? Release-group credits are not imported.
+- Should the resolved view of credits relate a span on a mix to a channel of
+  the same take? A channel and the mix are different Artifacts; only a
+  capture alignment relates their samples, and the view does not use one.
+- Should a contribution say more than MusicBrainz can, such as a part within
+  an instrument (second trombone) or a doubling? Today that survives only in
+  the credit text.
+- How does a person's sensitivity limit "the rehearsals I play in"
+  ([ADR 0018](decisions/0018-people-in-the-archive.md)) relate to
+  contributions? Channel and span credits could select that content; whether
+  they may, and who asserts them, is undecided.
 
 - How does a person's sensitivity claim select the content it covers ("the
   rehearsals I play in") rather than naming objects one by one

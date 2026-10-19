@@ -193,6 +193,73 @@ formats that will stay readable.
 **Usage observation**: a periodic count of how content was used (plays, views),
 from an outside service.
 
+## Chords and meter
+
+([ADR 0077](decisions/0077-chord-stacks-and-meter.md))
+
+**Chord stack**: what sounds at once, as a bass pitch class, the pitch classes
+above it, and optionally a root, which need not sound. Not a chord name: a
+stack has as many names as it has candidate roots.
+**Reading**: one candidate an asserter gives for a span: a stack, "no chord",
+or a source's text left uninterpreted. A span's readings are in the
+asserter's order of preference and may carry weights on that claim's own
+scale. **Uncertain tone**: a pitch class the asserter is unsure of: exactly
+one of a group sounds, or one or none may. **Voicing**: a stack's actual
+notes, with their octaves. **Computed name**: a Harte string or lead-sheet
+symbol derived from a stack; a view, never the claim. The source's own symbol
+is the reading's **text**, kept verbatim. **Held end**: a span end the
+asserter did not hear or read but inferred, holding a chord until the next
+change by a stated rule; weaker evidence than an asserted end. **Chord
+sequence**: chords in the order a document or a person gives them, with no
+times, about a Work or a document rather than a recording; each **sequence
+entry** is located by line and word, never by the lyric's text. A
+**correction** is a claim that names the claims it corrects; they stay, and
+the resolved view shows the correction first where they overlap.
+
+**Meter layer**: one counting of the music, as a sequence of bars or, in a
+**beat-only layer**, as beats alone with no time signature. Several layers
+over the same samples are polymeter or cross-rhythm, and none is primary. A
+**felt layer** is a feel heard over a written one (a triplet feel in 4/4).
+**Bar**: a span of samples with a numerator and denominator, and optionally
+its **beat grouping** (2+2+3) and the samples of its counted beats. **Metric
+modulation**: an explicit link between adjacent bars saying which note value
+before lasts as long as which after, so that the tempo changes by their
+ratio. **Regrouping**: a link between adjacent bars where every note value
+keeps its length and the felt pulse moves (quarter to dotted quarter, the
+eighth unchanged). **Tempo** is derived from bars and beats, never stored.
+
+**Document**: an outside source's admitted bytes (a transcription file, a
+saved chart) that a claim pins to say where its readings came from. A
+**locator** is a position in the document's own numbering (its bar, its
+beat). A claim's **document alignment** is how a document's positions were
+placed on a recording's samples, and by which method; it is not a capture
+alignment, which relates two recordings' clocks. **Mix**: the recording as heard, every
+part together; machine claims are made from it first, and a claim made from a
+separated part is a further claim beside it.
+
+## Credits
+
+([ADR 0078](decisions/0078-contributions.md))
+
+**Contribution**: a claim that a **contributor** (a person or organisation
+Entity) took part in a **role** in one **scope**. The role is a MusicBrainz
+relationship type, with its attributes, instruments, and vocals; a contribution
+may keep only the source's words when no type fits. Not a billing credit: an
+`artist_credit` says whom a selection is presented as by, a contribution says
+who did what.
+**Scope**: how much of the music a contribution is about: a Work, a
+**release** (one edition as issued), a **recording** (a recording, or a take
+in the archive), a **span** (sample ranges of a recording), or a **channel**
+(one source within a recording: a stem, an input channel's own file, or one
+channel of a multichannel file). **Credit text**: the credit exactly as the
+source printed it, kept beside the role.
+A finer claim **refines** a coarser one when it names the same contributor and
+role about part of the coarser subject; a claim with no contributor that
+matches only **locates** it. A claim nothing refines is **finest**. Refining
+never contradicts: no credit asserts absence.
+**Band membership**: a claim that a person was a member of a band (an
+organisation), with instruments and partial from and to dates.
+
 ## Naming discipline
 
 When an established concept is meant, use its established word:

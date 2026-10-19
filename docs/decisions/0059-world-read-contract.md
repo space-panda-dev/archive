@@ -133,6 +133,15 @@ removes its pointer. The release notes give the date it closes.
   `end_sample`, and `sample_rate`, beside the Work, corpus, score, method,
   and run a version 2 match names. It is an addition like revisions 2 and 3,
   so older generations rebuild in full.
+- Revision 5 of projection 6 adds specification 0.0.9's claims (ADRs 0077
+  and 0078): chord stacks as spans of ranked readings, chord sequences as
+  untimed entries, meter layers of bars or beats with their links, a
+  contribution as a `prov:Attribution` whose `prov:hadRole` is a concept of
+  the specification's MusicBrainz role scheme (in the domain graph, each
+  `skos:exactMatch` its MusicBrainz relationship type), and a band
+  membership as an `org:Membership`. Each claim is re-checked by the World
+  module that holds its rules before it is projected. It is an addition, so
+  older generations rebuild in full.
 - The first use of the overlap window will be the first rename.
 
 ## Alternatives considered
