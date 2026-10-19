@@ -325,8 +325,10 @@ contract, the asserter fields), the release needs:
 - An importer can recognise artists, releases, and recordings it has seen,
   in both catalogues, and a person can correct a wrong match by superseding
   it or affirm one by a judgment (ADR 0081).
-- A bandmate can assert their own tracklist or correspondence under their
-  name (ADR 0088); disagreements are kept, not resolved.
+- Anyone the operator records can assert a tracklist or correspondence;
+  disagreements are kept, not resolved. A bandmate's login does not send
+  these contracts in 0.0.10: they are not on ADR 0088's list of member
+  contracts, which stays narrow until a need is shown.
 - Release groups, labels as catalogue entries, release events, and
   barcodes are still not held.
 - No invariant changes. INV-7 keeps every list and mapping; INV-8 ranks no
@@ -351,7 +353,7 @@ contract, the asserter fields), the release needs:
   named views define no current tracklist or correspondence; ADR 0084's lead
   sheet may name a recording that `recording_audio` ties to a release;
   ADR 0085's rights claims govern a saved catalogue response admitted as a
-  document; ADR 0088 lets a bandmate assert these claims.
+  document; ADR 0088's member contracts do not include these.
 
 ## Alternatives considered
 

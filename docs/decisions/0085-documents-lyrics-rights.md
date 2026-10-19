@@ -264,7 +264,10 @@ and no `run`: a sensitivity is a person's, never a machine's. Its payload is
 `RED`, `AMBER`, `GREEN`, or `CLEAR`, and `reason` is 1 to 2,000 characters.
 Its envelope `agent` is the person whose limit it is: the operator for their
 own, or the person the content records (ADR 0018), recorded by the operator
-or, under ADR 0088, asserted by that person.
+with that person as its author. [ADR 0088](0088-bandmates.md) keeps
+sensitivity claims the operator's to send, so a bandmate with a login does
+not assert one through the relay in 0.0.10; whether they should, for limits
+that only narrow, is open.
 
 The three settings of D7.3 are three of those labels, so nothing new is
 invented and ADR 0016's table is unchanged:
@@ -404,8 +407,9 @@ to what the relay shows), and hold no state outside the claims Door admits.
   `content_mismatch`, and `content_not_described`. `request_malformed`,
   `body_too_large`, and `content_not_relayed` keep their meanings.
 - Raw SPARQL over `/world/query` still answers every projected claim to its
-  caller. Until ADR 0088 decides what a bandmate's login may query, only the
-  operator's login reaches it, so reach is enforced on content routes first.
+  caller. ADR 0088 keeps it the operator's: a bandmate reads only named
+  views filtered by the circle's readable set, so reach is enforced on
+  content routes and views.
 - No invariant changes.
 
 ## Relation to other decisions
@@ -435,9 +439,9 @@ to what the relay shows), and hold no state outside the claims Door admits.
   lyric documents.
 - ADR 0086: a melody note may later point
   at a lyric word by the same locator.
-- ADR 0088: bandmates' logins, their
-  own sensitivity claims, and the disclosure grant that reach is checked
-  beside.
+- ADR 0088: bandmates' logins, the
+  readable set and the disclosure grant that reach is checked beside, and
+  the co-writer consent (D12.2) this record leaves to it.
 - ADR 0089: bank audio is served under
   the recording's reach.
 

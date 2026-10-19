@@ -190,9 +190,9 @@ recording, chords, meter, form, key, lyrics, lyric timing, melody, and
 credits are what a render or a view shows. The relay checks each one's
 sensitivity and rights (ADR 0085) before it shows or sends any of them; the
 lead sheet's own disclosure never widens an input's. Sharing a co-written
-Work's lead sheet beyond the band needs each co-writer's approval (ADRs 0085
-and 0088). Lineage, the band and its memberships, and the documents a tuning
-was read from are not shown.
+Work's lead sheet beyond the band needs each co-writer's consent (ADR 0088's
+sharing gate). Lineage, the band and its memberships, and the documents
+strings were read from are not shown.
 
 **The rules live in World until a release installs them.**
 `world/lead_sheets.py` holds every rule above as World will re-check it, the

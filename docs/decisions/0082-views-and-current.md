@@ -304,9 +304,10 @@ A **band-adopted lead sheet** is a lead sheet claim whose envelope `agent`
 is the band's organisation Entity. Adopting is asserting a new claim, never
 a mark on someone's personal lead sheet, so each person's version and the
 band's coexist (INV-7). The specification's envelope names a person, model,
-or process as `agent`; letting an organisation be one, and deciding who may
-propose a record under a band's name, are changes the specification and
-Door need (below). The view itself checks no authority: a claim's agent is
+or process as `agent`; letting an organisation be one is a change the
+specification and Door need (below). Who may send a record under a band's
+name is [ADR 0088](0088-bandmates.md)'s: a member whose own band membership
+is among the lead sheet's `adopted_by`. The view itself checks no authority: a claim's agent is
 evidence of who asserted it, and governance stays with Door (ADR 0005).
 
 **The relay serves views.** Two routes join `/world/query`, under the same
