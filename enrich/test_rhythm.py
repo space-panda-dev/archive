@@ -470,6 +470,28 @@ class Levels(unittest.TestCase):
         self.assertTrue(numpy.allclose(doubled, 132))
         self.assertTrue(numpy.allclose(counted, 66))
 
+    def test_a_level_the_window_cannot_measure_is_no_evidence_against_it(self) -> None:
+        # The tracker counts 120; the music's level is 60 (1:2), which the first seconds' windows hold too few
+        # beats to lay. Read as no support, those seconds chose 120 and the cost of a change held it there.
+        seconds = 60
+        tempo = numpy.full(seconds, 120.0)
+        table = numpy.full((seconds, len(meter.RELATIONS)), 0.05)
+        half, one = meter.RELATION_NAMES.index("1:2"), meter.RELATION_NAMES.index("1:1")
+        table[:, half], table[:, one] = 0.9, 0.3
+        table[:4, :] = numpy.nan
+        table[:4, one] = 0.3
+        primary, _ = meter.primary_levels(table, tempo, self.config)
+        self.assertTrue(numpy.allclose(primary, 60), primary)
+        # Anchor: read as no support at all, the unmeasured seconds take the tracker's level.
+        old, _ = meter.primary_levels(numpy.nan_to_num(table), tempo, self.config)
+        self.assertTrue(numpy.allclose(old[:4], 120), old[:4])
+        # A window too short for a slow level's group of beats marks it unmeasured, not unsupported.
+        beats = numpy.arange(0.5, 2.5, 0.5)  # four beats: one group of two, so one pulse of 1:2 at either phase
+        peak = meter.peaks(meter.accents(spikes(10, beats)))
+        measured = meter.support_table(beats, peak, 3, 10, 1.5, [meter.RELATIONS] * 3)
+        self.assertTrue(numpy.isnan(measured[0, meter.RELATION_NAMES.index("1:2")]))
+        self.assertFalse(numpy.isnan(measured[0, one]))
+
     def test_seconds_without_beats_have_no_primary_and_no_alternatives(self) -> None:
         seconds = 40
         beats = numpy.arange(20.5, 39, 0.5)
@@ -517,6 +539,18 @@ class Meter(unittest.TestCase):
         # Nothing repeats: no evidence for any meter, and a tie is 4.
         self.assertTrue(numpy.all(meter.meters(numpy.zeros((10, len(meter.METERS)))) == 4))
 
+    def test_a_song_that_changes_meter_prefers_five_where_five_and_four_are_close(self) -> None:
+        four, three, five = (meter.METERS.index(m) for m in (4, 3, 5))
+        steady = numpy.zeros((60, len(meter.METERS)))
+        steady[:30, four] = 0.1
+        steady[30:, four], steady[30:, five] = 0.05, 0.06  # 5 a little better than 4, by less than the margin
+        self.assertTrue(numpy.all(meter.meters(steady) == 4))  # anchor: in a song all in 4, the margin holds
+        changing = numpy.vstack((steady, numpy.zeros((30, len(meter.METERS)))))
+        changing[60:, three] = 0.2  # a clear stretch of 3: this song changes meter
+        found = meter.meters(changing)
+        self.assertTrue(numpy.all(found[:25] == 4) and numpy.all(found[35:55] == 5) and numpy.all(found[65:] == 3),
+                        found)
+
     def test_downbeats_follow_the_evidence_and_a_short_bar_moves_them(self) -> None:
         downbeats = [0, 4, 8, 12, 16, 18, 22, 26, 30, 34, 38]  # a bar of two beats at 16
         evidence = numpy.zeros(42)
@@ -563,10 +597,34 @@ class Meter(unittest.TestCase):
         for index, start in enumerate(bars):
             first = int(start * meter.ROWS_PER_SECOND)
             chroma[first:first + int(2 * meter.ROWS_PER_SECOND), (index * 5) % 12] = 1  # a chord a bar
-        evidence = meter.downbeat_evidence(pulse, meter.accents(spikes(seconds, bars)), chroma)
+        per_bar = numpy.full(len(pulse), 4)
+        nothing = numpy.zeros(count)
+        evidence = meter.downbeat_evidence(pulse, nothing, meter.accents(spikes(seconds, bars)), chroma, per_bar)
         on_bars = numpy.isin(numpy.arange(len(pulse)), numpy.arange(0, len(pulse), 4))
         self.assertGreater(evidence[on_bars][1:-1].min(), evidence[~on_bars][2:-2].max())
-        self.assertEqual(len(meter.downbeat_evidence(pulse[:1], numpy.zeros(count), chroma)), 1)
+        # The harmony alone places the bar lines too.
+        harmony = meter.downbeat_evidence(pulse, nothing, nothing, chroma, per_bar)
+        self.assertGreater(harmony[on_bars][1:-1].min(), harmony[~on_bars][2:-2].max())
+        self.assertEqual(len(meter.downbeat_evidence(pulse[:1], nothing, nothing, chroma, per_bar[:1])), 1)
+
+    def test_the_backbeat_is_not_a_downbeat(self) -> None:
+        # A kick on beats 1 and 3, a snare as loud on 2 and 4 with nothing low in it, one chord throughout.
+        seconds = 30
+        pulse = numpy.arange(0.5, 29, 0.5)
+        count = int(seconds * meter.ROWS_PER_SECOND)
+        kicks, snares = pulse[0::2], pulse[1::2]
+        flux = meter.peaks(meter.accents(spikes(seconds, pulse)))
+        low = meter.accents(spikes(seconds, kicks))
+        chroma = numpy.zeros((count, 12), numpy.float32)
+        chroma[:, (0, 4, 7)] = 1
+        evidence = meter.downbeat_evidence(pulse, flux, low, chroma, numpy.full(len(pulse), 4))
+        self.assertGreater(evidence[0::2][1:-1].min(), evidence[1::2][1:-1].max())
+        # Anchor: the whole accent alone cannot tell them apart.
+        self.assertTrue(numpy.allclose(meter.at(flux, kicks[1:20]), meter.at(flux, snares[1:20])))
+        # A held chord's beats differ by rounding only: that is no harmonic evidence for any of them.
+        held = meter.downbeat_evidence(pulse, flux, numpy.zeros(count), chroma + 1e-4 * numpy.random.default_rng(1).
+                                       random(chroma.shape), numpy.full(len(pulse), 4))
+        self.assertLess(numpy.ptp(held[2:-2]), 0.5)
 
     def test_standardising_constant_values_gives_zeros(self) -> None:
         self.assertEqual(list(meter.robust_z(numpy.full(5, 2.0))), [0.0] * 5)

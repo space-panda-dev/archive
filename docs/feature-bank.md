@@ -266,7 +266,7 @@ parameters are in the manifest's descriptions and in the
 | Extractor | Version | Needs | Outputs |
 |---|---|---|---|
 | `frames` | 1 | none | series `hpcp`, `rms_db`, `centroid`, `rolloff`, `flatness`, `flux`, `onset_hfc`, `mfcc`, `melbands`; scalars `samples`, `seconds` |
-| `rhythm` | 3 | none | series `tempo`, `onset_count`, `onset_deviation`, `offgrid`, `chunk_bpm`, `chunk_confidence`, `primary_tempo`, `tempo_support`, `downbeat_margin`; scalars `bpm`, `confidence`, `onset_rate`, `seconds`, `primary_bpm`, `meter`; events `beats`, `onsets`, `pulse`, `downbeats`, `tempo_changes`; spans `tempo_spans` |
+| `rhythm` | 4 | none | series `tempo`, `onset_count`, `onset_deviation`, `offgrid`, `chunk_bpm`, `chunk_confidence`, `primary_tempo`, `tempo_support`, `downbeat_margin`; scalars `bpm`, `confidence`, `onset_rate`, `seconds`, `primary_bpm`, `meter`; events `beats`, `onsets`, `pulse`, `downbeats`, `tempo_changes`; spans `tempo_spans` |
 | `tonal` | 4 | `frames`: rms_db | series `pitched`, `tuning_windows`, `chroma`, `bass_chroma`, `dissonance`; scalars `tuning_frequency`, `tuning_cents`, `tuning_confidence`, `tuning_window_count`, `drift_spread_cents`, `detuned`, `key`, `scale`, `mode`, `scale_notes`, `key_strength`, `key_margin`, `collection`, `collection_margin`, `tonic_margin`, `tonic_named`; spans `tuning_drift`, `detuned_spans`, `keys`, `key_regions` |
 | `chords` | 2 | `frames`: samples; `rhythm`: beats; `tonal`: bass_chroma, chroma, pitched | scalars `changes_per_minute`, `beat_share`; spans `chords`, `chord_candidates` |
 | `colour` | 3 | `frames`: centroid, hpcp, rms_db | series `colour`; files `palette`, `preview` |
@@ -285,7 +285,11 @@ what each changed:
   meter, downbeats, spans of one level and meter, and changes that say
   `meter` where the beat persists; 3 decides each take on its own, prefers
   the tracker's own octave, and publishes downbeats only where
-  `downbeat_margin` is clear.
+  `downbeat_margin` is clear; 4 places bar lines by the low accent less the
+  backbeat's and by the beat-synchronous chroma, publishes them from a
+  margin of 1 (on 17 of 18 tracks of a test album, where 3 published them
+  on 8), prefers bars of 5 to 4 in a song that changes meter, and takes a
+  second whose window cannot lay every level as no evidence.
 - `tonal` 1 and 2 measured tuning, key, and chords with Essentia's
   `TuningFrequency`, `Key`, and `ChordsDetection` (2 records its second
   decode and blanks harmony on a detuned recording); 3 takes the tuning as a
