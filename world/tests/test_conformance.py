@@ -37,6 +37,17 @@ UNREACHABLE = {("records", ARCH + "dependent_destroy"), ("records", ARCH + "depe
 # made by the real Door from an archive at the previous release.
 UNCITED = {("archive.transition/specification_upgrade", "1")}
 
+# Installed by specification 0.0.10 and not yet cited by the fixture: Door
+# refuses a record under a bundle whose profile rules it does not enforce yet
+# (D-18), and the fixture plan gains each contract as Door and World take it
+# on. Enumerated from the two catalogs rather than named.
+def _contracts(version):
+    return {(c["id"], c["version"]) for c in
+            json.loads((ROOT / "spec" / version / "contracts.json").read_text())["contracts"]}
+
+
+NOT_YET_ADMITTED = _contracts("0.0.10") - _contracts("0.0.9")
+
 
 def integration_binaries():
     """Door and Archive, or a skip; CI sets ARCHIVE_REQUIRE_INTEGRATION so a
@@ -87,7 +98,7 @@ class FixtureArchiveConformanceTests(unittest.TestCase):
     def test_the_fixture_cites_every_contract_in_the_catalog(self):
         # Enumerate the catalog rather than naming today's contracts.
         catalog = json.loads((ROOT / "spec" / self.export["spec"].removeprefix("archive/") / "contracts.json").read_text())
-        expected = {(c["id"], c["version"]) for c in catalog["contracts"]} - UNCITED
+        expected = {(c["id"], c["version"]) for c in catalog["contracts"]} - UNCITED - NOT_YET_ADMITTED
         self.assertTrue(UNCITED <= {(c["id"], c["version"]) for c in catalog["contracts"]})
         cited = {(c["id"], c["version"]) for r in self.export["records"] for c in r.get("contracts", [])}
         self.assertEqual(cited, expected)

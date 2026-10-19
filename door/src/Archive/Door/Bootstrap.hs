@@ -241,7 +241,7 @@ cleanBootstrapEnvironment = filter (not . isGitVariable . fst)
     isGitVariable name = "GIT_" `Text.isPrefixOf` Text.pack name
 
 archiveVersion :: Text
-archiveVersion = "archive/0.0.9"
+archiveVersion = "archive/0.0.10"
 
 archiveProgram :: Text
 archiveProgram = "pkg:hackage/archive@0.0.1.0"
@@ -579,13 +579,13 @@ loadResources :: IO Resources
 loadResources = do
   versionPath <- getDataFileName "spec/VERSION"
   specificationPath <- getDataFileName "spec/archive-spec.md"
-  contextPath <- getDataFileName "spec/0.0.9/context.jsonld"
+  contextPath <- getDataFileName "spec/0.0.10/context.jsonld"
   contractDirectory <- getDataFileName "spec/contracts"
   versionBytes <- LazyByteString.readFile versionPath
   specificationBytes <- LazyByteString.readFile specificationPath
   contextBytes <- LazyByteString.readFile contextPath
-  if versionBytes /= "0.0.9\n"
-    then failIO "installed VERSION does not select archive/0.0.9"
+  if versionBytes /= "0.0.10\n"
+    then failIO "installed VERSION does not select archive/0.0.10"
     else pure ()
   context <- decodeResource contextBytes
   _ <- ioEither (validateCoreContextForSpecification archiveVersion context)

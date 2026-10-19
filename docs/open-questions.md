@@ -172,11 +172,15 @@ unsupported rather than guess.
     This is a fact about audio, not about records, so Door has nothing to
     compare until some claim measures it (an alignment between the stem and
     the mix, say); which claim, and what tolerance, is undecided.
-- The 0.0.10 records leave cross-claim rules to World until Door's profile
-  can read a pinned claim's payload and references: a section or entry
+- Specification 0.0.10 (D-18) makes Door compare a pinned tuning's or
+  notes claim's `source` with the record's own
+  ([ADR 0086](decisions/0086-notes-and-melody.md)), and leaves to World the
+  cross-claim rules that read a pinned claim's payload: a section or entry
   index inside the pinned form or sequence, a placed bar's time signature
-  ([ADR 0083](decisions/0083-form-and-work-meter.md)), and that a pinned tuning, notes, or contribution claim is about
-  the same source ([ADR 0086](decisions/0086-notes-and-melody.md)). Which of these does a release make Door's?
+  ([ADR 0083](decisions/0083-form-and-work-meter.md)), a tune that fits its
+  meter, and a melody span inside its notes claim's range. Which of these,
+  and the contribution a notes claim pins, should a later release make
+  Door's?
 - How is operator succession verified? (Author and authorizer are agents in
   PROV roles: [ADR 0012](decisions/0012-inherited-meaning.md).) ADR 0026 defines
   only initial bootstrap; this succession question remains open.

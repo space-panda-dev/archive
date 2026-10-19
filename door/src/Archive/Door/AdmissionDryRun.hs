@@ -60,6 +60,7 @@ import Archive.Door.Contracts
   , validateCoreContextForSpecification
   )
 import Archive.Door.Json (decodeUnique)
+import Archive.Door.PendingRules (refusePendingRules)
 import Archive.Door.Layout
   ( ArchiveManifest
   , digestText
@@ -979,6 +980,9 @@ validateProposalContracts snapshot proposal = pure $ do
       bundle <- case Map.lookup key catalog of
         Nothing -> Left ("proposed contract is not installed at this snapshot: " <> contractId citation)
         Just value -> Right value
+      -- A proposal under a bundle whose rules this Door cannot check yet is
+      -- refused (specification 0.0.10, D-18); committed records still load.
+      refusePendingRules (contractBundleId bundle) (contractBundleVersion bundle) (contractBundleSchema bundle)
       validateContractInstance (contractBundleSchema bundle) instanceValue
       pure bundle
 

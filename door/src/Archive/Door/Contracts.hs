@@ -32,6 +32,13 @@ module Archive.Door.Contracts
   ) where
 
 import Archive.Door.Json (decodeUnique)
+import Archive.Door.PendingRules (pendingProfileRuleNames)
+import Archive.Door.SchemaObjectKeywords
+  ( evaluateObjectKeywords
+  , objectKeywordNames
+  , objectKeywordSchemas
+  , validateObjectKeywordTypes
+  )
 import Archive.Door.Layout
   ( archiveRoot
   , contractPath
@@ -198,6 +205,7 @@ validateCoreContextForSpecification specification value = do
         "archive/0.0.7" -> Set.fromList reviewContextKeys
         "archive/0.0.8" -> Set.fromList reviewContextKeys
         "archive/0.0.9" -> Set.fromList creditContextKeys
+        "archive/0.0.10" -> Set.fromList creditContextKeys
         _ -> Set.empty
   if not (Set.null expected) && keys == expected
     then Right ()
@@ -333,7 +341,7 @@ profileRuleNames =
   , "x-archive-metric-modulations", "x-archive-target-bound", "x-archive-partial-dates"
   , "x-archive-subset", "x-archive-document-order", "x-archive-nested-ranges"
   , "x-archive-target-samples", "x-archive-target-index"
-  ]
+  ] <> pendingProfileRuleNames
 
 walkSchema :: Value -> [Text] -> Value -> Either Text ()
 walkSchema root path (Object fields) = do
@@ -359,7 +367,7 @@ schemaKeywords =
   , "minLength", "maxLength", "format", "minimum", "maximum"
   , "$comment", "title", "description", "default", "deprecated"
   , "examples", "readOnly", "writeOnly"
-  ] <> profileRuleNames
+  ] <> objectKeywordNames <> profileRuleNames
 
 rejectUnknownSchemaKeywords :: [Text] -> KeyMap.KeyMap Value -> Either Text ()
 rejectUnknownSchemaKeywords path fields =
@@ -766,7 +774,7 @@ validateAscendingItemsInstance rule instanceValue = do
     isInteger _ = False
 
 -- | @x-archive-pitch-stacks@: every object @payload@ reaches that has a
--- @bass@ is a stack of pitch classes (0 to 11): @tones@ above the bass, and
+-- @bass@ and @tones@ is a stack of pitch classes (0 to 11): @tones@ above the bass, and
 -- optional @uncertain@ groups of @classes@ and a @voicing@ of MIDI notes.
 -- No uncertain class is the bass, a tone, or in another group; the groups
 -- are in ascending order of their classes; the voicing's lowest note is the
@@ -793,7 +801,10 @@ validatePitchStacksInstance rule instanceValue = do
   voicingName <- requiredString "voicing" rule
   payload <- requiredObject "payload" instanceValue
   holders <- pathHolders (path <> [bassName]) payload
-  let stacks = filter (KeyMap.member (Key.fromText bassName)) holders
+  -- A stack has a bass and its tones; a bass-only reading (specification
+  -- 0.0.10) has a bass and no tones, and nothing for this rule to check.
+  let stacks = filter (\fields -> KeyMap.member (Key.fromText bassName) fields
+        && KeyMap.member (Key.fromText tonesName) fields) holders
   mapM_ (stack bassName tonesName uncertainName classesName voicingName) stacks
   where
     stack bassName tonesName uncertainName classesName voicingName fields = do
@@ -1295,6 +1306,7 @@ validateSchemaKeywordTypes fields = do
     then Left "contract schema then/else require if"
     else Right ()
   validateContainsBounds fields
+  validateObjectKeywordTypes fields
 
 validateTypeKeyword :: Value -> Either Text ()
 validateTypeKeyword (String name)
@@ -1415,7 +1427,7 @@ integerValue name (Just (Number value)) = case floatingOrInteger value :: Either
 integerValue name (Just _) = Left ("contract schema " <> name <> " must be a non-negative integer")
 
 nestedSchemas :: KeyMap.KeyMap Value -> [(Key.Key, Value)]
-nestedSchemas fields = concatMap one (KeyMap.toList fields)
+nestedSchemas fields = concatMap one (KeyMap.toList fields) <> objectKeywordSchemas fields
   where
     one (key, value) = case Key.toText key of
       "$defs" -> case value of
@@ -1797,6 +1809,7 @@ evaluateSchema root path (Object fields) value = do
     , evaluateAnyOf root path fields value
     , evaluateNot root path fields value
     , evaluateConditional root path fields value
+    , evaluateObjectKeywords (\schema item -> evaluateSchema root ("propertyNames" : path) schema item) fields value
     ]
   pure (referenceMatch && keywordMatch)
 evaluateSchema _ path _ _ = Left (schemaPath path <> " must be an object")

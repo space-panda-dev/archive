@@ -31,9 +31,11 @@ def bundle(identifier: str) -> dict:
 
 def specification_scheme() -> rdflib.Graph:
     text = (ROOT / "spec/archive-spec.md").read_text()
-    blocks = re.findall(r"```turtle\n(.*?)```", text, re.S)
+    # The specification also ships 0.0.10's rights statements as Turtle; the
+    # role scheme is the block that holds the vocal scheme.
+    blocks = [block for block in re.findall(r"```turtle\n(.*?)```", text, re.S) if "arch:vocals a skos:ConceptScheme" in block]
     if len(blocks) != 1:
-        raise AssertionError(f"the specification holds {len(blocks)} Turtle blocks, not the one role scheme")
+        raise AssertionError(f"the specification holds {len(blocks)} role scheme Turtle blocks, not one")
     graph = rdflib.Graph()
     graph.parse(data=blocks[0], format="turtle")
     return graph

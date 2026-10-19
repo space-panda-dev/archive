@@ -1,6 +1,6 @@
 # Archive Specification
 
-Version: 0.0.9
+Version: 0.0.10
 Status: draft
 
 This is the contract an archive is governed by. It is copied into every archive
@@ -127,8 +127,10 @@ evidence, each with its provenance, without its storage choosing between them.
 provenance.
 
 **S-18.** Which claim is current MUST NOT be stored as evidence. It MUST be
-defined only by the rule in the claim's contract, and every materialisation of it
-MUST derive from that rule.
+defined only by a stated rule: the rule in the claim's contract, or a named
+current rule that a reader asks for by name and version, which says what it
+chose and why and reports a conflict rather than choosing. Every
+materialisation of it MUST derive from that rule.
 
 **S-19.** Evidentiary authority MUST NOT be assigned solely by whether the agent
 was a person, a model, a deterministic process, or an external authority.
@@ -193,7 +195,11 @@ distribution.
 circle MUST require an approval given for that publication. A change in rights
 MUST NOT by itself cause publication. Open and distribution destinations MUST
 require a rights claim permitting publication; unknown or restrictive rights MUST
-block it.
+block it. The circle is private: rights MUST NOT limit what may be disclosed to
+it, and only sensitivity does. A Work the operator wrote with others MUST NOT be
+disclosed beyond its band without each other writer's recorded consent for that
+destination and those exact revisions; inside the band the operator's approval
+suffices.
 
 **S-31.** A withdrawal from an irreversible destination MUST be recorded as
 requested, with known outside copies reported.
@@ -205,7 +211,10 @@ policy revision that allowed it, whether or not any result is kept, and MUST
 be recorded before any content is sent; a send that may have begun counts as
 received. A processor
 that received content MUST be reported as a possible external survivor when
-that content is destroyed. A sensitivity claim MUST cap disclosure: RED at
+that content is destroyed. Disclosing a record discloses what it pins,
+transitively, and a cap on anything it pins is a cap on it. A disclosure to the
+circle is a publication approval to the circle's destination, recorded before
+any member reads what it covers. A sensitivity claim MUST cap disclosure: RED at
 private, AMBER at circle, GREEN at service; CLEAR sets no cap. When an object
 carries several sensitivity claims, the most restrictive MUST apply. A
 sensitivity claim whose source is a person the content records MUST NOT be
@@ -323,7 +332,8 @@ contain another top-level field.
 be a canonical SHA-256 digest. `object_id` MUST be a portable object identifier.
 `shape` MUST be exactly `artifact`, `entity`, `claim`, or `assessment`. `by`
 MUST identify the writing program and `agent` MUST separately identify the
-asserting person, model, or process. `at` MUST be Door's RFC 3339 UTC recording
+asserting person, organisation, model, or process; an organisation asserts
+only where its contract allows it, such as a band's adopted lead sheet (D-18). `at` MUST be Door's RFC 3339 UTC recording
 time. `payload` MUST be a JSON object.
 
 `refs` and `supersedes` MUST be arrays even when empty. A reference MUST contain
@@ -574,7 +584,8 @@ defines `release` (one edition of music as issued, after MusicBrainz's
 Release) and `recording` (after MusicBrainz's Recording), mapped to
 `arch:Release` and `arch:Recording`; a context for an earlier version MUST NOT
 accept them, and their identities are opaque, never a title or an external
-identifier. This Archive-owned term does not establish an RDF
+identifier. Specification 0.0.10 keeps the 0.0.9 kinds and core context
+unchanged. This Archive-owned term does not establish an RDF
 equivalence between Archive and MusicBrainz Work types or settle the open LRM
 mapping question.
 
@@ -602,7 +613,7 @@ match. Missing, changed, unknown, or remotely dependent contracts MUST be
 refused on admission and reported as incomplete on read.
 
 Adding contracts outside a specification release, domain assessment
-contracts, enrichment contracts other than those of D-15 to D-17, and current rules
+contracts, enrichment contracts other than those of D-15 to D-18, and current rules
 remain unsupported until separately defined.
 
 ### D-9. Transition proposals and dispatch (ADR 0028)
@@ -1214,7 +1225,8 @@ allows (letters, digits, and `-._~:/?#[]@!$&'()*+,;=%`); and its spans or
 bars MAY carry a `locator`, the document's own numbering. A claim that pins
 no document MUST NOT have either. The URL says where the document came
 from; the pinned Artifact is the evidence. Pitch classes are integers 0 to
-11, C = 0, in twelve-tone equal temperament.
+11, C = 0, in twelve-tone equal temperament, each the nearest step of the
+grid in force at its samples (D-18's tuning).
 
 **Chord stacks.** The payload MUST contain `sample_rate` and `spans`, and MAY
 contain `part` (1 to 100 characters naming the part described),
@@ -1975,6 +1987,542 @@ arch:vocal-treble_vocals a skos:Concept ; skos:inScheme arch:vocals ; skos:notat
   skos:exactMatch mbattr:433631a2-68b7-49e6-90b4-5af19e26fc75 .
 arch:vocal-whistling a skos:Concept ; skos:inScheme arch:vocals ; skos:notation "whistling" ;
   skos:exactMatch mbattr:ed220196-6250-456d-ab7b-465bee605b16 .
+```
+
+### D-18. Harmony as claims, keys, form, lead sheets, documents, notes, catalogues, bandmates, and exports (ADRs 0079 to 0089)
+
+Specification 0.0.10 installs version 2 of `archive.claim/chord_stacks`,
+`archive.claim/chord_sequence`, `archive.claim/meter_layers`, and
+`archive.assessment/judgment`, and version 1 of `archive.claim/key_sequence`,
+`archive.claim/key_regions`, `archive.claim/tuning`,
+`archive.claim/span_annotation`, `archive.claim/form`,
+`archive.claim/form_spans`, `archive.claim/lead_sheet`,
+`archive.claim/document_source`, `archive.claim/timed_lyrics`,
+`archive.claim/sensitivity`, `archive.claim/rights`, `archive.claim/notes`,
+`archive.claim/melody`, `archive.claim/melody_spans`,
+`archive.claim/tracklist`, `archive.claim/recording_audio`,
+`archive.claim/catalogue_correspondence`, `archive.claim/work_origin`,
+`archive.claim/sharing_consent`, and `archive.claim/export`. Every 0.0.9
+contract bundle remains installed with its exact bytes, and every version 1
+claim keeps its meaning under its own contract; a version 2 does not
+supersede its version 1, and an importer that needs none of a version 2's
+additions MAY write either. The layout is `archive/2`, and the core context
+and the Entity kinds are those of 0.0.9, so the release is additive and a
+0.0.9 archive adopts it by the specification upgrade of D-15. None of these
+contracts is current by kind or asserter, and none stores which claim is
+current (S-18).
+
+Unless a contract says otherwise below, a timed claim follows D-17's rules
+for chord stacks: it pins exactly one `source` Artifact revision and exactly
+one `stream`, an audio stream version 1 Claim revision whose `artifact`
+reference pins that Artifact object and revision; its payload's
+`sample_rate` equals the stream's; no span ends after the stream's
+`sample_count`; spans have integer `start_sample` and `end_sample` with
+`0 <= start_sample < end_sample`; a `run` is a derivation run version 1 Claim
+revision and a `document` an Artifact revision; `document_url` (D-17's URL
+form), locators, and an `alignment` (D-17's object) appear only as stated; a
+span's `end` is `asserted` (also when absent) or `held`, with a `hold_rule`
+of 1 to 500 characters exactly when some end is held; and `weight` (exact
+decimal text) appears on every reading exactly when the payload states a
+`weight_scale` (1 to 200 characters). An untimed claim pins no audio and has
+no `sample_rate` and no `alignment`; its subject is a `work`, a
+`musical_work` Entity revision, a `document`, or both. `corrects` names the
+claims a claim corrects, of the kinds each contract states; a correction
+replaces nothing. A `part` (1 to 100 characters) names the one player a claim
+describes; a claim without `part` describes the whole sound, and a mix claim
+and a part claim that differ are a difference, never a conflict.
+
+**Lineage.** `derived_from` names zero to eight exact Claim revisions the
+asserter read the claim from, with or without a run; it maps to
+`prov:wasDerivedFrom`, and no view replaces, hides, or ranks a claim because
+another derives from it. On the musical contracts it MAY pin a Claim citing
+chord stacks version 1 or 2, chord sequence version 1 or 2, meter layers
+version 1 or 2, key sequence, key regions, tuning, form, form spans, notes,
+melody, or melody spans. No revision MAY appear twice in `derived_from`, and
+none in both `corrects` and `derived_from`.
+
+**A stem cited by bank key.** A payload's optional `stem` is the closed object
+`{extractor, key, output, sha256}`: `extractor` is a lowercase ASCII letter
+followed by at most 62 lowercase letters, digits, and hyphens; `output` is the
+same with underscores in place of hyphens; and `key` and `sha256` are
+canonical SHA-256 digests. With the content digest of
+the pinned `source` revision it names one file of a feature bank,
+`sha256/<ab>/<cd>/<source hex>/bank/<extractor>/<key hex>/` output `output`,
+whose bytes have the digest `sha256`. The citation says which stem the
+asserter read; it is not evidence of the bytes, which may be deleted and made
+again, and Door does not check the file. A claim with a `stem` MUST NOT pin an
+`analysed` Artifact. The claim's samples are the source's.
+
+**Chord stacks version 2** is version 1 (D-17) with these additions: an
+optional `stem`; zero to eight `derived_from`; 1 to 100,000 spans;
+`corrects` MAY pin chord stacks version 1 or 2; `sequence` MAY pin chord
+sequence version 1 or 2; and a reading MAY be **bass-only**: an object of
+`bass`, a pitch class, optional `root` (a pitch class), optional `text`, and
+`weight` under the weight rule, and nothing else. A bass-only reading says
+which pitch class is lowest and nothing above it; a stack with `"tones": []`
+still says that only the bass sounds. **Chord sequence version 2** is version
+1 with `derived_from`, the bass-only reading, and `corrects` of chord
+sequence version 1 or 2; it has no samples and no stem, and keeps 10,000
+entries.
+
+**Meter layers version 2** is timed when it pins a `source`, and untimed
+otherwise. A timed claim is version 1 (D-17) with an optional `stem`;
+`derived_from`; zero to eight `corrects` of timed meter layers version 1 or
+2; and at most one `meter`, an untimed meter layers version 2 Claim revision
+an alignment placed on this recording, in which case it states `alignment`
+and its bars MAY name `placed`, `{layer, bar}`, the 0-based position of the
+untimed bar it was placed from (a repeated bar is placed once per pass). A
+claim without `meter` MUST NOT have `placed`. An untimed claim is a Work's or
+a document's written meter: it pins no `stream`, `analysed` Artifact, or
+`meter`; MAY pin at most one `form`, a form version 1 Claim revision, at most
+one `sequence`, a chord sequence version 1 or 2 Claim revision, at most one
+`run`, zero to eight `corrects` of untimed meter layers version 2, and
+`derived_from`; its payload holds `layers`, optional `modulations`, and
+`document_url` with a document. An untimed layer holds 1 to 10,000 bars and
+never beats; a bar has `numerator`, `denominator`, and optional `grouping`
+as in D-17, an optional `locator` (`bar`, with a document), an optional
+`section` (the 0-based position of a section of the pinned form), and
+optional `chords`, 1 to 64 objects of `entry` (the 0-based position of an
+entry of the pinned sequence that changes in this bar) and optional `at`,
+the written offset from the downbeat. A section needs a pinned form and
+chords a pinned sequence. Within a layer, sections, entries, and locator bars
+never go back; within a bar, offsets strictly increase and are less than the
+bar's length. Untimed modulations follow D-17's rules with the bars of a
+layer adjacent by position.
+
+A **written length** is `{count, unit}`: `count` notes of value 1/`unit`, an
+integer `unit` from 1 to 1,024, so a dotted quarter is 3/8 and a triplet
+eighth 1/12. A duration's `count` is at least 1; an offset's is at least 0.
+
+**Key readings.** A key reading is a **key**: `collection`, 1 to 12 pitch
+classes in strictly ascending order; optional `tonic`, a class of the
+collection; optional `mode` (1 to 100 characters), only with a tonic; and
+optional `spelling`, the asserter's name for each class in the collection's
+order, each a letter `A` to `G` and at most two sharps (`#`) or flats (`b`)
+that sounds that class; or **no key**, `no_key` `true`, a statement that the
+passage has no tonal centre; or **text only**, the source's `text`. Every
+form MAY carry `text` (1 to 200 characters) and the weight rule. A `mode` of
+`ionian`, `dorian`, `phrygian`, `lydian`, `mixolydian`, `aeolian`, `locrian`,
+`harmonic minor`, or `melodic minor` MUST name that mode's collection on the
+tonic; `major` is `ionian`, and `minor` is any of `aeolian`, `harmonic
+minor`, and `melodic minor`. Any other mode text is the asserter's and is not
+checked. A region's `readings` are 1 to 16 distinct readings in the
+asserter's order of preference.
+
+**Key sequence** is untimed keys of a Work or a document. It MAY pin at most
+one `run`, zero to eight `corrects` (key sequence version 1), `derived_from`,
+and at most one anchor: a `chord_sequence`, a chord sequence version 1 or 2
+Claim revision, or a `form`, a form version 1 Claim revision. Its payload has
+`regions` (1 to 1,000) and optional `part`, `weight_scale`, and
+`document_url`. A region has `readings`, an optional `section` (1 to 100
+characters), an optional `locator` (`line`, at least 1, with a document,
+never going backwards), and, exactly when the claim pins an anchor, `first`
+and `last`, positions of the anchor's entries or sections as written, with
+`first <= last` and each region's `first` after the previous region's
+`last`. **Key regions** is one asserter's keys over one stream: a timed
+claim with optional `part`, `weight_scale`, `hold_rule`, `alignment`,
+`document_url`, and `stem`, and no `analysed` role. It MAY pin at most one
+`tuning`, a tuning Claim revision whose `source` is this claim's `source`
+revision; at most one `sequence`, a key sequence an alignment placed here
+(then it states `alignment`, and a region MAY name `region`, the position of
+the sequence region it was placed from, which needs the `sequence`); zero to
+eight `corrects` (key regions version 1); and `derived_from`. `regions` holds
+1 to 1,000 ordered, non-overlapping spans with `readings` and optional `end`
+and `locator` (`bar`, with a document).
+
+**Tuning** says where twelve-tone equal temperament lies on one stream. A
+timed claim with no `analysed` role and no `alignment`, it MAY pin `run`,
+`document`, zero to eight `corrects` (tuning version 1), and `derived_from`.
+Its payload has `sample_rate`; `reference_cents`, the grid's offset from
+A = 440 Hz as exact decimal text, at least -50 and less than 50; optional
+`drift`, 1 to 10,000 ordered, non-overlapping spans with `cents` in the same
+range, where the grid lies elsewhere; optional `confidence_scale` (1 to 200
+characters), and then `confidence` (exact decimal text) on the payload and
+every drift span, and otherwise none; optional `document_url` with a
+document; and optional `stem`. **Pitch classes are relative to the grid in
+force**: a chord's classes, a key's collection, and a note's pitch name the
+nearest step of the drift span's grid within it and the reference's
+elsewhere. An instrument tuned down or capoed is not a recording's tuning.
+
+**Judgment version 2** is version 1 (D-13) with at most one scope in its
+payload: `span`, `{start_sample, end_sample}` with `0 <= start_sample <
+end_sample`, with `sample_rate`, which appears exactly with `span`;
+`entries`, `{first, last}` with `0 <= first <= last`; or `reading`,
+`{reading}` and exactly one of `span` or `entry`, each an integer of at
+least 0. The judged Claim revision is timed when its payload states an
+integer `sample_rate` and it pins exactly one `stream`. A span scope needs a
+timed judged claim with the same `sample_rate`, and its span ends within the
+judged claim's stream's `sample_count`. An entries scope's `last` is a
+position of the judged claim's `entries`. A reading scope names a span (of a
+timed claim's `spans`) or an entry that exists and a reading it has. A
+version 2 `withdrawn` judgment's envelope `agent` MUST equal the judged
+claim's: only the asserter takes a claim back. A version 2 judgment with no
+scope judges the whole claim, as version 1 does.
+
+**Span annotation** is a person's mark. Its envelope `agent` MUST be an
+Archive object identifying a `person` Entity. It marks either samples of a
+recording, pinning exactly one `source` and one `stream` with `sample_rate`
+and `span` (as a judgment's) in its payload, or entries of a chord sequence,
+pinning exactly one `sequence` (chord sequence version 1 or 2) and at most one
+`work`, with `entries` (as a judgment's) whose `last` is a position of the
+sequence's entries; never both. A `work` it pins MUST be the Work revision
+that sequence pins. Its payload's `kind` is `unsure`, `interesting`, or
+`note`, and `text` (1 to 2,000 characters, the asserter's own words) appears
+exactly when the kind is `note`. It MAY pin zero to eight `about` Claim
+revisions, distinct and none its own stream or sequence; each MUST pin, under
+some role, the marked recording's `source` revision, or the sequence's `work`
+or `document` revision.
+
+**Form** is untimed sections of a Work or a document. It MAY pin at most one
+`run` and zero to eight distinct `corrects` (form version 1). Its payload has
+`sections`, 1 to 1,000 objects of `label` (1 to 100 characters, the source's
+own), optional `kind` (`intro`, `verse`, `pre_chorus`, `chorus`,
+`post_chorus`, `refrain`, `bridge`, `interlude`, `instrumental`, `solo`,
+`break`, `vamp`, `head`, `outro`, `coda`, or `tag`), and optional `locator`
+(exactly one of `line` or `bar`, with a document; located sections use one
+kind of locator and never go backwards); optional `repeats`, 0 to 1,000 of
+`first`, `last`, `times` (2 to 999), and optional `endings`; optional
+`jumps`, 0 to 8; and optional `document_url`. Repeats follow D-17's rules for
+a chord sequence's repeats over the sections. A repeat's `endings` are 2 to
+16 objects of `first`, `last`, and `passes` (distinct ascending pass numbers
+from 1 to `times`): they follow a non-empty body one after another, the last
+ending at the repeat's `last`, and every pass has exactly one ending; a
+repeat inside one with endings lies within its body or one ending. A jump is
+a D.C. or D.S. at the end of section `after`: `kind` `da_capo` or
+`dal_segno` (which needs `to`, the segno's section, at most `after`), `then`
+`end`, `fine` (which needs `fine`, a section at or after where play resumes),
+or `coda` (which needs `coda_from`, at or after where play resumes and before
+the last section, and `coda`, after both `after` and `coda_from`), and
+optional `repeats_on_return`. Where play resumes and the coda are never
+strictly inside a repeat, and jumps are at distinct sections in written
+order. **Form spans** is a timed claim of sections on a recording: optional
+`document_url` and `alignment`; at most one `form` it places (then it states
+`alignment`) and zero to eight distinct `corrects` (form spans version 1);
+`spans`, 1 to 10,000 ordered, non-overlapping spans, each with a `label` or
+a `section` (the position of a section of the pinned form, which needs the
+form) or both, an optional `kind`, and an optional `locator` as a section's.
+
+**Lead sheet** is a person's or a band's chosen version of a Work. Its
+envelope `agent` MUST identify a `person` or `organisation` Entity, never
+software. It pins exactly one `work`; at most one `source` Artifact, the
+recording its timed inputs count; at most one `recording` (a `recording`
+Entity, an audio selection or song occurrence version 2 Claim, or an
+Artifact), which needs the `source`; at least one of `chords` and `melody`;
+and, as chosen inputs, `chords` (0 to 16, chord stacks or chord sequence
+version 1 or 2), `meter` (0 to 4, meter layers version 1 or 2), `form` (0 to
+4, form or form spans), `key` (0 to 4, key sequence or key regions), `lyrics`
+(at most one Artifact, the lyric document), `lyric_timing` (0 to 4, timed
+lyrics, which need `lyrics` and place exactly that document), `melody` (0 to
+4, melody or melody spans), and `credits` (0 to 32, work-scope contribution
+Claims about the same Work object); with `document` (0 to 8 Artifacts a
+part's strings were read from), `derived_from` (0 to 8 lead sheets of the
+same Work object), `band` (at most one `organisation`), and `adopted_by` (0
+to 16 band membership Claims). No revision is pinned twice. An input that
+pins a `source` MUST pin the lead sheet's `source` revision, and one that
+pins a `work` MUST name the lead sheet's Work object. A person's lead sheet
+pins no `band` and no `adopted_by`; a band's pins the band, which is its
+`agent`, and the memberships of that band of the members who adopted it, no
+member twice. Its payload MAY hold `label` (1 to 200 characters) and `parts`,
+1 to 16 objects of distinct `name` (1 to 100 characters), optional
+`instrument` (a MusicBrainz instrument URI), optional `strings` (1 to 12 MIDI
+notes, in the tablature's order), optional `capo` (1 to 24, with `strings`),
+and optional `document` (the position of one of the `document` references,
+with `strings`). A later revision of a lead sheet keeps its agent, its Work
+object, and its `source` revision.
+
+**Document source** says what a document Artifact is and where it came from.
+It pins exactly one `document` Artifact, zero to eight `derived_from`
+Artifacts (the content it was made from), zero to sixteen distinct `work`
+Entities of kind `musical_work`, and at most one `run`; no object is both the
+document and among what it was made from. Its payload has `media_type`, one of
+`text/plain`, `text/markdown`, `application/json`, `application/pdf`,
+`application/rtf`, the Word and OpenDocument text types, the two MusicXML
+types, `application/x-guitar-pro`, `audio/midi`, `image/png`, and
+`image/jpeg`; optional `kinds`, distinct and ascending, from `booklet`,
+`catalogue_response`, `chords`, `licence`, `lyrics`, `notes`, `other`,
+`score`, `tablature`, and `transcript` (a transcript pins its `run` and at
+least one `derived_from`); optional `url` (D-17's URL form), which needs
+`retrieved_at`, and which, for a Google Docs document, MUST be its canonical
+`https://docs.google.com/document/d/<id>`; optional `retrieved_at` (as
+D-17's); and optional `filename` (1 to 255 characters, a name: not `.` or
+`..`, and with no `/`, `\`, or NUL).
+
+**Timed lyrics** places lines and words of one lyric document on one stream
+and holds no word of the lyric. It pins exactly one `document` Artifact, one
+`source` of another object, one `stream`, at most one `work`, at most one
+`run`, and zero to eight distinct `corrects` (timed lyrics version 1). Its
+payload has `sample_rate`, `scheme` (`text` or `lrc`), `alignment`, `lines`
+(1 to 10,000), optional `hold_rule`, and optional `confidence_scale`. A line
+has `line` (its number in the document, from 1), a span, an optional `end`,
+optional `words` (1 to 200), and `confidence` exactly with a scale. Lines are
+in order of start and may overlap. A word has `word` (its number in the
+line, from 1, strictly increasing), a span within its line's, after the word
+before it, an optional `end`, and `confidence` exactly with a scale. The
+document is UTF-8; a line ends at LF, CR LF, or a lone CR; a word is a
+maximal run of characters without the Unicode `White_Space` property; under
+`lrc`, time tags are not words and line numbers count every line of the file.
+Door does not read content, so whether a numbered line or word exists is not
+Door's to check.
+
+**Sensitivity** is a person's limit on how far objects may reach (S-32). Its
+envelope `agent` MUST identify a `person` Entity. It pins 1 to 1,000
+`subject` references of any shape, naming different objects. Its payload has
+`label`, a Traffic Light Protocol 2.0 label (`RED`, `AMBER`, `GREEN`, or
+`CLEAR`), and optional `reason` (1 to 2,000 characters). A limit holds for
+everything that pins its subject, transitively, so a transcript of a `RED`
+recording is `RED`.
+
+**Rights** states one rights statement about 1 to 1,000 `subject` references
+(Artifacts, or Entities of kind `musical_work`, `recording`, or `release`),
+with 0 to 8 `holder` references (`person` or `organisation` Entities), at
+most one `licensee` (a `person`), at most one `document`, and at most one
+`run`; subjects and holders name different objects. Its payload has
+`statement`, a RightsStatements.org statement identifier (the scheme at the
+end of this section) or `personal-use-licence`, which needs exactly one
+`licensee` (any other statement has none); optional `jurisdiction` (an ISO
+3166-1 alpha-2 code); optional `from` and `until` (partial dates as D-17's,
+`until` not before `from`); optional `text` (1 to 2,000 characters); and
+`document_url` and `retrieved_at` only with a document. Rights never limit
+the circle: whatever its statement, anything MAY be disclosed to the
+operator's circle, subject to sensitivity. Beyond the circle, a rights claim
+permitting it is needed (S-30), and among several the strictest applies; a
+`personal-use-licence` reaches the circle and nothing beyond it.
+
+**Notes** is one part's notes of one recording: a timed claim with `part`
+(required), optional `stem`, optional `range` (a span: the claim asserts
+silence between notes inside it and nothing outside; without it, the whole
+stream), optional `unpitched` (`true`), optional `confidence_scale` (then
+every note has `confidence`, and otherwise none does), optional `strings`
+and `capo` (as a lead sheet part's, only with a document), optional
+`document_url`, and `alignment` exactly with a document. It pins at most one
+`analysed` Artifact (never with a `stem`), at most one `tuning` (a tuning
+claim of the same `source` revision; never on an unpitched part), zero to
+eight `corrects` (notes version 1), `derived_from`, and at most one
+`contribution` (contribution version 1). `notes` holds 1 to 100,000 notes in
+strictly ascending order of `onset_sample` and then `pitch`, each with
+integer `onset_sample` within the range, `offset_sample` after it and within
+the stream, `pitch` (a MIDI note number, 0 to 127, the nearest step of the
+grid), optional `cents` (from that step, in [-50, 50), only with a pinned
+tuning), optional `velocity` (1 to 127), and an optional `locator` (`bar`
+and optional `at` and `duration` written lengths, with a document). A longer
+part is split into claims by range.
+
+**Melody** is a Work's or a document's tune, untimed: optional `run`, at most
+one `meter` (an untimed meter layers version 2 Claim revision whose bars it
+is laid on), zero to eight `corrects` (melody version 1), and
+`derived_from`. Its payload has `notes`, 1 to 10,000 items in written order,
+each a `pitch` (0 to 127) or a `rest` (`true`) with a `duration` and an
+optional `locator` (`bar`, with a document), at least one a pitch; optional
+`part`; optional `document_url`; and optional `start`, `{layer, bar, at?}`,
+only with a `meter`. **Melody spans** says which part carries a recording's
+tune: a timed claim pinning 1 to 16 distinct `notes` Claims about the same
+`source` revision, at most one `run`, zero to eight `corrects` (melody spans
+version 1), and `derived_from`; its payload has only `sample_rate` and
+`spans`, 1 to 10,000 ordered, non-overlapping spans, each naming in `notes`
+the revision of one pinned notes claim, with optional `select` (`all`,
+`highest`, or `lowest`). Every pinned notes claim is named by some span.
+
+**Tracklist** says what is on a release. It pins exactly one `release`
+Entity and one `track`, a `recording` Entity, per listed track, in order. Its
+payload has `media`, 1 to 200 objects of `position` (from 1), `tracks` (1 to
+999), optional `format`, and optional `title`; a track has `position` (0 to
+999; 0 is a hidden pregap track, first on its medium) and optional `number`,
+`title`, `artist_text`, and `length_ms`; at most 4,000 tracks in all. Media
+and tracks are in strictly ascending position, and unless the payload says
+`partial` (`true`) media are numbered 1, 2, … and a medium's tracks from 0 or 1
+with no gap. It MAY carry D-17's asserter fields with their document rules,
+`text` not required. **Recording audio** says archived audio is a recording:
+exactly one `recording` Entity and one `audio` (an Artifact, or an audio
+selection or song occurrence version 2 Claim), with `extent` `whole` or
+`part`; it MAY pin a `tracklist`, and then states `medium` and `track`, a
+position that tracklist lists whose `track` reference names this claim's
+recording object. **Catalogue correspondence** maps exactly one of an
+`artist` (`person` or `organisation`), a `release`, or a `recording` Entity
+to one `external` entry by `mapping`: a MusicBrainz artist, release, or
+recording, or a Discogs artist or release, by `skos:exactMatch` or
+`skos:closeMatch`, from the subject of the same kind; and a MusicBrainz
+release group or a Discogs master by `skos:broadMatch`, from a release. Each
+`external` is the canonical URI, `https://musicbrainz.org/<type>/<MBID>` or
+`https://www.discogs.com/<type>/<id>`. Both carry the asserter fields as a
+tracklist does.
+
+**Work origin** answers whose a musical Work is. Its envelope `agent` MUST
+identify a `person` Entity. It pins exactly one `work`, 0 to 32 distinct
+`writer` `person` Entities, and at most one `band` (`organisation`). Its
+payload is `{origin}`: `co_written` names at least two writers, the active
+operator's person among them; `own` names no writer or only the operator, and
+no band; `others` never names the operator and names no band. **Sharing
+consent** is a co-writer's answer for one destination: its `agent` MUST be a
+writer that its pinned `origin` (one work origin Claim revision whose origin
+is `co_written`) names, and never the active operator's person; it pins 1 to
+64 distinct `covers` Claim revisions; its payload has `destination` (1 to 200
+characters), `decision` (`approve` or `refuse`), and optional `reason`. A
+consent authorizes nothing by itself (S-30).
+
+**Export** records a file rendered from exact revisions that was sent to
+someone. It pins exactly one `artifact`, the exported file, 1 to 64
+`rendered` Claim revisions, and 0 to 16 `joined` Artifact revisions, no
+revision twice. Its payload has `format` (`pdf`, `musicxml`, `lilypond`, or
+`jams`); `media_type`, fixed by the format (`application/pdf`,
+`application/vnd.recordare.musicxml+xml`, `text/x-lilypond`, or
+`application/json`); `exporter`, `{id, version}` (`id` as a stem's
+`extractor`, `version` an ASCII letter or digit followed by at most 39
+letters, digits, and dots);
+`key`; optional `options`, at most 32 named scalars (names as a stem's
+`output`; values booleans, integers of magnitude below 2^53, or text of 1 to
+200 characters); optional `software` (1 to 32 `{name, version}`); and
+optional `losses` (1 to 32 distinct texts of 1 to 200 characters). `key`
+MUST be `sha256:` and the lowercase hexadecimal SHA-256 of the RFC 8785
+canonical JSON of `{format, exporter: {id, version}, options, rendered,
+joined}`, where `options` is the payload's (or `{}`) and `rendered` and
+`joined` are the pinned revisions in reference order, each `[id,
+revision_id]`.
+
+**Terms.** Each fragment maps its payload fields and roles; `derived_from`
+maps to `prov:wasDerivedFrom`, `run` to `prov:wasGeneratedBy`, `document` to
+`dcterms:source` (except where the document is the claim's subject), and
+`stream` to `arch:measured_stream`, as in D-15 and D-17. Payload fields that
+share a core term's name (a section's or a mark's `kind`, a part's `name`, a
+sensitivity's `label`, an export's `artifact` and `software`) are not mapped.
+
+**JSON Schema keywords.** The evaluator also supports `propertyNames` (a
+schema every property name of an object, as a string, MUST satisfy) and
+`minProperties` and `maxProperties` (non-negative integers bounding an
+object's number of properties). Each applies only to an object instance.
+
+**Profile rules.** `x-archive-pitch-stacks` applies to every reading with a
+`bass` and `tones`; a bass-only reading has nothing for it to check, and no
+earlier bundle's meaning changes. The release adds the rules below. Each is
+closed and root-only, names distinct fields, and an unknown or malformed rule
+MUST be refused when the bundle loads. A Door that installs a bundle declaring
+a rule it does not enforce MUST refuse every record citing that bundle, and a
+generic schema success MUST NOT bypass a rule. A "timed form" means a record
+that pins a reference in the rule's role; "the active operator" is the person
+D-13 names.
+
+- `x-archive-distinct-revisions` names `roles`: no revision MAY appear twice
+  among the references in those roles.
+- `x-archive-ordered-fields` is a list of `{path, low, high, strict}`: on
+  every object the path reaches, the integer `low` MUST be less than (`strict`
+  true) or at most `high`.
+- `x-archive-ordered-ranges` names a payload array `payload` and integer
+  fields `first` and `last`: on each element with both, `first <= last`, and
+  each such element's `first` is after the previous one's `last`.
+- `x-archive-ascending-tuples` is a list of `{payload, fields, strict}`: in
+  every array the path `payload` reaches, elements are in ascending order of
+  the tuple of their integer `fields`, strictly when `strict` is true.
+- `x-archive-contained-spans` names an `outer` array, the `inner` array each
+  of its elements holds, and integer `start` and `end`: every inner span lies
+  within its outer element's.
+- `x-archive-distinct-values` names `paths`: the values reached by each path
+  are distinct.
+- `x-archive-file-names` names payload `fields` whose string values MUST NOT
+  be `.` or `..` or contain `/`, `\`, or NUL.
+- `x-archive-spellings` names a `payload` path to readings, their `classes`
+  array, and their `names` array: where both are present they have equal
+  length and each name sounds the class at its position.
+- `x-archive-when-pinned` names a `role` and two maps of earlier profile
+  rules, `then` and `else`: the `then` rules apply exactly when the record
+  pins a reference in `role`, and the `else` rules otherwise. A rule named in
+  either map MUST NOT also appear at the root.
+- `x-archive-written-bars` names `layers`, their `bars`, and `modulations`,
+  and checks an untimed meter layers payload as stated above.
+- `x-archive-target-form` names a role `by` and a map from roles to `without`
+  or `same`: a Claim pinned in a `without` role pins no reference in `by`; one
+  pinned in a `same` role pins one exactly when this record does.
+- `x-archive-pinned-subjects` is a list of `{roles, subject, equals, match}`:
+  for each Claim pinned in any of `roles` and each reference it has in
+  `subject`, this record MUST pin a reference in `equals` naming the same
+  object (`match` `object`) or the same object and revision (`revision`).
+- `x-archive-target-values` is a list of `{role, field, values}`: each Claim
+  pinned in `role` has payload `field` with one of `values`.
+- `x-archive-target-span` names a `role` whose one Claim has integer payload
+  fields `rate` and `count`, and this payload's object `span` with integer
+  `start` and `end`: when the record pins the role, its `rate` equals the
+  Claim's and `end` is at most `count`.
+- `x-archive-within-range` names a `role` whose one Claim has an integer
+  `count`, a payload object `range` with integer `start` and `end`, and a
+  payload array `items` with integer `field`: `range.end` is at most `count`,
+  and with a range every `field` is at least `start` and less than `end`.
+- `x-archive-ref-index` names a `path` and a `role`: every integer the path
+  reaches is a position among the record's references in `role`.
+- `x-archive-ref-per-item` names a `path` and a `role`: the items the path
+  reaches, in order, number exactly the references in `role`.
+- `x-archive-named-refs` names a `path` and a `role`: the revision
+  identifiers the path reaches are exactly the revisions pinned in `role`.
+- `x-archive-agent` names Entity `kinds`: the envelope `agent` is an Archive
+  object whose head Entity revision has one of those kinds.
+- `x-archive-supersession` names `agent` (`true`), `objects`, and
+  `revisions`: a record that supersedes a revision keeps its agent, names the
+  same object in each of `objects`, and pins the same revision in each of
+  `revisions`.
+- `x-archive-asserter-only` names a payload `field`, a `value`, and a `role`:
+  when the field has that value, the envelope `agent` equals the agent of the
+  record pinned in `role`.
+- `x-archive-judged-scope` names the `role` of the judged Claim and checks a
+  judgment version 2's scope against it, as stated above.
+- `x-archive-mark-about` names the `about` role and checks a span
+  annotation's `about` references and `work`, as stated above.
+- `x-archive-form-structure` names `sections`, `repeats`, and `jumps`, and
+  checks a form's locators, endings, and jumps, as stated above.
+- `x-archive-adoption` names the `band` and `adopted_by` roles and checks a
+  lead sheet's asserter and adoption, as stated above.
+- `x-archive-tracklist-positions` names `media`, `tracks`, `position`, and
+  `partial`, and checks a tracklist's positions, as stated above.
+- `x-archive-tracklist-entry` names the `tracklist` role and the `medium`,
+  `track`, and `recording` it compares, as stated above.
+- `x-archive-operator-writers` names the `field` holding the origin and the
+  `writer` role, and checks a work origin's writers against the active
+  operator, as stated above.
+- `x-archive-consenting-writer` names the `role` of the pinned origin and its
+  `writers` role: the envelope `agent` is one of those writers and is not the
+  active operator's person.
+- `x-archive-export-key` names the payload `key` and the `rendered` and
+  `joined` roles, and recomputes the key as stated above.
+
+A reference target of chord stacks `sequence`, a lead sheet's inputs, and the
+other roles that accept several contracts use D-17's `any`. Whether a
+section or entry index is within a pinned form or sequence, a placed bar's
+time signature, a tune that fits its meter, and a melody span within its
+notes claim's range read a pinned claim's payload in ways no rule here
+states; they are World's checks, and Door does not refuse them.
+
+**The rights statements.** This is the vocabulary a rights claim's
+`statement` draws from, as SKOS. Each RightsStatements.org statement is a
+concept whose notation is its identifier and which is `skos:exactMatch` the
+statement's URI; the personal-use licence is Archive's own concept.
+
+```turtle
+@prefix arch: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+
+arch:rights a skos:ConceptScheme ; skos:notation "rights" .
+arch:rights-InC a skos:Concept ; skos:inScheme arch:rights ; skos:notation "InC" ;
+  skos:exactMatch <http://rightsstatements.org/vocab/InC/1.0/> .
+arch:rights-InC-OW-EU a skos:Concept ; skos:inScheme arch:rights ; skos:notation "InC-OW-EU" ;
+  skos:exactMatch <http://rightsstatements.org/vocab/InC-OW-EU/1.0/> .
+arch:rights-InC-EDU a skos:Concept ; skos:inScheme arch:rights ; skos:notation "InC-EDU" ;
+  skos:exactMatch <http://rightsstatements.org/vocab/InC-EDU/1.0/> .
+arch:rights-InC-NC a skos:Concept ; skos:inScheme arch:rights ; skos:notation "InC-NC" ;
+  skos:exactMatch <http://rightsstatements.org/vocab/InC-NC/1.0/> .
+arch:rights-InC-RUU a skos:Concept ; skos:inScheme arch:rights ; skos:notation "InC-RUU" ;
+  skos:exactMatch <http://rightsstatements.org/vocab/InC-RUU/1.0/> .
+arch:rights-NoC-CR a skos:Concept ; skos:inScheme arch:rights ; skos:notation "NoC-CR" ;
+  skos:exactMatch <http://rightsstatements.org/vocab/NoC-CR/1.0/> .
+arch:rights-NoC-NC a skos:Concept ; skos:inScheme arch:rights ; skos:notation "NoC-NC" ;
+  skos:exactMatch <http://rightsstatements.org/vocab/NoC-NC/1.0/> .
+arch:rights-NoC-OKLR a skos:Concept ; skos:inScheme arch:rights ; skos:notation "NoC-OKLR" ;
+  skos:exactMatch <http://rightsstatements.org/vocab/NoC-OKLR/1.0/> .
+arch:rights-NoC-US a skos:Concept ; skos:inScheme arch:rights ; skos:notation "NoC-US" ;
+  skos:exactMatch <http://rightsstatements.org/vocab/NoC-US/1.0/> .
+arch:rights-CNE a skos:Concept ; skos:inScheme arch:rights ; skos:notation "CNE" ;
+  skos:exactMatch <http://rightsstatements.org/vocab/CNE/1.0/> .
+arch:rights-UND a skos:Concept ; skos:inScheme arch:rights ; skos:notation "UND" ;
+  skos:exactMatch <http://rightsstatements.org/vocab/UND/1.0/> .
+arch:rights-NKC a skos:Concept ; skos:inScheme arch:rights ; skos:notation "NKC" ;
+  skos:exactMatch <http://rightsstatements.org/vocab/NKC/1.0/> .
+arch:rights-personal-use-licence a skos:Concept ; skos:inScheme arch:rights ;
+  skos:notation "personal-use-licence" .
 ```
 
 ## 7. Not yet defined
