@@ -115,9 +115,11 @@ SHIPPED = {
     # Version 3: the tuning from a histogram of the windows, profiles
     # referenced to it, the key as a mode; chords move to their own extractor.
     # Version 4: mains hum left out; a tonic named only where it leads; key
-    # regions by note collection.
-    "tonal": {"version": "4",
-              "code": "sha256:9f5bcc7ef500abf52da8b909e97a8a63a560718c8fee9391639abf7508622e11",
+    # regions by note collection. Version 5: the tuning only from enough
+    # windows; the tonic by the bass among the collection's notes, with a
+    # calibrated confidence.
+    "tonal": {"version": "5",
+              "code": "sha256:05b14296dc67836cb4700f76f0ef7a0afc35bb4aba9432061be478de62938f32",
               "outside": {"cover.py": "sha256:1d3d8e48959d97ec6d633ab683eebea5bcb75616a1d29e218c25da30a7a4884c",
                           "extractors/frames/frames.py":
                               "sha256:acac662e87efbcafcebab714b858e8b42c287de7963156c7e2a14adfd860c565"}},

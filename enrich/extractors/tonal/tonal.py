@@ -22,7 +22,9 @@ recording again for each frame's spectral peaks, and measures:
   (below), as the frequency of A4 in Hz and its distance from 440 Hz in
   cents, folded into [-50, 50), and `tuning_window_count`, how many windows
   it was taken from: `tuning_confidence` is measured over every sounding
-  frame, so it does not show that a tuning rests on two windows of six;
+  frame, so it does not show that a tuning rests on two windows of six.
+  Since version 5 a tuning that does rest on too few (below) is not
+  reported: 440 Hz with confidence 0, as when no window is confident;
 - `detuned`, `detuned_spans`: whether the recording, and which windows of
   it, sit more than `max_detune_cents` (40) from 440 Hz, where a profile
   referenced to 440 Hz, as `frames/hpcp` is, splits each pitch class over
@@ -36,13 +38,14 @@ recording again for each frame's spectral peaks, and measures:
   normalised, so loud and quiet frames keep their difference; a frame below
   the level gate is 0. The `chords` extractor reads them;
 - `collection`, `collection_margin`, `key`, `mode`, `scale`, `scale_notes`,
-  `key_strength`, `key_margin`, `tonic_margin`, `tonic_named`: the note
-  collection of the pitched frames and, when one leads, its tonic and mode
-  (below); `keys`: the same in windows of about thirty seconds that are at
-  least half pitched; and `key_regions`, a timeline of the note collections
-  with the tonic named where it leads. A span is labelled with the tonic and
-  mode ("F dorian") where the tonic leads and with the collection ("Eb major
-  scale") where it does not, and valued by its tonic margin;
+  `key_strength`, `tonic_margin`, `tonic_confidence`, `tonic_named`: the
+  note collection of the pitched frames, its tonic and mode, and how sure
+  the tonic is (below); `keys`: the same in windows of about thirty seconds
+  that are at least half pitched; and `key_regions`, a timeline of the note
+  collections with the tonic named where it is likely. A span is labelled
+  with the tonic and mode ("F dorian") where the tonic's confidence is at
+  least one half and with the collection ("Eb major scale") where it is
+  not, and valued by that confidence;
 - `dissonance`: `Dissonance` (sensory roughness) of every frame that
   passes the level gate, on the `frames` grid; a frame below it reads 0, as
   silence does, so a quiet room's noise is not averaged in. Talk and noise
@@ -82,7 +85,16 @@ of all its sounding frames' histogram about that tuning, so noise the pitch
 gate let through still lowers it. The recording's tuning is the median of
 the windows that are at least half pitched and at least `min_confidence`
 (0.4) confident, each weighted by its confidence; with none, it is 440 Hz
-with confidence 0. Version 2 used Essentia's `TuningFrequency`, whose
+with confidence 0. So it is with too few: fewer than `min_windows` (4)
+confident windows, unless the recording is too short to have that many and
+every window is confident, or fewer than `min_window_share` (half) of the
+windows that are at least half pitched. A tuning from two windows of a
+minute, or from six of fourteen pitched windows whose other eight agree
+only weakly, speaks for a corner of the recording, not for the whole: on the
+album below version 4 reported one track at +18.5 cents from two windows
+of six, and another at +15.5 from six of fourteen. The windows themselves
+keep their tunings (written near the confident windows' median, reported
+or not), and the profiles still follow them. Version 2 used Essentia's `TuningFrequency`, whose
 estimate over a long stretch of a dense mix, and over white or pink noise,
 falls to 434.2 Hz (-23 cents) whatever the music: on an album of eighteen
 masters eight read exactly that, where these windows read from -6 to +23
@@ -131,47 +143,66 @@ a semitone from 440 Hz therefore keeps its pitch classes whole, where
 `frames/hpcp` splits them; at exactly half a semitone the name depends on
 which side the fold puts the tuning.
 
-The key. The profile of the pitched frames is the sum of their `chroma`
-and of half their `bass_chroma`, each frame's square-rooted bins divided by
-their sum, so every pitched frame counts once and the bass, which mostly
-plays roots, leans the tonic towards it. It is correlated with a template
-for every tonic of every mode of the diatonic collection (ionian, dorian,
-phrygian, lydian, mixolydian, aeolian, locrian) and of the harmonic and
-melodic minor collections: the tonic weighs 5, the fifth 4.5, the third
-4.25, the collection's other notes 3.75, and the notes outside it 2 (the
-shape of Temperley's major profile, applied to any mode, so the seven
-modes of one collection differ only in which note is the tonic). Harmonic
-and melodic minor give up `collection_penalty` (0.02), so that a diatonic
-reading wins a tie. `key` is the tonic, named as Essentia names notes (A,
-Bb, B, C, C#, D, Eb, E, F, F#, G, Ab); `mode` the mode; `scale_notes` the
-collection from the tonic up; `scale` is "major" for ionian, lydian, and
-mixolydian and "minor" for the rest, so a reader of version 2 still finds
-the key it expects; `key_strength` is the winner's correlation and
-`key_margin` how far it leads the runner-up. Version 2 read "Eb major" for
-music in F dorian, which has Eb major's notes and F's tonic. On the album
-above, the new tonic agreed with 15 of 38 published key claims (Spotify's,
-ChordU's, Ultimate Guitar's, and the keys of note-for-note transcriptions)
-where version 2's agreed with 11; the claims agree with each other on the
-tonic in 11 of 31 pairs. That is evidence about this album only.
+The key: the note collection. The profile of the pitched frames is the
+sum of their `chroma` and of half their `bass_chroma`, each frame's
+square-rooted bins divided by their sum, so every pitched frame counts once
+(`key_shares` gives the two halves, `key_profile` their sum). It is
+correlated with a template for every tonic of every mode of the diatonic
+collection (ionian, dorian, phrygian, lydian, mixolydian, aeolian, locrian)
+and of the harmonic and melodic minor collections: the tonic weighs 5, the
+fifth 4.5, the third 4.25, the collection's other notes 3.75, and the notes
+outside it 2 (the shape of Temperley's major profile, applied to any mode,
+so the seven modes of one collection differ only in which note is the
+tonic). Harmonic and melodic minor give up `collection_penalty` (0.02), so
+that a diatonic reading wins a tie. The collection is the best reading's,
+and `collection_margin` how far it leads the best reading on other notes.
+Version 2 read "Eb major" for music in F dorian, which has Eb major's notes
+and F's tonic.
 
-The modes of one collection share their notes and differ only in which
-note the music leans on, and that lean is often slight: a progression of
-Cmaj7, Am7, Dm7, G7, Fmaj7, and E7 read A aeolian, F lydian, or C ionian
-as its level and tuning changed, every one by a margin under 0.015, and in
-version 3 its thirty-second windows made four regions in four modes on
-one set of notes. So each reading reports how far it leads:
-`collection_margin` over the best reading on other notes, and
-`tonic_margin` over the best reading with another tonic (for F dorian
-usually Eb ionian, its own notes). The tonic is named (`tonic_named`) when
-`tonic_margin` is at least `min_tonic_margin` (0.03); below it, `key`,
-`mode`, and `scale` are the best guess among modes that share the notes and
-`collection` is what to read. The threshold sits between that progression
-(0.010 to 0.014) and synthetic music with a plain tonic (a C major
-progression with its roots in the bass 0.040, an F dorian vamp 0.090). On
-the album the tonic was named on 11 of 18 tracks; there it agreed with 10
-of 22 published key claims, and where it was not named with 5 of 16: the
-claims are noisy (they agree with each other on 11 of 31 pairs), so this
-supports the threshold only weakly.
+The key: the tonic. The templates are good at the notes and poor at the
+tonic, since the modes of one collection share their notes and differ only
+in which note the music leans on: a progression of Cmaj7, Am7, Dm7, G7,
+Fmaj7, and E7 read A aeolian, F lydian, or C ionian as its level and tuning
+changed, each by a margin under 0.015. In version 4 the tonic was the best
+template's and was named when it led the best reading with another tonic by
+0.03; on the album below that margin did not predict being right (where the
+tonic was named it agreed with 10 of 22 published key claims, where it was
+not with 5 of 16), and a song in B-flat whose transcriptions both say B-flat
+read G aeolian. So since version 5 the tonic is chosen among the
+collection's own notes by `tonic_evidence`: each note's share of the bass
+(which mostly plays roots), a quarter of its share of the treble, and
+`favour` (0.08) more for the collection's major or minor tonic (its ionian
+and aeolian tonics, or a harmonic or melodic minor collection's own), since
+most music in a collection is in one of those two; another mode wins only
+where the bass sits on its tonic clearly more. The song in B-flat reads B-flat
+ionian; an F dorian vamp, its bass on F three bars in four, still reads F
+dorian. `key` is the tonic, named as Essentia names notes (A, Bb, B, C, C#,
+D, Eb, E, F, F#, G, Ab); `mode` the mode; `scale_notes` the collection from
+the tonic up; `scale` is "major" for ionian, lydian, and mixolydian and
+"minor" for the rest, so a reader of version 2 still finds the key it
+expects; `key_strength` is the named mode's correlation; `tonic_margin` how
+far the tonic's evidence leads the collection's next note. Version 4's
+`key_margin`, how far the best template led the runner-up, is gone: the key
+is no longer the best template.
+
+`tonic_confidence` is the chance that the tonic is right, given the
+collection: the softmax of the seven notes' evidence at `temperature`
+(0.07), read at the tonic, so 1/7 where nothing tells the notes apart and
+near 1 where one note holds the bass. The temperature is calibrated on the
+album: there the mean confidence (0.43) matched the share of the published
+key claims (Spotify's, ChordU's, Ultimate Guitar's, and the keys of
+note-for-note transcriptions) whose tonic the key agreed with (0.45). It
+did not tell the tracks it got right from those it got wrong: the claims
+are noisy (they agree with each other on the tonic in 11 of 31 pairs), and
+the most confident track disagrees with all three of its claims. So it is
+calibrated in the mean on one album, not proven to rank. The tonic is named
+(`tonic_named`) when its confidence is at least `min_confidence` (one
+half): more likely right than wrong. Below it `key`, `mode`, and `scale`
+are the best guess and `collection` is what to read. A C major cycle of C,
+F, G, and A minor with each root as long in the bass reads C ionian with a
+confidence of about 0.4, its A as strong in the bass, and is not named; C,
+F, C, G is. On the album the tonic agreed with 17 of 38 claims where
+version 4's agreed with 15, and it was named on 6 tracks of 18.
 
 `keys` is a window-by-window description, not a claim of modulation.
 `key_regions` is the timeline: the windows' collections are decoded on a
@@ -179,7 +210,7 @@ path that pays `region_switch` (0.1) for each change (`collection_path`),
 so a change must lead by more than that over the windows it holds, the
 windows are laid end to end (each keeps the stretch nearer its centre than
 its neighbours'), runs of one collection merge, and each region's tonic is
-found from its own pitched frames among that collection's modes and named
+found from its own pitched frames among that collection's notes and named
 as above. On the album the regions went from 143 in version 3 (up to 16 a
 track, through modes of one collection) to 50 (at most 6).
 
@@ -222,13 +253,18 @@ HUM = {"mains_hz": [50, 60], "lines": [1, 2, 3], "tolerance_hz": "1.5", "min_pre
 PITCHED = {"block_frames": 54, "concentration_cents": 15, "min_sounding": "0.5", "min_concentration": "0.4",
            "votes": "one-per-sounding-frame"}
 TUNING = {"estimator": "histogram-peak", "window_frames": 216, "hop_frames": 108, "min_pitched": "0.5",
-          "min_confidence": "0.4", "recording": "confidence-weighted-median", "max_detune_cents": 40}
+          "min_confidence": "0.4", "recording": "confidence-weighted-median", "min_windows": 4,
+          "min_window_share": "0.5", "max_detune_cents": 40}
 CHROMA = {"treble_hz": [100, 5000], "bass_hz": [40, 250], "relative_db": 60, "weighting": "cosine-squared",
           "width_semitones": 1, "reference": "local-tuning"}
 KEY = {"weights": {"tonic": "5", "fifth": "4.5", "third": "4.25", "scale": "3.75", "outside": "2"},
        "bass_weight": "0.5", "collections": ["diatonic", "harmonic minor", "melodic minor"],
-       "collection_penalty": "0.02", "min_tonic_margin": "0.03", "window_frames": 324, "hop_frames": 162,
-       "min_pitched": "0.5", "regions": "viterbi-over-collections", "region_switch": "0.1"}
+       "collection_penalty": "0.02",
+       "tonic": {"among": "the-collections-notes", "bass": "1", "treble": "0.25",
+                 "favoured_modes": ["ionian", "aeolian", "harmonic minor", "melodic minor"], "favour": "0.08",
+                 "temperature": "0.07", "min_confidence": "0.5"},
+       "window_frames": 324, "hop_frames": 162, "min_pitched": "0.5", "regions": "viterbi-over-collections",
+       "region_switch": "0.1"}
 DISSONANCE = {"maxPeaks": 100, "relative_threshold": "0.01"}
 TUNING_COLUMNS = ("cents", "confidence", "pitched_share")
 
@@ -528,19 +564,23 @@ KEY_COLLECTIONS = numpy.array([collection for _, _, _, collection in KEY_CANDIDA
 COLLECTION_NAMES = list(dict.fromkeys(KEY_COLLECTIONS.tolist()))
 
 
-def key_profile(chroma: numpy.ndarray, bass: numpy.ndarray) -> numpy.ndarray:
-    """The frames' profile for the key: each frame's square-rooted treble and
-    bass bins divided by their own sums (a silent frame adds nothing), summed,
-    and the bass added at `bass_weight` of the treble's total."""
-    def summed(values: numpy.ndarray) -> numpy.ndarray:
+def key_shares(chroma: numpy.ndarray, bass: numpy.ndarray) -> tuple[numpy.ndarray, numpy.ndarray]:
+    """The frames' treble and bass shares of each pitch class: each frame's
+    square-rooted bins divided by their own sum (a silent frame adds
+    nothing), summed over the frames, and each total scaled to sum to one (all
+    zeros when it has no weight)."""
+    def share(values: numpy.ndarray) -> numpy.ndarray:
         roots = numpy.sqrt(numpy.maximum(values.astype(numpy.float64), 0.0))
         totals = roots.sum(axis=1, keepdims=True)
-        return (roots / numpy.where(totals > 0, totals, 1.0)).sum(axis=0)
-    treble, low = summed(chroma), summed(bass)
-    profile = treble / treble.sum() if treble.sum() > 0 else numpy.zeros(12)
-    if low.sum() > 0:
-        profile = profile + float(KEY["bass_weight"]) * low / low.sum()
-    return profile
+        summed = (roots / numpy.where(totals > 0, totals, 1.0)).sum(axis=0)
+        return summed / summed.sum() if summed.sum() > 0 else numpy.zeros(12)
+    return share(chroma), share(bass)
+
+
+def key_profile(treble: numpy.ndarray, low: numpy.ndarray) -> numpy.ndarray:
+    """The profile the templates are correlated with: the treble shares and
+    the bass shares at `bass_weight`."""
+    return treble + float(KEY["bass_weight"]) * low
 
 
 def key_scores(profile: numpy.ndarray) -> numpy.ndarray | None:
@@ -574,33 +614,64 @@ def collection_path(scores: numpy.ndarray, switch: float) -> list[int]:
     return path[::-1]
 
 
-def key_of(profile: numpy.ndarray, collection: str | None = None) -> dict[str, Any] | None:
-    """The best tonic and mode for a profile, its note collection, and how
-    far each leads: `key_margin` over the runner-up of any kind,
-    `tonic_margin` over the best reading with another tonic (in F dorian's
-    case, Eb ionian, on the same notes), and `collection_margin` over the
-    best reading on other notes. With `collection`, the best tonic and mode
-    of that collection's notes. None for a profile with no weight or no
-    contrast."""
-    scores = key_scores(profile)
+def tonic_evidence(notes: Sequence[int], treble: numpy.ndarray, low: numpy.ndarray,
+                   favoured: Sequence[int]) -> numpy.ndarray:
+    """Each of a collection's notes' claim to be its tonic: its bass share,
+    `treble` times its treble share, and `favour` more for the collection's
+    major or minor tonic (`favoured`)."""
+    settings = KEY["tonic"]
+    return numpy.array([float(settings["bass"]) * low[note] + float(settings["treble"]) * treble[note]
+                        + (float(settings["favour"]) if note in favoured else 0.0) for note in notes])
+
+
+def tonic_of(collection: str, treble: numpy.ndarray, low: numpy.ndarray) -> dict[str, Any]:
+    """The tonic of a collection's notes, its mode, how far its evidence
+    leads the next note's (`tonic_margin`), and its confidence: the softmax
+    of the seven notes' evidence at `temperature`, read at the tonic. A
+    harmonic or melodic minor collection has one mode named here, on its own
+    tonic, which its other notes' evidence can only make less certain."""
+    modes = [(tonic, mode, notes) for tonic, mode, notes, name in KEY_CANDIDATES if name == collection]
+    notes = list(modes[0][2]) if len(modes) == 1 else sorted({tonic for tonic, _, _ in modes})
+    favoured = [tonic for tonic, mode, _ in modes if mode in KEY["tonic"]["favoured_modes"]]
+    evidence = tonic_evidence(notes, treble, low, favoured)
+    named = {tonic: (mode, scale) for tonic, mode, scale in modes}
+    best = max((index for index, note in enumerate(notes) if note in named), key=lambda index: evidence[index])
+    weights = numpy.exp((evidence - evidence.max()) / float(KEY["tonic"]["temperature"]))
+    tonic = notes[best]
+    mode, scale = named[tonic]
+    return {"tonic": tonic, "mode": mode, "notes": scale,
+            "tonic_margin": float(evidence[best] - numpy.delete(evidence, best).max()),
+            "tonic_confidence": float(weights[best] / weights.sum())}
+
+
+def key_of(treble: numpy.ndarray, low: numpy.ndarray, collection: str | None = None) -> dict[str, Any] | None:
+    """The note collection of treble and bass shares, its tonic and mode, and
+    how sure each is. The collection is the one whose best mode correlates
+    best with the profile (`key_profile`); `collection_margin` is how far it
+    leads the best reading on other notes. The tonic is then chosen among
+    that collection's notes by `tonic_of`, and `key_strength` is the
+    correlation of the mode it names. With `collection`, that collection's
+    tonic and mode. None for a profile with no weight or no contrast."""
+    scores = key_scores(key_profile(treble, low))
     if scores is None:
         return None
-    order = numpy.argsort(-scores, kind="stable")
-    if collection is not None:
-        order = numpy.concatenate([order[KEY_COLLECTIONS[order] == collection],
-                                   order[KEY_COLLECTIONS[order] != collection]])
-    best = int(order[0])
-    tonic, mode, collection, name = KEY_CANDIDATES[best]
-    tonic_margin = float(scores[best] - scores[KEY_TONICS != tonic].max())
-    return {"key": NOTES[tonic], "mode": mode, "scale": "major" if mode in MAJOR_MODES else "minor",
-            "scale_notes": " ".join(NOTES[note] for note in collection), "key_strength": float(scores[best]),
-            "key_margin": float(scores[best] - scores[order[1]]), "collection": name,
-            "collection_margin": float(scores[best] - scores[KEY_COLLECTIONS != name].max()),
-            "tonic_margin": tonic_margin, "tonic_named": tonic_margin >= float(KEY["min_tonic_margin"])}
+    if collection is None:
+        collection = str(KEY_COLLECTIONS[int(numpy.argmax(scores))])
+    inside = KEY_COLLECTIONS == collection
+    tonic = tonic_of(collection, treble, low)
+    chosen = next(index for index, (t, m, _, name) in enumerate(KEY_CANDIDATES)
+                  if (t, m, name) == (tonic["tonic"], tonic["mode"], collection))
+    return {"key": NOTES[tonic["tonic"]], "mode": tonic["mode"],
+            "scale": "major" if tonic["mode"] in MAJOR_MODES else "minor",
+            "scale_notes": " ".join(NOTES[note] for note in tonic["notes"]), "key_strength": float(scores[chosen]),
+            "collection": collection,
+            "collection_margin": float(scores[inside].max() - scores[~inside].max()),
+            "tonic_margin": tonic["tonic_margin"], "tonic_confidence": tonic["tonic_confidence"],
+            "tonic_named": tonic["tonic_confidence"] >= float(KEY["tonic"]["min_confidence"])}
 
 
-NO_KEY = {"key": "", "mode": "", "scale": "", "scale_notes": "", "key_strength": 0.0, "key_margin": 0.0,
-          "collection": "", "collection_margin": 0.0, "tonic_margin": 0.0, "tonic_named": False}
+NO_KEY = {"key": "", "mode": "", "scale": "", "scale_notes": "", "key_strength": 0.0, "collection": "",
+          "collection_margin": 0.0, "tonic_margin": 0.0, "tonic_confidence": 0.0, "tonic_named": False}
 
 
 def key_label(found: dict[str, Any]) -> str:
@@ -612,20 +683,20 @@ def key_label(found: dict[str, Any]) -> str:
 def keys(chroma: numpy.ndarray, bass: numpy.ndarray, pitched: numpy.ndarray, samples: int) -> dict[str, Any]:
     """The recording's key, each window's, and the regions: the windows'
     collections laid end to end, each region keyed again from its own frames."""
-    found = key_of(key_profile(chroma[pitched], bass[pitched])) if pitched.any() else None
+    found = key_of(*key_shares(chroma[pitched], bass[pitched])) if pitched.any() else None
     outputs: dict[str, Any] = dict(found or NO_KEY)
     spans, scored = [], []
     for start, end in windows(len(chroma), KEY["window_frames"], KEY["hop_frames"]):
         mask = pitched[start:end]
         if mask.sum() < float(KEY["min_pitched"]) * (end - start):
             continue
-        profile = key_profile(chroma[start:end][mask], bass[start:end][mask])
-        window = key_of(profile)
+        treble, low = key_shares(chroma[start:end][mask], bass[start:end][mask])
+        window = key_of(treble, low)
         if window is None:
             continue
         begin, finish = extent(start, end, samples)
-        spans.append({"start": begin, "end": finish, "label": key_label(window), "value": window["tonic_margin"]})
-        scored.append(key_scores(profile))
+        spans.append({"start": begin, "end": finish, "label": key_label(window), "value": window["tonic_confidence"]})
+        scored.append(key_scores(key_profile(treble, low)))
     outputs["keys"] = spans
     path = collection_path(numpy.array(scored), float(KEY["region_switch"]))
     laid = regions([{**span, "label": COLLECTION_NAMES[index], "value": 0.0} for span, index in zip(spans, path)])
@@ -634,8 +705,8 @@ def keys(chroma: numpy.ndarray, bass: numpy.ndarray, pitched: numpy.ndarray, sam
         first = max(int(numpy.floor(region["start"] / SECONDS_PER_ROW + 0.5)), 0)
         stop = min(int(numpy.ceil(region["end"] / SECONDS_PER_ROW + 0.5)), len(chroma))
         mask = pitched[first:stop]
-        within = key_of(key_profile(chroma[first:stop][mask], bass[first:stop][mask]), region["label"])
-        found_regions.append({**region, "label": key_label(within), "value": within["tonic_margin"]})
+        within = key_of(*key_shares(chroma[first:stop][mask], bass[first:stop][mask]), region["label"])
+        found_regions.append({**region, "label": key_label(within), "value": within["tonic_confidence"]})
     outputs["key_regions"] = found_regions
     return outputs
 
@@ -710,8 +781,10 @@ class Tuning:
         listed = [window for window in self.finished if window["defined"]
                   and window["pitched"] / (window["end"] - window["start"]) >= float(TUNING["min_pitched"])]
         confident = [window for window in listed if window["confidence"] >= float(TUNING["min_confidence"])]
-        found = recording_tuning([window["cents"] for window in confident],
-                                 [window["confidence"] for window in confident])
+        measured = recording_tuning([window["cents"] for window in confident],
+                                    [window["confidence"] for window in confident])
+        centre = 0.0 if measured is None else measured
+        found = measured if supported(len(confident), len(listed), len(self.windows)) else None
         cents = 0.0 if found is None else found
         confidence = 0.0 if found is None else concentration(self.sounding_histogram, cents,
                                                              PITCHED["concentration_cents"])
@@ -719,18 +792,28 @@ class Tuning:
         drift = []
         for index, window in enumerate(self.finished):
             share = window["pitched"] / (window["end"] - window["start"])
-            window_cents = near(window["cents"], cents) if window["defined"] else 0.0
+            window_cents = near(window["cents"], centre) if window["defined"] else 0.0
             rows[index] = (window_cents, window["confidence"], share)
             if window in listed:
                 begin, end = extent(window["start"], window["end"], samples)
                 drift.append({"start": begin, "end": end, "value": window_cents})
         limit = TUNING["max_detune_cents"]
         detuned_spans = [dict(span) for span in drift if abs(span["value"]) > limit]
-        anchors = [((window["start"] + window["end"] - 1) / 2, near(window["cents"], cents)) for window in confident]
+        anchors = [((window["start"] + window["end"] - 1) / 2, near(window["cents"], centre)) for window in confident]
         return ({"tuning_frequency": frequency_of(cents), "tuning_cents": cents, "tuning_confidence": confidence,
                  "tuning_window_count": len(confident),
                  "tuning_drift": drift, "drift_spread_cents": spread([span["value"] for span in drift]),
                  "detuned": confidence > 0 and abs(cents) > limit, "detuned_spans": detuned_spans}, rows, anchors)
+
+
+def supported(confident: int, listed: int, windows: int) -> bool:
+    """Whether `confident` windows are enough for a whole recording's tuning:
+    at least `min_windows` of them (or every window, when the recording has
+    fewer), and at least `min_window_share` of the `listed` windows, those
+    at least half pitched. Fewer, and the tuning rests on a corner of the
+    recording that its other pitched windows do not confirm."""
+    return confident > 0 and confident >= min(TUNING["min_windows"], windows) \
+        and confident >= float(TUNING["min_window_share"]) * listed
 
 
 def need(request: dict[str, Any], feature: str, columns: int) -> numpy.ndarray:
@@ -860,8 +943,8 @@ def measure(request: dict[str, Any], decode: Callable[[], Iterable[numpy.ndarray
 
 
 SCALARS = ("tuning_frequency", "tuning_cents", "tuning_confidence", "tuning_window_count", "drift_spread_cents",
-           "detuned", "key", "scale", "mode", "scale_notes", "key_strength", "key_margin", "collection",
-           "collection_margin", "tonic_margin", "tonic_named")
+           "detuned", "key", "scale", "mode", "scale_notes", "key_strength", "collection", "collection_margin",
+           "tonic_margin", "tonic_confidence", "tonic_named")
 SPANS = ("tuning_drift", "detuned_spans", "keys", "key_regions")
 SERIES = {"pitched": "u8", "tuning_windows": "f32", "dissonance": "f32", "chroma": "f32", "bass_chroma": "f32"}
 
@@ -873,7 +956,7 @@ def main(argv: list[str]) -> int:
     try:
         request = json.loads(Path(argv[0]).read_text(encoding="utf-8"))
         if request.get("parameters") != parameters():
-            raise TonalError("tonal 4 has fixed settings; the request names others")
+            raise TonalError("tonal 5 has fixed settings; the request names others")
         output = Path(request["output_dir"])
         measured = measure(request)
         result_outputs: dict[str, Any] = {name: {"value": measured[name]} for name in SCALARS}

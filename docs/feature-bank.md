@@ -267,7 +267,7 @@ parameters are in the manifest's descriptions and in the
 |---|---|---|---|
 | `frames` | 1 | none | series `hpcp`, `rms_db`, `centroid`, `rolloff`, `flatness`, `flux`, `onset_hfc`, `mfcc`, `melbands`; scalars `samples`, `seconds` |
 | `rhythm` | 3 | none | series `tempo`, `onset_count`, `onset_deviation`, `offgrid`, `chunk_bpm`, `chunk_confidence`, `primary_tempo`, `tempo_support`, `downbeat_margin`; scalars `bpm`, `confidence`, `onset_rate`, `seconds`, `primary_bpm`, `meter`; events `beats`, `onsets`, `pulse`, `downbeats`, `tempo_changes`; spans `tempo_spans` |
-| `tonal` | 4 | `frames`: rms_db | series `pitched`, `tuning_windows`, `chroma`, `bass_chroma`, `dissonance`; scalars `tuning_frequency`, `tuning_cents`, `tuning_confidence`, `tuning_window_count`, `drift_spread_cents`, `detuned`, `key`, `scale`, `mode`, `scale_notes`, `key_strength`, `key_margin`, `collection`, `collection_margin`, `tonic_margin`, `tonic_named`; spans `tuning_drift`, `detuned_spans`, `keys`, `key_regions` |
+| `tonal` | 5 | `frames`: rms_db | series `pitched`, `tuning_windows`, `chroma`, `bass_chroma`, `dissonance`; scalars `tuning_frequency`, `tuning_cents`, `tuning_confidence`, `tuning_window_count`, `drift_spread_cents`, `detuned`, `key`, `scale`, `mode`, `scale_notes`, `key_strength`, `collection`, `collection_margin`, `tonic_margin`, `tonic_confidence`, `tonic_named`; spans `tuning_drift`, `detuned_spans`, `keys`, `key_regions` |
 | `chords` | 2 | `frames`: samples; `rhythm`: beats; `tonal`: bass_chroma, chroma, pitched | scalars `changes_per_minute`, `beat_share`; spans `chords`, `chord_candidates` |
 | `colour` | 3 | `frames`: centroid, hpcp, rms_db | series `colour`; files `palette`, `preview` |
 | `loudness-r128` | 1 | none | scalars `integrated` |
@@ -293,7 +293,12 @@ what each changed:
   it (`chroma`, `bass_chroma`), reports the key as a note collection with
   a tonic and mode while keeping `key` and `scale`, and moves chords to
   `chords`; 4 leaves mains hum out of the tuning and profiles, names a
-  tonic only where it leads, and draws `key_regions` by note collection.
+  tonic only where it leads, and draws `key_regions` by note collection; 5
+  reports a recording's tuning only from enough confident windows (four,
+  and half of those at least half pitched), chooses the tonic among the
+  collection's notes by their share of the bass, favouring the major or
+  minor tonic, adds a calibrated `tonic_confidence` that decides
+  `tonic_named`, and drops `key_margin`.
 - `chords` 1 named a chord per half beat from `tonal`'s profiles by a
   Viterbi path, with a bass of its own and three candidates a span; 2
   prices the six-note m11 above the five-note chords.
