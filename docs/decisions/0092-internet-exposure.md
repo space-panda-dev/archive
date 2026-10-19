@@ -295,7 +295,8 @@ its Door profile rules: an authorizer pinned to the active operator,
 - [ADR 0054](0054-door-service-for-applications.md) and
   [ADR 0063](0063-relay-read-speed.md): unchanged. Door stays on its local
   socket, and both listeners share one relay, its cache, and its write lock.
-- ADRs 0093 (audiences) and 0094 (people's writes and grants), proposed
+- [ADR 0093](0093-audiences.md) (audiences) and
+  [ADR 0094](0094-peoples-writes.md) (people's writes and grants), proposed
   alongside this one, decide what an internet member may read and propose.
 
 ## Alternatives considered
@@ -400,7 +401,8 @@ its Door profile rules: an authorizer pinned to the active operator,
    let it supersede the operator's own records of member contracts.
    *Recommended:* accept this for now. It is the same person, and the
    tailnet can supersede back. If a stolen session matters more, a later
-   record can add the ingress to the proposal manifest.
+   record can add the ingress to the proposal manifest. [ADR 0095](0095-participation.md) (its
+   question 2) and [ADR 0098](0098-content-lineage.md) (its question 5) depend on this answer.
 4. **The route's policy revision.** S-32 requires a policy revision, and no
    policy language exists (ADR 0007; compare the open question on circle
    disclosures). *Recommended:* make `policy` optional in version 1, and

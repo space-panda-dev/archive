@@ -30,7 +30,7 @@ so.
   sample cut from it a silent survivor.
 
 The sample app (cuts made in the review app, browsed beside songbook songs
-and organised libraries) and friends who upload and cut make this urgent:
+and organised libraries) and friends who admit files and cut make this urgent:
 samples are the content that reach, destroy, and credits most need to
 follow.
 
@@ -147,7 +147,7 @@ ranges; a `bank` recipe's digest equal to the output's, with exactly one
 input. The agent is any person, or a tool's Package URL with a `run`.
 
 **Who may assert it.** Lineage only narrows reach, so a member whose login
-has the cut grant (ADR 0094) may assert it over
+has the cut grant ([ADR 0094](0094-peoples-writes.md)) may assert it over
 what their audiences can read, like a cut; the relay adds the contract to
 the member contracts under that grant, and its existing rule that every pin
 be readable applies. A tool that admits a derived file (an admitted stem, a
@@ -166,7 +166,7 @@ revision of any object today: a revision that drops an input widens nothing
 until the operator rejects the revision that named it. The relay refuses a
 `rejected` judgment of a lineage claim drafted in member capacity
 (`operator_only`): a login through Cloudflare is member capacity, the
-operator's own included (ADR 0092, W1.3), and
+operator's own included ([ADR 0092](0092-internet-exposure.md), W1.3), and
 the record alone cannot show the capacity it was made in.
 
 ### Reach is computed backward through lineage (W1.13)
@@ -186,7 +186,7 @@ Door's `Archive.Door.Reach` index gains the same edge, so a publication
 approval beyond the circle is refused by the same rule Door already shares
 with `beyond_circle` (ADR 0085's amendment).
 
-**Rights through a lineage edge ask for derivative use.** Where ADR 0097
+**Rights through a lineage edge ask for derivative use.** Where [ADR 0097](0097-rights-by-use.md)
 lets a rights claim say what use it permits, a source reached through a
 lineage edge is read for use in a derivative, and the beyond-circle check
 reads a clearance for that use (ADR 0097); a
@@ -200,7 +200,7 @@ document to `derived_from`. The export claim adds its `artifact` to each
 than the lead sheet it renders and the lyric document it joins, which
 nothing enforces today.
 
-**Origin is ADR 0096's.** Lineage caps reach; it never stands in for
+**Origin is [ADR 0096](0096-origin-of-recordings.md)'s.** Lineage caps reach; it never stands in for
 origin. An output with lineage and no origin claim keeps ADR 0096's unknown
 origin, so beyond the circle it is still others' work needing a fresh
 approval (INV-20). Whether a complete lineage may ever supply an origin is
@@ -384,7 +384,8 @@ derived from destroyed content means stays
    work because its named sources are). Recommend: lineage never stands in
    for origin, except a `complete: true` lineage claim the operator asserted
    or affirmed, which lets the output take the most restrictive origin of
-   its sources (ADR 0096 to state it).
+   its sources (ADR 0096 to state it; as drafted, ADR 0096 leaves this
+   question to this record).
 2. **The word.** Recommend *lineage span* for the decision's placement,
    since *placement* names managed copies (ADR 0032).
 3. **Withdrawal and revision.** Recommend that neither the asserter's
@@ -398,14 +399,15 @@ derived from destroyed content means stays
 5. **Capacity in the record.** World cannot tell an operator judgment made
    over the tailnet from one made through Cloudflare. Recommend the relay
    refuse member-capacity rejections of lineage now, and ADR 0092 or 0094
-   decide whether transitions and operator judgments should record capacity.
+   decide whether transitions and operator judgments should record capacity
+   (ADR 0092, its question 3, recommends not recording it for now).
 6. **Inputs that are not in the archive** (a commercial record sampled but
    never admitted). Recommend: not expressible as lineage; the output's
    origin claim (ADR 0096, `commercial_release`) carries it until the
    source is admitted.
 7. **Required lineage.** Recommend that Archive's own tools that admit a
    derived file (stem, render, sample render) must propose its lineage in
-   the same batch, and that people's uploads are never required to.
+   the same batch, and that what people admit through the relay is never required to.
 8. **Cycles.** Recommend Door refuse only self-lineage (output among
    inputs, by object or digest) and World tolerate longer cycles, giving
    every member of one the same, strictest reach.

@@ -23,7 +23,7 @@ beyond service, and nothing records that the pack may not be passed on even
 where its statement would otherwise allow it. Three applications are about
 to make derivatives routine: the review app cuts samples, the sample app
 files them beside organised libraries, and content lineage
-(ADR 0098, drafted in parallel) caps an output's
+([ADR 0098](0098-content-lineage.md), proposed) caps an output's
 reach by its sources. Lineage needs to know what a source permits *for
 derivatives*, not for listening.
 
@@ -183,8 +183,9 @@ every source an output's lineage reaches (ADR 0098 walks it backward), the
 use read is `derive`, whatever the use exercised on the output.
 
 **What the relay and applications exercise.** Inside the circle nothing
-changes: rights never limit it. For an audience beyond the circle
-(ADR 0093's service and open audiences), named views,
+changes: rights never limit it, and every audience is circle class
+([ADR 0093](0093-audiences.md)). For a destination beyond the circle
+(which the relay does not serve yet; ADR 0093, its question 6), named views,
 listening copies, peaks, and practice audio played in the page are
 `listen`; a file the relay hands over to keep (an export, a document's
 bytes, a rendered mix offered as a download) is `redistribute`.
@@ -192,13 +193,14 @@ bytes, a rendered mix offered as a download) is `redistribute`.
 
 ### The beyond-circle check reads the use and the clearances
 
-**A publication approval names its use.** The next publication approval
-version adds a required `use`, the use the publication exercises (a
+**A publication approval names its use.** Publication approval version 3
+adds a required `use`, the use the publication exercises (a
 website that streams a song is `listen`, a store that sells downloads is
 `redistribute`). An approval of version 2, which names none, is checked
 against all three uses, each of which must pass: the strictest reading, so
-no existing approval reaches further than it does today. Whether the use
-joins the version ADR 0093 adds for audiences is open question 2.
+no existing approval reaches further than it does today. ADR 0093 adds no
+approval version (an audience is the approval's `destination`), so
+version 3 carries only `use` (open question 2).
 
 **The check, per covered revision**, on the UTC date of the transition
 (Door) or the publish date (`may_publish`), for the approval's use *u* and
@@ -206,7 +208,8 @@ class *c*:
 
 1. sensitivity of the closure allows *c*, unchanged;
 2. every rights subject in the closure permits *u* at *c*, by the strictest
-   head rights claim about it;
+   head rights claim about it, except a subject reached only through a
+   lineage edge, which step 3 reads;
 3. every rights subject among the lineage sources of the covered object
    (ADR 0098) permits `derive` at *c*;
 4. a subject blocked in step 2 or 3 is lifted when a head clearance by the
@@ -229,7 +232,7 @@ use and for clearances.
    the rule that a widening entry pins a `document`.
 2. `archive.claim/clearance` version 1, as above, with profile rules for its
    role counts and reference targets (`x-archive-reference-targets`).
-3. The next `archive.transition/publication_approval` version: a required
+3. `archive.transition/publication_approval` version 3: a required
    `use`; `x-archive-beyond-circle` reads it, and reads every use for
    version 2.
 4. The uses SKOS scheme in the specification's vocabulary section.
@@ -335,9 +338,9 @@ subject, in one Work or recording, for one destination class.
   `derive`, clearance lifting), `may_publish`, `works_touched` (reused for a
   clearance's `in`); `MEMBER_CONTRACTS` stays without rights and clearance.
 - `world/record_views.py`: `reach`, `may_publish`, and `readable_set` views
-  (a `use` parameter; an audience beyond the circle reads `listen`).
-- `relay/access.py`: `Access._reach` (reach per use for audiences beyond the
-  circle; downloads read `redistribute`).
+  (a `use` parameter; a destination beyond the circle reads `listen`).
+- `relay/access.py`: `Access._reach` (reach per use, once a destination
+  beyond the circle is served; downloads read `redistribute`).
 - `door/src/Archive/Door/Reach.hs`: `rightsLimit` and `reachBlockers` (a use
   argument, clearance lifting), `Index` (clearances by subject).
 - `door/src/Archive/Door/BeyondCircle.hs`: `beyondCircleRule` (a `use`
@@ -355,10 +358,10 @@ subject, in one Work or recording, for one destination class.
 
 1. **May a `uses` entry widen past the permit table only with a pinned
    licence document?** Recommended: yes, as written; narrowing needs nothing.
-2. **Which approval version carries `use`?** ADR 0093 adds an audience to
-   the approval to the circle. Recommended: one new version carries both,
-   so the archive does not gain two version 3s; the consistency pass should
-   pick the number.
+2. **Which approval version carries `use`?** Version 3. ADR 0093 adds no
+   approval version: an audience is named by the approval's existing
+   `destination`, so there is no second version 3 to merge with.
+   Recommended: accept version 3 for `use` alone.
 3. **May a clearance's `in` be an Artifact, not only a Work or recording
    Entity?** The operator's own bounce often has no recording Entity.
    Recommended: yes, an Artifact or a `musical_work` or `recording` Entity.
@@ -377,7 +380,7 @@ subject, in one Work or recording, for one destination class.
    W1.7 lets members narrow sensitivity; rights stay the operator's (ADR
    0088). Recommended: not in wave 1; clearances stay operator-only always,
    because they widen.
-8. **Does an origin of `sample_pack` (ADR 0096) imply a rights claim?**
+8. **Does an origin of `sample_pack` ([ADR 0096](0096-origin-of-recordings.md)) imply a rights claim?**
    Recommended: no; origin and rights stay separate claims (ADR 0010). The
    sample-pack importer (wave 2) proposes a version 2 rights claim from the
    pack's licence for the operator to admit.

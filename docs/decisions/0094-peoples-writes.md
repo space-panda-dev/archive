@@ -9,12 +9,12 @@ changed only by a code release. Three applications will now read World and
 propose to Door: the rehearsal review app (cut, name, release), a lead-sheet
 songbook, and a sample app whose cuts are made in the review app. Friends and
 bandmates will log in through the internet
-(ADR 0092, proposed) into named audiences
-(ADR 0093, proposed). That exposes four gaps:
+([ADR 0092](0092-internet-exposure.md), proposed) into named audiences
+([ADR 0093](0093-audiences.md), proposed). That exposes four gaps:
 
 - **Who may write what is configuration, not evidence.** Nothing in the
   archive says that a person was allowed to cut, or when that changed. The
-  operator cannot answer "could Sam upload in March?" from the records, and
+  operator cannot answer "could Sam admit files in March?" from the records, and
   turning a person's writes off is a code or configuration change that leaves
   no trace (ADR 0005 keeps governance acts attributable).
 - **Members cannot cut.** `archive.claim/audio_selection` is not in
@@ -73,7 +73,7 @@ reasons:
   makes no one's claim truer. Governance authority is the operator's, and a
   transition records author and authorizer separately and has Door check the
   authorizer at commit. A claim records only an asserter; anyone may assert
-  any claim, so "Sam may upload" asserted by Sam would be admitted as
+  any claim, so "Sam may admit files" asserted by Sam would be admitted as
   evidence and every reader would have to filter by agent to find the ones
   that count. That filter would be the authority, outside Door.
 - **[ADR 0028](0028-transition-proposals-and-dispatch.md).** Transitions are dispatched by
@@ -99,16 +99,19 @@ revision; exactly one `authorizer`, a person Entity revision, which Door
 requires to be the active operator. The envelope `agent` is the author: the
 person who proposed the change, normally the operator. Payload:
 
-- `ability`: one of `annotate`, `cut`, `upload` (below);
+- `ability`: one of `annotate`, `cut`, `admit` (below; W1.6 calls the third
+  "upload", and the [naming table](../vocabulary.md#naming-discipline) says
+  *admit*);
 - `decision`: `allow` or `deny`;
 - `audiences`: 1 to 16 distinct audience names, each 1 to 200 characters,
-  exactly as ADR 0093's configuration names them;
+  exactly as ADR 0093's audience transitions name them (a name is never
+  changed or reused, so it identifies one audience);
 - `reason`, optional, 1 to 2,000 characters.
 
 ```json
 {
   "agent": "urn:uuid:…(the operator's person)",
-  "payload": {"ability": "upload", "decision": "allow",
+  "payload": {"ability": "admit", "decision": "allow",
               "audiences": ["band"], "reason": "Sam deposits phone recordings of rehearsals"},
   "refs": [
     {"role": "grantee", "id": "urn:uuid:…(Sam's person)", "revision_id": "sha256:…"},
@@ -124,16 +127,17 @@ active operator; the grantee is a person Entity and not the active operator
 (question 6); the payload is closed and its audience names distinct; and no
 two grants in one batch name the same grantee, ability and audience. A grant
 has no effect on Door's own derived state: Door records it, and World and
-the relay read it. Door does not know audiences (they are relay
-configuration under ADR 0093), so it checks names only by shape; a grant
-naming an audience no relay serves is admitted and grants nothing.
+the relay read it. Door checks audience names only by shape; a grant naming
+no live audience is admitted and grants nothing. ADR 0093 records audiences
+as transitions and has Door refuse a circle approval that names no live
+audience; whether Door should refuse such a grant too is question 9.
 
 **One act per change, latest wins.** There is no separate withdrawal
 contract: turning an ability off is a `deny` grant. For each grantee,
 ability, and audience, the **effective grant** is the head `write_grant`
 naming them with the latest Door recording time, the rule ADR 0085 already
 uses for a person's latest sensitivity claim. Where none names them, the
-**default** applies: `annotate` and `cut` allowed, `upload` denied (W1.6).
+**default** applies: `annotate` and `cut` allowed, `admit` denied (W1.6).
 The default is part of the named view below and changes only with a new
 version of it, never by configuration. A grant is never superseded or
 retired to undo it; the history of grants is the audit trail W1.5 asks for.
@@ -150,9 +154,9 @@ is refused **`not_granted`** (403), a new code under
 
 | Ability | Default | What it admits |
 |---|---|---|
-| `annotate` | allowed | Claims and assessments about readable things: everything now in `MEMBER_CONTRACTS` except `sharing_consent` (judgments, span annotations, selection kind and title, contributions and band memberships, links of a take to a Work, and the music-fact claims of ADRs 0077 to 0086), and a contribution at ADR 0095's session scope |
-| `cut` | allowed | `archive.claim/audio_selection` version 2, pinning readable Artifact revisions, with the caller as its envelope `agent` (W1.6); and ADR 0098's lineage claim, which W1.12 gives to anyone with a cut grant |
-| `upload` | denied | Artifacts whose content the relay staged for the caller, with the claims that describe them in the same batch: a document source (ADR 0085) and ADR 0096's origin claim |
+| `annotate` | allowed | Claims and assessments about readable things: everything now in `MEMBER_CONTRACTS` except `sharing_consent` (judgments, span annotations, selection kind and title, contributions and band memberships, links of a take to a Work, and the music-fact claims of ADRs 0077 to 0086), and a contribution at [ADR 0095](0095-participation.md)'s session scope |
+| `cut` | allowed | `archive.claim/audio_selection` version 2, pinning readable Artifact revisions, with the caller as its envelope `agent` (W1.6); and [ADR 0098](0098-content-lineage.md)'s lineage claim, which W1.12 gives to anyone with a cut grant |
+| `admit` | denied | Artifacts whose content the relay staged for the caller, with the claims that describe them in the same batch: a document source (ADR 0085) and [ADR 0096](0096-origin-of-recordings.md)'s origin claim |
 
 **What no grant gates.** Some writes are a person's own say, not a
 permission, and a `deny` cannot take them away:
@@ -183,12 +187,12 @@ it does so by its own stated rule, per question, as
 (operator, then participant, then other member, then machine) are such a
 rule; ADR 0095 (proposed) defines who is a
 participant, and a view that adopts the tiers is a new version of that view.
-A person with `upload` is not thereby a participant, and a person with no
+A person with `admit` is not thereby a participant, and a person with no
 grants is not thereby lower.
 
-### Uploads go to staging, then Door
+### Admitted content goes through staging, then Door
 
-A member with an effective `upload` allow may use the relay's staging route,
+A member with an effective `admit` allow may use the relay's staging route,
 which today answers only the operator (`check_stage_request`). The flow is
 ADR 0085's, unchanged except for who may call it:
 
@@ -197,7 +201,7 @@ ADR 0085's, unchanged except for who may call it:
    that caller (`Documents.staged_for`, already keyed by agent).
 2. The client sends an ordinary admission. The relay passes it only when
    every content row is bytes it staged for this caller (`check_contents`,
-   which today refuses every member), the caller holds `upload`, and every
+   which today refuses every member), the caller holds `admit`, and every
    draft passes the member checks above.
 3. Door admits it under [ADR 0023](0023-admission-and-staging.md): it fetches
    the key from the relay's staging remote, verifies fixity and size, and
@@ -219,13 +223,13 @@ ADR 0085's, unchanged except for who may call it:
   it. Custody first: the friend's material is held in the operator's archive,
   under the operator's policy.
 
-**An upload reaches no one else until the operator says so.** The member
-reads their own records already (`readable_by`), so they read their upload.
+**A member's admitted content reaches no one else until the operator says so.** The member
+reads their own records already (`readable_by`), so they read what they admitted.
 Others read it only through a publication approval to their audience, which
 stays the operator's (ADR 0088). Beyond the circle, an Artifact with no
-origin is others' work (W1.13), so an upload widens nothing.
+origin is others' work (W1.13), so admitting it widens nothing.
 
-Members admit Artifacts, not Entities: a recording session for an uploaded
+Members admit Artifacts, not Entities: a recording session for an admitted
 phone recording is still the operator's to create (question 7).
 
 ### Members set their own limits
@@ -317,9 +321,9 @@ library, beside `world/circle.py`, so a client can check a proposal first.
 - Door gains one transition handler and no new state. The relay gains one
   refusal code, two named views and an ability check on every member write;
   each check is a lookup in the generation it already loaded.
-- A grant naming an audience is only as meaningful as the relay's
-  configuration of that audience, which is not evidence (ADR 0093 decides
-  that).
+- A grant names audiences whose membership is itself evidence: ADR 0093
+  records each audience as an operator transition, so who a grant reached on
+  a given date can also be answered from the archive.
 
 ## Alternatives considered
 
@@ -344,9 +348,9 @@ library, beside `world/circle.py`, so a client can check a proposal first.
 - **Any member may limit anything they can read.** W1.7 limits it to
   content that records them; otherwise any member could keep anything from
   publication.
-- **Door enforcing grants.** Door would have to read World-derived state
-  (audiences, effective grants) to admit a record; W1.5 places enforcement
-  in the relay, which already gates every member write.
+- **Door enforcing grants.** Door would have to compute effective grants
+  and audience membership to admit a member's record; W1.5 places
+  enforcement in the relay, which already gates every member write.
 
 ## New nouns
 
@@ -359,7 +363,7 @@ library, beside `world/circle.py`, so a client can check a proposal first.
 5. Yes, as admitted records, like any transition; nothing else.
 6. A record kind, not a subsystem.
 
-**Ability** (`annotate`, `cut`, `upload`).
+**Ability** (`annotate`, `cut`, `admit`).
 1. Names a set of contracts a person may propose as one unit.
 2. None.
 3. None by itself.
@@ -383,19 +387,21 @@ is ADR 0096's role; audience is ADR 0093's.
 Verified on 2026-10-19 to exist; a later implementation would change:
 
 - `world/circle.py`: `MEMBER_CONTRACTS` (split by ability; add
-  `audio_selection` version 2 and `sensitivity` version 1),
-  `check_member_draft` (ability check, Artifacts under `upload`, the
+  `audio_selection` version 2 and `sensitivity` version 1, and the sibling
+  records' contribution version 2, ADR 0095, origin version 1, ADR 0096,
+  and lineage version 1, ADR 0098),
+  `check_member_draft` (ability check, Artifacts under `admit`, the
   sensitivity subject exception), `readable_by` (unchanged rule, now relied
-  on for own limits and uploads).
+  on for own limits and admitted content).
 - `world/grants.py` (new): effective grants, defaults, records-them test.
 - `world/views.py`: `check_request` and `catalogue` gain
   `archive.view/write_grants` and `archive.view/person_limits`.
-- `world/documents.py`: `check_stage_request` (members with `upload`),
+- `world/documents.py`: `check_stage_request` (members with `admit`),
   `check_document_admission` (staged content that is not a document).
 - `relay/access.py`: `Access.check_drafts` and `Access.readable` read grants
   and audiences from the generation.
 - `relay/served.py`: `stage_document` and `check_contents` admit a member's
-  staged bytes under `upload`.
+  staged bytes under `admit`.
 - `relay/staging.py`: `Documents.stage` and `Documents.staged_for`
   (already per agent; media types and size, question 7).
 - `relay/relay.py`: `Relay.archive` (`caller.grants`), `Relay._door`,
@@ -416,12 +422,15 @@ Verified on 2026-10-19 to exist; a later implementation would change:
 2. **Who counts as recorded.** The records-them test accepts only
    contributions or participation the operator asserted or affirmed (W1.9's
    rule). Recommended: accept; a member whose participation is not yet
-   affirmed asks the operator, as today.
-3. **Depositors' limits.** A friend's upload may not record them, so W1.7
+   affirmed asks the operator, as today. ADR 0095 (its question 8)
+   recommends that, for selecting what a limit covers, any participation
+   naming the person should count, affirmed or not; the decisions do not
+   settle which.
+3. **Depositors' limits.** What a friend admits may not record them, so W1.7
    does not let them limit it. Recommended: let a depositor (ADR 0096) limit
    what they deposited, by reading ADR 0018's "a person the content records"
    as including its depositor; this changes INV-26's wording and needs the
-   operator's decision.
+   operator's decision. ADR 0096 (its question 2) asks the same.
 4. **Policy revision.** S-32 ties a publication approval to a policy
    revision. Recommended: a grant cites none until the policy language
    exists, the same answer the open question gives for circle disclosure.
@@ -430,12 +439,19 @@ Verified on 2026-10-19 to exist; a later implementation would change:
 6. **The operator's own internet login** (member capacity, W1.3).
    Recommended: the view's rule gives the operator's person all three
    abilities in member capacity, and Door refuses a grant naming the
-   operator, since a self-grant authorizes nothing new.
-7. **Upload transport and scope.** Staging takes 64 MiB of base64 JSON and
+   operator, since a self-grant authorizes nothing new. Grants are over
+   audiences, and ADR 0093 keeps the operator out of every audience; which
+   audiences this login reads is ADR 0092's question 2 and ADR 0093's
+   question 7, which recommend differently.
+7. **Staging transport and scope.** Staging takes 64 MiB of base64 JSON and
    only document types; audio and sample libraries are larger. Recommended: a
    streamed staging route with a size cap from configuration, audio and
    document types only, Artifacts only (sessions stay the operator's), and
-   no enrichment run started by a member's upload: the operator's next run
+   no enrichment run started by a member's admission: the operator's next run
    picks it up.
 8. **Grants before a login.** Recommended: a grant may name any person
    Entity, with or without a login, so the operator can prepare one.
+9. **Door and audience names.** Now that ADR 0093 records audiences in the
+   archive, should Door refuse a grant naming no live audience, as it
+   refuses a circle approval to one? This record keeps the shape check
+   only; neither draft decided it.

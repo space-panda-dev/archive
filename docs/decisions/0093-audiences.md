@@ -16,11 +16,11 @@ configuration edit. Adding a person discloses to them everything already
 approved to the circle, but the archive holds no record that they were added,
 or when. ADR 0088 calls the approval the record of disclosure. With one list
 that was close enough. With several lists, and with grants that name the
-lists (ADR 0094, proposed), the archive must hold the lists itself.
+lists ([ADR 0094](0094-peoples-writes.md), proposed), the archive must hold the lists itself.
 
 Three applications will read World through the relay: the rehearsal review
 app, a lead-sheet songbook, and a sample app. Friends and bandmates will log
-in to all three (ADR 0092, proposed). Each login
+in to all three ([ADR 0092](0092-internet-exposure.md), proposed). Each login
 reads through the audiences its person belongs to.
 
 The operator decided the following on 2026-10-19 (wave 1 decisions W1.8 and
@@ -135,7 +135,8 @@ crew's audience name and covering the revisions. Nothing in the gate itself
 changes.
 
 **What the relay does.** The relay's `callers` configuration still maps each
-login to a person (ADR 0056; ADR 0092 adds verified Access logins). The
+tailnet login to a person (ADR 0056), and ADR 0092's `internet.logins` maps
+each verified Access email to one. The
 relay reads the live audiences from the selected World generation, and they
 change with each snapshot:
 
@@ -182,13 +183,16 @@ does.
   before anything is served that they can now read what that audience was
   approved. Removing them is another transition. What they already read was
   disclosed and stays recorded as disclosed.
-- Grants (ADR 0094, proposed) can name audiences by object, because
-  audiences are in the archive.
+- Grants (ADR 0094, proposed) name audiences by name. Because a name is
+  never changed or reused, a name in a grant always means one audience
+  object, and that audience is in the archive.
 - A co-written song needs co-writers' consent for each audience that reaches
   beyond its band. A band-only audience needs none.
 - Sensitivity cannot tell one audience from another. `AMBER` lets an object
   reach every audience. Keeping something from the crew but not the band is
-  done by not approving it to the crew (Open for the operator, 3).
+  done by not approving it to the crew (Open for the operator, 3). An `AMBER`
+  object still reaches no member who reads through the internet, because
+  Cloudflare is a service processor (ADR 0092, its question 1).
 - An audience never names another archive. Someone else's content enters
   only by the operator holding it in custody (W1.15).
 - The readable set is computed once per audience for each snapshot. At a few
@@ -297,6 +301,8 @@ A later implementation would change:
    records. *Recommend: keep the operator out of every audience. The
    operator reads everything over the tailnet. If ADR 0092 wants the operator
    to preview what an audience sees, use `archive.view/readable_set`.*
+   ADR 0092 (its question 2) recommends the opposite; the decisions do not
+   settle which.
 8. **When the relay stops reading configuration.** *Recommend: from the
    specification release that installs `archive.transition/audience`. A
    relay with both a configured `circle` and a live audience refuses to

@@ -105,7 +105,7 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
 - What origin values mark the operator's own work across media (a recording, a
   book, a photograph) ([ADR 0010](decisions/0010-publication.md))? A musical
   Work's origin, co-written Works included, is [ADR 0088](decisions/0088-bandmates.md)'s `work_origin`;
-  recordings and other media have none. (ADR 0096, proposed, would answer
+  recordings and other media have none. ([ADR 0096](decisions/0096-origin-of-recordings.md), proposed, would answer
   this for recordings and Artifacts.)
 - Does a disclosure to the circle need a policy revision before the policy
   language exists? [ADR 0088](decisions/0088-bandmates.md) records it as a publication approval, which S-32
@@ -158,8 +158,10 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
   read another's objects: a friend's own sample library, say, kept in their
   own archive. Until this is decided, someone else's content enters only by
   the operator holding it in custody on their behalf, with the person
-  recorded as its origin and their own limits binding
-  ([ADR 0018](decisions/0018-people-in-the-archive.md)).
+  recorded on its origin claim (as depositor, or as `captured_by` when they
+  recorded it) and, where the content records them, their own limits
+  binding ([ADR 0018](decisions/0018-people-in-the-archive.md)).
+  ([ADR 0093](decisions/0093-audiences.md), proposed, keeps this open.)
 - Door refuses a proposal written under a specification context the archive
   does not hold, and refuses a committed record written under a context only
   a later commit added. A committed record under a context the archive never
@@ -223,7 +225,7 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
   at a looser distance (about 0.11, on the exact scale); until an origin is
   recorded, every corpus entry is judged alike, at 0.118 on the quarter-rate
   scale and 0.08 on the exact one
-  ([ADR 0071](decisions/0071-essentia-cover-similarity.md)). (ADR 0096,
+  ([ADR 0071](decisions/0071-essentia-cover-similarity.md)). ([ADR 0096](decisions/0096-origin-of-recordings.md),
   proposed, would answer this.)
 - Do the window matcher's thresholds hold outside the recordings that chose
   them? The hit limit (0.20), the quarter-rate suggestion distance (0.118),
@@ -302,7 +304,7 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
 - May a bandmate with a relay login assert their own sensitivity limit, at
   least one that only narrows what is shown? [ADR 0088](decisions/0088-bandmates.md) keeps sensitivity claims
   the operator's to send, so the operator records a bandmate's limit with
-  them as its author. (ADR 0094, proposed, would answer this)
+  them as its author. ([ADR 0094](decisions/0094-peoples-writes.md), proposed, would answer this.)
 - Is [ADR 0085](decisions/0085-documents-lyrics-rights.md)'s rights permit table right: `InC` held by the operator permits
   distribution, `NoC-US` distribution, `NoC-NC` open, everything else (and no
   rights claim) service, and the strictest claim wins whoever asserted it?
@@ -316,7 +318,7 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
 - What records where an admitted stem or practice render came from: its
   mix, separator, and settings? [ADR 0079](decisions/0079-machine-harmony-claims.md) admits a chosen stem as an Artifact
   whose digest its bank citations name, and [ADR 0089](decisions/0089-practice-audio-and-exports.md) a chosen render the same
-  way, but no claim states the link. (ADR 0098, proposed, would answer this)
+  way, but no claim states the link. ([ADR 0098](decisions/0098-content-lineage.md), proposed, would answer this.)
 - How are parts of untimed claims judged or marked: a Work's untimed meter or
   form, a Work-level melody, a key over sections ([ADR 0081](decisions/0081-judgments-and-annotations.md))? They can be judged
   only whole, and a mark on a Work needs a chord sequence to range over.

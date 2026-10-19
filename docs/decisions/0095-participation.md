@@ -2,7 +2,7 @@
 
 Status: proposed (wave 1, drafted 2026-10-19)
 
-Friends and bandmates are getting logins of their own (ADRs 0092 to 0094),
+Friends and bandmates are getting logins of their own ([ADRs 0092](0092-internet-exposure.md) to [0094](0094-peoples-writes.md)),
 and three applications will read World: the rehearsal review app, the
 lead-sheet songbook, and a sample app. Once more than the operator annotates,
 a view has to say whose word comes first. The operator wants someone who was
@@ -25,7 +25,7 @@ Nothing in an archive can say who was in the room:
   for one chosen person. Every other person's claim is listed and never
   chosen; there is no notion of a participant.
 
-Anyone with the default annotate grant may assert a contribution (ADR 0094).
+Anyone with the default annotate grant may assert a contribution ([ADR 0094](0094-peoples-writes.md)).
 If participation counted whoever asserted it, a member could raise their own
 standing by saying they were there.
 
@@ -221,7 +221,7 @@ affirmed, since counting reads the operator's records, not the asserter's
 grant; and being a participant grants nothing. Permission is not weight
 (W1.4).
 
-**Audiences (ADR 0093).** The view, like every view, runs on the records the
+**Audiences ([ADR 0093](0093-audiences.md)).** The view, like every view, runs on the records the
 caller may read. The operator's participations and judgments are the
 operator's own records, which ADR 0088 never discloses by inheritance; a
 member reading the view sees a participant only when the operator disclosed
@@ -369,8 +369,8 @@ detail of the contribution contract.
   `PROJECTION_REVISIONS` (6: 7 becomes 6: 8).
 - `world/projection/6/revision.ttl`: `wsh:CreditClaim`'s
   `arch:contribution_scope` `sh:in` list gains `"session"`.
-- `world/circle.py`: `MEMBER_CONTRACTS` gains contribution version 2 (and
-  wherever ADR 0094 maps the annotate grant to contracts).
+- `world/circle.py`: `MEMBER_CONTRACTS` gains contribution version 2, and
+  `world/grants.py` (new, ADR 0094) maps it to the annotate ability.
 - `relay/relay.py`: no change beyond the registry, which `_view_answer`
   already reads through `run_view`.
 - `spec/`: a release installs the contribution version 2 bundle.
@@ -389,13 +389,14 @@ detail of the contribution contract.
    and still only lists `member` claims; span annotations get an ordering
    view in the review app's wave.
 2. **Does an operator affirmation made through Cloudflare (member
-   capacity, ADR 0092) count?** A record does not say which capacity sent
+   capacity, [ADR 0092](0092-internet-exposure.md)) count?** A record does not say which capacity sent
    it, and the judgment's agent is the operator's person either way.
    Recommendation: it counts. Counting changes what views rank, never what
    is disclosed or granted, so it is not the operator capacity W1.3 keeps on
    the tailnet. If the operator wants it tailnet-only, the relay would have
    to refuse an operator's judgment of a participation in member capacity,
-   which is a grant rule for ADR 0094.
+   which is a grant rule for ADR 0094. This depends on ADR 0092's question 3
+   (capacity is not recorded on records).
 3. **Where does a session's date come from?** No record holds it, and the
    label is not evidence. Recommendation: the view takes `on` from the
    client for now; a later decision adds a session date claim (from the
@@ -424,4 +425,6 @@ detail of the contribution contract.
    does not settle)? Recommendation: yes, in the decision that settles limit
    selection (ADR 0094's area): a limit only narrows (INV-26), so any
    participation naming the person should select, counted or not; counting
-   matters only for ranking.
+   matters only for ranking. ADR 0094's test for which subjects a member may
+   limit accepts only participation the operator asserted or affirmed (its
+   question 2); the decisions do not settle which.

@@ -26,7 +26,7 @@ Three things now need it:
   either thing, or whose drive it was.
 - **The sample app and lineage.** A cut from a commercial album, a hit from
   a sample pack, and a phrase a synthesiser rendered are all "others' work"
-  to ADR 0010 but differ in what follows from them. Lineage (ADR 0098) caps
+  to ADR 0010 but differ in what follows from them. Lineage ([ADR 0098](0098-content-lineage.md)) caps
   an output by its sources and falls back to origin where there is no
   lineage, so origin must exist for lineage to bottom out.
 
@@ -132,7 +132,7 @@ ADR 0088's sharing gate still applies through the Work; origin adds nothing
 to it and removes nothing from it.
 
 **Origin and rights are separate.** A sample pack is typically "derive yes,
-redistribute no", but that is a rights claim by use (ADR 0097), not origin.
+redistribute no", but that is a rights claim by use ([ADR 0097](0097-rights-by-use.md)), not origin.
 Origin never stands in for a rights claim: an `own_capture` recording still
 needs a permitting rights claim to go beyond service (INV-21).
 
@@ -151,11 +151,15 @@ claim. From them:
 - **Others' work** is everything else, including content with no origin at
   all. INV-18 holds: a missing origin never withdraws or drops anything; it
   only withholds the looser treatment own work gets.
-- **Content without its own origin** takes it from what it was made from:
-  a stem ([ADR 0075](0075-stems-as-content.md)) or derived media
-  ([ADR 0069](0069-derived-media.md)) from its source, and a lineage output
-  (ADR 0098) is own work only when every lineage source is. With neither
-  origin nor lineage it is unknown origin, as W1.13 says.
+- **Content without its own origin**: a stem
+  ([ADR 0075](0075-stems-as-content.md)) or derived media
+  ([ADR 0069](0069-derived-media.md)) takes it from its source, since each is
+  the recording it came from. A lineage output (ADR 0098) does not: lineage
+  never stands in for origin there, so an output with lineage and no origin
+  claim of its own is unknown origin. Whether a complete lineage the operator
+  asserted or affirmed may let an output take its sources' origin is
+  ADR 0098's question 1, not decided here. With neither origin nor lineage
+  content is unknown origin, as W1.13 says.
 
 ### Reach
 
@@ -227,8 +231,9 @@ Open, 2.
   set and `may_show` do not change.
 - **Relay.** `origin` version 1 joins the member contracts of
   `world/circle.py`, over readable subjects as ADR 0088 requires, under the
-  grants of ADR 0094; `own_capture` from a member is refused
-  `operator_only`. A member's upload (ADR 0094) carries an origin draft in
+  grants of [ADR 0094](0094-peoples-writes.md) (which ability covers it is Open, 4); `own_capture`
+  from a member is refused
+  `operator_only`. A member's admission (ADR 0094) carries an origin draft in
   the same proposal (Open, 4).
 
 ## Consequences
@@ -242,8 +247,10 @@ Open, 2.
 - Most existing content has no origin and stays others' work. Nothing
   changes for it until someone asserts one; the operator's own rehearsal
   captures need `own_capture` claims, best proposed by the capture import.
-- Sample-app cuts inherit origin through lineage, so a cut from a sample pack
-  stays a sample pack's, however many renders later.
+- A sample-app render made from a sample pack is never own work: with no
+  origin claim of its own it is unknown origin, and its lineage (ADR 0098)
+  caps its reach by the pack's sensitivity and rights, however many renders
+  later.
 - The vocabulary's existing **Origin** entry gains a contract and a closed
   set; **depositor** is added as a role.
 
@@ -320,19 +327,23 @@ contract and a closed set.
    limit only for a person the content records, and a friend's bought albums
    do not record them. Recommended: yes, as a narrowing sensitivity claim
    that binds until they lift it, which needs an amendment to INV-26 and
-   ADR 0018, so it is not assumed here.
+   ADR 0018, so it is not assumed here. ADR 0094 (its question 3) asks the
+   same.
 3. **Should the capture import propose `own_capture`?** Its agent is the
    importer, and `own_capture` must be the operator's. Recommended: the
    operator marks capture grammars as their own devices in configuration,
    and the import proposes `own_capture` under the operator's person with
    the importer as `by`; content from other grammars gets no origin.
-4. **Must a member's upload carry an origin?** Recommended: yes, in the same
-   proposal, `unknown` allowed, so uploaded content never arrives without
-   anyone having been asked.
+4. **Must a member's admission carry an origin?** Recommended: yes, in the same
+   proposal, `unknown` allowed, so a member's content never arrives without
+   anyone having been asked. ADR 0094 places origin under the `admit`
+   ability, with the staged Artifacts it describes. Which ability, if any,
+   lets a member assert origin about other readable content (the Relay
+   paragraph above) neither draft decided; `annotate` does not list it.
 5. **A friend's own recordings of sessions the operator did not attend.**
    `participant_capture` reads as "someone else recorded it", which fits,
    though the friend did not take part in any of the operator's sessions
-   (ADR 0095). Recommended: use it, naming the friend in `captured_by`, and
+   ([ADR 0095](0095-participation.md)). Recommended: use it, naming the friend in `captured_by`, and
    note in the scheme's definition that "participant" means the recorder.
 6. **Should a `captured_by` person's consent gate sharing beyond the
    circle, as a co-writer's does?** Recommended: not in wave 1; their
