@@ -27,7 +27,9 @@ run. With `shifts` 0 Demucs applies no random offset, so a run on one build
 gives the same samples each time.
 
 Invoked by the runner as `<demucs-python> stems.py <request.json>`; the
-settings are fixed, and a request naming others is refused.
+settings are fixed, and a request naming others is refused. Another
+separator that differs only in its model and its stems (`stems-6s`) runs
+this program's `main` with its own `Separation`.
 """
 
 from __future__ import annotations
@@ -39,7 +41,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Protocol
+from typing import Any, Iterable, Iterator, NamedTuple, Protocol
 
 import numpy
 
@@ -64,6 +66,17 @@ APPLY = {"shifts": 0, "split": True, "overlap": "0.25", "segment": None, "device
          "normalise": "chunk mean and standard deviation, as demucs.api.Separator.separate_tensor"}
 
 
+class Separation(NamedTuple):
+    """What one separator extractor is: its id (for its messages), its
+    pinned model, and the stems it writes, in its manifest's order."""
+    extractor: str
+    model: dict[str, Any]
+    stems: tuple[str, ...]
+
+
+HTDEMUCS = Separation("stems", MODEL, STEMS)
+
+
 class StemsError(Exception):
     pass
 
@@ -84,10 +97,11 @@ def encode_arguments(path: str) -> list[str]:
             "+bitexact", "-c:a", "flac", "-compression_level", "5", "-f", "flac", path]
 
 
-def parameters() -> dict[str, Any]:
+def parameters(separation: Separation = HTDEMUCS) -> dict[str, Any]:
     """The settings, which the manifest must declare exactly."""
-    return {"decoder": "ffmpeg", "decode_arguments": decode_arguments("{input}"), "model": MODEL, "apply": APPLY,
-            "chunk_seconds": CHUNK_SECONDS, "crossfade_seconds": CROSSFADE_SECONDS, "stems": list(STEMS),
+    return {"decoder": "ffmpeg", "decode_arguments": decode_arguments("{input}"), "model": separation.model,
+            "apply": APPLY, "chunk_seconds": CHUNK_SECONDS, "crossfade_seconds": CROSSFADE_SECONDS,
+            "stems": list(separation.stems),
             "encoding": {"encoder": "ffmpeg", "encode_arguments": encode_arguments("{output}"), "bits": 16,
                          "scale": SCALE, "rounding": "nearest, ties to even", "overflow": "clamp"},
             "levels": {"hop": LEVEL_HOP, "frame": LEVEL_FRAME, "floor_db": FLOOR_DB,
@@ -389,22 +403,23 @@ def ffmpeg_version(ffmpeg: str = "ffmpeg") -> str:
 
 
 def separate(input_path: str, output: Path, model: Model, chunk: int = CHUNK_SECONDS * RATE,
-             overlap: int = CROSSFADE_SECONDS * RATE) -> dict[str, Any]:
-    """Decode, separate, join, measure, and encode; returns the result's
-    outputs. `chunk` and `overlap` are in samples; the parameters fix them,
-    and only a test passes others, to join many chunks of a short input."""
+             overlap: int = CROSSFADE_SECONDS * RATE, stems: tuple[str, ...] = STEMS) -> dict[str, Any]:
+    """Decode, separate, join, measure, and encode `stems`; returns the
+    result's outputs. `chunk` and `overlap` are in samples; the parameters
+    fix them, and only a test passes others, to join many chunks of a short
+    input."""
     if model.samplerate != RATE or model.channels != CHANNELS:
         raise StemsError(f"the model separates {model.channels} channels at {model.samplerate} Hz, "
                          f"not {CHANNELS} at {RATE}")
-    missing = [stem for stem in STEMS if stem not in model.sources]
+    missing = [stem for stem in stems if stem not in model.sources]
     if missing:
         raise StemsError(f"the model has no {', '.join(missing)} source")
-    order = [model.sources.index(stem) for stem in STEMS]
+    order = [model.sources.index(stem) for stem in stems]
     encoders: list[Encoder] = []
     try:
-        for stem in STEMS:
+        for stem in stems:
             encoders.append(Encoder(output / f"{stem}.flac"))
-        levels = Levels(len(STEMS))
+        levels = Levels(len(stems))
         mix = Levels(1)
         joiner = Joiner(overlap)
 
@@ -440,12 +455,12 @@ def separate(input_path: str, output: Path, model: Model, chunk: int = CHUNK_SEC
         raise StemsError(f"{mix.samples} samples were decoded and {levels.samples} separated")
     series = levels.series()
     rows = -(-mix.samples // LEVEL_HOP) + 1
-    if series.shape != (rows, len(STEMS)):
+    if series.shape != (rows, len(stems)):
         raise StemsError(f"{mix.samples} samples made {series.shape[0]} level rows, not {rows}")
     (output / "levels.f32").write_bytes(series.tobytes())
-    outputs: dict[str, Any] = {stem: {} for stem in STEMS}
-    outputs["levels"] = {"shape": [rows, len(STEMS)]}
-    for index, stem in enumerate(STEMS):
+    outputs: dict[str, Any] = {stem: {} for stem in stems}
+    outputs["levels"] = {"shape": [rows, len(stems)]}
+    for index, stem in enumerate(stems):
         outputs[f"{stem}_rms_db"] = {"value": round(levels.rms_db(index), 3)}
         outputs[f"{stem}_peak_db"] = {"value": round(levels.peak_db(index), 3)}
         outputs[f"{stem}_clamped"] = {"value": encoders[index].clamped}
@@ -455,17 +470,17 @@ def separate(input_path: str, output: Path, model: Model, chunk: int = CHUNK_SEC
     return outputs
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str], separation: Separation = HTDEMUCS) -> int:
     if len(argv) != 1:
         print("usage: stems.py <request.json>", file=sys.stderr)
         return 2
     try:
         request = json.loads(Path(argv[0]).read_text(encoding="utf-8"))
-        if request.get("parameters") != parameters():
-            raise StemsError("stems 1 has fixed settings; the request names others")
+        if request.get("parameters") != parameters(separation):
+            raise StemsError(f"{separation.extractor} has fixed settings; the request names others")
         output = Path(request["output_dir"])
-        model = load_model(MODEL, APPLY)
-        outputs = separate(request["input"]["path"], output, model)
+        model = load_model(separation.model, APPLY)
+        outputs = separate(request["input"]["path"], output, model, stems=separation.stems)
         software = [*model.software, {"name": "ffmpeg", "version": ffmpeg_version()},
                     {"name": "numpy", "version": numpy.__version__},
                     {"name": "python", "version": platform.python_version()}]
@@ -475,7 +490,7 @@ def main(argv: list[str]) -> int:
                   "outputs": outputs}
         (output / "result.json").write_text(json.dumps(result))
     except (StemsError, OSError, KeyError, ValueError) as exc:
-        print(f"stems: {exc}", file=sys.stderr)
+        print(f"{separation.extractor}: {exc}", file=sys.stderr)
         return 1
     return 0
 
