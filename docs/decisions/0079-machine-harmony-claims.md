@@ -277,7 +277,7 @@ measures audio: what it reads is in the bank or it proposes nothing.
 
 ```
 enrich propose --artifact <Artifact object id> [--stream <audio_stream object id>]
-               [--proposers chords,beats,bass] [--bank <root>]
+               [--proposers chords-jiang,chords-chordino,beats,bass] [--bank <root>]
                --archive <root> [--staging <repo>] [--dry-run] [--export <file>]
 enrich propose --all [--proposers …] [--bank <root>] --archive <root> …
 ```
@@ -289,7 +289,7 @@ enrich propose --all [--proposers …] [--bank <root>] --archive <root> …
 - `--bank` defaults to `ARCHIVE_FEATURE_BANK`; with neither, the command
   fails. Entries are found by the keys the installed extractors give
   (ADR 0073), never by searching.
-- `--proposers` defaults to `chords,beats,bass`.
+- `--proposers` defaults to `chords-jiang,chords-chordino,beats,bass`.
 
 The answer is JSON, as every `enrich` command prints, one object
 per Artifact, with exit status 0, or 3 when nothing was proposed:
@@ -326,6 +326,15 @@ answers `unchanged`. A new extractor version or a stem made again with other
 bits is a new key or digest, so a new run, whose claims sit beside the old
 ones; nothing is superseded by a machine.
 
+**A proposer's id is its run's method.** [ADR 0082](0082-views-and-current.md)'s
+first current rule ranks machines by their runs' method identifiers, so
+each chord extractor has its own proposer, named as the extractor is, and
+D4.2's order (Jiang before Chordino) is the order of those two ids. The two
+learned chord extractors arrive with the feature bank's 0.0.10 work, which
+retires the template `chords` extractor; a proposer reads only what its
+extractor's installed version declares, and the other proposers' inputs
+follow the installed versions in the same way.
+
 **Times.** Bank spans and events are in seconds from the start of the
 decoded stream, and the stream decoded is the first audio stream, which the
 pinned stream claim describes. A time `t` becomes the sample
@@ -338,7 +347,8 @@ sample are one.
 
 | Proposer | Reads | Proposes |
 |---|---|---|
-| `chords` | the mix's `chords/chords` and `chords/chord_candidates` | one chord stacks version 2 claim. Each `chords` span is a span whose end is `asserted`; its readings are its three candidates in the extractor's order, each read from its label: the root as `root`, the quality's intervals as `tones` above the bass, the `/bass` as `bass` (the root when none), the label verbatim as `text`, and `N` as `no_chord`. Weights are each candidate's score, as exact decimal text, under the scale "mean template score, chords extractor version *n*". A later candidate equal to an earlier one is dropped. |
+| `chords-jiang` | the mix's `chords-jiang/chords` spans and its `readings` file | one chord stacks version 2 claim. Each span is a span whose end is `asserted`; its readings are the extractor's weighted candidates in its order, each read from its label: the root as `root`, the quality's intervals as `tones` above the bass, the `/bass` as `bass` (the root when none), the label verbatim as `text`, and `N` as `no_chord`. Weights are the extractor's own, as exact decimal text, under the scale it names. A later candidate equal to an earlier one is dropped. |
+| `chords-chordino` | the mix's `chords-chordino/chords` spans | one chord stacks version 2 claim, one reading a span, read from its label as above, with no weights. |
 | `beats` | the mix's `rhythm/pulse` and `rhythm/downbeats` | one meter layers version 2 claim with a beat-only layer of the pulse, with no `downbeats` (the tracker publishes them only where its margin is clear, and a layer's `downbeats` would assert every other beat is not one), and, when any downbeat is published, a bars layer: a bar from each published downbeat to the pulse its value of beats later, in the meter its label states, with the pulses inside it as its `beats` when their count is the numerator or divides it evenly (as equal groups), and none otherwise. Neither layer has a `role`: a tracker does not know the written meter from the felt one. |
 | `bass` | `stems/bass` of the mix, `tonal/bass_chroma` and `tonal/pitched` measured on that stem (`extract.py run tonal --from stems/bass`), and the mix's `rhythm/pulse` | one chord stacks version 2 claim citing the bass stem in `stem`. For each interval between two pulses, the strongest class of the stem's mean bass chroma over it, when the interval is pitched for at least the share its parameters state and the class leads the next by at least their margin; otherwise no span. Each span holds one bass-only reading weighted by that lead; neighbouring intervals with the same bass are one span. |
 | `key` | the mix's `tonal/key_regions` | one key regions claim (ADR 0080): a region per span, its reading the label's tonic and mode when the label names them and its collection otherwise, weighted by the tonic margin on the extractor's scale. |
@@ -352,9 +362,9 @@ by default.
 
 **The capture import's fifth step.** After `enrich match-windows`
 ([ADR 0070](0070-capture-import.md), [ADR 0072](0072-windowed-work-matches.md)),
-when a bank root is configured, the import makes the mix's `chords` entry and
-the entries it needs (`frames`, `rhythm`, `tonal`: minutes a
-recording-hour) for each Artifact of each session's primary source, then runs
+when a bank root is configured, the import makes the mix's chord entries
+(`chords-jiang`, `chords-chordino`) and the entries the default proposers
+need (`frames`, `rhythm`, `tonal`) for each Artifact of each session's primary source, then runs
 `enrich propose` on it with the default proposers. It does not separate stems:
 separation takes most of an hour a recording-hour (ADR 0075), so `bass`
 answers `nothing_proposed` until the operator, or a worker, makes the stems,

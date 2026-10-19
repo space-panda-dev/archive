@@ -81,8 +81,9 @@ decided by testing, not here. Both must exist.
 - `content` is the recording's content digest; `stems` names the bank entry
   the stems come from, by extractor and key, as
   [ADR 0079](0079-machine-harmony-claims.md) cites a stem. A 4-stem and a
-  6-stem separation are two entries (another extractor, or other
-  parameters), so the stem set is named by its key, never by a count.
+  6-stem separation are two entries (the bank's `stems` and the `stems-6s`
+  its 0.0.10 work adds, with `guitar` and `piano`), so the stem set is named
+  by its entry's key, never by a count.
 - `gains` names 1 to 16 of that entry's `file` outputs, each with an
   integer gain in percent, 1 to 200. **Any subset is a mix (D11.3):** a stem
   left out is not in it, so "minus drums and bass" is the other stems, and

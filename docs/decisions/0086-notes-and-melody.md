@@ -347,9 +347,10 @@ by kind.
 **Views, all computed and never stored.** World serves the tune of a
 recording (each span's selected notes, tagged with the claim they came
 from), its hand-offs, a Work-level melody laid on its bars with ties split
-at bar lines, and the difference between a part's notes and a chord stacks
-claim over the same seconds (ADR 0082). `world/notes.py` holds the first
-three.
+at bar lines. `world/notes.py` holds all three. The difference between a
+part's notes and a chord stacks claim over the same seconds is a computed
+difference (D3.2), but ADR 0082's difference view compares chord claims
+only; comparing notes with chords is a later version of it.
 
 **Exchange is lossy and says so.** None is built. A notes claim maps to
 JAMS `note_midi` (pitch with cents folded in, which needs the tuning claim

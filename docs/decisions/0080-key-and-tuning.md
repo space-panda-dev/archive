@@ -196,8 +196,9 @@ recordings.
 **The mix and a part are separate claims.** A claim with no `part` is about
 the whole sound; one with a `part` is about one player. A part that sounds
 in another key from the mix, or from another part, is a difference to show,
-never a conflict; the views that find it are
-ADR 0082's.
+never a conflict. ADR 0082's difference view compares chord claims only;
+comparing keys is a later version of it, and until then such a difference
+is found by reading both claims.
 
 ### `archive.claim/tuning` version 1: where the grid lies
 
