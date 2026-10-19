@@ -133,14 +133,14 @@ speed), 0069 (media by digest).
 ## enrich (Python)
 
 Purpose: machine claims proposed through Door, derived media, and the feature
-bank. Doc: [enrich/README.md](enrich/README.md) (862; one section per
+bank. Doc: [enrich/README.md](enrich/README.md) (875; one section per
 command, `rg -n '^##' enrich/README.md`).
 
 | File | Lines | What |
 |---|---|---|
 | `enrich/enrich.py` | 685 | `main` (619): `probe`, `detect`, `match`, `match-windows` (`run_probe`, `run_detect`, `run_match`, `run_match_windows`) |
 | `enrich/adapter.py` | 588 | `propose`: a tool result to a Door proposal (ADR 0064) |
-| `enrich/probe.py`, `detector.py` | 234, 646 | stream facts (0065), span suggestions (0066) |
+| `enrich/probe.py`, `detector.py` | 234, 674 | stream facts (0065), span suggestions (0066; presets and the talk gate, 0091) |
 | `enrich/match.py`, `cover.py`, `windows.py` | 358, 1073, 517 | work matching (0067, 0071, 0072) |
 | `enrich/extract.py` | 717 | feature-bank runner: `main` (`list`, `run`), `run_default`, `run_from` |
 | `enrich/bank.py` | 819 | `Catalog` (326), `Bank` (704): the bank format |
@@ -165,7 +165,7 @@ shipped extractors").
 ## capture (Python)
 
 Purpose: import a recorder card as sessions, then run probe/detect/match.
-`capture/capture.py` (661): `main` (618, `import`), `read_directory`,
+`capture/capture.py` (670): `main` (624, `import`), `read_directory`,
 `group`, `plan`, `admit`, `enrich`; `grammar.py` (124) recorder file-name
 grammars, `GRAMMARS`; `send.py` (185) sends a card read elsewhere.
 Tests: suite `capture`; `test_capture` (763), `test_grammar`, `test_send`.
