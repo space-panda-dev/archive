@@ -26,7 +26,8 @@ needs (`ffmpeg`, `ffprobe`, numpy).
 ```sh
 capture/capture.py import --archive <dir> --staging <annex> --derived-media <root> <directory>
                           [--session-name <name>] [--jobs <n>] [--profile-cache <dir>]
-                          [--defer-listening-copies] [--bank <root>] [--extract-config <file>] [--dry-run]
+                          [--detector-preset jam|show|studio] [--defer-listening-copies] [--bank <root>]
+                          [--extract-config <file>] [--dry-run]
 ```
 
 It prints one JSON object with `status` `committed`, `predicted` (a dry
@@ -70,8 +71,10 @@ staged or proposed.
    `pkg:generic/archive-capture@0.1.0`: the grouping is the grammar's.
 5. **Enrich**, quickest first, so a session can be reviewed before its
    slowest output exists. `enrich probe` on every new Artifact, then `enrich
-   detect` with the `jam` preset on each part of each session's primary
-   source: each run is its own batch, staged in the same staging repository,
+   detect` with the `--detector-preset` (`jam` unless `studio` or `show` is
+   named; `studio` never says talk, for masters and studio recordings,
+   [ADR 0091](../docs/decisions/0091-talk-needs-level.md)) on each part of
+   each session's primary source: each run is its own batch, staged in the same staging repository,
    one at a time, and all of them read one `archive export` that is brought
    up to date with `archive export --since` after each commit, instead of
    exporting every record for each run. Then waveform peaks for every

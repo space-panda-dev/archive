@@ -39,12 +39,18 @@ def counted(path: Path) -> detector.Stream:
     return detector.Stream(facts.stream_index, facts.sample_rate, facts.channel_count, facts.sample_count)
 
 
-def session(directory: Path, rate: int = 8000, channels: int = 1) -> tuple[Path, list[int]]:
+# Talk between songs is quieter than the music: this talk's median hop level
+# is about 18 dB below the session's 80th-percentile hop level.
+QUIET_TALK = 0.05
+
+
+def session(directory: Path, rate: int = 8000, channels: int = 1,
+            talk_amplitude: float = QUIET_TALK) -> tuple[Path, list[int]]:
     """Music, talk, music, talk, a long quiet, music: the first three pairs
     separated by six-second gaps of the room's floor."""
     return support.synthetic_wav(directory / "session.wav", rate, [
-        chord(40, A_MINOR), floor_noise(6), talk(40), floor_noise(6), chord(40, G_MAJOR), floor_noise(6),
-        talk(40), floor_noise(72), chord(40, C_MAJOR)], channels=channels)
+        chord(40, A_MINOR), floor_noise(6), talk(40, talk_amplitude), floor_noise(6), chord(40, G_MAJOR),
+        floor_noise(6), talk(40, talk_amplitude), floor_noise(72), chord(40, C_MAJOR)], channels=channels)
 
 
 def nan_wav(directory: Path) -> Path:
@@ -91,6 +97,27 @@ class KnownStructure(unittest.TestCase):
         # Every signal contributed: silence for the gaps, the others nearby.
         self.assertGreater(result.report["points"]["silence"], 0)
         self.assertEqual(result.report["quiet_runs"], 1)
+
+    def test_talk_as_loud_as_the_music_is_unknown(self) -> None:
+        # Loud singing ranks like talk; level is the evidence the rank lacks (ADR 0091).
+        wav, _ = session(self.tmp, talk_amplitude=0.2)
+        stream = counted(wav)
+        # Anchor: without the level gate the rank alone calls both talk-like spans talk.
+        ungated = detector.detect(wav, stream, {**JAM, "talk_margin_db": 0, "talk_reference_percentile": 100})
+        self.assertEqual([c for _, _, c in ungated.spans], ["music", "talk", "music", "talk", "quiet", "music"])
+        gated = detector.detect(wav, stream, JAM)
+        self.assertEqual([s[:2] for s in gated.spans], [s[:2] for s in ungated.spans])
+        self.assertEqual([c for _, _, c in gated.spans], ["music", "unknown", "music", "unknown", "quiet", "music"])
+
+    def test_the_studio_preset_never_says_talk(self) -> None:
+        wav, _ = session(self.tmp)
+        stream = counted(wav)
+        jam = detector.detect(wav, stream, JAM)
+        studio = detector.detect(wav, stream, detector.PRESETS["studio"])
+        # Anchor: the same audio under `jam` has talk.
+        self.assertEqual([c for _, _, c in jam.spans].count("talk"), 2)
+        self.assertEqual([s[:2] for s in studio.spans], [s[:2] for s in jam.spans])
+        self.assertEqual([c for _, _, c in studio.spans], ["music", "unknown", "music", "unknown", "quiet", "music"])
 
     def test_a_change_of_chord_without_a_gap_is_found_by_novelty_alone(self) -> None:
         wav, edges = support.synthetic_wav(self.tmp / "two.wav", 44100, [chord(60, A_MINOR), chord(60, B_FLAT)],
@@ -318,16 +345,29 @@ class Rules(unittest.TestCase):
 
     def test_classes_follow_the_mean_rank_with_its_band(self) -> None:
         # Key confidence ranks up, flatness ranks down: the third span is the most tonal.
-        features = [(0.1, 0.9), (0.5, 0.5), (0.9, 0.1), (0.4, 0.55), (None, None)]
-        self.assertEqual(detector.classify(features, JAM), ["talk", "music", "music", "unknown", "unknown"])
-        self.assertEqual(detector.classify([(0.3, 0.3)], JAM), ["unknown"])
+        # Every level is far below the reference, so only the rank decides.
+        features = [(0.1, 0.9, -60.0), (0.5, 0.5, -60.0), (0.9, 0.1, -60.0), (0.4, 0.55, -60.0), (None, None, None)]
+        self.assertEqual(detector.classify(features, -10.0, JAM), ["talk", "music", "music", "unknown", "unknown"])
+        self.assertEqual(detector.classify([(0.3, 0.3, -60.0)], -10.0, JAM), ["unknown"])
+
+    def test_the_rank_only_nominates_talk_and_the_level_gate_is_strict(self) -> None:
+        # The first span ranks lowest; the gate is `level < reference - margin`.
+        margin = JAM["talk_margin_db"]
+        def first(level: float, preset: dict[str, int] = JAM) -> str:
+            features = [(0.1, 0.9, level), (0.5, 0.5, -60.0), (0.9, 0.1, -60.0)]
+            return detector.classify(features, -10.0, preset)[0]
+        self.assertEqual(first(-10.0 - margin - 0.001), "talk")
+        self.assertEqual(first(-10.0 - margin), "unknown")
+        self.assertEqual(first(-10.0), "unknown")
+        self.assertEqual(first(-60.0, detector.PRESETS["studio"]), "unknown")
+        self.assertFalse(detector.is_talk_level(None, -10.0, JAM))
 
     def test_the_band_edges_are_inclusive_and_exact(self) -> None:
         # Twenty-one key confidences rank 0, 1/20, ..., 1; without flatness the
         # mean rank is the key rank, so ranks 6/20, 7/20 and 8/20 sit exactly
         # on the talk edge, inside the band, and on the music edge.
-        features = [(float(index), None) for index in range(21)]
-        classes = detector.classify(features, JAM)
+        features = [(float(index), None, -60.0) for index in range(21)]
+        classes = detector.classify(features, -10.0, JAM)
         self.assertEqual(classes[:7], ["talk"] * 7)
         self.assertEqual(classes[7], "unknown")
         self.assertEqual(classes[8:], ["music"] * 13)
@@ -374,13 +414,19 @@ class Presets(unittest.TestCase):
         self.assertEqual((decoded["preset"], decoded["values"]), ("jam", JAM))
         self.assertIn("{stream_index}", decoded["decode_arguments"][8])
 
+    def test_studio_is_jam_without_talk(self) -> None:
+        studio = detector.parameters("studio")["values"]
+        self.assertEqual({key for key in studio if studio[key] != JAM[key]}, {"assign_talk"})
+        self.assertEqual((JAM["assign_talk"], studio["assign_talk"]), (1, 0))
+
     def test_an_unknown_preset_is_refused(self) -> None:
         with self.assertRaisesRegex(detector.DetectorError, "unknown preset"):
             detector.parameters("strict-silence")
 
     def test_values_the_rules_cannot_use_are_refused(self) -> None:
         cases = {"hop_ms": 0, "window_ms": 10050, "max_review_points": 0, "chroma_peak_percentile": 101,
-                 "chroma_min_hz": 6000, "rank_band_percent": 40}
+                 "chroma_min_hz": 6000, "rank_band_percent": 40, "assign_talk": 2, "talk_margin_db": -1,
+                 "talk_reference_percentile": 101}
         for key, value in cases.items():
             with self.subTest(key=key), self.assertRaises(detector.DetectorError):
                 detector.check_preset({**JAM, key: value})

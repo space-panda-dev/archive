@@ -89,7 +89,7 @@ is involved.
 ## `enrich detect`
 
 ```sh
-enrich/enrich.py detect --archive <dir> --artifact <object id> [--stream <claim id>] [--preset jam|show]
+enrich/enrich.py detect --archive <dir> --artifact <object id> [--stream <claim id>] [--preset jam|show|studio]
                         [--staging <annex>] [--dry-run]
 ```
 
@@ -119,14 +119,14 @@ decodes always gets at least one span, and one that cannot be analysed fails.
   "decoder", "decode_arguments"}`), one Artifact per preset, admitted by the
   first run that uses it and reused afterwards. Its software is `ffmpeg`, the
   libav libraries it reports, and `numpy`. The method is
-  `archive-enrich/detect-spans` version 1, and the agent is
-  `pkg:generic/archive-enrich-detect@0.1.0`.
+  `archive-enrich/detect-spans` version 2 (version 1 classed talk by rank
+  alone), and the agent is `pkg:generic/archive-enrich-detect@0.2.0`.
 - A rerun with the same preset, software, Artifact revision, and stream claim
   answers `unchanged` before decoding anything and writes nothing (INV-5).
   Another preset is another run; both runs' suggestions remain, and neither
   supersedes the other (ADR 0066).
 
-`detector.py <file> [--preset jam|show] [--stream-index n]` probes the file,
+`detector.py <file> [--preset jam|show|studio] [--stream-index n]` probes the file,
 detects, and prints the plain result; no archive is involved.
 
 ### How spans are found
@@ -181,19 +181,30 @@ with exactly its edges. Its edges replace any boundary inside it or less than
 `min_segment_ms` from it.
 
 **Classes.** A quiet run's span is `quiet`. Every other span is classed by
-the V2 detector's session-relative rule. For each span at least
-`classify_min_ms` long, two features are computed from its hops: **key
-confidence**, the best Pearson correlation of its mean chroma with the 24
-rotated Krumhansl-Schmuckler major and minor profiles, and the mean
-**spectral flatness**. Each feature is ranked among the recording's other
-unquiet spans, from 0 to 1 exactly (equal values rank in span order; a lone
-value has no rank), with flatness inverted. The mean of a span's ranks is
-`music` at or above `rank_threshold_percent + rank_band_percent` percent,
-`talk` at or below `rank_threshold_percent - rank_band_percent` percent, and
-`unknown` in between, without a rank, or when the span is too short. The rule
-is relative: in every recording with two or more classifiable spans, the
-least tonal is ranked lowest, so one span of a recording of only music is
-likely to be called `talk`.
+the V2 detector's session-relative rule, gated by level
+([ADR 0091](../docs/decisions/0091-talk-needs-level.md)). For each span at
+least `classify_min_ms` long, three features are computed from its hops:
+**key confidence**, the best Pearson correlation of its mean chroma with the
+24 rotated Krumhansl-Schmuckler major and minor profiles; the mean
+**spectral flatness**; and the **median hop level**. Key confidence and
+flatness are ranked among the recording's other unquiet spans, from 0 to 1
+exactly (equal values rank in span order; a lone value has no rank), with
+flatness inverted. The mean of a span's ranks is `music` at or above
+`rank_threshold_percent + rank_band_percent` percent. At or below
+`rank_threshold_percent - rank_band_percent` percent the rank only
+*nominates* talk: the span is `talk` when `assign_talk` is 1 and its median
+hop level is more than `talk_margin_db` below the recording's reference
+level, the `talk_reference_percentile` of all its hop levels; otherwise it is
+`unknown`. A span is also `unknown` between the two rank thresholds, without
+a rank, or when it is too short.
+
+The rank is relative: in every recording with two or more classifiable
+spans the least tonal ranks lowest, so about a fifth of every recording's
+spans are nominated, loud singing among them. Level is the absolute evidence
+the rank lacks: talk between songs is quieter than the band. The `studio`
+preset is `jam` with `assign_talk` 0, for masters and studio recordings,
+which hold no talk; no rank threshold could say that, because the
+lowest-ranked span always reaches it.
 
 **Failing loudly.** A signal that cannot be computed refuses the whole
 detection and nothing is proposed: loudness when the stream fills fewer than
@@ -237,15 +248,17 @@ produces evidence, so:
   are `music`, `talk`, and `unknown`.
 - **Presets are evidence.** The `jam` and `show` values are V2's, written as
   integer milliseconds and decibels, and recorded as the run's parameters
-  Artifact. V2's `strict-silence` preset, its spectral-balance values, and its
+  Artifact. The level gate and the `studio` preset are new (ADR 0091). V2's `strict-silence` preset, its spectral-balance values, and its
   1,000 Hz loudness rate are not carried over.
 
-**The presets are not calibrated.** V2's values were tuned against V2's
-signals; this detector's signals differ (FFT chroma, hop-level silence, the
-quiet rule), and it has been tested only on synthetic audio of known
-structure. Calibrating `jam` and `show` on real recordings is a follow-up for
-the operator. A changed preset is a new parameters Artifact and a new run, so
-earlier suggestions keep the values that made them.
+**The presets are mostly not calibrated.** V2's values were tuned against
+V2's signals; this detector's signals differ (FFT chroma, hop-level silence,
+the quiet rule). Only the talk gate was fitted on real recordings: the
+10 dB margin below the 80th percentile, leave-one-session-out on the
+calibration workset's accepted occurrences (ADR 0091), which has no labelled
+talk yet. The rest is tested only on synthetic audio of known structure. A
+changed preset is a new parameters Artifact and a new run, so earlier
+suggestions keep the values that made them.
 
 ## `enrich match`
 
@@ -807,7 +820,7 @@ Versions, needs, and outputs by kind are listed together in
 | `tonal` | Python, Essentia 2.1b6.dev1438, numpy, ffmpeg | from `frames/rms_db`, plus two decodes that repeat `frames`' framing for its spectral peaks (the first for the tuning, the second for profiles referenced to it): scalars `tuning_frequency`, `tuning_cents`, `tuning_confidence` (the confidence-weighted median of 20 s windows' tunings, each the densest stretch of a histogram of the loud peaks' distance from the tempered grid, mains hum left out; not reported from fewer than four confident windows or fewer than half the pitched ones), `tuning_window_count`, `drift_spread_cents`, `detuned`, `collection` (the note collection, such as `Eb major scale`), `collection_margin`, `key`, `mode` (ionian to locrian, harmonic or melodic minor), `scale` (major or minor, as before), `scale_notes`, `key_strength`, `tonic_margin`, `tonic_confidence` (the tonic chosen among the collection's notes by its share of the bass, the major or minor tonic favoured; the chance it is right, calibrated in the mean on one album), `tonic_named` (whether that confidence is at least one half; if not, read `collection`); series `tuning_windows` (grid `tuning`); spans `tuning_drift`, `detuned_spans`, `keys`, `key_regions` (a timeline of note collections, the tonic and mode named where they lead); on the `frames` grid, `pitched`, `dissonance`, and `chroma` and `bass_chroma` (twelve-bin profiles of 100-5,000 Hz and 40-250 Hz, referenced to the local tuning). Version 3 moved chords to `chords` (since retired); version 4 leaves mains hum out and names a tonic only where it leads; version 5 guards the tuning and chooses the tonic by the bass |
 | `structure` | Python, numpy; decodes nothing | from `frames` and `rhythm`: spans `playing`, `tuning` (held single pitches between the playing, labelled by pitch class), `count_ins` (three or more regular onsets before playing), `false_starts` (playing of at most 30 s and a restart, with the openings' similarity), `endings` (`stop`, `fade`, or `abrupt`), `sections` (self-similarity novelty peaks, labelled `A`, `B`, ...), `loops` (a pitch-class period repeated three or more times); series `novelty` a block of about 1 s; scalars `floor_db`, `reference_db`, `threshold_db`, and `floor` (whether the recording has a noise floor, as a rehearsal's room noise is: steady, onset-free quiet at least 26 dB under the playing, or unpitched quiet, a flat pitch-class profile at least 12 dB under it, struck or not; a master, whose quiet is pitched music, has none, so all of it is playing and it has no tuning, count-ins, or false starts); every span but `playing` with a confidence. Not claims: span suggestions are the span detector's |
 | `quality` | Python, Essentia 2.1b6.dev1438, ffmpeg | how well a recording was captured, from one more decode at the stream's own rate with every channel: EBU R 128 `integrated`, `loudness_range`, and `true_peak`; `sample_peak`, `full_scale_samples`, `clipped_seconds`, `dc_offset`, `whole_correlation`, `anti_phase`, `false_stereo`, `noise_floor`, `snr`, `bandwidth`, `band_limited`; per channel, `clipping` (flat tops at full scale, or long ones at the recording's own peak), `overs` (0 dBTP reached between samples, 4x oversampled), `gaps`, `noise_bursts` (spans) and `clicks`, `discontinuities` (events), each of the last three kept only where it stands out from the transients around it or (clicks and discontinuities) stands alone among the steps of the 150 ms around it, so that drums and limiters on a finished master are not defects while crackle still is; `hum` (spans: narrow, steady peaks at 50 or 60 Hz and their harmonics that persist through the quiet or sound in it); on the `frames` grid, `correlation` and `peak_db` |
-| `melody` | Python, Essentia 2.1b6.dev1438 | on a grid of 2,048-sample frames every 128 (the `hop_size` stride) at 44,100 Hz: `pitch` (MELODIA, in `bin_cents` bins: 5, or 2 on the vocal stem), `confidence`, `voiced`, `midi`, `cents`, `level_db`; `notes` spans; scalars `voiced_fraction`, `melodia_voiced_fraction`, `measured_fraction`, `loud_db`, `gate_db`, `reference_hz`, `samples`. The predominant melody of the vocal stem where the bank holds one (it prefers `stems/vocals`), else of the content; `voiced` is MELODIA's decision kept where a contour is mostly above a gate relative to the recording's loud level, and MELODIA runs only within a second of a row that reaches the gate |
+| `melody` | Python, Essentia 2.1b6.dev1438 | on a grid of 2,048-sample frames every 128 (the `hop_size` stride) at 44,100 Hz: `pitch` (MELODIA, in `bin_cents` bins: 5, or 2 on the vocal stem), `confidence`, `voiced`, `midi`, `cents`, `level_db`; `notes` spans; scalars `voiced_fraction`, `melodia_voiced_fraction`, `measured_fraction`, `loud_db`, `gate_db`, `reference_hz`, `samples`. The predominant melody of the vocal stem where the bank holds one voicing at least a fifth of its rows (it prefers `stems/vocals`, then `stems-6s/vocals`), else of the content; `voiced` is MELODIA's decision kept where a contour is mostly above a gate relative to the recording's loud level, and MELODIA runs only within a second of a row that reaches the gate |
 | `colour` | Python, numpy, ffmpeg | for each waveform pixel of [`media.py`](media.py)'s derived-media peaks (about 10 ms; the peaks stay derived media and are not copied into the bank): series `colour` (`u8` red, green, blue, on grid `peaks`) coloured from `frames/centroid` (hue between limits that [`hue_range.py`](hue_range.py) can take from a set of recordings) or `frames/hpcp` (hue) and `frames/rms_db` (lightness), interpolated to each pixel's centre; file `palette` (the mapping and legend stops, JSON, fields in [its README](extractors/colour/README.md)); file `preview` (a PNG of the whole recording). The mapping is its parameters |
 | `stems` | Python under `${demucs-python}` (Demucs 4.1.0, PyTorch), ffmpeg | `vocals`, `drums`, `bass`, `other`: 44.1 kHz stereo 16-bit FLAC from pinned htdemucs weights; `levels` (each stem's RMS every 4,096 samples); each stem's `_rms_db`, `_peak_db`, `_clamped`; `mix_rms_db`, `samples`, `seconds` ([ADR 0075](../docs/decisions/0075-stems-as-content.md)). On the CPU, or on Apple's GPU with `apply.device` `mps` (another key) |
 | `beats-beatthis` | Python under `${beatthis-python}` (beat_this 1.1.0, PyTorch), with the checkpoint `${beatthis-checkpoint}` | from its own decode at the file's rate (soundfile; the model resamples to 22,050 Hz mono): events `beats` and `downbeats` from Beat This's pinned `final0` checkpoint with its minimal postprocessor, at the model's own metrical level (nothing asserts a meter, and the downbeats' spacing is not one); scalars `beat_count`, `downbeat_count`, `median_bpm` (60 over the median beat interval). On a 69-minute album, 0.20 CPU-seconds a second of audio and 0.76 GB at most |
@@ -821,7 +834,7 @@ Versions, needs, and outputs by kind are listed together in
 `--from stems/vocals` measures a stem as content: every extractor runs on it
 unchanged, keyed by the stem's own digest and filed with the recording, after
 the stems are made if they are missing. An extractor whose manifest `prefers`
-a stem (`melody` prefers `stems/vocals`) measures it without `--from` where
+a stem (`melody` prefers `stems/vocals`, then `stems-6s/vocals`) measures it without `--from` where
 the bank already holds it, and the content otherwise, or where its measure of
 the stem falls short of the preference's `at_least` (a vocal stem voicing
 less than a fifth of its rows falls back to the mix); `--no-prefer` measures

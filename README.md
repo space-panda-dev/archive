@@ -260,11 +260,15 @@ and Archive's adapter to Spool, among others. They are listed in
 
 ## Where to look
 
+[MAP.md](MAP.md) is a finding aid: each part's entry points, long files,
+tests, and what not to read.
+
 The [proposed shadow runbook](docs/shadow-runbook.md) describes the records-first
 checkpoint and the separate approvals required before operating on a copy.
 
 ```
 AGENTS.md            how to change this repository (for agents and people)
+MAP.md               where things are: entry points, tests, slow suites
 docs/vocabulary.md   what each term means
 docs/invariants.md   what must always hold
 docs/state-model.md  what counts as evidence, and what happens when things are lost

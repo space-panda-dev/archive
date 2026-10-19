@@ -217,6 +217,8 @@ its declared ones there (fields it declares; canonical JSON):
 
 ```json
 "prefers": [{"input": "stems/vocals", "parameters": {"bin_cents": 2},
+             "at_least": {"voiced_fraction": "0.2"}},
+            {"input": "stems-6s/vocals", "parameters": {"bin_cents": 2},
              "at_least": {"voiced_fraction": "0.2"}}]
 ```
 
@@ -225,9 +227,9 @@ feature whose entry the bank holds for that content, and the content itself
 when it holds none. `at_least` (optional) maps scalar outputs of the
 extractor's own measure to minimums in decimal text: once that measure of
 the feature is in the bank and any of them is below its minimum, the
-preference is passed over for the next, or the content (`melody` falls back
-to the mix where the vocal stem voices less than a fifth of its rows, as on
-an instrumental). A measure passed over is kept; the runner measures the
+preference is passed over for the next, or the content (`melody` takes
+`stems/vocals`, then `stems-6s/vocals`, then the mix, passing over a vocal
+stem that voices less than a fifth of its rows, as on an instrumental). A measure passed over is kept; the runner measures the
 next default input too and names what it passed over in `passed_over`.
 `at_least` is not a parameter and changes no key. Without `--from`, the runner runs every other target
 first, then measures each preferring target on its default input as `--from`
@@ -404,7 +406,9 @@ what each changed:
 - `melody` 2 resolves pitch in 2-cent bins, gates voicing by level, and
   adds `level_db`; 3 runs MELODIA only within a second of a row that reaches
   the gate (`measured_fraction`), prefers the vocal stem where the bank holds
-  it, and resolves pitch in 5-cent bins, 2 on that stem.
+  it, and resolves pitch in 5-cent bins, 2 on that stem. Still 3: it passes
+  over a stem voicing less than a fifth of its rows, and takes the 6-stem
+  separator's vocal stem after the 4-stem one's.
 - `colour` 2 stopped copying the peaks into the bank and checks its
   palette; 3 sets the centroid hue's
   default range to 500 Hz to 4 kHz, which

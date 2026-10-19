@@ -3,8 +3,8 @@
 
     capture import --archive <dir> --staging <annex> --derived-media <root> <directory>
                    [--session-name <name>] [--expect <manifest>] [--jobs <n>]
-                   [--profile-cache <dir>] [--defer-listening-copies] [--bank <root>]
-                   [--extract-config <file>] [--dry-run]
+                   [--profile-cache <dir>] [--detector-preset jam|show|studio]
+                   [--defer-listening-copies] [--bank <root>] [--extract-config <file>] [--dry-run]
 
 The importer hashes every file, skips content that is already an Artifact's,
 groups the rest into sessions and sources with a recorder grammar, and
@@ -58,6 +58,9 @@ SPANS_CONTRACT = ("archive.claim/span_suggestions", "1")
 WINDOW_MATCH_CONTRACT = ("archive.claim/work_match", "3")
 # What the default proposers make (ADR 0079), needed only with a bank.
 PROPOSED_CONTRACTS = (("archive.claim/chord_stacks", "2"), ("archive.claim/meter_layers", "2"))
+# The span detector's presets (enrich/detector.py), named here so a wrong one
+# is refused before anything is staged.
+DETECTOR_PRESETS = ("jam", "show", "studio")
 STAGING_REMOTE = "capture-staging"
 # The one source of a session the operator named: files no grammar knows.
 NAMED_SOURCE = "files"
@@ -390,6 +393,8 @@ def enrich(command: str, artifact: str, args: argparse.Namespace, env: dict[str,
                  "--archive-command", args.archive_command, "--ffmpeg", args.ffmpeg]
     if command in ("probe", "match-windows"):
         arguments += ["--ffprobe", args.ffprobe]
+    if command == "detect":
+        arguments += ["--preset", args.detector_preset]
     if command == "match-windows":
         arguments += ["--jobs", str(args.jobs)]
         if args.profile_cache is not None:
@@ -669,6 +674,9 @@ def main(argv: list[str] | None = None, grammars: Sequence[Any] = grammars_modul
     command.add_argument("--jobs", type=int, default=default_jobs(),
                          help="derived media made at once, and processes matching windows (default: the "
                               "processors less two, at least one)")
+    command.add_argument("--detector-preset", choices=DETECTOR_PRESETS, default="jam",
+                         help="the span detector's preset (ADR 0091): jam (the default) for rehearsals and "
+                              "shows, studio for masters and studio recordings, which never says talk")
     command.add_argument("--profile-cache",
                          help="the directory `enrich match-windows` keeps the corpus occurrences' profiles in "
                               "between imports; regenerable, outside any archive")

@@ -40,9 +40,9 @@ configured (`${demucs-python}` on a machine without Demucs) is skipped, and
 said to be; named on its own, it fails.
 
 Without `--from`, an extractor whose manifest `prefers` a file feature
-(`melody` prefers `stems/vocals`) measures the first of those the bank
-already holds for the content, as `--from` would, after everything else has
-run; where the bank holds none, it measures the content. A preference may
+(`melody` prefers `stems/vocals`, then `stems-6s/vocals`) measures the
+first of those the bank already holds for the content, as `--from` would,
+after everything else has run; where the bank holds none, it measures the content. A preference may
 set minimums for scalars of its measure (`melody` asks a `voiced_fraction`
 of at least 0.2 on the vocal stem); a measure below one is kept but passed
 over, and the next default input is measured too. A preference never

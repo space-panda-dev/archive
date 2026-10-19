@@ -143,7 +143,9 @@ SHIPPED = {
     # scalar says which.
     "structure": {"version": "2",
                   "code": "sha256:9fc498fabca00b759a976939890ac94782c8b18110a331ef124bad6da31cfaa1",
-                  "outside": {"detector.py": "sha256:892a47fc87e7ffdd71b2c0fa38c553284ba4b4fd5ed607c0956a1a814075d9e4",
+                  # detector.py changed for ADR 0091's talk gate only; structure uses its
+                  # runs, checkerboard_kernel, and novelty_curve, which did not.
+                  "outside": {"detector.py": "sha256:6cb9ce7e11a2cbd89b4d5094545f2922921901944c25b7e0e311d3733d591eb1",
                               "probe.py": "sha256:6be7514d1671f50e43a07646fe6aa2a54cf4d35a44e608d6a27f58d8d9732384"}},
     # Version 3: clipping at full scale or long at the recording's own peak,
     # overs, events kept where they stand out from their surroundings or
@@ -154,9 +156,10 @@ SHIPPED = {
     # Version 2: 2-cent bins, a level gate on voicing, and level_db.
     # Version 3: only the rows within reach of the gate are measured; 5-cent bins,
     # and 2 on the vocal stem it prefers; measured_fraction. Still 3 when the
-    # preference gained at_least: no entry's bits change, only which is the default.
+    # preference gained at_least, and again when it gained stems-6s/vocals after
+    # stems/vocals: no entry's bits change, only which is the default.
     "melody": {"version": "3",
-               "code": "sha256:6945b72eaae40a85d24fd296a368d07eea89d6e4b41e8531ae070d7299255079",
+               "code": "sha256:cb25749d8c1d95c87a6e40e2789397f7527daaf28d8df481e4bdfd5481cecedf",
                "outside": {}},
     # colour reads the peaks' format and decode from waveform.py, not the
     # derived-media tool media.py, so an edit to that tool's routes or

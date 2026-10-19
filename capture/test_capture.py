@@ -216,6 +216,22 @@ class CaptureImport(unittest.TestCase):
         entry = bank.Bank(root).entry(lr_artifact["payload"]["content"]["digest"], "chords-jiang")
         self.assertIsNotNone(entry)  # the runner filed it under the Artifact's content digest
 
+    def test_a_studio_import_detects_with_the_studio_preset(self) -> None:
+        import detector
+        card_file(self.card, "010101_120000_TrLR.WAV", music(24))
+        code, answer = self.run_import(None, "--detector-preset", "studio")
+        self.assertEqual(code, 0, answer)
+        [claim] = self.claims(SPANS)
+        [run_ref] = [ref for ref in claim["refs"] if ref["role"] == "run"]
+        by_revision = {r["revision_id"]: r for r in self.records()}
+        [parameters_ref] = [ref for ref in by_revision[run_ref["revision_id"]]["refs"] if ref["role"] == "parameters"]
+        data = adapter.canonical(detector.parameters("studio"))
+        # Anchor: the presets' parameters differ, so the digest names one.
+        self.assertNotEqual(data, adapter.canonical(detector.parameters("jam")))
+        self.assertEqual(by_revision[parameters_ref["revision_id"]]["payload"]["content"],
+                         {"digest": adapter.digest_of(data), "size": len(data)})
+        self.assertNotIn("talk", {span["class"] for span in claim["payload"]["spans"]})
+
     def test_a_second_import_changes_nothing_and_does_no_work(self) -> None:
         card_file(self.card, "010101_120000_TrLR.WAV", music(24))
         card_file(self.card, "010101_120000_TrMic.WAV", mic(24))
@@ -655,7 +671,8 @@ class Steps(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="capture-steps-"))
         self.addCleanup(support.remove_tree, self.tmp)
         self.args = capture.argparse.Namespace(archive=self.tmp, staging=self.tmp / "s", door="door",
-                                               archive_command="archive", ffmpeg="ffmpeg", ffprobe="ffprobe")
+                                               archive_command="archive", ffmpeg="ffmpeg", ffprobe="ffprobe",
+                                               detector_preset="jam")
 
     def fake_enrich(self, body: str) -> Path:
         tools = self.tmp / "tools"
@@ -709,6 +726,23 @@ class Steps(unittest.TestCase):
         propose_step.propose_all([({"digest": "sha256:" + "0" * 64, "file": "a.wav", "object_id": "x"}, entry)],
                                  args, {}, bomb, capture.content_path, bomb)
         self.assertEqual(entry, {"propose": propose_step.SKIPPED})
+
+    def test_detect_is_given_the_detector_preset(self) -> None:
+        body = "import json, sys\nprint(json.dumps({'status': 'unchanged', 'argv': sys.argv[1:]}))\n"
+        seen = {}
+        with patch.object(capture, "ENRICH", self.fake_enrich(body)):
+            for preset in ("jam", "studio"):
+                args = capture.argparse.Namespace(**{**vars(self.args), "detector_preset": preset})
+                seen[preset] = capture.enrich("detect", "x", args, dict(os.environ))[1]["argv"]
+            probe = capture.enrich("probe", "x", self.args, dict(os.environ))[1]["argv"]
+        for preset, argv in seen.items():
+            self.assertEqual(argv[argv.index("--preset") + 1], preset)
+        self.assertIn("--artifact", probe)  # anchor: the arguments were read
+        self.assertNotIn("--preset", probe)
+
+    def test_the_detector_presets_are_the_detectors(self) -> None:
+        import detector
+        self.assertEqual(sorted(capture.DETECTOR_PRESETS), sorted(detector.PRESETS))
 
     def test_an_enrich_that_cannot_start_is_a_failure(self) -> None:
         with patch.object(capture.sys, "executable", str(self.tmp / "no-python")):

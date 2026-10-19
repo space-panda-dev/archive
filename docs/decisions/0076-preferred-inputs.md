@@ -129,8 +129,16 @@ preferred feature, or the content.** `melody` declares
 
 ```json
 "prefers": [{"input": "stems/vocals", "parameters": {"bin_cents": 2},
+             "at_least": {"voiced_fraction": "0.2"}},
+            {"input": "stems-6s/vocals", "parameters": {"bin_cents": 2},
              "at_least": {"voiced_fraction": "0.2"}}]
 ```
+
+The candidates are tried in that order: the 4-stem separator's vocal stem,
+then the 6-stem separator's (`stems-6s`, where the operator made one), then
+the mix; each stem must reach the same minimum, and a stem that falls short
+is listed under `passed_over`. Either stem's melody is measured in 2-cent
+bins.
 
 `Bank.default_input` decides it, so the runner and every reader still agree:
 a preference whose feature the bank holds is the default until its measure
