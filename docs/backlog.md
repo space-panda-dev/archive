@@ -66,7 +66,25 @@ scratch copy.
   for spelling.
 - Written rhythm (staccato rather than rests), syllable-timed lyrics and the
   bass line as its own staff: the ADR 0085 and 0086 amendments planned before
-  0.0.10 is cut.
+  0.0.10 is cut. The 60% staccato rule over-fires on singing (a third of all
+  notes marked); a measured replacement from the lead-sheet viewer experiment
+  (notes from the pitch curve, a constant onset offset removed, rhythm chosen
+  by timing error plus a simplicity cost, every syllable on a note, bleed and
+  octave errors dropped, a suggested clef) should replace it before 0.0.10
+  merges, and apply to the bass line too.
+- Melody, the long tail: free-time passages where the beat grid is wrong,
+  syllables shifted by a misaligned lyric line, heavily ornamented singing
+  reduced to its landing notes (a choice, not checked against a person's
+  transcription), and whether the simpler rhythm (written onsets a median
+  35-90 ms from sung ones) keeps the feel.
+- Full-band transcription, a research pass before any build: the current best
+  open models per part (solo piano, separated single-line horns and bass,
+  drums, comping in a band mix), their licences against AGPL, and engraving
+  from notes to a readable score (rhythm, swing, voices, spelling) per
+  instrument. Score horn transcriptions against a published hand-transcribed
+  jazz-solo database, which gives real references where the vocal work had
+  none. Expected: melody, bass and drum grooves soon; horn solos good enough to
+  study with work; full comping voicings need people's corrections.
 
 ## Operations
 
