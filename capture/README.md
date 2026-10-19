@@ -24,7 +24,8 @@ needs (`ffmpeg`, `ffprobe`, numpy).
 
 ```sh
 capture/capture.py import --archive <dir> --staging <annex> --derived-media <root> <directory>
-                          [--session-name <name>] [--jobs <n>] [--defer-listening-copies] [--dry-run]
+                          [--session-name <name>] [--jobs <n>] [--profile-cache <dir>]
+                          [--defer-listening-copies] [--dry-run]
 ```
 
 It prints one JSON object with `status` `committed`, `predicted` (a dry
@@ -77,8 +78,9 @@ staged or proposed.
    `enrich/media.py` (default: the processors less two).
    `--defer-listening-copies` leaves the listening copies for a later
    `enrich/media.py` run. Last, `enrich match-windows` on each detection,
-   with `--jobs` processes, searches the whole recording and proposes the
-   Works it finds, each in a window of whole suggested spans
+   with `--jobs` processes and the `--profile-cache` given, if any, which
+   keeps the corpus occurrences' profiles between imports, searches the
+   whole recording and proposes the Works it finds, each in a window of whole suggested spans
    ([ADR 0072](../docs/decisions/0072-windowed-work-matches.md));
    it is the slowest step. The report counts the window claims proposed and
    keeps each kept window with every Work within the limit, of which only

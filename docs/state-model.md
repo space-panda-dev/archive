@@ -45,9 +45,11 @@ extractors make every entry again from the content. A record of an
 extractor's failure beside the bank's entries is operational. So are the
 window matcher's profiles
 ([ADR 0072](decisions/0072-windowed-work-matches.md)): `enrich match-windows`
-holds a recording's whole-recording profiles in memory only, and the
+holds a recording's whole-recording profiles in memory only, its
+`--profile-cache` keeps corpus occurrences' profiles that it measures again
+when they are lost, and the
 calibration harness's workset and measured-windows files are measured again
-from the audio. Both are derived from the operator's recordings, so they stay
+from the audio. All are derived from the operator's recordings, so they stay
 outside this repository. So is the window matcher's answer: the Works within
 the limit that a window does not claim, and a near tie's comparisons, which
 `capture import` keeps in its report and `enrich match-windows --regenerate`

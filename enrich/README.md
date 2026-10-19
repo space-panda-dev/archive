@@ -15,6 +15,7 @@ here writes a record: Door decides every revision.
 | [`detector.py`](detector.py) | The span detector, a standalone tool ([ADR 0066](../docs/decisions/0066-span-suggestions.md)) |
 | [`match.py`](match.py) | The numpy work matcher, a standalone tool ([ADR 0067](../docs/decisions/0067-matches-and-alignments-pin-runs.md)); uncalibrated |
 | [`cover.py`](cover.py) | The measure: Essentia's profiles, measured per span or for a whole recording, the quarter-rate distance, and the bit-exact port of Essentia's distance ([ADR 0071](../docs/decisions/0071-essentia-cover-similarity.md)) |
+| [`profile_cache.py`](profile_cache.py) | The window matcher's regenerable cache of corpus occurrences' profiles ([`enrich match-windows`](#enrich-match-windows)) |
 | [`windows.py`](windows.py) | The whole-recording window search: candidate pass, regions, snapping, claim rounds, and decisions, a standalone tool ([ADR 0072](../docs/decisions/0072-windowed-work-matches.md)) |
 | [`calibrate_windows.py`](calibrate_windows.py) | Checks the window matcher's thresholds against an archive's accepted occurrences; proposes nothing |
 | [`enrich.py`](enrich.py) | The `enrich` command that runs a tool against an archive's records |
@@ -331,7 +332,7 @@ are deterministic.
 
 ```sh
 enrich/enrich.py match-windows --archive <dir> --suggestions <object id> [--jobs <n>]
-                 [--staging <annex>] [--dry-run | --regenerate]
+                 [--profile-cache <dir>] [--staging <annex>] [--dry-run | --regenerate]
 ```
 
 Searches the whole recording behind one `archive.claim/span_suggestions`
@@ -377,6 +378,18 @@ The capture import runs it last.
   occurrence is measured once, from its first selection's first track. An
   occurrence too short to compare is skipped, with its reason. Any other
   failure to read one refuses the run.
+- **The profile cache.** With `--profile-cache <dir>`, each occurrence's
+  profiles are kept there and read back by later runs, so a corpus is
+  decoded once rather than on every import (`profile_cache.py`). An entry
+  is keyed by the pieces' content digests and spans, the measure's
+  settings, the software the run records, the decoder's path, and the
+  machine, and returns the bits that were measured, so the answer is the
+  same with or without it. It is not the feature bank: an occurrence is
+  measured on its spans alone, which a slice of a whole file's `frames/hpcp`
+  is not (ADR 0073). The cache is regenerable; a damaged entry refuses the
+  run until it is deleted. A corpus file's bytes are hashed against their
+  record only when they are about to be decoded, and once per run however
+  many occurrences cut it.
 - **The recording is measured once, whole.** The pinned stream is decoded from
   sample 0 to its `sample_count`, in blocks, and turned into HPCP profiles.
   These take about 1.9 MB per recording-hour, and memory does not grow with
