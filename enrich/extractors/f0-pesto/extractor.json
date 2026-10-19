@@ -14,8 +14,9 @@
  "requires": [
   "ffmpeg",
   "pesto-pitch==2.0.1",
-  "torch",
-  "numpy",
+  "torch==2.14.1+cpu",
+  "numpy==2.5.4",
+  "python==3.12.15",
   "mir-1k_g7.ckpt sha256:16c32e06ddd950e3e4866dfa3c7f8a87c4988f8adf43e57977b189f031f26f3e (shipped in the pesto-pitch wheel)"
  ],
  "needs": [],

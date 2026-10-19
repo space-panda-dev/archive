@@ -14,8 +14,9 @@
  "requires": [
   "ffmpeg",
   "torchcrepe==0.0.24",
-  "torch",
-  "numpy",
+  "torch==2.14.1+cpu",
+  "numpy==2.5.4",
+  "python==3.12.15",
   "tiny.pth sha256:d4993eea36ed1a0ad9ac549c740dae5265b049ce72004f00c2f59e01c0be8432 (shipped in the torchcrepe wheel)"
  ],
  "needs": [],

@@ -14,9 +14,10 @@
  "requires": [
   "ffmpeg",
   "basic-pitch==0.4.0 (installed without its TensorFlow dependency)",
-  "onnxruntime",
-  "librosa",
-  "numpy",
+  "onnxruntime==1.31.0",
+  "librosa==0.11.0",
+  "numpy==2.4.6",
+  "python==3.11.17",
   "nmp.onnx sha256:2c3c1d144bfa61ad236e92e169c13535c880469a12a047d4e73451f2c059a0ec (shipped in the basic-pitch wheel)"
  ],
  "needs": [],

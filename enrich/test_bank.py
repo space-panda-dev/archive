@@ -174,13 +174,13 @@ SHIPPED = {
                  "outside": {"extractors/stems/stems.py":
                                  "sha256:649708bb68316a9c33b94a9fa273ca3bfb45c2e1dcc6b310a960371fe0191586"}},
     "notes-basic-pitch": {"version": "1",
-                          "code": "sha256:b5448bba015abacd05b07e03eb60e280ae45e3aa01bb5562dd30ef6a0eefe3b2",
+                          "code": "sha256:b81ad3ab4528b6c557e4a3ad254c5262754689efcbd157ac5bff976f28d40133",
                           "outside": {}},
     "f0-pesto": {"version": "1",
-                 "code": "sha256:ba157732b055c68b9d1d3921700ee727c354689cd1586e90f2f4f3f36a466d24",
+                 "code": "sha256:a627f3b3f63d03e2f953707fa39653da0582168bfa714c0b40afeb82d7f928cc",
                  "outside": {}},
     "f0-torchcrepe": {"version": "1",
-                      "code": "sha256:c4d699901479e035345865983ac6439f94193af30acac3687b8c5c8b26720af9",
+                      "code": "sha256:3ea7b08895a262f9c175bcadb49fdf1ad59c6a8c69d6492aa5341e6abcafa4e7",
                       "outside": {}},
     # The learned beat and chord extractors keep the album trial's id, version, and
     # parameters, so their keys are the trial's (test_beats_chords checks one).
