@@ -42,6 +42,7 @@ import Archive.Door.TransitionDryRun
 import Archive.Door.Identity (parseIdentityName, parseIdentityNamespace, uuidV5)
 import Archive.Door.Contracts (validateCoreContextForSpecification, validateContractInstance)
 import Archive.Door.Json (decodeUnique)
+import Rules010 (rules010Checks)
 import Specification010 (specification010Checks)
 import qualified Data.Map.Strict as CheckpointMap
 import Archive.Door.Layout (contentRelativePath, parseSha256Digest, recordRelativePath, specificationLayout)
@@ -408,6 +409,7 @@ main = do
   windowMatchProfileChecks
   musicAndCreditProfileChecks
   specification010Checks >>= mapM_ (\(label, passed, detail) -> assert label passed ExitSuccess detail "")
+  rules010Checks >>= mapM_ (\(label, passed, detail) -> assert label passed ExitSuccess detail "")
   withProposalTemporaryRoot previousReleaseUpgradeChecks
   withProposalTemporaryRoot specificationUpgradeRefusalChecks
   withProposalTemporaryRoot earlierSpecificationChecks
@@ -7477,9 +7479,8 @@ musicAndCreditProfileChecks = do
 -- | A 0.0.9 archive adopts 0.0.10 by one `door transition` (ADR 0068): the
 -- release is additive (its core context is 0.0.9's), the commit installs the
 -- twenty-four bundles it adds and the new version, and they are installed
--- only after it. Every one of them declares a profile rule this Door does not
--- enforce yet, so after the upgrade a record citing one is refused for that
--- reason, no longer as an uninstalled contract.
+-- only after it. After the upgrade a record citing one is admitted under its
+-- profile rules, no longer refused as an uninstalled contract.
 previousReleaseUpgradeChecks :: FilePath -> IO ()
 previousReleaseUpgradeChecks parent = do
   previousCatalog <- either (const Set.empty) id <$> loadContractCatalog "archive/0.0.9"
@@ -7558,11 +7559,14 @@ previousReleaseUpgradeChecks parent = do
   assert "the upgraded archive holds the released bundles and reads at 0.0.10"
     (and installedMatch && statusCode == ExitSuccess && contains "\"spec\":\"archive/0.0.10\"" statusOut)
     statusCode statusOut statusErr
-  _ <- refuseNew root archiveId "the upgraded archive installs sensitivity but refuses it until Door enforces its rules"
+  let asOperator = replace ("\"agent\":\"" <> person <> "\"") ("\"agent\":\"" <> operatorId <> "\"")
+  _ <- refuseNew root archiveId "the upgraded archive refuses a sensitivity whose agent is no person Entity it holds"
     "archive.claim/sensitivity" "previous-release-sensitivity-after"
     (contractRecord "claim" sensitivityBundle "{\"label\":\"RED\"}" [pinned "subject" (operatorId, operatorRevision)])
-    "unsupported: archive.claim/sensitivity version 1 declares profile rules this Door does not enforce yet: x-archive-agent"
-  -- Rights declares no pending rule, so Door admits it under its rules now.
+    "agent must be an Archive object identifying a person Entity"
+  _ <- admitNew root archiveId "the upgraded archive admits the operator's sensitivity under its rules"
+    "archive.claim/sensitivity" "previous-release-sensitivity-operator"
+    (asOperator . contractRecord "claim" sensitivityBundle "{\"label\":\"RED\"}" [pinned "subject" (operatorId, operatorRevision)])
   work <- admitNew root archiveId "the upgraded archive admits a Work"
     "archive.audio/song" "song-3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f" (entityRecord "musical_work" "A Work")
   let rightsBundle = bundleOf "archive.claim/rights"

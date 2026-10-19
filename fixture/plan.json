@@ -355,6 +355,185 @@
       ]
     },
     {
+      "name": "harmony, form, and keys of 0.0.10",
+      "command": "admit",
+      "records": [
+        {"key": "chords-v2", "namespace": "archive.claim/chord_stacks", "name": "fixture-chords-v2", "shape": "claim", "contracts": [{"id": "archive.claim/chord_stacks", "version": "2"}],
+         "payload": {"sample_rate": 8000, "part": "bass", "stem": {"extractor": "stems", "key": "sha256:abababababababababababababababababababababababababababababababab", "output": "bass", "sha256": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"}, "spans": [{"start_sample": 0, "end_sample": 2000, "readings": [{"bass": 4, "root": 0, "text": "/E"}]}, {"start_sample": 2000, "end_sample": 4000, "readings": [{"bass": 9, "tones": [0, 4], "text": "Am"}]}]},
+         "refs": [{"role": "source", "pin": "recording"}, {"role": "stream", "pin": "stream"}, {"role": "derived_from", "pin": "chords"}]},
+        {"key": "sequence-v2", "namespace": "archive.claim/chord_sequence", "name": "fixture-sequence-v2", "shape": "claim", "contracts": [{"id": "archive.claim/chord_sequence", "version": "2"}],
+         "payload": {"entries": [{"readings": [{"bass": 0, "tones": [4, 7], "text": "C"}]}, {"readings": [{"bass": 4, "text": "/E"}]}, {"readings": [{"bass": 7, "tones": [2, 5, 11], "text": "G7"}]}]},
+         "refs": [{"role": "work", "pin": "work-a"}, {"role": "derived_from", "pin": "sequence"}]},
+        {"key": "form", "namespace": "archive.claim/form", "name": "fixture-form", "shape": "claim", "contracts": [{"id": "archive.claim/form", "version": "1"}],
+         "payload": {"document_url": "https://example.org/fixture-chart", "sections": [{"label": "Intro", "kind": "intro", "locator": {"line": 1}}, {"label": "Verse", "kind": "verse", "locator": {"line": 2}}, {"label": "First ending", "locator": {"line": 3}}, {"label": "Second ending", "locator": {"line": 4}}, {"label": "Coda", "kind": "coda", "locator": {"line": 5}}], "repeats": [{"first": 1, "last": 3, "times": 2, "endings": [{"first": 2, "last": 2, "passes": [1]}, {"first": 3, "last": 3, "passes": [2]}]}], "jumps": [{"after": 3, "kind": "da_capo", "then": "coda", "coda_from": 1, "coda": 4}]},
+         "refs": [{"role": "work", "pin": "work-a"}, {"role": "document", "pin": "chart"}]}
+      ]
+    },
+    {
+      "name": "written meter and keys",
+      "command": "admit",
+      "records": [
+        {"key": "meter-written", "namespace": "archive.claim/meter_layers", "name": "fixture-meter-written", "shape": "claim", "contracts": [{"id": "archive.claim/meter_layers", "version": "2"}],
+         "payload": {"layers": [{"role": "written", "bars": [{"numerator": 4, "denominator": 4, "section": 0, "chords": [{"entry": 0}]}, {"numerator": 4, "denominator": 4, "section": 1, "chords": [{"entry": 1}, {"entry": 2, "at": {"count": 2, "unit": 4}}]}, {"numerator": 3, "denominator": 4, "section": 2}, {"numerator": 3, "denominator": 4, "section": 3}, {"numerator": 6, "denominator": 8, "grouping": [3, 3], "section": 4}]}], "modulations": [{"layer": 0, "bar": 4, "kind": "equation", "before": {"denominator": 4}, "after": {"denominator": 4, "dots": 1}}]},
+         "refs": [{"role": "work", "pin": "work-a"}, {"role": "form", "pin": "form"}, {"role": "sequence", "pin": "sequence-v2"}]},
+        {"key": "key-sequence", "namespace": "archive.claim/key_sequence", "name": "fixture-key-sequence", "shape": "claim", "contracts": [{"id": "archive.claim/key_sequence", "version": "1"}],
+         "payload": {"regions": [{"first": 0, "last": 1, "readings": [{"collection": [0, 2, 4, 5, 7, 9, 11], "tonic": 0, "mode": "major", "spelling": ["C", "D", "E", "F", "G", "A", "B"]}]}, {"first": 2, "last": 2, "readings": [{"collection": [0, 2, 4, 6, 7, 9, 11], "tonic": 7, "mode": "ionian"}, {"text": "G?"}]}]},
+         "refs": [{"role": "work", "pin": "work-a"}, {"role": "chord_sequence", "pin": "sequence-v2"}]},
+        {"key": "tuning", "namespace": "archive.claim/tuning", "name": "fixture-tuning", "shape": "claim", "contracts": [{"id": "archive.claim/tuning", "version": "1"}],
+         "payload": {"sample_rate": 8000, "reference_cents": "-12.5", "drift": [{"start_sample": 2000, "end_sample": 3000, "cents": "10"}]},
+         "refs": [{"role": "source", "pin": "recording"}, {"role": "stream", "pin": "stream"}]}
+      ]
+    },
+    {
+      "name": "placed meter, keys, and sections",
+      "command": "admit",
+      "records": [
+        {"key": "meter-placed", "namespace": "archive.claim/meter_layers", "name": "fixture-meter-placed", "shape": "claim", "contracts": [{"id": "archive.claim/meter_layers", "version": "2"}],
+         "payload": {"sample_rate": 8000, "alignment": {"method": "manual"}, "layers": [{"role": "written", "bars": [{"start_sample": 0, "end_sample": 2000, "numerator": 4, "denominator": 4, "placed": {"layer": 0, "bar": 0}}, {"start_sample": 2000, "end_sample": 4000, "numerator": 4, "denominator": 4, "placed": {"layer": 0, "bar": 1}}]}]},
+         "refs": [{"role": "source", "pin": "recording"}, {"role": "stream", "pin": "stream"}, {"role": "meter", "pin": "meter-written"}]},
+        {"key": "key-regions", "namespace": "archive.claim/key_regions", "name": "fixture-key-regions", "shape": "claim", "contracts": [{"id": "archive.claim/key_regions", "version": "1"}],
+         "payload": {"sample_rate": 8000, "alignment": {"method": "manual"}, "regions": [{"start_sample": 0, "end_sample": 2000, "region": 0, "readings": [{"collection": [0, 2, 4, 5, 7, 9, 11], "tonic": 0, "mode": "major"}]}, {"start_sample": 2000, "end_sample": 4000, "region": 1, "readings": [{"no_key": true}]}]},
+         "refs": [{"role": "source", "pin": "recording"}, {"role": "stream", "pin": "stream"}, {"role": "tuning", "pin": "tuning"}, {"role": "sequence", "pin": "key-sequence"}]},
+        {"key": "form-spans", "namespace": "archive.claim/form_spans", "name": "fixture-form-spans", "shape": "claim", "contracts": [{"id": "archive.claim/form_spans", "version": "1"}],
+         "payload": {"sample_rate": 8000, "alignment": {"method": "manual"}, "spans": [{"start_sample": 0, "end_sample": 1000, "section": 0}, {"start_sample": 1000, "end_sample": 3000, "section": 1, "label": "Verse"}, {"start_sample": 3000, "end_sample": 4000, "section": 4}]},
+         "refs": [{"role": "source", "pin": "recording"}, {"role": "stream", "pin": "stream"}, {"role": "form", "pin": "form"}]}
+      ]
+    },
+    {
+      "name": "notes and melody",
+      "command": "admit",
+      "records": [
+        {"key": "notes", "namespace": "archive.claim/notes", "name": "fixture-notes", "shape": "claim", "contracts": [{"id": "archive.claim/notes", "version": "1"}],
+         "payload": {"sample_rate": 8000, "part": "bass", "range": {"start_sample": 0, "end_sample": 4000}, "notes": [{"onset_sample": 0, "offset_sample": 900, "pitch": 40, "velocity": 90}, {"onset_sample": 1000, "offset_sample": 1900, "pitch": 45, "cents": "-5"}]},
+         "refs": [{"role": "source", "pin": "recording"}, {"role": "stream", "pin": "stream"}, {"role": "tuning", "pin": "tuning"}]},
+        {"key": "melody", "namespace": "archive.claim/melody", "name": "fixture-melody", "shape": "claim", "contracts": [{"id": "archive.claim/melody", "version": "1"}],
+         "payload": {"part": "voice", "start": {"layer": 0, "bar": 0}, "notes": [{"pitch": 64, "duration": {"count": 1, "unit": 4}}, {"rest": true, "duration": {"count": 1, "unit": 4}}, {"pitch": 67, "duration": {"count": 2, "unit": 4}}]},
+         "refs": [{"role": "work", "pin": "work-a"}, {"role": "meter", "pin": "meter-written"}]}
+      ]
+    },
+    {
+      "name": "the part that carries the tune",
+      "command": "admit",
+      "records": [
+        {"key": "melody-spans", "namespace": "archive.claim/melody_spans", "name": "fixture-melody-spans", "shape": "claim", "contracts": [{"id": "archive.claim/melody_spans", "version": "1"}],
+         "payload": {"sample_rate": 8000, "spans": [{"start_sample": 0, "end_sample": 2000, "notes": "$revision:notes", "select": "highest"}]},
+         "refs": [{"role": "source", "pin": "recording"}, {"role": "stream", "pin": "stream"}, {"role": "notes", "pin": "notes"}]}
+      ]
+    },
+    {
+      "name": "a lyric document",
+      "command": "admit",
+      "records": [
+        {"key": "lyrics", "namespace": "archive.core/artifact", "name": "fixture-lyrics", "shape": "artifact", "content": "lyrics.txt"}
+      ]
+    },
+    {
+      "name": "documents, limits, and rights",
+      "command": "admit",
+      "records": [
+        {"key": "document-source", "namespace": "archive.claim/document_source", "name": "fixture-document-source", "shape": "claim", "contracts": [{"id": "archive.claim/document_source", "version": "1"}],
+         "payload": {"media_type": "text/plain", "kinds": ["lyrics"], "filename": "lyrics.txt", "url": "https://example.org/fixture-lyrics", "retrieved_at": "2026-01-01"},
+         "refs": [{"role": "document", "pin": "lyrics"}, {"role": "work", "pin": "work-a"}]},
+        {"key": "timed-lyrics", "namespace": "archive.claim/timed_lyrics", "name": "fixture-timed-lyrics", "shape": "claim", "contracts": [{"id": "archive.claim/timed_lyrics", "version": "1"}],
+         "payload": {"sample_rate": 8000, "scheme": "text", "alignment": {"method": "manual"}, "lines": [{"line": 1, "start_sample": 0, "end_sample": 2000, "words": [{"word": 1, "start_sample": 0, "end_sample": 1000}, {"word": 2, "start_sample": 1000, "end_sample": 2000}]}, {"line": 2, "start_sample": 2000, "end_sample": 4000}]},
+         "refs": [{"role": "document", "pin": "lyrics"}, {"role": "source", "pin": "recording"}, {"role": "stream", "pin": "stream"}, {"role": "work", "pin": "work-a"}]},
+        {"key": "sensitivity", "namespace": "archive.claim/sensitivity", "name": "fixture-sensitivity", "shape": "claim", "contracts": [{"id": "archive.claim/sensitivity", "version": "1"}],
+         "payload": {"label": "AMBER", "reason": "Fixture limit"},
+         "refs": [{"role": "subject", "pin": "take-a"}]},
+        {"key": "rights", "namespace": "archive.claim/rights", "name": "fixture-rights", "shape": "claim", "contracts": [{"id": "archive.claim/rights", "version": "1"}],
+         "payload": {"statement": "InC", "jurisdiction": "US", "from": "2020"},
+         "refs": [{"role": "subject", "pin": "work-a"}, {"role": "holder", "pin": "ensemble"}]}
+      ]
+    },
+    {
+      "name": "a release's tracks",
+      "command": "admit",
+      "records": [
+        {"key": "tracklist", "namespace": "archive.claim/tracklist", "name": "fixture-tracklist", "shape": "claim", "contracts": [{"id": "archive.claim/tracklist", "version": "1"}],
+         "payload": {"media": [{"position": 1, "format": "CD", "tracks": [{"position": 1, "title": "Fixture Track", "length_ms": 500}]}]},
+         "refs": [{"role": "release", "pin": "release"}, {"role": "track", "pin": "recording-entity"}]},
+        {"key": "catalogue", "namespace": "archive.claim/catalogue_correspondence", "name": "fixture-catalogue", "shape": "claim", "contracts": [{"id": "archive.claim/catalogue_correspondence", "version": "1"}],
+         "payload": {"external": "https://musicbrainz.org/release/0f0e0d0c-0b0a-4908-8706-050403020100", "mapping": "skos:exactMatch"},
+         "refs": [{"role": "release", "pin": "release"}]},
+        {"key": "catalogue-artist", "namespace": "archive.claim/catalogue_correspondence", "name": "fixture-catalogue-artist", "shape": "claim", "contracts": [{"id": "archive.claim/catalogue_correspondence", "version": "1"}],
+         "payload": {"external": "https://musicbrainz.org/artist/1f0e0d0c-0b0a-4908-8706-050403020100", "mapping": "skos:exactMatch"},
+         "refs": [{"role": "artist", "pin": "guest"}]}
+      ]
+    },
+    {
+      "name": "the recording's audio",
+      "command": "admit",
+      "records": [
+        {"key": "recording-audio", "namespace": "archive.claim/recording_audio", "name": "fixture-recording-audio", "shape": "claim", "contracts": [{"id": "archive.claim/recording_audio", "version": "1"}],
+         "payload": {"extent": "whole", "medium": 1, "track": 1},
+         "refs": [{"role": "recording", "pin": "recording-entity"}, {"role": "audio", "pin": "recording"}, {"role": "tracklist", "pin": "tracklist"}]}
+      ]
+    },
+    {
+      "name": "a co-written Work",
+      "command": "admit",
+      "records": [
+        {"key": "origin", "namespace": "archive.claim/work_origin", "name": "fixture-origin", "shape": "claim", "contracts": [{"id": "archive.claim/work_origin", "version": "1"}],
+         "payload": {"origin": "co_written"},
+         "refs": [{"role": "work", "pin": "work-b"}, {"role": "writer", "pin": "operator"}, {"role": "writer", "pin": "guest"}, {"role": "band", "pin": "ensemble"}]}
+      ]
+    },
+    {
+      "name": "a co-writer's consent",
+      "command": "admit",
+      "records": [
+        {"key": "consent", "namespace": "archive.claim/sharing_consent", "name": "fixture-consent", "shape": "claim", "contracts": [{"id": "archive.claim/sharing_consent", "version": "1"}], "agent": "@guest",
+         "payload": {"destination": "fixture-circle", "decision": "approve"},
+         "refs": [{"role": "origin", "pin": "origin"}, {"role": "covers", "pin": "title"}]}
+      ]
+    },
+    {
+      "name": "lead sheets and marks",
+      "command": "admit",
+      "records": [
+        {"key": "lead-sheet", "namespace": "archive.claim/lead_sheet", "name": "fixture-lead-sheet", "shape": "claim", "contracts": [{"id": "archive.claim/lead_sheet", "version": "1"}],
+         "payload": {"label": "Fixture chart", "parts": [{"name": "Keys"}, {"name": "Bass", "instrument": "https://musicbrainz.org/instrument/17f9f065-2312-4a24-8309-6f6dd63e2e33", "strings": [28, 33, 38, 43], "capo": 2, "document": 0}]},
+         "refs": [{"role": "work", "pin": "work-a"}, {"role": "chords", "pin": "sequence-v2"}, {"role": "meter", "pin": "meter-written"}, {"role": "form", "pin": "form"}, {"role": "key", "pin": "key-sequence"}, {"role": "melody", "pin": "melody"}, {"role": "credits", "pin": "contribution-work"}, {"role": "lyrics", "pin": "lyrics"}, {"role": "document", "pin": "chart"}]},
+        {"key": "annotation", "namespace": "archive.claim/span_annotation", "name": "fixture-annotation", "shape": "claim", "contracts": [{"id": "archive.claim/span_annotation", "version": "1"}],
+         "payload": {"kind": "note", "text": "Fixture note", "sample_rate": 8000, "span": {"start_sample": 0, "end_sample": 1000}},
+         "refs": [{"role": "source", "pin": "recording"}, {"role": "stream", "pin": "stream"}, {"role": "about", "pin": "chords-v2"}]},
+        {"key": "judgment-v2", "namespace": "archive.assessment/judgment", "name": "fixture-judgment-v2", "shape": "assessment", "contracts": [{"id": "archive.assessment/judgment", "version": "2"}],
+         "payload": {"verdict": "affirmed", "sample_rate": 8000, "span": {"start_sample": 0, "end_sample": 2000}},
+         "refs": [{"role": "assessment_of", "pin": "chords-v2"}]},
+        {"key": "judgment-entries", "namespace": "archive.assessment/judgment", "name": "fixture-judgment-entries", "shape": "assessment", "contracts": [{"id": "archive.assessment/judgment", "version": "2"}],
+         "payload": {"verdict": "affirmed", "entries": {"first": 0, "last": 1}},
+         "refs": [{"role": "assessment_of", "pin": "sequence-v2"}]},
+        {"key": "annotation-sequence", "namespace": "archive.claim/span_annotation", "name": "fixture-annotation-sequence", "shape": "claim", "contracts": [{"id": "archive.claim/span_annotation", "version": "1"}],
+         "payload": {"kind": "unsure", "entries": {"first": 1, "last": 2}},
+         "refs": [{"role": "sequence", "pin": "sequence-v2"}, {"role": "work", "pin": "work-a"}]}
+      ]
+    },
+    {
+      "name": "a band's lead sheet",
+      "command": "admit",
+      "records": [
+        {"key": "lead-sheet-band", "namespace": "archive.claim/lead_sheet", "name": "fixture-lead-sheet-band", "shape": "claim", "contracts": [{"id": "archive.claim/lead_sheet", "version": "1"}], "agent": "@ensemble",
+         "payload": {"label": "Fixture band chart"},
+         "refs": [{"role": "work", "pin": "work-a"}, {"role": "source", "pin": "recording"}, {"role": "chords", "pin": "sequence-v2"}, {"role": "lyrics", "pin": "lyrics"}, {"role": "lyric_timing", "pin": "timed-lyrics"}, {"role": "band", "pin": "ensemble"}, {"role": "adopted_by", "pin": "membership"}, {"role": "derived_from", "pin": "lead-sheet"}]}
+      ]
+    },
+    {
+      "name": "an exported file",
+      "command": "admit",
+      "records": [
+        {"key": "export-file", "namespace": "archive.core/artifact", "name": "fixture-export-file", "shape": "artifact", "content": "export.json"}
+      ]
+    },
+    {
+      "name": "what was exported",
+      "command": "admit",
+      "records": [
+        {"key": "export", "namespace": "archive.claim/export", "name": "fixture-export", "shape": "claim", "contracts": [{"id": "archive.claim/export", "version": "1"}],
+         "payload": {"format": "jams", "media_type": "application/json", "exporter": {"id": "fixture-exporter", "version": "1"}, "options": {"transpose": -2}, "key": "$export-key"},
+         "refs": [{"role": "artifact", "pin": "export-file"}, {"role": "rendered", "pin": "lead-sheet"}, {"role": "rendered", "pin": "chords-v2"}, {"role": "joined", "pin": "chart"}]}
+      ]
+    },
+    {
       "name": "publication",
       "command": "transition",
       "records": [

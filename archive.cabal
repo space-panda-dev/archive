@@ -44,7 +44,17 @@ library
     , Archive.Door.Json
     , Archive.Door.Layout
     , Archive.Door.MutationError
-    , Archive.Door.PendingRules
+    , Archive.Door.AgentRules
+    , Archive.Door.FormStructure
+    , Archive.Door.JudgedScope
+    , Archive.Door.PinnedRules
+    , Archive.Door.RecordRules
+    , Archive.Door.ReleaseAdmission
+    , Archive.Door.RuleJson
+    , Archive.Door.RuleRecords
+    , Archive.Door.RuleSyntax
+    , Archive.Door.WhenPinned
+    , Archive.Door.WrittenBars
     , Archive.Door.Proposal
     , Archive.Door.RecordCommit
     , Archive.Door.SchemaObjectKeywords
@@ -112,7 +122,7 @@ executable archive
 test-suite door-test
   type: exitcode-stdio-1.0
   main-is: Main.hs
-  other-modules: Specification010
+  other-modules: Rules010, Specification010
   hs-source-dirs: door/test
   build-tool-depends:
       archive:archive

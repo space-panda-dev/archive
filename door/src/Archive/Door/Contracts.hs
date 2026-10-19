@@ -32,7 +32,9 @@ module Archive.Door.Contracts
   ) where
 
 import Archive.Door.Json (decodeUnique)
-import Archive.Door.PendingRules (pendingProfileRuleNames)
+import Archive.Door.RecordRules (validateRecordRules)
+import Archive.Door.RuleSyntax (releaseRuleNames, validateReleaseRules)
+import Archive.Door.WhenPinned (effectiveSchema)
 import Archive.Door.SchemaObjectKeywords
   ( evaluateObjectKeywords
   , objectKeywordNames
@@ -327,6 +329,7 @@ validateSchema schema@(Object fields) = do
   maybe (Right ()) validateNestedRangesRule (KeyMap.lookup "x-archive-nested-ranges" fields)
   _ <- targetSamplesRule schema
   _ <- targetIndexRule schema
+  validateReleaseRules nestedRules fields
   walkSchema schema [] schema
 validateSchema _ = Left "contract schema must be a JSON object"
 
@@ -341,7 +344,12 @@ profileRuleNames =
   , "x-archive-metric-modulations", "x-archive-target-bound", "x-archive-partial-dates"
   , "x-archive-subset", "x-archive-document-order", "x-archive-nested-ranges"
   , "x-archive-target-samples", "x-archive-target-index"
-  ] <> pendingProfileRuleNames
+  ] <> releaseRuleNames
+
+-- | The schema one map of @x-archive-when-pinned@ makes (D-18), checked as
+-- a bundle's schema is.
+nestedRules :: KeyMap.KeyMap Value -> Either Text ()
+nestedRules = validateSchema . Object
 
 walkSchema :: Value -> [Text] -> Value -> Either Text ()
 walkSchema root path (Object fields) = do
@@ -1464,7 +1472,12 @@ validateContractInstance schema instanceValue = do
   matches <- evaluateSchema schema [] schema instanceValue
   if not matches
     then Left "contract instance does not satisfy its schema"
-    else validateContractProfile schema instanceValue
+    else do
+      effective <- effectiveSchema schema instanceValue
+      validateContractProfile effective instanceValue
+      case (effective, instanceValue) of
+        (Object root, Object fields) -> validateRecordRules root fields
+        _ -> Right ()
 
 validateContractProfile :: Value -> Value -> Either Text ()
 validateContractProfile (Object schema) (Object instanceValue) = do

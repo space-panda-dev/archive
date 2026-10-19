@@ -78,9 +78,8 @@ elsewhere and is governed by the specification kept here.
 > origins and sharing consents ([ADR 0088](docs/decisions/0088-bandmates.md)),
 > and exports ([ADR 0089](docs/decisions/0089-practice-audio-and-exports.md)),
 > each as a contract bundle; a 0.0.9 archive adopts it by the same upgrade.
-> Door admits the three whose rules it already checks (rights, form spans,
-> and catalogue correspondence) and refuses the others, naming the profile
-> rules it does not enforce yet, until it does.
+> Door admits all twenty-four under their profile rules, and the published
+> fixture archive holds a record of each.
 > [`enrich/`](enrich/README.md) proposes machine claims through `door admit`:
 > `enrich probe` (audio stream facts), `enrich detect` (span suggestions), and
 > `enrich match` (work matches), each under a derivation run; `enrich/media.py`

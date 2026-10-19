@@ -2357,7 +2357,14 @@ writer that its pinned `origin` (one work origin Claim revision whose origin
 is `co_written`) names, and never the active operator's person; it pins 1 to
 64 distinct `covers` Claim revisions; its payload has `destination` (1 to 200
 characters), `decision` (`approve` or `refuse`), and optional `reason`. A
-consent authorizes nothing by itself (S-30).
+consent authorizes nothing by itself (S-30). A record of this release or a later one that
+cites a member contract (ADR 0088: judgment versions 1 and 2, span
+annotation, chord stacks, chord sequence, and meter layers versions 1 and 2,
+key regions, key sequence, tuning, form, form spans, lead sheet, timed
+lyrics, notes, melody, melody spans, contribution, band membership,
+selection kind, selection title, performance/work version 3, and sharing
+consent) and supersedes a revision MUST keep that revision's `agent`; Door
+checks this beside the bundles, since the earlier bundles' bytes are fixed.
 
 **Export** records a file rendered from exact revisions that was sent to
 someone. It pins exactly one `artifact`, the exported file, 1 to 64

@@ -3,9 +3,8 @@
 -- | Checks of the specification 0.0.10 bundles in Door's own evaluator
 -- (D-18): every bundle loads; the JSON Schema each one states accepts and
 -- refuses what the World module of its record does; the object keywords the
--- release adds evaluate and are refused when malformed; and every bundle that
--- declares a profile rule this Door does not enforce yet is refused for it,
--- while no earlier bundle is.
+-- release adds evaluate and are refused when malformed; and every profile rule
+-- the release adds is declared by some bundle and refused when malformed.
 --
 -- Each check is a (label, passed, detail) row; Main asserts them.
 module Specification010 (specification010Checks) where
@@ -13,7 +12,9 @@ module Specification010 (specification010Checks) where
 import Archive.Door.Catalog (loadContractCatalog)
 import Archive.Door.Contracts (validateContractBundle, validateContractInstance)
 import Archive.Door.Json (decodeUnique)
-import Archive.Door.PendingRules (refusePendingRules)
+import Archive.Door.RecordRules (exportKey)
+import Archive.Door.RuleSyntax (releaseRuleNames)
+import qualified Data.Aeson.Key as Key
 import Data.Aeson (Value (..), (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -60,6 +61,27 @@ specification010Checks = do
             (Object (KeyMap.insert "payload" (Object (KeyMap.insert "x-archive-agent" rule payload)) properties))
             (KeyMap.delete "x-archive-agent" root))) bundle)
         _ -> Null
+      schemaOf (identifier, version, _) = schema identifier version
+      -- A rule is declared at a root or in a when-pinned map.
+      declared value = case value of
+        Object root -> [Key.toText key | key <- KeyMap.keys root <> nestedKeys root, Key.toText key `elem` releaseRuleNames]
+        _ -> []
+      nestedKeys root = case KeyMap.lookup "x-archive-when-pinned" root of
+        Just (Object rule) -> concat [KeyMap.keys rules | Just (Object rules) <- [KeyMap.lookup "then" rule, KeyMap.lookup "else" rule]]
+        _ -> []
+      loadWith name version change = case bundleValue name version of
+        Object bundle | Just (Object root) <- KeyMap.lookup "schema" bundle ->
+          validateContractBundle name version zeroDigest (Object (KeyMap.insert "schema" (Object (change root)) bundle))
+        _ -> Left "the bundle is not in the catalog"
+      malformedRules =
+        [ (identifier <> " " <> name, loadWith identifier version (adjust spoil (Key.fromText name)))
+        | entry@(identifier, version, _) <- added, name <- declared (schemaOf entry)
+        , KeyMap.member (Key.fromText name) (rootOf (schemaOf entry)) ]
+          <> [ ("archive.claim/meter_layers x-archive-written-bars", loadWith "archive.claim/meter_layers" "2"
+                 (whenPinnedElse (adjust spoil "x-archive-written-bars"))) ]
+      rootOf value = case value of
+        Object root -> root
+        _ -> KeyMap.empty
       malformedNames = case bundleValue "archive.claim/export" "1" of
         Object bundle -> Object (KeyMap.insert "schema" (replaceOptions (KeyMap.lookup "schema" bundle)) bundle)
         _ -> Null
@@ -68,18 +90,24 @@ specification010Checks = do
         length added == 24 && all (`elem` current) previous, show added)
     , ("every 0.0.10 bundle loads by its digest",
         not (null loads) && all (isRight . snd) loads, show [entry | (entry, Left _) <- loads])
-    , ("every added bundle but three declares a profile rule this Door does not enforce yet, and is refused for it",
-        [ (identifier, version) | (identifier, version, _) <- added
-        , isRight (refusePendingRules identifier version (schema identifier version)) ]
-          == [ ("archive.claim/catalogue_correspondence", "1"), ("archive.claim/form_spans", "1")
-             , ("archive.claim/rights", "1") ],
-        show [ (identifier, version) | (identifier, version, _) <- added
-             , isRight (refusePendingRules identifier version (schema identifier version)) ])
-    , ("no 0.0.9 bundle declares a pending rule (anchor)",
-        not (null previous)
-          && all (\(identifier, version, _) -> isRight (refusePendingRules identifier version (schema identifier version))) previous,
-        "")
-    , ("a pending rule below the schema root is refused when the bundle loads",
+    , ("every rule the release adds is declared by an added bundle, and no 0.0.9 bundle declares one",
+        Set.fromList releaseRuleNames == Set.fromList (concatMap (declared . schemaOf) added)
+          && not (any (any (`elem` releaseRuleNames) . declared . schemaOf) previous),
+        show (Set.toList (Set.fromList releaseRuleNames `Set.difference` Set.fromList (concatMap (declared . schemaOf) added))))
+    , ("every declared release rule with an unknown key added is refused when its bundle loads",
+        not (null malformedRules) && all (\(_, result) -> isLeft result) malformedRules,
+        show [name | (name, Right _) <- malformedRules])
+    , ("a when-pinned map naming a rule also at the root is refused when the bundle loads",
+        isLeft (loadWith "archive.claim/meter_layers" "2" (\root -> KeyMap.insert "x-archive-target-samples"
+          (Aeson.object ["role" .= ("stream" :: Text), "count" .= ("sample_count" :: Text), "paths" .= [["layers", "beats" :: Text]]]) root)), "")
+    , ("a when-pinned map holding a schema keyword is refused when the bundle loads",
+        isLeft (loadWith "archive.claim/meter_layers" "2" (whenPinnedElse (KeyMap.insert "type" (String "object")))), "")
+    , ("a when-pinned map with a malformed nested rule is refused when the bundle loads",
+        isLeft (loadWith "archive.claim/meter_layers" "2" (whenPinnedElse (KeyMap.insert "x-archive-written-bars"
+          (Aeson.object ["layers" .= ("layers" :: Text), "bars" .= ("layers" :: Text), "modulations" .= ("modulations" :: Text)])))), "")
+    , ("the meter layers bundle loads as released (anchor)",
+        isRight (loadWith "archive.claim/meter_layers" "2" id), "")
+    , ("a release rule below the schema root is refused when the bundle loads",
         buried /= Null && isLeft (validateContractBundle "archive.claim/sensitivity" "1" zeroDigest buried),
         show (validateContractBundle "archive.claim/sensitivity" "1" zeroDigest buried))
     , ("a propertyNames that is not a schema is refused when the bundle loads",
@@ -91,6 +119,25 @@ specification010Checks = do
     <> meterChecks accepts refuses
     <> keyChecks accepts refuses
     <> catalogueChecks accepts refuses
+
+-- | A rule with an unknown key: in the object itself, or in each object a
+-- list rule holds.
+spoil :: Value -> Value
+spoil (Object fields) = Object (KeyMap.insert "unknown" (String "x") fields)
+spoil (Array items) = Array (fmap spoil items)
+spoil value = value
+
+-- | Change one key's value, when present.
+adjust :: (Value -> Value) -> Key.Key -> KeyMap.KeyMap Value -> KeyMap.KeyMap Value
+adjust change key fields = maybe fields (\value -> KeyMap.insert key (change value) fields) (KeyMap.lookup key fields)
+
+-- | Change the else map of a schema's when-pinned rule.
+whenPinnedElse :: (KeyMap.KeyMap Value -> KeyMap.KeyMap Value) -> KeyMap.KeyMap Value -> KeyMap.KeyMap Value
+whenPinnedElse change = adjust (\value -> case value of
+  Object rule -> Object (adjust (\maps -> case maps of
+    Object rules -> Object (change rules)
+    other -> other) "else" rule)
+  other -> other) "x-archive-when-pinned"
 
 zeroDigest :: Text
 zeroDigest = "sha256:" <> Text.replicate 64 "0"
@@ -114,7 +161,7 @@ ref :: Text -> Text -> Value
 ref role suffix = Aeson.object
   [ "role" .= role
   , "id" .= ("urn:uuid:00000000-0000-4000-8000-0000000000" <> suffix)
-  , "revision_id" .= ("sha256:" <> Text.replicate 64 "0" :: Text) ]
+  , "revision_id" .= ("sha256:" <> Text.replicate 62 "0" <> suffix :: Text) ]
 
 instanceOf :: Value -> [Value] -> Value
 instanceOf payload refs = Aeson.object ["payload" .= payload, "refs" .= refs]
@@ -133,11 +180,19 @@ exportChecks accepts refuses =
       (export ("{" <> concatMap (\n -> "\"o" <> show n <> "\":true,") [1 .. 32 :: Int] <> "\"o33\":true}"))
   , refuses "an export with a fractional option is refused" "archive.claim/export" "1" (export "{\"scale\":1.5}")
   , refuses "an export whose media type is not its format's is refused" "archive.claim/export" "1"
-      (instanceOf (decoded (exportPayload "pdf" "application/json" options)) exportRefs)
+      (keyed (instanceOf (decoded (exportPayload "pdf" "application/json" options)) exportRefs))
+  , refuses "an export whose key is not its request's is refused" "archive.claim/export" "1"
+      (instanceOf (decoded (exportPayload "pdf" "application/pdf" options)) exportRefs)
   ]
   where
     options = "{\"paper\":\"a4\",\"transpose\":-2,\"parts\":true}"
-    export opts = instanceOf (decoded (exportPayload "pdf" "application/pdf" opts)) exportRefs
+    export opts = keyed (instanceOf (decoded (exportPayload "pdf" "application/pdf" opts)) exportRefs)
+    -- The payload's key made the one its request states (D-18).
+    keyed (Object instanceValue)
+      | Just (Object payload) <- KeyMap.lookup "payload" instanceValue =
+          let key = exportKey payload [("urn:uuid:00000000-0000-4000-8000-000000000002", "sha256:" <> Text.replicate 62 "0" <> "02")] []
+          in Object (KeyMap.insert "payload" (Object (KeyMap.insert "key" (String key) payload)) instanceValue)
+    keyed value = value
     exportRefs = [ref "artifact" "01", ref "rendered" "02"]
     exportPayload format media opts = "{\"format\":\"" <> format <> "\",\"media_type\":\"" <> media
       <> "\",\"exporter\":{\"id\":\"lead-sheet\",\"version\":\"1\"},\"key\":\"sha256:" <> replicate 64 'a'

@@ -37,16 +37,14 @@ UNREACHABLE = {("records", ARCH + "dependent_destroy"), ("records", ARCH + "depe
 # made by the real Door from an archive at the previous release.
 UNCITED = {("archive.transition/specification_upgrade", "1")}
 
-# Installed by specification 0.0.10 and not yet cited by the fixture: Door
-# refuses a record under a bundle whose profile rules it does not enforce yet
-# (D-18), and the fixture plan gains each contract as Door and World take it
-# on. Enumerated from the two catalogs rather than named.
-def _contracts(version):
-    return {(c["id"], c["version"]) for c in
-            json.loads((ROOT / "spec" / version / "contracts.json").read_text())["contracts"]}
+# Contracts whose record another person or a band asserts (D-18): a
+# co-writer's sharing consent and a band's lead sheet. The fixture names that
+# Entity as the agent; every other record is the operator's or a tool's.
+ASSERTED_BY_OTHERS = {("archive.claim/sharing_consent", "1"), ("archive.claim/lead_sheet", "1")}
 
-
-NOT_YET_ADMITTED = _contracts("0.0.10") - _contracts("0.0.9")
+# Door admits every contract specification 0.0.10 adds, and the fixture plan
+# cites each of them, so none is waiting to be admitted.
+NOT_YET_ADMITTED: set[tuple[str, str]] = set()
 
 
 def integration_binaries():
@@ -98,7 +96,7 @@ class FixtureArchiveConformanceTests(unittest.TestCase):
     def test_the_fixture_cites_every_contract_in_the_catalog(self):
         # Enumerate the catalog rather than naming today's contracts.
         catalog = json.loads((ROOT / "spec" / self.export["spec"].removeprefix("archive/") / "contracts.json").read_text())
-        expected = {(c["id"], c["version"]) for c in catalog["contracts"]} - UNCITED - NOT_YET_ADMITTED
+        expected = {(c["id"], c["version"]) for c in catalog["contracts"]} - UNCITED
         self.assertTrue(UNCITED <= {(c["id"], c["version"]) for c in catalog["contracts"]})
         cited = {(c["id"], c["version"]) for r in self.export["records"] for c in r.get("contracts", [])}
         self.assertEqual(cited, expected)
@@ -109,11 +107,18 @@ class FixtureArchiveConformanceTests(unittest.TestCase):
                                for ref in r["refs"])}
         runs = {r["revision_id"] for r in self.export["records"] if self.cites(r["revision_id"], "archive.claim/derivation_run")}
         self.assertTrue(runs and made_by_runs)
+        entities = {r["object_id"] for r in self.export["records"]
+                    if r["shape"] == "entity" and r["payload"].get("kind") in ("person", "organisation")}
+        others = 0
         for record in self.export["records"]:
             if record["revision_id"] in runs | made_by_runs:
                 self.assertTrue(record["agent"].startswith("pkg:"), record["revision_id"])
-            else:
-                self.assertEqual(record["agent"], self.manifest["operator_id"])
+            elif record["agent"] != self.manifest["operator_id"]:
+                others += 1
+                self.assertIn(record["agent"], entities, record["revision_id"])
+                self.assertTrue({(c["id"], c["version"]) for c in record.get("contracts", [])} & ASSERTED_BY_OTHERS,
+                                record["revision_id"])
+        self.assertTrue(others)
 
     def cites(self, revision, contract):
         [record] = [r for r in self.export["records"] if r["revision_id"] == revision]

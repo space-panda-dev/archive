@@ -60,7 +60,7 @@ import Archive.Door.Contracts
   , validateCoreContextForSpecification
   )
 import Archive.Door.Json (decodeUnique)
-import Archive.Door.PendingRules (refusePendingRules)
+import Archive.Door.ReleaseAdmission (effectiveBundles, validateReleaseAdmission)
 import Archive.Door.Layout
   ( ArchiveManifest
   , digestText
@@ -951,14 +951,18 @@ validateProposalContracts snapshot proposal = pure $ do
       validateCitationContexts bundles
       let targets = committed <> earlier
       validateReferenceTargetRules targets (proposalRecordDraft record) bundles
+      -- Rules nested by when-pinned apply to the form this record has (D-18).
+      effective <- effectiveBundles instanceValue bundles
       mapM_ (validateDistinctTrackContent targets
-        (proposalRecordDraft record) instanceValue) bundles
-      mapM_ (validateTargetMeasure targets (proposalRecordDraft record)) bundles
-      mapM_ (validateSameSubject targets (proposalRecordDraft record)) bundles
-      mapM_ (validateSpanWindow targets (proposalRecordDraft record)) bundles
-      mapM_ (validateTargetBound targets (proposalRecordDraft record)) bundles
-      mapM_ (validateTargetSamples targets (proposalRecordDraft record)) bundles
-      mapM_ (validateTargetIndex targets (proposalRecordDraft record)) bundles
+        (proposalRecordDraft record) instanceValue) effective
+      mapM_ (validateTargetMeasure targets (proposalRecordDraft record)) effective
+      mapM_ (validateSameSubject targets (proposalRecordDraft record)) effective
+      mapM_ (validateSpanWindow targets (proposalRecordDraft record)) effective
+      mapM_ (validateTargetBound targets (proposalRecordDraft record)) effective
+      mapM_ (validateTargetSamples targets (proposalRecordDraft record)) effective
+      mapM_ (validateTargetIndex targets (proposalRecordDraft record)) effective
+      validateReleaseAdmission [(targetObject t, targetRevision t, targetDraft t) | t <- targets]
+        (proposalRecordDraft record) effective
       (revision, _) <- canonicalizeDraftStrict (proposalRecordValue record)
       pure (earlier <> [Target (objectIdText (envelopeObject (proposalRecordDraft record)))
         revision (proposalRecordDraft record)])
@@ -980,9 +984,6 @@ validateProposalContracts snapshot proposal = pure $ do
       bundle <- case Map.lookup key catalog of
         Nothing -> Left ("proposed contract is not installed at this snapshot: " <> contractId citation)
         Just value -> Right value
-      -- A proposal under a bundle whose rules this Door cannot check yet is
-      -- refused (specification 0.0.10, D-18); committed records still load.
-      refusePendingRules (contractBundleId bundle) (contractBundleVersion bundle) (contractBundleSchema bundle)
       validateContractInstance (contractBundleSchema bundle) instanceValue
       pure bundle
 
