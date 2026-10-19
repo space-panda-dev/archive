@@ -40,6 +40,28 @@ design). Its tests run alone:
 python3 -m unittest world.tests.test_contributions
 ```
 
+## Proposed for specification 0.0.10
+
+These modules hold the rules of proposed records, as World would re-check
+them; no specification release installs their contracts yet, so Door
+admits none, and World projects none. Each needs only the standard library.
+
+| Module | Record | Holds |
+|---|---|---|
+| [`harmony.py`](harmony.py) | [ADR 0079](../docs/decisions/0079-machine-harmony-claims.md) | chord stacks and chord sequence version 2, the bank citation of a stem, `derived_from` |
+| [`tonality.py`](tonality.py) | [ADR 0080](../docs/decisions/0080-key-and-tuning.md) | key sequences, key regions, tuning, spelling by key |
+| [`judgments.py`](judgments.py) | [ADR 0081](../docs/decisions/0081-judgments-and-annotations.md) | judgment version 2, standing, span annotations |
+| [`views.py`](views.py) | [ADR 0082](../docs/decisions/0082-views-and-current.md) | the named views and the first current rule |
+| [`form.py`](form.py) | [ADR 0083](../docs/decisions/0083-form-and-work-meter.md) | form, form spans, meter layers version 2 (with ADR 0079's additions) |
+| [`lead_sheets.py`](lead_sheets.py) | [ADR 0084](../docs/decisions/0084-lead-sheets.md) | lead sheets, changes since, a render's export request |
+| [`documents.py`](documents.py) | [ADR 0085](../docs/decisions/0085-documents-lyrics-rights.md) | document sources, timed lyrics, sensitivity, rights, reach, staging checks |
+| [`notes.py`](notes.py) | [ADR 0086](../docs/decisions/0086-notes-and-melody.md) | notes, melody, melody spans, written lengths, instrument fields |
+| [`catalogue.py`](catalogue.py) | [ADR 0087](../docs/decisions/0087-tracklists-and-correspondence.md) | tracklists, recording audio, catalogue correspondence, credits per track |
+| [`circle.py`](circle.py) | [ADR 0088](../docs/decisions/0088-bandmates.md) | the relay's circle, the readable set, work origin, sharing consent and gate |
+| [`exports.py`](exports.py) | [ADR 0089](../docs/decisions/0089-practice-audio-and-exports.md) | practice requests and keys, transposition, export requests, keys and claims, MusicXML `<harmony>` |
+
+Their tests run with the rest: `python3 -m unittest discover -s world/tests`.
+
 ## Install
 
 Use a virtual environment and the dependency pinned to the initial Oxigraph
