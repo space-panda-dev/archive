@@ -348,7 +348,7 @@ class PutWorkCollect(unittest.TestCase):
         self.assertEqual(run.returncode, remote.EX_DATAERR, run.stderr)
 
     def test_only_an_extractor_that_needs_nothing_travels(self) -> None:
-        code, answer = call("put", "chords", "--content", str(self.audio), "--bank", str(self.bank),
+        code, answer = call("put", "structure", "--content", str(self.audio), "--bank", str(self.bank),
                             "--spool", self.spool.command)
         self.assertEqual(code, 1)
         self.assertIn("only an extractor that needs no other feature", answer["detail"])
