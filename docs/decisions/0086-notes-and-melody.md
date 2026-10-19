@@ -482,7 +482,10 @@ rounded to a grid. How the notes are written is a named World view,
 - A note's written value fills the interval from its onset to the next
   note's onset, on the grid. When the sounded share of that interval is
   short (initially under 60%), the note is marked `staccato` instead of
-  being followed by a rest.
+  being followed by a rest. Alongside staccato, the view may mark
+  `tenuto` on a held phrase end: a phrase's last note, before a written
+  rest, that sounds through most of a long written value (confirmed by the
+  operator, 2026-10-19).
 - A rest is written only when the silence is long relative to the beat
   (initially at least one beat) **and** falls at a phrase boundary: a
   `line_end`, where a timed-lyrics line (ADR 0085) ends on the note before
