@@ -134,10 +134,12 @@ mix's predominant melody with MELODIA), `structure` (playing, tuning,
 count-ins, false starts, endings, sections, and loops, from `frames` and
 `rhythm` without decoding), `quality` (how well the recording was captured),
 `colour` (a colour-coded waveform's data), and `stems` (Demucs, in an
-environment of its own; [ADR 0075](0075-stems-as-content.md)). Three
+environment of its own; [ADR 0075](0075-stems-as-content.md)). Seven
 more run learned or plugin models in environments of their own, as `stems`
-does: `beats-beatthis` (beats and downbeats at the model's own metrical
-level), `chords-jiang` (large-vocabulary chord labels, each span with its
+does: `stems-6s` (the `stems` program with a six-stem model),
+`notes-basic-pitch` (notes with their cents and bends), `f0-pesto` and
+`f0-torchcrepe` (one voice's pitch, two opinions), `beats-beatthis` (beats
+and downbeats at the model's own metrical level), `chords-jiang` (large-vocabulary chord labels, each span with its
 three most probable readings and their weights), and `chords-chordino` (a
 second chord opinion that is not learned).
 Every shipped extractor's version, needs, and outputs are listed in one
