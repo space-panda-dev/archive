@@ -106,3 +106,4 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0089](0089-practice-audio-and-exports.md) | Practice audio from the stems, transposition, and exports that are views until shared |
 | [0090](0090-extractor-runs-travel-through-spool.md) | An extractor run travels through Spool, and its files come back as result attachments |
 | [0091](0091-talk-needs-level.md) | Talk needs level, and a studio preset never says talk (amends 0066's presets) |
+| [0094](0094-peoples-writes.md) | People's writes: grants are transitions, and members set their own limits (proposed) |
