@@ -2,7 +2,7 @@
  "contract": "archive-extractor/1",
  "id": "melody",
  "version": "3",
- "description": "The predominant melody's pitch contour, voicing, and intonation by Essentia's MELODIA (PredominantPitchMelodia) in bin_cents bins, on the audio it is given: by default the recording's vocal stem where the bank holds one (prefers stems/vocals, in 2-cent bins) and at least a fifth of its rows are voiced, else the mix (5-cent bins); never the bass. Voicing is MELODIA's, kept for each contour at least half of whose rows reach a level gate relative to the recording's loud level, and MELODIA runs only on the rows within reach_seconds of one that reaches it. Decodes again at 44,100 Hz, since the frames grid is too coarse for a contour: once for the levels, once for the contour, once for the notes; hop_size is the stride, and the audio is measured in chunks with margins so memory stays bounded.",
+ "description": "The predominant melody's pitch contour, voicing, and intonation by Essentia's MELODIA (PredominantPitchMelodia) in bin_cents bins, on the audio it is given: by default the recording's vocal stem where the bank holds one and at least a fifth of its rows are voiced (prefers stems/vocals, then stems-6s/vocals, each in 2-cent bins), else the mix (5-cent bins); never the bass. Voicing is MELODIA's, kept for each contour at least half of whose rows reach a level gate relative to the recording's loud level, and MELODIA runs only on the rows within reach_seconds of one that reaches it. Decodes again at 44,100 Hz, since the frames grid is too coarse for a contour: once for the levels, once for the contour, once for the notes; hop_size is the stride, and the audio is measured in chunks with margins so memory stays bounded.",
  "command": [
   "${python}",
   "melody.py"
@@ -20,6 +20,15 @@
  "prefers": [
   {
    "input": "stems/vocals",
+   "parameters": {
+    "bin_cents": 2
+   },
+   "at_least": {
+    "voiced_fraction": "0.2"
+   }
+  },
+  {
+   "input": "stems-6s/vocals",
    "parameters": {
     "bin_cents": 2
    },

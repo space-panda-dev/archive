@@ -96,9 +96,11 @@ class Manifest(unittest.TestCase):
         # It reads no feature, whatever else the catalog holds (ADR 0074: a need is fixed).
         self.assertEqual(extractor.needs, [])
         self.assertNotIn("optional", extractor.manifest)
-        # It prefers the vocal stem, in finer bins, where the bank holds one (never making it).
-        self.assertEqual(extractor.prefers, [{"input": "stems/vocals", "parameters": {"bin_cents": 2},
-                                              "at_least": {"voiced_fraction": "0.2"}}])
+        # It prefers a vocal stem, in finer bins, where the bank holds one (never making it):
+        # the 4-stem separator's, then the 6-stem separator's, then the mix.
+        self.assertEqual(extractor.prefers, [{"input": feature, "parameters": {"bin_cents": 2},
+                                              "at_least": {"voiced_fraction": "0.2"}}
+                                             for feature in ("stems/vocals", "stems-6s/vocals")])
         self.assertEqual(melody.settings({**melody.parameters(), **extractor.prefers[0]["parameters"]})
                          ["predominant"]["binResolution"], 2.0)
         self.assertEqual(melody.settings(melody.parameters())["predominant"]["binResolution"], 5.0)
@@ -778,12 +780,97 @@ class VocalStem(unittest.TestCase):
         self.assertEqual((entry.manifest["key"], entry.manifest["parameters"]["bin_cents"]),
                          (mix.manifest["key"], 5))
 
+    def separated(self, directory: Path, four: str | None, six: str | None) -> tuple[Path, list[str]]:
+        """A sung tune, and the bank holding its stems from each separator
+        given a STEMS_FAKE mode (None: that separator is not run); the
+        source and the melody's arguments."""
+        import test_stems
+        notes = (60, 64, 67, 64, 62, 65, 69, 65)
+        samples = numpy.concatenate([silence(0.3)] + [tone(0.5, midi_hz(n), 0.8) for n in notes] + [silence(0.3)])
+        wav = support.write_wav(directory / "take.wav", samples, RATE)
+        support.ffmpeg("-i", str(wav), "-ac", "2", "-c:a", "flac", str(directory / "take.flac"))
+        source = directory / "take.flac"
+        program = test_stems.fake_python(directory)
+        fake = ["--program", f"demucs-python={program}", "--program", f"stems-6s-python={program}"]
+        for separator, mode in (("stems", four), ("stems-6s", six)):
+            if mode is None:
+                continue
+            out = io.StringIO()
+            with patch.dict(os.environ, {"STEMS_FAKE": mode}), redirect_stdout(out), \
+                    redirect_stderr(io.StringIO()):
+                self.assertEqual(extract.main(["run", separator, "--content", str(source), "--bank",
+                                               str(directory / "bank"), *fake]), 0, out.getvalue())
+        return source, configured(directory, LENIENT) + fake
+
+    def test_a_mostly_unvoiced_vocal_stem_falls_back_to_the_six_stem_vocals(self) -> None:
+        """Where the 4-stem vocal stem is bleed but the 6-stem separator's
+        voices the tune, the 6-stem vocal stem's melody is the recording's,
+        in 2-cent bins, and the 4-stem one is passed over."""
+        directory = scratch(self)
+        source, argv = self.separated(directory, "instrumental", "gains")
+        code, answer = run_melody(directory, source, *argv)
+        self.assertEqual(code, 0, answer)
+        recording = bank.file_digest(source)
+        reader = bank.Bank(directory / "bank", None, {"melody": LENIENT})
+        self.assertNotEqual(reader.input_of(recording, "stems/vocals")[1],
+                            reader.input_of(recording, "stems-6s/vocals")[1])  # anchor: two stems
+        four = reader.entry_from(recording, "stems/vocals", "melody")
+        six = reader.entry_from(recording, "stems-6s/vocals", "melody")
+        self.assertLess(four.scalar("voiced_fraction"), 0.2)
+        self.assertGreaterEqual(six.scalar("voiced_fraction"), 0.2)
+        said = answer["extractors"]["melody"]
+        self.assertEqual(said["input"], "stems-6s/vocals")
+        self.assertEqual(said["passed_over"], {"stems/vocals": four.manifest["key"]})
+        self.assertEqual(said["key"], six.manifest["key"])
+        self.assertEqual(six.manifest["parameters"]["bin_cents"], 2)
+        entry, feature = reader.default_entry(recording, "melody")
+        self.assertEqual((entry.manifest["key"], feature), (six.manifest["key"], "stems-6s/vocals"))
+        # The mix was not measured: the 6-stem vocal stem was enough.
+        self.assertIsNone(reader.entry(recording, "melody"))
+
+    def test_the_four_stem_vocals_come_first_and_every_short_stem_is_passed_over(self) -> None:
+        """Both separators' vocal stems voiced: the 4-stem one is the
+        default and the 6-stem one is not measured. Both bleed: each is
+        passed over in order, and the mix is the recording's melody."""
+        directory = scratch(self)
+        source, argv = self.separated(directory, "gains", "gains")
+        code, answer = run_melody(directory, source, *argv)
+        self.assertEqual(code, 0, answer)
+        recording = bank.file_digest(source)
+        reader = bank.Bank(directory / "bank", None, {"melody": LENIENT})
+        self.assertIsNotNone(reader.input_of(recording, "stems-6s/vocals"))  # anchor: the bank holds both
+        said = answer["extractors"]["melody"]
+        self.assertEqual(said["input"], "stems/vocals")
+        self.assertNotIn("passed_over", said)
+        self.assertIsNone(reader.entry_from(recording, "stems-6s/vocals", "melody"))
+        self.assertEqual(reader.default_entry(recording, "melody")[1], "stems/vocals")
+
+        directory = scratch(self)
+        source, argv = self.separated(directory, "instrumental", "instrumental")
+        code, answer = run_melody(directory, source, *argv)
+        self.assertEqual(code, 0, answer)
+        recording = bank.file_digest(source)
+        reader = bank.Bank(directory / "bank", None, {"melody": LENIENT})
+        four = reader.entry_from(recording, "stems/vocals", "melody")
+        six = reader.entry_from(recording, "stems-6s/vocals", "melody")
+        mix = entry_of(directory, source, LENIENT)
+        self.assertLess(four.scalar("voiced_fraction"), 0.2)
+        self.assertLess(six.scalar("voiced_fraction"), 0.2)
+        said = answer["extractors"]["melody"]
+        self.assertNotIn("input", said)
+        self.assertEqual(said["passed_over"], {"stems/vocals": four.manifest["key"],
+                                               "stems-6s/vocals": six.manifest["key"]})
+        self.assertEqual(list(said["passed_over"]), ["stems/vocals", "stems-6s/vocals"])
+        self.assertEqual(said["key"], mix.manifest["key"])
+        self.assertIsNone(reader.default_entry(recording, "melody")[1])
+
     def test_the_melody_never_prefers_the_bass(self) -> None:
         """Bass is its own category: no stem a melody prefers is a bass
         part, and its preference falls back below a voiced fifth."""
         catalog = bank.Catalog.load()
         prefers = catalog["melody"].prefers
         self.assertTrue(prefers)  # anchor: it prefers something
+        self.assertEqual([p["input"] for p in prefers], ["stems/vocals", "stems-6s/vocals"])
         for preference in prefers:
             source, output = preference["input"].split("/")
             self.assertNotIn("bass", output)
