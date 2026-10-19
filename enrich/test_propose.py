@@ -473,6 +473,11 @@ class FromTheBank(unittest.TestCase):
     def test_key_tuning_notes_and_sections_make_claims_world_accepts(self) -> None:
         [keys] = self.propose("key").outputs
         self.assertTrue(all(r["readings"][0].get("collection") for r in keys.payload["regions"]))
+        # tonal 6 names no tonic: every reading is a collection only, weighted by its margin.
+        self.assertTrue(keys.payload["regions"])  # anchor: there are readings to look at
+        self.assertTrue(all("tonic" not in r["readings"][0] and "mode" not in r["readings"][0]
+                            for r in keys.payload["regions"]))
+        self.assertIn("leads the best reading on other notes", keys.payload["weight_scale"])
         [tuning] = self.propose("tuning").outputs
         self.assertLess(abs(float(tuning.payload["reference_cents"])), 5)  # the music is tuned to 440 Hz
         [sections] = self.propose("sections").outputs

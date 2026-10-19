@@ -42,10 +42,10 @@ recording again for each frame's spectral peaks, and measures:
   note collection of the pitched frames, its tonic and mode, and how sure
   the tonic is (below); `keys`: the same in windows of about thirty seconds
   that are at least half pitched; and `key_regions`, a timeline of the note
-  collections with the tonic named where it is likely. A span is labelled
-  with the tonic and mode ("F dorian") where the tonic's confidence is at
-  least one half and with the collection ("Eb major scale") where it is
-  not, and valued by that confidence;
+  collections. A span is labelled with the collection ("Eb major scale")
+  and valued by its `collection_margin`; since version 6 no tonic is named
+  (`tonic_named` is false everywhere), and readers read `collection` and
+  `scale_notes`' notes, not the tonic;
 - `dissonance`: `Dissonance` (sensory roughness) of every frame that
   passes the level gate, on the `frames` grid; a frame below it reads 0, as
   silence does, so a quiet room's noise is not averaged in. Talk and noise
@@ -195,14 +195,21 @@ note-for-note transcriptions) whose tonic the key agreed with (0.45). It
 did not tell the tracks it got right from those it got wrong: the claims
 are noisy (they agree with each other on the tonic in 11 of 31 pairs), and
 the most confident track disagrees with all three of its claims. So it is
-calibrated in the mean on one album, not proven to rank. The tonic is named
-(`tonic_named`) when its confidence is at least `min_confidence` (one
-half): more likely right than wrong. Below it `key`, `mode`, and `scale`
-are the best guess and `collection` is what to read. A C major cycle of C,
-F, G, and A minor with each root as long in the bass reads C ionian with a
-confidence of about 0.4, its A as strong in the bass, and is not named; C,
-F, C, G is. On the album the tonic agreed with 17 of 38 claims where
-version 4's agreed with 15, and it was named on 6 tracks of 18.
+calibrated in the mean on one album, not proven to rank. Version 5 named
+the tonic (`tonic_named`) when its confidence was at least one half.
+Version 6 names it nowhere: on the album the confidence did not rank
+(of 5 claims at 0.7 or more, 1 agreed; its Brier score, 0.316, was worse
+than a constant 0.45's, 0.247), named tonics agreed with 5 of 12 claims
+and unnamed with 12 of 26, and neither the bass stem's share nor the chord
+roots' raised the 17 of 38 agreements, the references themselves settling
+at most 25 (most misses are the relative major or minor). So `tonic_named`
+is false everywhere; `key`, `mode`, and `scale` remain the best guess and
+`collection` and `scale_notes`' notes are what to read, until references
+settle relative major and minor. A C major cycle of C, F, G, and A minor
+with each root as long in the bass reads C ionian with a confidence of
+about 0.4, its A as strong in the bass; C, F, C, G above one half. On the album
+the tonic agreed with 17 of 38 claims where version 4's agreed with 15;
+version 5 named it on 6 tracks of 18, 7 of its named claims wrong.
 
 `keys` is a window-by-window description, not a claim of modulation.
 `key_regions` is the timeline: the windows' collections are decoded on a
@@ -210,8 +217,8 @@ path that pays `region_switch` (0.1) for each change (`collection_path`),
 so a change must lead by more than that over the windows it holds, the
 windows are laid end to end (each keeps the stretch nearer its centre than
 its neighbours'), runs of one collection merge, and each region's tonic is
-found from its own pitched frames among that collection's notes and named
-as above. On the album the regions went from 143 in version 3 (up to 16 a
+found from its own pitched frames among that collection's notes (not
+named, as above). On the album the regions went from 143 in version 3 (up to 16 a
 track, through modes of one collection) to 50 (at most 6).
 
 Times are seconds from the first decoded sample. Each frame stands for the
@@ -262,7 +269,7 @@ KEY = {"weights": {"tonic": "5", "fifth": "4.5", "third": "4.25", "scale": "3.75
        "collection_penalty": "0.02",
        "tonic": {"among": "the-collections-notes", "bass": "1", "treble": "0.25",
                  "favoured_modes": ["ionian", "aeolian", "harmonic minor", "melodic minor"], "favour": "0.08",
-                 "temperature": "0.07", "min_confidence": "0.5"},
+                 "temperature": "0.07", "named": "never"},
        "window_frames": 324, "hop_frames": 162, "min_pitched": "0.5", "regions": "viterbi-over-collections",
        "region_switch": "0.1"}
 DISSONANCE = {"maxPeaks": 100, "relative_threshold": "0.01"}
@@ -667,7 +674,7 @@ def key_of(treble: numpy.ndarray, low: numpy.ndarray, collection: str | None = N
             "collection": collection,
             "collection_margin": float(scores[inside].max() - scores[~inside].max()),
             "tonic_margin": tonic["tonic_margin"], "tonic_confidence": tonic["tonic_confidence"],
-            "tonic_named": tonic["tonic_confidence"] >= float(KEY["tonic"]["min_confidence"])}
+            "tonic_named": False}
 
 
 NO_KEY = {"key": "", "mode": "", "scale": "", "scale_notes": "", "key_strength": 0.0, "collection": "",
@@ -675,9 +682,9 @@ NO_KEY = {"key": "", "mode": "", "scale": "", "scale_notes": "", "key_strength":
 
 
 def key_label(found: dict[str, Any]) -> str:
-    """A span's label: the tonic and mode when the tonic is named, the note
-    collection when it is not."""
-    return f"{found['key']} {found['mode']}" if found["tonic_named"] else found["collection"]
+    """A span's label: the note collection. Since version 6 no tonic is
+    named, so no label is a tonic and mode."""
+    return found["collection"]
 
 
 def keys(chroma: numpy.ndarray, bass: numpy.ndarray, pitched: numpy.ndarray, samples: int) -> dict[str, Any]:
@@ -695,7 +702,7 @@ def keys(chroma: numpy.ndarray, bass: numpy.ndarray, pitched: numpy.ndarray, sam
         if window is None:
             continue
         begin, finish = extent(start, end, samples)
-        spans.append({"start": begin, "end": finish, "label": key_label(window), "value": window["tonic_confidence"]})
+        spans.append({"start": begin, "end": finish, "label": key_label(window), "value": window["collection_margin"]})
         scored.append(key_scores(key_profile(treble, low)))
     outputs["keys"] = spans
     path = collection_path(numpy.array(scored), float(KEY["region_switch"]))
@@ -706,7 +713,7 @@ def keys(chroma: numpy.ndarray, bass: numpy.ndarray, pitched: numpy.ndarray, sam
         stop = min(int(numpy.ceil(region["end"] / SECONDS_PER_ROW + 0.5)), len(chroma))
         mask = pitched[first:stop]
         within = key_of(*key_shares(chroma[first:stop][mask], bass[first:stop][mask]), region["label"])
-        found_regions.append({**region, "label": key_label(within), "value": within["tonic_confidence"]})
+        found_regions.append({**region, "label": key_label(within), "value": within["collection_margin"]})
     outputs["key_regions"] = found_regions
     return outputs
 

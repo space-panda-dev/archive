@@ -605,6 +605,9 @@ def drop_bleed(notes: list[dict[str, int]], levels: Any, grid: dict[str, int] | 
 
 KEY_LABEL = re.compile(r"(?P<tonic>[A-G][#b]?) (?P<mode>[a-z]+(?: minor)?)(?P<scale> scale)?\Z")
 SCALE_MODES = {"major": "ionian", "harmonic minor": "harmonic minor", "melodic minor": "melodic minor"}
+# Tonal versions whose key_regions value is the tonic's confidence; since
+# version 6 it is the collection's margin, and every label is a collection.
+TONIC_VALUED = ("4", "5")
 TONIC_MODES = ("ionian", "dorian", "phrygian", "lydian", "mixolydian", "aeolian", "locrian",
                "harmonic minor", "melodic minor")
 
@@ -634,8 +637,9 @@ def propose_key(context: Context) -> Proposal | Lacking:
     entry = context.bank.entry(context.content, "tonal")
     if entry is None:
         return Lacking(("tonal/key_regions",))
-    proposal = Proposal([], {"regions": "a region per tonal/key_regions span: its label's tonic and mode, or its "
-                                        "note collection; weighted by the span's value",
+    proposal = Proposal([], {"regions": "a region per tonal/key_regions span: its label's note collection (tonal 6 "
+                                        "names no tonic), or a tonic and mode where an earlier tonal "
+                                        "labelled one; weighted by the span's value",
                              "weights": "rounded half to even to 4 places", "times": TIMES})
     read(proposal, context, entry, "key_regions")
     regions = [{"start_sample": start, "end_sample": end,
@@ -646,8 +650,10 @@ def propose_key(context: Context) -> Proposal | Lacking:
         return Lacking(detail="tonal/key_regions holds no region")
     if len(regions) > MAX_REGIONS:
         raise ProposerError(f"tonal/key_regions holds {len(regions)} regions; a claim holds at most {MAX_REGIONS}")
-    scale = weight_scale(f"tonal {entry.manifest['extractor']['version']} key_regions value: the tonic's confidence "
-                         f"given the collection")
+    version = entry.manifest["extractor"]["version"]
+    scale = weight_scale(f"tonal {version} key_regions value: "
+                         + ("the tonic's confidence given the collection" if version in TONIC_VALUED else
+                            "how far the collection's best correlation leads the best reading on other notes"))
     proposal.outputs = [Planned(KEY_REGIONS, "keys", {"sample_rate": context.sample_rate, "weight_scale": scale,
                                                       "regions": regions})]
     return proposal
@@ -840,7 +846,7 @@ PROPOSERS: dict[str, Proposer] = {proposer.id: proposer for proposer in (
     Proposer("chords-chordino", "1", propose_chordino),
     Proposer("beats", "1", propose_beats),
     Proposer("bass", "1", propose_bass),
-    Proposer("key", "1", propose_key),
+    Proposer("key", "2", propose_key),
     Proposer("tuning", "1", propose_tuning),
     Proposer("notes", "2", propose_notes),
     Proposer("bass-line", "1", propose_bass_line),
