@@ -40,8 +40,10 @@ from world.harmony import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "enrich"))
-import bank  # noqa: E402  (enrich/bank.py, standard library only)
+# Appended, not inserted: World's own test modules must come first, since
+# enrich/ has test modules of the same names (test_notes).
+sys.path.append(str(ROOT / "enrich"))
+import bank  # noqa: E402  (enrich/bank.py)
 
 SOURCE = {"id": "urn:uuid:00000000-0000-4000-8000-0000000000c1", "revision_id": "sha256:" + "c1" * 32}
 STREAM = {"id": "urn:uuid:00000000-0000-4000-8000-0000000000c2", "revision_id": "sha256:" + "c2" * 32}
