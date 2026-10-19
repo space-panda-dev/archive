@@ -175,15 +175,11 @@ not an input, so a revised source lead sheet is not reported as a change.
 **Renders are views (D11.2).** A PDF, MusicXML, LilyPond, or JAMS render of a
 lead sheet is regenerable from its revision, which pins every input exactly,
 and from the render's own parameters (a transposition, a paper size, the
-parts chosen). It is filed under ADR 0069's derived-media layout:
-
-```
-sha256/<ab>/<cd>/<lead sheet revision digest>/lead-sheet.<format>.<renderer>@<version>.<view>
-```
-
-where `<view>` is the first 16 hexadecimal digits of the SHA-256 of the
-parameters as canonical JSON (keys sorted, no whitespace). Losing a render
-loses nothing. A render joins the lyric document's words at render time, as
+parts chosen). A render is [ADR 0089](0089-practice-audio-and-exports.md)'s
+export of the lead sheet revision: its request renders that revision, joins
+the lyric document it pins, and passes the view's parameters as options, and
+it is filed by ADR 0089's export key, which is the only key a render has.
+Losing a render loses nothing. A render joins the lyric document's words at render time, as
 ADR 0077 requires, so a render carries the lyrics. When the operator sends a
 render to someone, that exact file is admitted as an Artifact and tied to the
 lead sheet revision it renders by the claim ADR 0089 defines for shared
@@ -200,7 +196,7 @@ was read from are not shown.
 
 **The rules live in World until a release installs them.**
 `world/lead_sheets.py` holds every rule above as World will re-check it, the
-changes-since view, the list of shown inputs, and the render key. It uses only
+changes-since view, the list of shown inputs, and the export request a render makes (keyed by ADR 0089). It uses only
 the standard library, so a client can check a proposal before Door does.
 Door cannot admit the contract until a specification release installs its
 bundle; that release adds the Door profile rules this record needs: an

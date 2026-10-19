@@ -153,9 +153,9 @@ stem it was read from:
   what a reader of the claim needs without opening the run, and what a
   person's claim, which has no run, can give: a person who transcribes the
   bass while listening to the bass stem cites it the same way.
-- **Any `file` output can be cited.** A practice mix the bank makes beside
-  the stems (ADR 0089) is cited the same way, with its own extractor,
-  key and output.
+- **Any `file` output of the bank can be cited** the same way, with its own
+  extractor, key and output. A practice render (ADR 0089) is derived media,
+  not a bank output; a claim cites the stems it was read from.
 
 **Admitting a chosen stem.** A person who wants a stem kept as evidence, for
 example because it was sent to someone, admits its bytes as an Artifact
@@ -450,8 +450,9 @@ state outside the claims Door admits.
 - ADR 0084: a lead sheet may pin chord stacks version 2.
 - ADR 0086: notes claims carry `derived_from` and `stem` as here; the
   `notes` proposer makes them.
-- ADR 0089: a practice mix is cited like a stem; a chosen stem is admitted
-  as above.
+- ADR 0089: its practice request names a stems entry by the same
+  extractor and key; a chosen stem or render is admitted as above, its
+  origin open.
 
 ## Rejected
 

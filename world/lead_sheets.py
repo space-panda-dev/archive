@@ -25,8 +25,6 @@ before a release installs any of them.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -44,6 +42,7 @@ SONG_OCCURRENCE = ("archive.claim/song_occurrence", "2")
 JUDGMENT = ("archive.assessment/judgment", "1")
 
 # The contracts of the other 0.0.10 records, by the names those records define.
+from world.exports import ExportError, export_key                 # noqa: E402  ADR 0089
 from world.documents import TIMED_LYRICS                     # noqa: E402  ADR 0085
 from world.form import FORM, FORM_SPANS, METER_LAYERS_V2     # noqa: E402  ADR 0083 (meter v2 shared with 0079)
 from world.harmony import CHORD_SEQUENCE_V2, CHORD_STACKS_V2  # noqa: E402  ADR 0079
@@ -53,13 +52,11 @@ from world.tonality import KEY_REGIONS, KEY_SEQUENCE         # noqa: E402  ADR 0
 OBJECT_ID = re.compile(r"urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 REVISION_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
 INSTRUMENT = re.compile(r"https://musicbrainz\.org/instrument/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
-RENDERER = re.compile(r"[a-z][a-z0-9._-]{0,63}@[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}\Z")
 MAX_LABEL = 200
 MAX_PART_NAME = 100
 MAX_PARTS = 16
 MAX_STRINGS = 12
 MAX_CAPO = 24
-RENDER_FORMATS = ("pdf", "musicxml", "lilypond", "jams")
 
 # Reference roles: (minimum, maximum) and the contracts or shapes each pins.
 # The order of references within one role is meaningful: for `chords`,
@@ -417,19 +414,23 @@ def rendered_inputs(lead_sheet: dict[str, Any]) -> list[dict[str, Any]]:
     return [ref for ref in lead_sheet.get("refs", []) if ref.get("role") in RENDERED_ROLES]
 
 
-def render_key(lead_sheet_revision: str, fmt: str, renderer: str, parameters: dict[str, Any] | None = None) -> str:
-    """The derived-media path a render is filed under (ADR 0069's layout):
-    the lead sheet revision's digest, then the format, the renderer and its
-    version, and a digest of the view's parameters (a transposition, a paper
-    size, the parts chosen). The lead sheet revision pins every input
-    exactly, so this key names one render; losing it loses nothing."""
-    if not isinstance(lead_sheet_revision, str) or not REVISION_ID.fullmatch(lead_sheet_revision):
-        raise LeadSheetError("a render is keyed by an exact lead sheet revision")
-    if fmt not in RENDER_FORMATS:
-        raise LeadSheetError(f"a render's format is one of {', '.join(RENDER_FORMATS)}")
-    if not isinstance(renderer, str) or not RENDERER.fullmatch(renderer):
-        raise LeadSheetError("a renderer is named as name@version")
-    canonical = json.dumps(parameters or {}, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    view = hashlib.sha256(canonical.encode()).hexdigest()[:16]
-    digest = lead_sheet_revision.removeprefix("sha256:")
-    return f"sha256/{digest[:2]}/{digest[2:4]}/{digest}/lead-sheet.{fmt}.{renderer}.{view}"
+def render_key(lead_sheet: dict[str, Any], fmt: str, exporter: dict[str, str],
+               options: dict[str, Any] | None = None) -> str:
+    """The key a render of this lead sheet revision is filed under: ADR
+    0089's export key of a request that renders the lead sheet revision,
+    which pins every input exactly, and joins the lyric document it pins,
+    whose words the render shows. The view's parameters (a transposition, a
+    paper size, the parts chosen) are the export's options. There is one
+    export key, ADR 0089's; this names the request a lead sheet makes."""
+    if not isinstance(lead_sheet, dict) or not REVISION_ID.fullmatch(str(lead_sheet.get("revision_id"))) \
+            or not OBJECT_ID.fullmatch(str(lead_sheet.get("id"))):
+        raise LeadSheetError("a render is keyed by an exact lead sheet revision, {id, revision_id}")
+    lyrics = [{"id": r["id"], "revision_id": r["revision_id"]} for r in lead_sheet.get("refs", [])
+              if r.get("role") == "lyrics"]
+    request = {"format": fmt, "exporter": exporter,
+               "rendered": [{"id": lead_sheet["id"], "revision_id": lead_sheet["revision_id"]}],
+               "joined": lyrics, "options": options or {}}
+    try:
+        return export_key(request)
+    except ExportError as error:
+        raise LeadSheetError(str(error)) from None

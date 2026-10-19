@@ -41,6 +41,7 @@ from world.lead_sheets import (
     render_key,
     rendered_inputs,
 )
+from world.exports import export_key
 
 ROOT = Path(__file__).resolve().parents[2]
 RATE = 8000
@@ -527,28 +528,32 @@ class Renders(unittest.TestCase):
         for hidden in ("derived_from", "band", "adopted_by", "document"):
             self.assertNotIn(hidden, roles)
 
-    def test_render_key_is_fixed_by_the_revision_format_renderer_and_view(self):
-        revision = work_sheet()["revision_id"]
-        key = render_key(revision, "pdf", "leadsheet-pdf@1.0.0", {"transpose": -2, "paper": "a4"})
-        self.assertEqual(key, render_key(revision, "pdf", "leadsheet-pdf@1.0.0", {"paper": "a4", "transpose": -2}))
-        self.assertTrue(key.startswith("sha256/30/30/" + "30" * 32 + "/lead-sheet.pdf.leadsheet-pdf@1.0.0."))
+    def test_render_key_is_adr_0089s_export_key_of_the_revision(self):
+        sheet = {**work_sheet(), "id": pin(0x30)["id"]}
+        pdf = {"id": "lead-sheet-lilypond", "version": "1"}
+        key = render_key(sheet, "pdf", pdf, {"transpose": -2, "paper": "a4"})
+        # One key: the export key of a request rendering the revision and joining its lyrics.
+        self.assertEqual(key, export_key({"format": "pdf", "exporter": pdf, "options": {"paper": "a4", "transpose": -2},
+                                          "rendered": [{"id": sheet["id"], "revision_id": sheet["revision_id"]}],
+                                          "joined": [{"id": LYRICS["id"], "revision_id": LYRICS["revision_id"]}]}))
         others = {
-            render_key(revision, "pdf", "leadsheet-pdf@1.0.0"),
-            render_key(revision, "musicxml", "leadsheet-pdf@1.0.0", {"transpose": -2, "paper": "a4"}),
-            render_key(revision, "pdf", "leadsheet-pdf@1.0.1", {"transpose": -2, "paper": "a4"}),
-            render_key(band_sheet()["revision_id"], "pdf", "leadsheet-pdf@1.0.0", {"transpose": -2, "paper": "a4"}),
+            render_key(sheet, "pdf", pdf),
+            render_key(sheet, "musicxml", pdf, {"transpose": -2, "paper": "a4"}),
+            render_key(sheet, "pdf", {**pdf, "version": "2"}, {"transpose": -2, "paper": "a4"}),
+            render_key({**band_sheet(), "id": pin(0x31)["id"]}, "pdf", pdf, {"transpose": -2, "paper": "a4"}),
         }
         self.assertEqual(len(others), 4)
         self.assertNotIn(key, others)
 
     def test_render_key_refuses_what_names_no_exact_render(self):
-        revision = work_sheet()["revision_id"]
+        sheet = {**work_sheet(), "id": pin(0x30)["id"]}
+        pdf = {"id": "lead-sheet-lilypond", "version": "1"}
         with self.assertRaisesRegex(LeadSheetError, "exact lead sheet revision"):
-            render_key("latest", "pdf", "leadsheet-pdf@1")
+            render_key({"id": sheet["id"], "revision_id": "latest"}, "pdf", pdf)
         with self.assertRaisesRegex(LeadSheetError, "format"):
-            render_key(revision, "docx", "leadsheet-pdf@1")
-        with self.assertRaisesRegex(LeadSheetError, "name@version"):
-            render_key(revision, "pdf", "leadsheet-pdf")
+            render_key(sheet, "docx", pdf)
+        with self.assertRaisesRegex(LeadSheetError, "exporter"):
+            render_key(sheet, "pdf", {"id": "leadsheet-pdf"})
 
 
 if __name__ == "__main__":

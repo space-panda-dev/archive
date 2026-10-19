@@ -11,6 +11,7 @@ against what the bank actually declares.
 """
 
 import copy
+from fractions import Fraction
 import json
 import unittest
 from pathlib import Path
@@ -26,9 +27,18 @@ from world.exports import (
     export_path,
     feature_name,
     musicxml_harmony,
+    original_seconds,
     practice_refusal,
+    practice_key,
+    practice_path,
+    render_seconds,
     request_of,
+    shifted_outputs,
+    transpose_key,
+    transpose_reading,
 )
+from world.harmony import check_reading, stack_names
+from world.tonality import check_key_reading, key_pitch_names
 
 ROOT = Path(__file__).resolve().parents[2]
 STEMS = json.loads((ROOT / "enrich/extractors/stems/extractor.json").read_text())["outputs"]
@@ -217,12 +227,13 @@ class ExportClaimTest(unittest.TestCase):
 
 class PracticeAudioTest(unittest.TestCase):
     SERVED = frozenset({"stems/vocals", "stems/drums", "stems/bass", "stems/other",
-                        "practice/without_bass", "stems/levels"})
+                        "stems6/guitar", "stems/levels"})
+    # A hypothetical six-stem separator's output, declared as an audio file.
     MIX = {"kind": "file", "media_type": "audio/flac", "suffix": ".flac"}
 
     def test_feature_names(self):
         self.assertEqual(feature_name("stems/bass"), ("stems", "bass"))
-        self.assertEqual(feature_name("practice/without_bass"), ("practice", "without_bass"))
+        self.assertEqual(feature_name("stems6/guitar"), ("stems6", "guitar"))
         for bad in ("stems", "stems/", "/bass", "Stems/bass", "stems/bass/x", "../x/y", None):
             with self.subTest(bad), self.assertRaises(ExportError):
                 feature_name(bad)
@@ -242,7 +253,7 @@ class PracticeAudioTest(unittest.TestCase):
     def test_unknown_reach_never_widens(self):
         # A sensitivity or disclosure that cannot be established is refused,
         # and is not the same answer as a known yes.
-        self.assertEqual(practice_refusal("practice/without_bass", self.MIX, self.SERVED,
+        self.assertEqual(practice_refusal("stems6/guitar", self.MIX, self.SERVED,
                                           BANDMATE, OPERATOR, None), "media_forbidden")
         self.assertEqual(practice_refusal("stems/bass", STEMS["bass"], self.SERVED, OPERATOR, None, True),
                          "media_forbidden")
@@ -253,14 +264,100 @@ class PracticeAudioTest(unittest.TestCase):
             ("stems/levels", STEMS["levels"], self.SERVED),          # configured, but a series
             ("stems/vocals_rms_db", STEMS["vocals_rms_db"], self.SERVED | {"stems/vocals_rms_db"}),
             ("stems/vocals", STEMS["vocals"], frozenset()),          # an audio file, not configured
-            ("practice/without_drums", self.MIX, self.SERVED),       # not configured
-            ("practice/without_bass", None, self.SERVED),            # no installed extractor declares it
+            ("stems6/piano", self.MIX, self.SERVED),       # not configured
+            ("stems6/guitar", None, self.SERVED),            # no installed extractor declares it
             ("frames/hpcp", {"kind": "file", "media_type": "application/octet-stream"}, {"frames/hpcp"}),
         ]
         for feature, declared, served in cases:
             with self.subTest(feature):
                 self.assertEqual(practice_refusal(feature, declared, served, OPERATOR, OPERATOR, True),
                                  "feature_not_served")
+
+
+class PracticeRenderTest(unittest.TestCase):
+    """D11.3 to D11.5: any subset of stems, gains, transposition and speed,
+    one key per mix, the same musical position in a render as live."""
+
+    STEMS_ENTRY = {"extractor": "stems", "key": "sha256:" + "5e" * 32}
+    CONTENT = "sha256:" + "c0" * 32
+    RENDERER = {"id": "practice-rubberband", "version": "1"}
+
+    def request(self, **changes):
+        return {"content": self.CONTENT, "stems": self.STEMS_ENTRY, "renderer": self.RENDERER,
+                "gains": {"vocals": 100, "other": 100}, **changes}
+
+    def test_any_subset_is_a_mix_with_one_key(self):
+        # Minus drums and bass: the other two stems, in any order, with defaults stated or not.
+        self.assertEqual(practice_key(self.request()),
+                         practice_key(self.request(gains={"other": 100, "vocals": 100}, semitones=0, speed=100)))
+        keys = {practice_key(self.request(**change)) for change in (
+            {}, {"gains": {"vocals": 100}}, {"gains": {"vocals": 100, "other": 50}}, {"semitones": -2},
+            {"speed": 75}, {"stems": {**self.STEMS_ENTRY, "key": "sha256:" + "6e" * 32}},
+            {"renderer": {**self.RENDERER, "version": "2"}}, {"content": "sha256:" + "c1" * 32})}
+        self.assertEqual(len(keys), 8)
+
+    def test_every_real_stem_can_be_mixed(self):
+        files = [name for name, output in STEMS.items() if output["kind"] == "file"]
+        self.assertEqual(sorted(files), ["bass", "drums", "other", "vocals"])  # anchor: the 4-stem entry
+        practice_key(self.request(gains={name: 100 for name in files}))
+
+    def test_drums_are_never_pitch_shifted(self):
+        everything = self.request(gains={"vocals": 100, "drums": 80, "bass": 100}, semitones=3)
+        self.assertEqual(shifted_outputs(everything), ["bass", "vocals"])
+        self.assertEqual(shifted_outputs(self.request(gains={"drums": 100}, semitones=3)), [])
+        self.assertEqual(shifted_outputs({**everything, "semitones": 0}), [])
+
+    def test_a_render_lives_with_its_recording(self):
+        path = practice_path(Path("/derived"), self.request())
+        self.assertEqual(path.parts[:6], ("/", "derived", "sha256", "c0", "c0", "c0" * 32))
+        self.assertEqual(path.parent.name, "practice")
+        self.assertEqual(path.name, practice_key(self.request()).split(":")[1] + ".flac")
+
+    def test_the_same_musical_position_after_a_switch(self):
+        self.assertEqual(render_seconds(30, 75), 40)
+        self.assertEqual(original_seconds(render_seconds(Fraction(61, 3), 80), 80), Fraction(61, 3))
+        self.assertEqual(render_seconds(12, 100), 12)
+
+    def test_refused(self):
+        bad = {
+            "no stems": self.request(gains={}),
+            "a stem at zero gain": self.request(gains={"vocals": 0}),
+            "a fractional gain": self.request(gains={"vocals": 99.5}),
+            "a bad output name": self.request(gains={"Vocals": 100}),
+            "an octave and one": self.request(semitones=13),
+            "too slow": self.request(speed=24),
+            "a boolean speed": self.request(speed=True),
+            "bare hex content": self.request(content="c0" * 32),
+            "bare hex stems key": self.request(stems={"extractor": "stems", "key": "5e" * 32}),
+            "an unknown field": self.request(loop={"start": 0}),
+        }
+        for name, request in bad.items():
+            with self.subTest(name), self.assertRaises(ExportError):
+                practice_key(request)
+        with self.assertRaises(ExportError):
+            render_seconds(10, 0)
+
+
+class TranspositionTest(unittest.TestCase):
+
+    def test_a_chord_moves_and_keeps_its_names(self):
+        reading = {"bass": 4, "tones": [0, 7], "root": 0, "text": "C/E",
+                   "uncertain": [{"pitch_classes": [10, 11], "present": "exactly_one"}], "voicing": [52, 60, 67]}
+        moved = transpose_reading(reading, 2)
+        self.assertEqual(check_reading(moved, False), "stack")
+        self.assertNotIn("text", moved)  # the source named the chord before the move
+        self.assertEqual(stack_names(moved["bass"], moved["tones"], moved["root"])[0].symbol, "D/F#")
+        self.assertEqual(moved["uncertain"][0]["pitch_classes"], [0, 1])
+        self.assertNotIn("voicing", transpose_reading({**reading, "voicing": [124]}, 5))
+
+    def test_a_key_moves_and_is_spelled_by_its_new_tonic(self):
+        g_flat = {"collection": [1, 3, 5, 6, 8, 10, 11], "tonic": 6, "mode": "major",
+                  "spelling": ["Db", "Eb", "F", "Gb", "Ab", "Bb", "Cb"], "text": "Gb"}
+        g = transpose_key(g_flat, 1)
+        check_key_reading(g, False)
+        self.assertEqual(key_pitch_names(g)[6], "F#")
+        self.assertEqual(key_pitch_names(g)[7], "G")
+        self.assertEqual(transpose_key({"no_key": True}, 3), {"no_key": True})
 
 
 def stack(bass, tones, **extra):

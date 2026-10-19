@@ -1,7 +1,9 @@
-"""Practice audio and exports (ADR 0089): which bank features the relay
-serves for practice and to whom, the export request and the key that names
-its regenerable file, the `archive.claim/export` version 1 claim that admits
-a sent file, and the MusicXML `<harmony>` mapping ADR 0077 left unbuilt.
+"""Practice audio and exports (ADR 0089): which bank stems the relay serves
+for practice and to whom, the practice practice request (any subset of stems,
+gains, transposition, speed) and the key that names its regenerable file,
+transposition as a view, the export request and the key that names its
+regenerable file, the `archive.claim/export` version 1 claim that admits a
+sent file, and the MusicXML `<harmony>` mapping ADR 0077 left unbuilt.
 
 ADR 0089 is proposed. No specification release installs
 `archive.claim/export` yet, so Door cannot admit one; this module holds its
@@ -11,9 +13,10 @@ before Door does (INV-2). It uses only the standard library.
 An export is a computed view: regenerable from the exact revisions it
 renders, never stored as a claim, and never a judgment between claims
 (INV-7). Only a file that a person sent is admitted, as an Artifact with an
-export claim saying what it rendered. Practice audio is bank content
-(ADRs 0073 and 0075): never admitted unless a person chooses, and served
-only to callers the recording itself may reach.
+export claim saying what it rendered. Stems are bank content (ADRs 0073 and
+0075) and practice renders are derived media (ADR 0069): never admitted
+unless a person chooses, and served only to callers the recording itself
+may reach. Nothing transposed is ever a claim.
 """
 
 from __future__ import annotations
@@ -21,11 +24,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape
 
-from world.harmony import PITCH_NAMES, check_reading, stack_names
+from world.harmony import BANK_EXTRACTOR, BANK_OUTPUT, PITCH_NAMES, check_reading, stack_names
 
 EXPORT = ("archive.claim/export", "1")
 
@@ -326,6 +330,163 @@ def practice_refusal(feature: str, declared: dict[str, Any] | None, served: set[
     if recording_reaches_caller is True:
         return None
     return "media_forbidden"
+
+
+# ---------------------------------------------------------------------------
+# Practice renders (decisions D11.3 to D11.5)
+
+RENDERER_ID = EXPORTER_ID
+MAX_RENDER_STEMS = 16
+GAINS = (1, 200)          # percent of the stem as separated; a stem left out is not in the mix
+SEMITONES = (-12, 12)
+SPEEDS = (25, 200)        # percent of the original tempo
+DEFAULT_SEMITONES = 0
+DEFAULT_SPEED = 100
+# Outputs never pitch-shifted, whatever the request: they have no pitch to
+# move (D11.4). A renderer that changes this list is a new renderer version.
+UNPITCHED_OUTPUTS = frozenset({"drums"})
+
+
+def check_practice_request(request: Any) -> dict[str, Any]:
+    """Check a practice practice request: the settings a client also applies
+    live (D11.5), sent so a machine renders the same mix. Returns it with
+    its defaults filled in; raises ExportError.
+
+    - `content`: the recording's content digest, `sha256:<hex>`;
+    - `stems`: the bank entry the stems come from, `{extractor, key}` as
+      ADR 0079 cites a stem, so a 4-stem and a 6-stem separation (two
+      extractors, or one with other parameters) are told apart by key;
+    - `gains`: 1 to 16 of that entry's `file` outputs, each with an integer
+      gain in percent (1 to 200). Any subset is a mix (D11.3); an output left
+      out is not in it, so "minus drums and bass" names the other stems;
+    - `semitones` (-12 to 12, default 0) and `speed` (25 to 200 percent,
+      default 100): a pitch shift and a time stretch, each optional;
+    - `renderer`: `{id, version}`, whose version stands for its code, as an
+      extractor's does.
+
+    Every number is an integer, so canonical JSON, and the key, has one
+    spelling."""
+    where = "practice request"
+    _closed(request, {"content", "stems", "gains", "renderer"}, {"semitones", "speed"}, where)
+    if not isinstance(request["content"], str) or not KEY.fullmatch(request["content"]):
+        raise ExportError(f"{where} content must be a recording's digest, sha256:<64 lowercase hex>")
+    stems = _closed(request["stems"], {"extractor", "key"}, set(), f"{where} stems")
+    if not isinstance(stems["extractor"], str) or not BANK_EXTRACTOR.fullmatch(stems["extractor"]):
+        raise ExportError(f"{where} stems extractor must be a bank extractor id")
+    if not isinstance(stems["key"], str) or not KEY.fullmatch(stems["key"]):
+        raise ExportError(f"{where} stems key must be the entry's key, sha256:<64 lowercase hex>")
+    gains = request["gains"]
+    if not isinstance(gains, dict) or not 1 <= len(gains) <= MAX_RENDER_STEMS:
+        raise ExportError(f"{where} gains must name 1 to {MAX_RENDER_STEMS} stems")
+    for output, gain in gains.items():
+        if not BANK_OUTPUT.fullmatch(output):
+            raise ExportError(f"{where} gains names {output!r}, which is not a bank output name")
+        if isinstance(gain, bool) or not isinstance(gain, int) or not GAINS[0] <= gain <= GAINS[1]:
+            raise ExportError(f"{where} gain of {output} must be an integer percent in {GAINS[0]}..{GAINS[1]}")
+    _check_exporter(request["renderer"], f"{where} renderer")
+    for name, (low, high), default in (("semitones", SEMITONES, DEFAULT_SEMITONES), ("speed", SPEEDS, DEFAULT_SPEED)):
+        value = request.get(name, default)
+        if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+            raise ExportError(f"{where} {name} must be an integer in {low}..{high}")
+    return {**request, "semitones": request.get("semitones", DEFAULT_SEMITONES),
+            "speed": request.get("speed", DEFAULT_SPEED)}
+
+
+def practice_key(request: dict[str, Any]) -> str:
+    """The key of a practice render: the SHA-256 of the canonical JSON of
+    the recording, the stems entry, the gains, the semitones, the speed, and
+    the renderer, defaults filled in, so one mix has one key however it was
+    asked for. It is known before rendering, so a client asks by settings
+    and the relay finds the file by key."""
+    checked = check_practice_request(request)
+    material = {key: checked[key] for key in ("content", "stems", "gains", "renderer", "semitones", "speed")}
+    return "sha256:" + hashlib.sha256(canonical(material)).hexdigest()
+
+
+def practice_path(root: Path, request: dict[str, Any]) -> Path:
+    """Where a render lives under a derived-media root: in its recording's
+    own directory, as ADR 0069 files derived media,
+    `sha256/<ab>/<cd>/<content hex>/practice/<key hex>.flac`, with the
+    request beside it as `<key hex>.json`, so destroying the recording finds
+    its renders."""
+    checked = check_practice_request(request)
+    content = checked["content"].split(":", 1)[1]
+    key = practice_key(checked).split(":", 1)[1]
+    return Path(root) / "sha256" / content[:2] / content[2:4] / content / "practice" / (key + ".flac")
+
+
+def shifted_outputs(request: dict[str, Any]) -> list[str]:
+    """The stems a render pitch-shifts: every stem in the mix but the
+    unpitched ones, and none when the request moves nothing (D11.4)."""
+    checked = check_practice_request(request)
+    if checked["semitones"] == 0:
+        return []
+    return sorted(output for output in checked["gains"] if output not in UNPITCHED_OUTPUTS)
+
+
+def render_seconds(original_seconds: Fraction | int, speed: int) -> Fraction:
+    """Where a musical position of the recording falls in a render made at
+    `speed` percent: a render starts where the recording does and is
+    stretched evenly, so a client switching from its live mix to the render
+    (D11.5) seeks here and stays at the same place in the music."""
+    if isinstance(speed, bool) or not isinstance(speed, int) or not SPEEDS[0] <= speed <= SPEEDS[1]:
+        raise ExportError(f"speed must be an integer in {SPEEDS[0]}..{SPEEDS[1]}")
+    return Fraction(original_seconds) * 100 / speed
+
+
+def original_seconds(render_position: Fraction | int, speed: int) -> Fraction:
+    """The inverse of `render_seconds`: the recording's position, and so the
+    samples every claim counts, of a place in a render."""
+    render_seconds(0, speed)  # the same check of `speed`
+    return Fraction(render_position) * speed / 100
+
+
+# ---------------------------------------------------------------------------
+# Transposition as a view (D11.4)
+
+
+def transpose_reading(reading: dict[str, Any], semitones: int) -> dict[str, Any]:
+    """A chord reading moved by `semitones`, for display only: every pitch
+    class moves, a voicing moves when it stays within MIDI (and is dropped
+    otherwise), and the source's verbatim `text` is dropped, since it names
+    the chord before the move. A weight stays: it compares readings within
+    their claim. The result is a view, never a claim."""
+    if isinstance(semitones, bool) or not isinstance(semitones, int):
+        raise ExportError("semitones must be an integer")
+    moved = {k: v for k, v in reading.items() if k != "text"}
+    for field in ("bass", "root"):
+        if field in moved:
+            moved[field] = (moved[field] + semitones) % 12
+    if "tones" in moved:
+        moved["tones"] = sorted((pc + semitones) % 12 for pc in moved["tones"])
+    if "uncertain" in moved:
+        moved["uncertain"] = sorted(({**group, "pitch_classes": sorted((pc + semitones) % 12
+                                                                       for pc in group["pitch_classes"])}
+                                     for group in moved["uncertain"]), key=lambda group: group["pitch_classes"])
+    if "voicing" in moved:
+        notes = [note + semitones for note in moved["voicing"]]
+        if all(0 <= note <= 127 for note in notes):
+            moved["voicing"] = notes
+        else:
+            del moved["voicing"]
+    return moved
+
+
+def transpose_key(key: dict[str, Any], semitones: int) -> dict[str, Any]:
+    """A key reading (ADR 0080) moved by `semitones`: the collection and
+    tonic move and the mode stays; the asserter's own `spelling` and `text`
+    are dropped, so the moved key is spelled by ADR 0080's stated rule (Gb
+    major moved up a semitone is G major, not F## anything). A `no_key` or
+    text-only reading moves to no key reading at all."""
+    if isinstance(semitones, bool) or not isinstance(semitones, int):
+        raise ExportError("semitones must be an integer")
+    if "collection" not in key:
+        return {"no_key": True} if key.get("no_key") else {}
+    moved = {k: v for k, v in key.items() if k not in ("spelling", "text")}
+    moved["collection"] = sorted((pc + semitones) % 12 for pc in key["collection"])
+    if "tonic" in moved:
+        moved["tonic"] = (moved["tonic"] + semitones) % 12
+    return moved
 
 
 # ---------------------------------------------------------------------------
