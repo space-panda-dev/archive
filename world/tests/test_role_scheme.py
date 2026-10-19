@@ -1,7 +1,7 @@
 """The role scheme of specification 0.0.9 (D-17) is one table in three places.
 
-world/contributions.py holds MusicBrainz's role types, attributes, and vocals
-as World re-checks them; the specification ships the same table as a SKOS
+world/contributions.py holds MusicBrainz's role types, attributes, and vocals,
+each with its MusicBrainz identifier, as World re-checks them; the specification ships the same table as a SKOS
 scheme in Turtle; and the contribution and band membership bundles encode it
 as JSON Schema for Door. A change to one that is not made to the others fails
 here. Needs rdflib (world/requirements-test.txt).
@@ -54,7 +54,7 @@ class RoleScheme(unittest.TestCase):
         found = {}
         for concept in graph.subjects(RDF.type, SKOS.Concept):
             scheme = graph.value(concept, SKOS.inScheme)
-            if scheme == rdflib.URIRef(C.VOCAL_SCHEME):
+            if scheme in (rdflib.URIRef(C.VOCAL_SCHEME), rdflib.URIRef(C.ATTRIBUTE_SCHEME)):
                 continue
             match = graph.value(concept, SKOS.exactMatch)
             found[str(concept)] = (
@@ -68,9 +68,36 @@ class RoleScheme(unittest.TestCase):
         # Anchor: the table is not empty and names the types ADR 0078 cites.
         self.assertIn(C.role_concept(C.ROLE_TYPES["recording"]["instrument"]), expected)
         self.assertEqual(found, expected)
-        vocals = {str(graph.value(concept, SKOS.notation))
-                  for concept in graph.subjects(SKOS.inScheme, rdflib.URIRef(C.VOCAL_SCHEME))}
-        self.assertEqual(vocals, set(C.VOCALS))
+
+    def attribute_concepts(self, graph: rdflib.Graph, scheme: str) -> dict[str, tuple[str, str | None]]:
+        concepts = {}
+        for concept in graph.subjects(SKOS.inScheme, rdflib.URIRef(scheme)):
+            notation = str(graph.value(concept, SKOS.notation))
+            matches = [str(m) for m in graph.objects(concept, SKOS.exactMatch)]
+            self.assertLessEqual(len(matches), 1, concept)
+            concepts[notation] = (str(concept), matches[0].removeprefix(C.MUSICBRAINZ_ATTRIBUTE) if matches else None)
+        return concepts
+
+    def test_vocals_and_attributes_match_their_musicbrainz_attributes(self):
+        graph = specification_scheme()
+        vocals = self.attribute_concepts(graph, C.VOCAL_SCHEME)
+        attributes = self.attribute_concepts(graph, C.ATTRIBUTE_SCHEME)
+        # Anchor: both schemes are present and their identifiers differ, so a
+        # vocal cannot pass as an attribute or the reverse.
+        self.assertIn("lead vocals", vocals)
+        self.assertIn("co", attributes)
+        self.assertFalse(set(C.VOCAL_IDS.values()) & set(C.ATTRIBUTES.values()))
+        self.assertEqual(vocals, {name: (C.vocal_concept(name), gid) for name, gid in C.VOCAL_IDS.items()})
+        self.assertEqual(attributes, {name: (C.attribute_concept(name), gid) for name, gid in C.ATTRIBUTES.items()})
+        self.assertEqual(set(C.VOCALS), set(C.VOCAL_IDS))
+        # Every attribute a type takes is a concept of the scheme, and the
+        # scheme holds no attribute that no type takes.
+        taken = {str(a) for a in graph.objects(None, ARCH.takesAttribute)}
+        used = set().union(*(kind.attributes for kinds in table().values() for kind in kinds.values()))
+        self.assertEqual(taken, used)
+        self.assertEqual(used, set(C.ATTRIBUTES))
+        for gid in [*C.VOCAL_IDS.values(), *C.ATTRIBUTES.values()]:
+            self.assertRegex(gid, r"\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 
     def test_the_contribution_bundle_encodes_the_code_table(self):
         schema = bundle("archive.claim/contribution")["schema"]
@@ -96,6 +123,23 @@ class RoleScheme(unittest.TestCase):
     def test_vocals_and_membership_attributes_are_the_code_tables(self):
         membership = bundle("archive.claim/band_membership")["schema"]["properties"]["payload"]["properties"]
         self.assertEqual(set(membership["vocals"]["items"]["enum"]), set(C.VOCALS))
+        # Every attribute either bundle accepts has its MusicBrainz identifier.
+        accepted: set[str] = set()
+
+        def walk(node: object) -> None:
+            if isinstance(node, dict):
+                enum = node.get("attributes", {}).get("items", {}).get("enum") if isinstance(node.get("attributes"), dict) else None
+                accepted.update(enum or [])
+                for value in node.values():
+                    walk(value)
+            elif isinstance(node, list):
+                for value in node:
+                    walk(value)
+
+        walk(bundle("archive.claim/contribution")["schema"])
+        walk(bundle("archive.claim/band_membership")["schema"])
+        self.assertIn("executive", accepted)
+        self.assertEqual(accepted, set(C.ATTRIBUTES))
         self.assertEqual(set(membership["attributes"]["items"]["enum"]), set(C.MEMBERSHIP_ATTRIBUTES))
         self.assertEqual(C.MEMBER_OF_BAND.attributes, C.MEMBERSHIP_ATTRIBUTES)
 

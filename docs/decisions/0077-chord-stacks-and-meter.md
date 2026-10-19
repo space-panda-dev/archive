@@ -96,11 +96,17 @@ pin the audio whose timeline they describe the way span suggestions do
   (a Guitar Pro file, a saved chart page);
 - zero to eight `analysed` Artifact revisions: audio the asserter analysed in
   place of the mix, such as a separated stem, whose samples share the
-  source's timeline;
+  source's timeline. Specification 0.0.9 does not enforce this: Door admits
+  an `analysed` Artifact without checking its timeline, and the check is
+  left to a later release ([open questions](../open-questions.md#door));
 - for a chord stacks claim only, at most one `sequence`, the
   `archive.claim/chord_sequence` version 1 Claim revision an alignment placed
-  on this recording, and zero to eight `corrects`, chord claim revisions this
-  claim corrects (below).
+  on this recording, and zero to eight `corrects`, the claims this claim
+  corrects (below), each an `archive.claim/chord_stacks` version 1 Claim
+  revision. A chord stacks claim never corrects a sequence, and a sequence's
+  own `corrects` pins only chord sequence claims, so a correction is always
+  of its own kind: a timed reading corrects a timed reading, and a sequence
+  a sequence.
 
 A claim that pins a `document` or a `sequence` states its `alignment`: a
 `method` of 1 to 200 characters (`manual` for a person's placement,
@@ -170,7 +176,8 @@ order and roughly where in a line or section they fall, but never when. Such
 a claim's subject is what it describes, not a recording: it pins at least one
 of a `work` (an Entity revision of kind `musical_work`) and a `document` (the
 Artifact revision it was read from), at most one `run` when a tool read it,
-and zero to eight `corrects`, the sequence claims it corrects. It pins no
+and zero to eight `corrects`, the `archive.claim/chord_sequence` version 1
+Claim revisions it corrects. It pins no
 audio and has no `sample_rate` and no `alignment`. Its payload has optional
 `part`, `weight_scale`, and `document_url` (as above), `entries`, and
 optional `repeats`:
@@ -302,7 +309,8 @@ bass, so six-nine is written `6(9)`: `Bb6(9)/G`.
 **Mix first.** A machine extractor makes its chord and meter claims from the
 mix. A claim from a stem is another claim about the same `source`, pinning the
 stem in `analysed`; it never supersedes the mix's claim, and nothing ranks it
-above it by kind (INV-7, INV-8).
+above it by kind (INV-7, INV-8). That the stem shares the mix's timeline is
+the asserter's statement; in 0.0.9 nothing checks it.
 
 **Current is computed, and not yet defined.** These contracts define no
 current rule. Any later rule is a stated policy that names the claim it

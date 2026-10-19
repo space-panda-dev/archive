@@ -27,11 +27,14 @@ python3 -m unittest world.tests.test_harmony
 [`contributions.py`](contributions.py) holds the rules of the two contracts of
 [ADR 0078](../docs/decisions/0078-contributions.md),
 `archive.claim/contribution` and `archive.claim/band_membership`, the
-MusicBrainz relationship types each scope accepts, the resolved view in which
-a finer credit refines a coarser one, and the join from a chord stacks claim
-to whose part it is. It needs only the standard library. Specification 0.0.9
-installs the contracts (D-17): Door admits them, and World re-checks each
-claim with this module before it projects it. Its tests run alone:
+MusicBrainz relationship types each scope accepts and the attributes and
+vocals they take (each with its MusicBrainz identifier), the resolved view in
+which a finer credit refines a coarser one, and the join from a chord stacks
+claim to whose part it is. It needs only the standard library. Specification
+0.0.9 installs the contracts (D-17): Door admits them, and World re-checks
+each claim with this module before it projects it. No importer proposes
+them yet ([contribution sources](../docs/contribution-sources.md) is a
+design). Its tests run alone:
 
 ```sh
 python3 -m unittest world.tests.test_contributions
