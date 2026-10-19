@@ -477,8 +477,10 @@ class Key(unittest.TestCase):
         self.assertEqual((on_eb["key"], on_eb["mode"]), ("Eb", "ionian"))
         self.assertLessEqual(found["key_strength"], 1.0)
         self.assertEqual(found["collection"], "Eb major scale")
-        self.assertTrue(found["tonic_named"])
-        self.assertGreaterEqual(found["tonic_confidence"], float(tonal.KEY["tonic"]["min_confidence"]))
+        # Version 6 names no tonic, however sure: the label is the collection.
+        self.assertGreaterEqual(found["tonic_confidence"], 0.5)  # anchor: version 5 named this one
+        self.assertFalse(found["tonic_named"])
+        self.assertEqual(tonal.key_label(found), "Eb major scale")
         self.assertGreater(found["tonic_margin"], 0)
         self.assertGreater(found["collection_margin"], 0)
 
@@ -504,7 +506,7 @@ class Key(unittest.TestCase):
 
     def test_the_tonic_confidence_is_a_share_of_the_collections_notes(self) -> None:
         """No evidence but the favour: the two favoured tonics share most of
-        it and neither is named; the confidence is a softmax over seven notes."""
+        it; the confidence is a softmax over seven notes."""
         flat = tonal.key_of(self.shares({6: 1.0, 8: 1.0, 10: 1.0, 11: 1.0, 1: 1.0, 3: 1.0, 5: 1.0}), numpy.zeros(12))
         self.assertEqual(flat["collection"], "Eb major scale")
         self.assertIn((flat["key"], flat["mode"]), {("Eb", "ionian"), ("C", "aeolian")})
@@ -547,7 +549,7 @@ class Key(unittest.TestCase):
         found = tonal.key_of(self.shares({0: 3.0, 2: 1.0, 3: 2.2, 5: 1.0, 7: 2.5, 8: 1.0, 11: 1.0}),
                              self.shares({0: 1.0}))
         self.assertEqual((found["key"], found["mode"], found["scale"]), ("A", "harmonic minor", "minor"))
-        self.assertTrue(found["tonic_named"])
+        self.assertEqual((found["tonic_named"], tonal.key_label(found)), (False, "A harmonic minor scale"))
         self.assertEqual(found["scale_notes"], "A B C D E F Ab")
 
     def test_no_weight_and_no_contrast_have_no_key(self) -> None:
@@ -777,21 +779,21 @@ class Harmony(unittest.TestCase):
                 self.assertGreater(found.scalar("key_strength"), 0.7)
                 self.assertGreater(found.scalar("tonic_confidence"), 0.5)
                 self.assertEqual(found.scalar("collection"), f"{key} major scale")
-                self.assertTrue(found.scalar("tonic_named"))
+                self.assertFalse(found.scalar("tonic_named"))  # version 6 names no tonic
                 windows = found.items("keys")
                 self.assertGreaterEqual(len(windows), 3)
-                # A window names the tonic, or only the notes when it cannot tell.
-                self.assertIn(f"{key} ionian", {span["label"] for span in windows})
-                self.assertLessEqual({span["label"] for span in windows}, {f"{key} ionian", f"{key} major scale"})
+                # A window names only the notes.
+                self.assertEqual({span["label"] for span in windows}, {f"{key} major scale"})
+                self.assertTrue(all(span["value"] > 0 for span in windows))  # the collection's margin
                 regions = found.items("key_regions")
-                self.assertEqual([(r["start"], r["label"]) for r in regions], [(0.0, f"{key} ionian")])
+                self.assertEqual([(r["start"], r["label"]) for r in regions], [(0.0, f"{key} major scale")])
                 self.assertEqual(regions[0]["end"], windows[-1]["end"])
                 self.assertFalse(found.scalar("detuned"))
 
     def test_a_cycle_with_every_root_in_the_bass_names_only_its_notes(self) -> None:
         """C, F, G, and A minor, each root as long in the bass: C, its major
         tonic, is the best guess, but A, its minor tonic, has as much bass
-        and nearly as much treble, so the tonic is not named."""
+        and nearly as much treble."""
         directory = scratch(self)
         found = measured(self, directory, write(directory, "cycle", progression(C_MAJOR, lambda t: 0, repeats=10,
                                                                                 bass=C_BASS)))
@@ -811,9 +813,10 @@ class Harmony(unittest.TestCase):
                                                                                bass=bass)))
         self.assertEqual((found.scalar("key"), found.scalar("mode"), found.scalar("scale")), ("F", "dorian", "minor"))
         self.assertEqual(found.scalar("scale_notes"), "F G Ab Bb C D Eb")
-        self.assertEqual((found.scalar("collection"), found.scalar("tonic_named")), ("Eb major scale", True))
-        self.assertEqual({span["label"] for span in found.items("keys")}, {"F dorian"})
-        self.assertEqual([span["label"] for span in found.items("key_regions")], ["F dorian"])
+        self.assertEqual((found.scalar("collection"), found.scalar("tonic_named")), ("Eb major scale", False))
+        self.assertGreater(found.scalar("tonic_confidence"), 0.5)  # anchor: version 5 named F dorian
+        self.assertEqual({span["label"] for span in found.items("keys")}, {"Eb major scale"})
+        self.assertEqual([span["label"] for span in found.items("key_regions")], ["Eb major scale"])
 
     def test_a_recording_near_half_a_semitone_keeps_its_profiles_and_key(self) -> None:
         """Near half a semitone from 440 Hz a profile referenced to 440 Hz
@@ -860,12 +863,14 @@ class Harmony(unittest.TestCase):
             bass[index * 324:(index + 1) * 324, note] = 1.0
         pitched = numpy.ones(rows, dtype=bool)
         found = tonal.keys(chroma, bass, pitched, rows * tonal.HOP)
-        labels = {span["label"] for span in found["keys"]}
-        self.assertGreaterEqual(len(labels), 3, labels)  # anchor: the windows do disagree
+        tonics = {tonal.key_of(*tonal.key_shares(chroma[start:end], bass[start:end]))["key"]
+                  for start, end in tonal.windows(rows, tonal.KEY["window_frames"], tonal.KEY["hop_frames"])}
+        self.assertGreaterEqual(len(tonics), 3, tonics)  # anchor: the windows do disagree on the tonic
+        self.assertEqual({span["label"] for span in found["keys"]}, {"C major scale"})
         whole = tonal.key_of(*tonal.key_shares(chroma, bass))
         self.assertEqual(whole["collection"], "C major scale")
         self.assertEqual([(region["label"], region["value"]) for region in found["key_regions"]],
-                         [(tonal.key_label(whole), whole["tonic_confidence"])])
+                         [(tonal.key_label(whole), whole["collection_margin"])])
         chroma[810:, 8] = 0.0  # F out ...
         chroma[810:, 9] = 1.0  # ... F# in: G major's notes for the second half
         found = tonal.keys(chroma, bass, pitched, rows * tonal.HOP)

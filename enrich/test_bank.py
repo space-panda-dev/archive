@@ -121,9 +121,10 @@ SHIPPED = {
     # Version 4: mains hum left out; a tonic named only where it leads; key
     # regions by note collection. Version 5: the tuning only from enough
     # windows; the tonic by the bass among the collection's notes, with a
-    # calibrated confidence.
-    "tonal": {"version": "5",
-              "code": "sha256:48298eb5dd34f2f2a91b9c9a267fdc70ca001ace46784b4ac590ed113aacd1f3",
+    # calibrated confidence. Version 6: no tonic named; spans labelled and
+    # valued by their collection.
+    "tonal": {"version": "6",
+              "code": "sha256:a21912bfd4c779778569730996b567aa0f88358bba6ff1286e44bb55d6356751",
               "outside": {"cover.py": "sha256:1d3d8e48959d97ec6d633ab683eebea5bcb75616a1d29e218c25da30a7a4884c",
                           "extractors/frames/frames.py":
                               "sha256:acac662e87efbcafcebab714b858e8b42c287de7963156c7e2a14adfd860c565"}},
@@ -181,8 +182,9 @@ SHIPPED = {
     "notes-basic-pitch": {"version": "1",
                           "code": "sha256:b81ad3ab4528b6c557e4a3ad254c5262754689efcbd157ac5bff976f28d40133",
                           "outside": {}},
-    "f0-pesto": {"version": "1",
-                 "code": "sha256:a627f3b3f63d03e2f953707fa39653da0582168bfa714c0b40afeb82d7f928cc",
+    # f0-pesto version 2: the level of the same audio on the same rows.
+    "f0-pesto": {"version": "2",
+                 "code": "sha256:cb9e2915b3f5c4b59caac11830467fc7c0dafcf6d95bdacbbb6e6c9036c02feb",
                  "outside": {}},
     "f0-torchcrepe": {"version": "1",
                       "code": "sha256:3ea7b08895a262f9c175bcadb49fdf1ad59c6a8c69d6492aa5341e6abcafa4e7",
@@ -1093,6 +1095,49 @@ class Preferences(unittest.TestCase):
         self.assertEqual(catalog.overrides_for("sep/f"), {"m": {"mode": "preferred"}})
         self.assertEqual(catalog.overrides_for("sep/f", {"m": {"mode": "mine"}}), {"m": {"mode": "mine"}})
         self.assertEqual(catalog.overrides_for("other/f", {"sep": {"mode": "x"}}), {"sep": {"mode": "x"}})
+
+
+class MediaType(unittest.TestCase):
+    """Archive content files have no telling suffix (`.blob`), so the runner
+    reads the media type from the first bytes."""
+
+    def test_suffix_less_content_is_read_by_its_first_bytes(self) -> None:
+        directory = Path(tempfile.mkdtemp(prefix="bank-type-"))
+        self.addCleanup(shutil.rmtree, directory, True)
+        wav = support.write_wav(directory / "tone.wav", [0.0] * 800, 8000)
+        blob = directory / "content.blob"
+        shutil.copyfile(wav, blob)
+        # Anchor: the name alone tells nothing.
+        self.assertIsNone(extract.mimetypes.guess_type(blob.name)[0])
+        self.assertEqual(extract.media_type_of(blob), "audio/wav")
+        flac = directory / "other.blob"
+        flac.write_bytes(b"fLaC" + bytes(40))
+        self.assertEqual(extract.media_type_of(flac), "audio/flac")
+        completed = subprocess.run([sys.executable, str(Path(extract.__file__)), "run", "loudness-r128",
+                                    "--content", str(blob), "--bank", str(directory / "b"), "--dry-run"],
+                                   capture_output=True, text=True)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout)["extractors"]["loudness-r128"]["status"], "would_run")
+
+    def test_unknown_or_unreadable_content_still_needs_media_type(self) -> None:
+        directory = Path(tempfile.mkdtemp(prefix="bank-type-"))
+        self.addCleanup(shutil.rmtree, directory, True)
+        unknown = directory / "content.blob"
+        unknown.write_bytes(b"not a known container")
+        for path in (unknown, directory / "missing.blob"):
+            with self.assertRaisesRegex(extract.RunError, "pass --media-type"):
+                extract.media_type_of(path)
+        # Unreadable is refused as unreadable, never as an unknown type.
+        unreadable = directory / "folder"
+        unreadable.mkdir()
+        with self.assertRaises(OSError):
+            extract.sniff_media_type(unreadable)
+        with self.assertRaisesRegex(extract.RunError, "cannot read the first bytes .*pass --media-type"):
+            extract.media_type_of(unreadable)
+        with self.assertRaisesRegex(extract.RunError, "from its name or its first bytes"):
+            extract.media_type_of(unknown)
+        # The suffix still wins, without reading the file.
+        self.assertEqual(extract.media_type_of(directory / "card.WAV"), "audio/wav")
 
 
 @needs_ffmpeg

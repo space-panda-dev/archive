@@ -61,7 +61,7 @@ The decisions behind these boundaries: Archive stands alone
 door admit | transition          the only commands that change archival meaning
 door transition (upgrade)        adopting a later, additive specification release
 door serve --socket <path>       the same commands for applications, on a private socket
-relay/relay.py --config <file>   Door's service, World's query, and derived media over HTTP, for the tailnet
+relay/relay.py --config <file>   Door's service, World's query and views, and derived media over HTTP, for the tailnet
 enrich/media.py --root <dir> --digest <d> <file>
                                  waveform peaks and a listening copy: regenerable derived media
 enrich/extract.py list | run <extractor|all> --content <file> --bank <dir>
@@ -79,6 +79,7 @@ archive views                    rebuilding browsable views (name unsettled)
 enrich/enrich.py probe           count an Artifact's audio streams and propose the facts to Door
 enrich/enrich.py detect          suggest an audio stream's spans and propose them to Door
 enrich/enrich.py match           score a selection against each Work's linked occurrences and propose matches
+enrich/enrich.py propose         read a recording's feature bank entries as claims and propose them to Door
 capture/capture.py import        admit a recorder card's new recordings as sessions, then enrich them
 ```
 
@@ -97,8 +98,15 @@ command line, and reloads when HEAD moved.
 The [relay](../relay/README.md) carries Door's service and World's query to
 the operator's browser over the tailnet
 ([ADR 0056](decisions/0056-tailnet-relay.md)). It turns a JSON proposal into a
-proposal directory for the service, refuses content and any draft not naming
-the caller's agent, and answers read-only SPARQL. It writes nothing itself.
+proposal directory for the service, refuses content it did not stage and any
+draft not naming the caller's agent, answers read-only SPARQL and World's
+named views ([ADR 0082](decisions/0082-views-and-current.md)), and, on a relay
+with a circle, serves bandmates what was disclosed to them
+([ADR 0088](decisions/0088-bandmates.md)). It writes no archival state itself:
+staged documents are operational until Door admits them
+([ADR 0085](decisions/0085-documents-lyrics-rights.md)), and practice renders
+and exports are regenerable files made by programs the operator installs on
+its host ([ADR 0089](decisions/0089-practice-audio-and-exports.md)).
 [`relay/openapi.json`](../relay/openapi.json) describes every route, answer,
 and refusal code ([ADR 0060](decisions/0060-relay-interface-and-role.md)).
 
@@ -129,8 +137,10 @@ an archive. It makes waveform peaks and a listening copy of a recording into a
 derived-media root laid out by content digest
 ([ADR 0069](decisions/0069-derived-media.md)). That root is regenerable and
 never admitted. The relay serves it read-only, by digest, to the operator's
-login only, for content World knows as an Artifact's; it reads the layout
-from `enrich/derived.py` and never serves an original's bytes.
+login and to members the recording is disclosed to, for content World knows
+as an Artifact's; it reads the layout from `enrich/derived.py` and the feature
+bank through `enrich/bank.py`, and serves no original's bytes but an admitted
+document's.
 
 `enrich/extract.py` is like it: it proposes nothing and never reads or
 writes an archive. It runs extractors, programs in any language that declare
@@ -146,7 +156,11 @@ It needs only the standard library; each extractor brings its own
 environment, named by configuration. Its graph is the few extractors one
 content needs, run in order on one machine; handing a run to another machine
 is Spool's job and is not wired. A claim made from features goes through the
-adapter and Door like any enrichment result.
+adapter and Door like any enrichment result: `enrich propose`'s proposers
+read the bank, never audio, and propose each one's claims with a derivation
+run ([ADR 0079](decisions/0079-machine-harmony-claims.md)); they check each
+claim with World's standard-library contract checks first, the one import
+`enrich/` makes from `world/`.
 
 [`capture/`](../capture/README.md) holds the native importer of new recordings
 ([ADR 0070](decisions/0070-capture-import.md)). `capture import` hashes a

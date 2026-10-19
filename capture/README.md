@@ -10,6 +10,7 @@ reads the archive through `archive export` and proposes through `door admit`.
 | File | What it is |
 |---|---|
 | [`capture.py`](capture.py) | The `capture import` command |
+| [`propose_step.py`](propose_step.py) | The import's fifth step: bank entries and `enrich propose` ([ADR 0079](../docs/decisions/0079-machine-harmony-claims.md)) |
 | [`send.py`](send.py) | The `capture send` command: a card read on one machine, imported on the archive's |
 | [`grammar.py`](grammar.py) | Recorder grammars: what a recorder's file names say, and its rollover rule |
 | `test_*.py` | Synthetic cards imported into scratch archives through the real Door and enrichment tools |
@@ -25,7 +26,8 @@ needs (`ffmpeg`, `ffprobe`, numpy).
 ```sh
 capture/capture.py import --archive <dir> --staging <annex> --derived-media <root> <directory>
                           [--session-name <name>] [--jobs <n>] [--profile-cache <dir>]
-                          [--detector-preset jam|show|studio] [--defer-listening-copies] [--dry-run]
+                          [--detector-preset jam|show|studio] [--defer-listening-copies] [--bank <root>]
+                          [--extract-config <file>] [--dry-run]
 ```
 
 It prints one JSON object with `status` `committed`, `predicted` (a dry
@@ -88,7 +90,22 @@ staged or proposed.
    keeps each kept window with every Work within the limit, of which only
    the closest is claimed. The archive must install `work_match` version 3
    (specification 0.0.8): an older one is refused before anything is staged.
-   A file whose probe
+   Then, when a feature bank root is configured (`--bank`, or
+   `ARCHIVE_FEATURE_BANK`), the bank entries and proposals of
+   [ADR 0079](../docs/decisions/0079-machine-harmony-claims.md)
+   ([`propose_step.py`](propose_step.py)): for each Artifact of each
+   session's primary source, `enrich/extract.py` makes the mix's
+   `chords-jiang`, `chords-chordino`, `rhythm`, and `tonal` entries (with
+   `frames`), using the runner configuration `--extract-config` names, and
+   `enrich propose` proposes from them with the default proposers (chords
+   of both extractors, beats, and the bass). It separates no stems, so
+   `bass` answers `nothing_proposed` until the stems exist and a later
+   `enrich propose --all` proposes it. An extractor whose interpreter is not
+   configured is skipped and said to be. The report keeps, under `propose`,
+   what the runner did for each extractor and each proposer's answer;
+   without a bank the step is reported as skipped. The archive must then
+   install `chord_stacks` and `meter_layers` version 2 (specification
+   0.0.10). A file whose probe
    counts no audio stream is reported with `nothing_proposed`, and nothing
    else runs on it. A failure stops the chain once the step it happened in
    has finished; the import does not resume it later, because its contents

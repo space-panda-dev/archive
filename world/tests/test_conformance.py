@@ -17,6 +17,7 @@ from pathlib import Path
 from pyoxigraph import Literal, NamedNode, Quad, Store
 
 from world import conformance
+from world.tests.plan0010 import drafted_export
 from world.world import PROJECTION_VERSION, PROJECTORS, build_projection
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -36,6 +37,15 @@ UNREACHABLE = {("records", ARCH + "dependent_destroy"), ("records", ARCH + "depe
 # version an archive already has. test_upgrade.py projects an upgrade record
 # made by the real Door from an archive at the previous release.
 UNCITED = {("archive.transition/specification_upgrade", "1")}
+
+# Contracts whose record another person or a band asserts (D-18): a
+# co-writer's sharing consent and a band's lead sheet. The fixture names that
+# Entity as the agent; every other record is the operator's or a tool's.
+ASSERTED_BY_OTHERS = {("archive.claim/sharing_consent", "1"), ("archive.claim/lead_sheet", "1")}
+
+# Door admits every contract specification 0.0.10 adds, and the fixture plan
+# cites each of them, so none is waiting to be admitted.
+NOT_YET_ADMITTED: set[tuple[str, str]] = set()
 
 
 def integration_binaries():
@@ -98,11 +108,18 @@ class FixtureArchiveConformanceTests(unittest.TestCase):
                                for ref in r["refs"])}
         runs = {r["revision_id"] for r in self.export["records"] if self.cites(r["revision_id"], "archive.claim/derivation_run")}
         self.assertTrue(runs and made_by_runs)
+        entities = {r["object_id"] for r in self.export["records"]
+                    if r["shape"] == "entity" and r["payload"].get("kind") in ("person", "organisation")}
+        others = 0
         for record in self.export["records"]:
             if record["revision_id"] in runs | made_by_runs:
                 self.assertTrue(record["agent"].startswith("pkg:"), record["revision_id"])
-            else:
-                self.assertEqual(record["agent"], self.manifest["operator_id"])
+            elif record["agent"] != self.manifest["operator_id"]:
+                others += 1
+                self.assertIn(record["agent"], entities, record["revision_id"])
+                self.assertTrue({(c["id"], c["version"]) for c in record.get("contracts", [])} & ASSERTED_BY_OTHERS,
+                                record["revision_id"])
+        self.assertTrue(others)
 
     def cites(self, revision, contract):
         [record] = [r for r in self.export["records"] if r["revision_id"] == revision]
@@ -126,6 +143,14 @@ class FixtureArchiveConformanceTests(unittest.TestCase):
             missing |= {(kind, p) for p in predicates - report.predicates.get(kind, set())}
             missing |= {(kind, c) for c in classes - report.classes.get(kind, set())
                         if c.startswith(("http", "urn"))}
+        # Specification 0.0.10's shapes declare every field their schemas
+        # allow, more than the fixture's records state; World's drafts of
+        # them (test_contract_graphs) state the rest, so a declared term is
+        # anchored by the fixture or by the drafts, never by neither.
+        drafted = build_projection(drafted_export())
+        emitted = conformance.check_store(drafted.store, drafted.archive_id, PROJECTION_VERSION)
+        missing = {(kind, term) for kind, term in missing
+                   if term not in emitted.predicates.get(kind, set()) | emitted.classes.get(kind, set())}
         self.assertEqual(missing, UNREACHABLE)
 
     def test_every_installed_contract_is_in_the_context_graph(self):

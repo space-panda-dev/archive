@@ -74,7 +74,11 @@ would otherwise see a reset instead of its refusal.
 - The relay passes Door's code through unchanged, so a browser client sees
   the same codes (ADR 0060).
 - The command line keeps printing the message alone; codes are a service
-  promise.
+  promise. *Amended for 0.0.10 (2026-10-19):* a real-data rehearsal found a
+  command-line refusal readable only as text, so after its `door: <message>`
+  line Door now writes the service's own reply,
+  `{"ok": false, "error": {"code", "message"}}`, as one more stderr line. A
+  refusal still writes no stdout and exits nonzero.
 - A client written against the old string `error` must read `error.message`.
   The relay deployed before this change still expects the old shape, so Door
   and the relay are upgraded together.

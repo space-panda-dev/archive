@@ -8,8 +8,12 @@ title, and byte here is invented.
   keys instead of identifiers. Together they cite every contract in the
   current specification's catalog except the specification upgrade, which
   Door refuses. A record may name its `agent`: derivation runs and the claims
-  they make are asserted by a tool's Package URL (ADR 0064); every other
-  record by the archive's operator.
+  they make are asserted by a tool's Package URL (ADR 0064); a record a
+  contract gives to another person or a band, such as a co-writer's sharing
+  consent or a band's lead sheet (D-18), by that Entity's plan key (`@guest`);
+  every other record by the archive's operator. A payload string
+  `$revision:<key>` names that key's revision, and an export's `key` of
+  `$export-key` is computed from its payload and references as D-18 states.
 - [`content/`](content/) holds the bytes the plan's artifacts admit.
   `recording.wav` is synthetic audio, 4000 frames of 16-bit mono at 8000 Hz
   (silence, a 440 Hz tone, then noise), made with:

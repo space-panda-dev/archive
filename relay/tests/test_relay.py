@@ -47,6 +47,8 @@ OPENAPI = json.loads((ROOT / "relay/openapi.json").read_text())
 SERVICE_SCHEMA = json.loads((ROOT / "door/service.schema.json").read_text())
 LOGIN = "operator@example.test"
 AGENT = "urn:uuid:00000000-0000-4000-8000-000000000001"
+OTHER = "urn:uuid:00000000-0000-4000-8000-000000000002"
+THIRD = "urn:uuid:00000000-0000-4000-8000-000000000003"
 ARCHIVE_ID = "urn:uuid:00000000-0000-4000-8000-0000000000aa"
 ORIGIN = "https://review.example.test:8449"
 DOOR = os.environ.get("ARCHIVE_TEST_DOOR")
@@ -91,13 +93,13 @@ class RelayHarness:
     def __init__(self, tmp: Path, archive_root: Path, door_socket: Path, world_store: Path, writes: str = "dry-run",
                  role: str = "shadow", archive_command: str = "archive", query_timeout_seconds: float = 30,
                  max_rows: int = 10000, query_workers: int = 3, cache_bytes: int = 64 * 1024 * 1024,
-                 callers: dict[str, str] | None = None, media_root: Path | None = None):
+                 callers: dict[str, str] | None = None, media_root: Path | None = None, **more):
         self.config = relay.Config(
             host="127.0.0.1", port=0, archive_root=archive_root, door_socket=door_socket,
             world_store=world_store, archive_command=archive_command, staging=private(tmp / "staging"),
             writes=writes, role=role, origins=frozenset([ORIGIN]), callers=callers or {LOGIN: AGENT},
             query_timeout_seconds=query_timeout_seconds, max_rows=max_rows, query_workers=query_workers,
-            cache_bytes=cache_bytes, media_root=media_root)
+            cache_bytes=cache_bytes, media_root=media_root, **more)
         self.relay = relay.Relay(self.config)
         # The server the relay itself runs, so tests see its threading.
         self.server = relay.make_server(self.relay, "127.0.0.1", 0)
@@ -213,7 +215,8 @@ class CallerChecks(Fixture):
         status, _, answer = self.harness().call("GET", "/health")
         self.assertEqual(status, 503)
         self.assertEqual(answer["archive"], {"archive_id": ARCHIVE_ID, "spec": "archive/0.0.6", "role": "shadow",
-                                             "projections": []})
+                                             "projections": [], "writes": "dry-run",
+                                             "caller": {"agent": AGENT, "capacity": "operator"}})
         self.assertEqual((answer["ok"], answer["result"]["healthy"], answer["result"]["door"],
                           answer["result"]["world"]["status"]), (False, False, "unreachable", "unavailable"))
 
@@ -458,10 +461,35 @@ class ConfigChecks(unittest.TestCase):
             "plain http origin": {"origins": ["http://review.example.test"]},
             "no callers": {"callers": {}},
             "caller without an agent": {"callers": {LOGIN: "not-an-agent"}},
+            "two agents and no circle": {"callers": {LOGIN: AGENT, "other@example.test": OTHER}},
+            "a member who is no caller": {"callers": {LOGIN: AGENT, "other@example.test": OTHER},
+                                         "circle": {"destination": "band", "members": [OTHER, THIRD]}},
+            "a circle with no members": {"circle": {"destination": "band", "members": []}},
+            "an unknown practice feature": {"bank_root": "/b", "practice_features": ["stems/levels"]},
+            "practice features without a bank": {"practice_features": ["stems/bass"]},
+            "a renderer named by a relative path": {"renderers": {"practice": {"version": "1",
+                                                                              "command": ["render"]}}},
+            "an exporter without a version": {"exporters": {"lead-sheet": {"command": ["/bin/true"]}}},
+            "a zero timeout": {"render_timeout_seconds": 0},
             "unknown field": {"funnel": True},
         }.items():
             with self.subTest(name), self.assertRaises(ValueError):
                 self.load(**changes)
+
+    def test_a_circle_names_the_operator_by_who_is_not_a_member(self) -> None:
+        config = self.load(callers={LOGIN: AGENT, "other@example.test": OTHER},
+                           circle={"destination": "band", "members": [OTHER]})
+        self.assertEqual(relay.access.check_config(config.callers, config.circle)[0], AGENT)
+        # Anchor: without the circle the same callers are refused.
+        with self.assertRaises(ValueError):
+            self.load(callers={LOGIN: AGENT, "other@example.test": OTHER})
+
+    def test_practice_features_installed_renderers_and_exporters_load(self) -> None:
+        config = self.load(bank_root="/b", practice_features=["stems/bass", "stems/drums"],
+                           renderers={"practice-test": {"version": "1", "command": ["/usr/bin/env", "true"]}},
+                           exporters={"lead-sheet": {"version": "1.2", "command": ["/usr/bin/env", "true"]}})
+        self.assertEqual((config.practice_features, set(config.renderers), set(config.exporters)),
+                         (("stems/bass", "stems/drums"), {"practice-test"}, {"lead-sheet"}))
 
     def test_the_derived_media_root_is_optional(self) -> None:
         # The deployed relay's configuration predates media and must still load.

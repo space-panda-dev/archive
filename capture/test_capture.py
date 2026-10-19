@@ -25,11 +25,14 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / "enrich"))
 
 import adapter  # noqa: E402
+import bank  # noqa: E402
 import capture  # noqa: E402
+import propose_step  # noqa: E402
 import derived  # noqa: E402
 import support  # noqa: E402
 from grammar import ZoomH4E  # noqa: E402
 from support import needs_door  # noqa: E402
+from test_beats_chords import stand_in_programs  # noqa: E402
 
 RATE = 8000
 STREAM = "archive.claim/audio_stream"
@@ -93,6 +96,7 @@ class CaptureImport(unittest.TestCase):
                 "--ffprobe", support.FFPROBE, *extra]
         out, err = io.StringIO(), io.StringIO()
         with patch.dict(os.environ, self.env), redirect_stdout(out), redirect_stderr(err):
+            os.environ.pop("ARCHIVE_FEATURE_BANK", None)  # a bank only where a test names one
             code = capture.main(argv, grammars or (ZoomH4E(),))
         return code, json.loads(out.getvalue() or err.getvalue())
 
@@ -173,9 +177,44 @@ class CaptureImport(unittest.TestCase):
         self.assert_media(mic_file)
         self.assertEqual([(entry["file"], entry["probe"], entry.get("detect")) for entry in answer["chain"]],
                          [(lr.name, "committed", "committed"), (mic_file.name, "committed", None)])
+        # Without a feature bank, the fifth step is skipped and said to be.
+        self.assertEqual([entry.get("propose") for entry in answer["chain"]], [propose_step.SKIPPED, None])
 
         # The input is exactly as it was.
         self.assertEqual(snapshot(self.card), before)
+
+    def test_with_a_bank_the_primary_source_gets_its_entries_and_proposals(self) -> None:
+        """The fifth step (ADR 0079): the chord, rhythm, and tonal entries of
+        the primary source's recording, made by the real runner (the chord
+        model replaced by its stand-in; Chordino's interpreter not
+        configured, so skipped), then `enrich propose`."""
+        lr = card_file(self.card, "010101_120000_TrLR.WAV", music(24))
+        card_file(self.card, "010101_120000_TrMic.WAV", mic(24))
+        programs = stand_in_programs(self.tmp)
+        configured = dict(item.split("=", 1) for item in programs[1::2] if not item.startswith("chordino-python"))
+        config = self.tmp / "extract.json"
+        config.write_text(json.dumps({"programs": configured}))
+        root = self.tmp / "bank"
+
+        code, answer = self.run_import(None, "--bank", str(root), "--extract-config", str(config))
+        self.assertEqual((code, answer["status"]), (0, "committed"), answer)
+        primary, other = answer["chain"]
+        self.assertNotIn("propose", other)
+        report = primary["propose"]
+        self.assertEqual(report["bank"]["chords-chordino"], "skipped: chordino-python is not configured")
+        for extractor in ("chords-jiang", "rhythm", "tonal", "frames"):
+            self.assertIn(report["bank"][extractor], ("ran", "hit"), report)
+        by_name = {p["name"]: p for p in report["proposers"]}
+        self.assertEqual(list(by_name), ["chords-jiang", "chords-chordino", "beats", "bass"])
+        self.assertEqual(by_name["chords-jiang"]["status"], "committed")
+        self.assertEqual(by_name["chords-chordino"], {"name": "chords-chordino", "status": "nothing_proposed",
+                                                      "missing": ["chords-chordino/chords"]})
+        self.assertEqual(by_name["bass"]["missing"][0], "stems/bass")
+        lr_artifact = self.artifact_of(lr)
+        chords = self.about(self.claims("archive.claim/chord_stacks"), "source", lr_artifact["object_id"])
+        self.assertEqual(len(chords), 1)
+        entry = bank.Bank(root).entry(lr_artifact["payload"]["content"]["digest"], "chords-jiang")
+        self.assertIsNotNone(entry)  # the runner filed it under the Artifact's content digest
 
     def test_a_studio_import_detects_with_the_studio_preset(self) -> None:
         import detector
@@ -668,6 +707,25 @@ class Steps(unittest.TestCase):
         self.assertIn("--jobs", seen[0])  # anchor: the arguments were read
         at = seen[1].index("--profile-cache")
         self.assertEqual(seen[1][at + 1], str(self.tmp / "profiles"))
+
+    def test_propose_is_given_the_bank_and_the_runner_configuration(self) -> None:
+        body = "import json, sys\nprint(json.dumps({'status': 'unchanged', 'argv': sys.argv[1:]}))\n"
+        with patch.object(capture, "ENRICH", self.fake_enrich(body)):
+            args = capture.argparse.Namespace(**vars(self.args), extract_config=self.tmp / "extract.json")
+            argv = capture.enrich("propose", "x", args, dict(os.environ), bank=self.tmp / "bank")[1]["argv"]
+        self.assertEqual(argv[argv.index("--artifact") + 1], "x")
+        self.assertEqual(argv[argv.index("--bank") + 1], str(self.tmp / "bank"))
+        self.assertEqual(argv[argv.index("--config") + 1], str(self.tmp / "extract.json"))
+
+    def test_without_a_bank_the_fifth_step_runs_nothing(self) -> None:
+        entry: dict = {}
+        args = capture.argparse.Namespace(**vars(self.args), bank=None, extract_config=None, jobs=1)
+
+        def bomb(*arguments, **options):
+            raise AssertionError("enrich ran without a bank")
+        propose_step.propose_all([({"digest": "sha256:" + "0" * 64, "file": "a.wav", "object_id": "x"}, entry)],
+                                 args, {}, bomb, capture.content_path, bomb)
+        self.assertEqual(entry, {"propose": propose_step.SKIPPED})
 
     def test_detect_is_given_the_detector_preset(self) -> None:
         body = "import json, sys\nprint(json.dumps({'status': 'unchanged', 'argv': sys.argv[1:]}))\n"

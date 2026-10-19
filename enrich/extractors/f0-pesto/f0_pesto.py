@@ -11,7 +11,14 @@ It decodes the content's first audio stream as 16 kHz mono float32, tracks
 it a minute at a time with PESTO's `mir-1k_g7` checkpoint at a 10 ms step,
 and writes `f0`: one row per 160 samples, the pitch in Hz (0 where the
 tracker gives none) and PESTO's confidence. A monophonic tracker reads one
-line, so the content is meant to be one voice: `--from stems/vocals`.
+line, so the content is meant to be one voice: `--from stems/vocals`, or
+the bass line, `--from stems/bass`.
+
+Version 2 also writes the level of the same audio on the same rows,
+`level_db` (the RMS in dBFS of the 320 samples, 20 ms, centred on each row;
+silence outside the audio; floored at -120), and `loud_db`, its 99th
+percentile, so a note builder can find re-articulations and gate voicing
+without decoding the audio again.
 
 The checkpoint is a pickle that PESTO loads with `weights_only=False`, so
 its digest is checked before it is loaded, and the checked file is the one
@@ -40,6 +47,9 @@ CHUNK_SECONDS = 60
 CHECKPOINT = "mir-1k_g7"
 WEIGHTS = "sha256:16c32e06ddd950e3e4866dfa3c7f8a87c4988f8adf43e57977b189f031f26f3e"
 PESTO = "2.0.1"
+LEVEL_FRAME = 320
+LEVEL_FLOOR_DB = -120
+LOUD_PERCENTILE = 99
 
 
 class F0Error(Exception):
@@ -57,7 +67,8 @@ def parameters() -> dict[str, Any]:
     """The settings, which the manifest must declare exactly."""
     return {"tracker": f"pesto-pitch=={PESTO}", "model": CHECKPOINT, "weights": WEIGHTS, "reduction": "alwa",
             "step_ms": STEP_MS, "chunk_seconds": CHUNK_SECONDS, "confidence": "pesto confidence",
-            "decode_arguments": decode_arguments("{input}"), "rate": RATE, "hop": HOP}
+            "decode_arguments": decode_arguments("{input}"), "rate": RATE, "hop": HOP,
+            "level": {"frame": LEVEL_FRAME, "floor_db": LEVEL_FLOOR_DB, "loud_percentile": LOUD_PERCENTILE}}
 
 
 def sha256_file(path: Path) -> str:
@@ -146,6 +157,19 @@ def on_grid(pitch: numpy.ndarray, confidence: numpy.ndarray, samples: int) -> nu
     return track
 
 
+def row_levels(signal: numpy.ndarray, rows: int) -> numpy.ndarray:
+    """The RMS level in dBFS of the LEVEL_FRAME samples centred on each row
+    (row k on sample k x HOP), as [rows, 1] float32; samples outside the
+    audio are silence, and the level is floored at LEVEL_FLOOR_DB."""
+    cumulative = numpy.concatenate([[0.0], numpy.cumsum(numpy.asarray(signal, dtype=numpy.float64) ** 2)])
+    centres = numpy.arange(rows) * HOP
+    low = numpy.clip(centres - LEVEL_FRAME // 2, 0, len(signal))
+    high = numpy.clip(centres + LEVEL_FRAME // 2, 0, len(signal))
+    mean_square = numpy.maximum(cumulative[high] - cumulative[low], 0.0) / LEVEL_FRAME
+    level = 10 * numpy.log10(numpy.maximum(mean_square, 10 ** (LEVEL_FLOOR_DB / 10)))
+    return level.astype("<f4").reshape(-1, 1)
+
+
 def ffmpeg_version(ffmpeg: str = "ffmpeg") -> str:
     first = subprocess.run([ffmpeg, "-version"], capture_output=True, text=True).stdout.split("\n", 1)[0].split()
     return first[2] if len(first) > 2 and first[:2] == ["ffmpeg", "version"] else "unknown"
@@ -165,12 +189,16 @@ def main(argv: list[str]) -> int:
         pitch, confidence = tracker.track(signal)
         track = on_grid(pitch, confidence, len(signal))
         (output / "f0.f32").write_bytes(track.tobytes())
+        level = row_levels(signal, len(track))
+        (output / "level_db.f32").write_bytes(level.tobytes())
         software = [*tracker.software, {"name": "ffmpeg", "version": ffmpeg_version()},
                     {"name": "numpy", "version": numpy.__version__},
                     {"name": "python", "version": platform.python_version()}]
         result = {"contract": "archive-extractor-result/1", "software": software,
                   "grids": {"f0": {"sample_rate": RATE, "hop": HOP, "first_centre": 0}},
-                  "outputs": {"f0": {"shape": list(track.shape)}, "rows_from_tracker": {"value": int(len(pitch))}}}
+                  "outputs": {"f0": {"shape": list(track.shape)}, "rows_from_tracker": {"value": int(len(pitch))},
+                              "level_db": {"shape": list(level.shape)},
+                              "loud_db": {"value": float(numpy.percentile(level, LOUD_PERCENTILE))}}}
         (output / "result.json").write_text(json.dumps(result))
     except (F0Error, OSError, KeyError, ValueError) as exc:
         print(f"f0-pesto: {exc}", file=sys.stderr)

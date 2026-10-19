@@ -63,9 +63,28 @@ elsewhere and is governed by the specification kept here.
 > contributions and band membership, with the Entity kinds `release` and
 > `recording` ([ADR 0078](docs/decisions/0078-contributions.md)), which Door
 > admits and World projects; a 0.0.8 archive adopts it by the same upgrade.
+> Specification 0.0.10 installs harmony as claims with stems cited by bank
+> key ([ADR 0079](docs/decisions/0079-machine-harmony-claims.md)), keys and
+> tuning ([ADR 0080](docs/decisions/0080-key-and-tuning.md)), scoped
+> judgments and span annotations
+> ([ADR 0081](docs/decisions/0081-judgments-and-annotations.md)), form and a
+> Work's written meter ([ADR 0083](docs/decisions/0083-form-and-work-meter.md)),
+> lead sheets ([ADR 0084](docs/decisions/0084-lead-sheets.md)), documents,
+> timed lyrics, sensitivity, and rights
+> ([ADR 0085](docs/decisions/0085-documents-lyrics-rights.md)), notes and
+> melody ([ADR 0086](docs/decisions/0086-notes-and-melody.md)), tracklists
+> and catalogue correspondence
+> ([ADR 0087](docs/decisions/0087-tracklists-and-correspondence.md)), work
+> origins and sharing consents ([ADR 0088](docs/decisions/0088-bandmates.md)),
+> and exports ([ADR 0089](docs/decisions/0089-practice-audio-and-exports.md)),
+> each as a contract bundle; a 0.0.9 archive adopts it by the same upgrade.
+> Door admits all twenty-four under their profile rules, and the published
+> fixture archive holds a record of each.
 > [`enrich/`](enrich/README.md) proposes machine claims through `door admit`:
-> `enrich probe` (audio stream facts), `enrich detect` (span suggestions), and
-> `enrich match` (work matches), each under a derivation run; `enrich/media.py`
+> `enrich probe` (audio stream facts), `enrich detect` (span suggestions),
+> `enrich match` (work matches), each under a derivation run, and
+> `enrich propose` (machine chords, beats, bass, keys, tuning, notes, and
+> sections read from the feature bank, ADR 0079); `enrich/media.py`
 > makes waveform peaks and listening copies that the relay serves by digest
 > ([ADR 0069](docs/decisions/0069-derived-media.md)). `capture import`
 > ([capture/](capture/README.md), [ADR 0070](docs/decisions/0070-capture-import.md))
@@ -219,8 +238,8 @@ repository.
 
 ## What is provisional
 
-- **The specification** is a small pre-1.0 contract at version 0.0.9
-  ([current spec](spec/archive-spec.md), [0.0.9 release copy](spec/0.0.9/archive-spec.md), [0.0.8 release copy](spec/0.0.8/archive-spec.md), [0.0.7 release copy](spec/0.0.7/archive-spec.md), [0.0.6 release copy](spec/0.0.6/archive-spec.md), [0.0.5 release copy](spec/0.0.5/archive-spec.md), [0.0.4 release copy](spec/0.0.4/archive-spec.md), [0.0.3 release copy](spec/0.0.3/archive-spec.md)); unresolved subjects remain explicitly outside
+- **The specification** is a small pre-1.0 contract at version 0.0.10
+  ([current spec](spec/archive-spec.md), [0.0.10 release copy](spec/0.0.10/archive-spec.md), [0.0.9 release copy](spec/0.0.9/archive-spec.md), [0.0.8 release copy](spec/0.0.8/archive-spec.md), [0.0.7 release copy](spec/0.0.7/archive-spec.md), [0.0.6 release copy](spec/0.0.6/archive-spec.md), [0.0.5 release copy](spec/0.0.5/archive-spec.md), [0.0.4 release copy](spec/0.0.4/archive-spec.md), [0.0.3 release copy](spec/0.0.3/archive-spec.md)); unresolved subjects remain explicitly outside
   its normative protocols.
 - The unresolved V2 audio migration gates are recorded in the
   [release readiness note](docs/proposals/v2-migration-release-readiness.md).

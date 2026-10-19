@@ -123,7 +123,7 @@ class MediaChecks(unittest.TestCase):
         options.setdefault("door_socket", self.work / "no-door" / "door.sock")
         options.setdefault("world_store", self.store)
         options.setdefault("media_root", self.media_root)
-        options.setdefault("callers", {OPERATOR_LOGIN: self.operator, LOGIN: AGENT})
+        options.setdefault("callers", {OPERATOR_LOGIN: self.operator})
         harness = RelayHarness(self.work, **options)
         self.addCleanup(harness.close)
         return harness
@@ -251,9 +251,13 @@ class MediaChecks(unittest.TestCase):
     # -- refusals -------------------------------------------------------
 
     def test_only_the_active_operators_person_is_served(self) -> None:
-        harness = self.harness()
-        status, _, answer = self.get(harness, self.path("kept"), login=LOGIN)
+        # A relay whose one caller is not the person World appoints serves
+        # that caller no media: the configuration names its operator, World
+        # names the archive's.
+        elsewhere = self.harness(callers={LOGIN: AGENT})
+        status, _, answer = self.get(elsewhere, self.path("kept"), login=LOGIN)
         self.assertEqual((status, answer["error"]["code"]), (403, "media_forbidden"))
+        harness = self.harness()
         status, _, answer = self.get(harness, self.path("kept"), login="stranger@example.test")
         self.assertEqual((status, answer["error"]["code"]), (403, "forbidden_identity"))
         self.assertNotIn("archive", answer)
@@ -458,9 +462,14 @@ class MediaUnitChecks(unittest.TestCase):
             relay.copy_range(io.BytesIO(b"0123"), 2, 4, io.BytesIO())
 
     def test_route_names_the_template_and_the_digest(self) -> None:
-        self.assertEqual(relay.route_of(f"/media/{self.DIGEST}/peaks"), ("/media/{digest}/peaks", self.DIGEST))
-        self.assertEqual(relay.route_of("/media/x/other"), ("/media/x/other", None))
-        self.assertEqual(relay.route_of("/health"), ("/health", None))
+        self.assertEqual(relay.route_of(f"/media/{self.DIGEST}/peaks"), ("/media/{digest}/peaks", {"digest": self.DIGEST}))
+        self.assertEqual(relay.route_of(f"/media/{self.DIGEST}/bank/stems/bass"),
+                         ("/media/{digest}/bank/{extractor}/{output}",
+                          {"digest": self.DIGEST, "extractor": "stems", "output": "bass"}))
+        self.assertEqual(relay.route_of("/documents/stage"), ("/documents/stage", {}))
+        self.assertEqual(relay.route_of(f"/documents/{self.DIGEST}"), ("/documents/{digest}", {"digest": self.DIGEST}))
+        self.assertEqual(relay.route_of("/media/x/other"), ("/media/x/other", {}))
+        self.assertEqual(relay.route_of("/health"), ("/health", {}))
 
 
 if __name__ == "__main__":

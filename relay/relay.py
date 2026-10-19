@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Relay HTTP from the operator's tailnet to Door's service and World (ADR 0056).
 
-The relay owns no state. Writes become proposal directories handed to
-`door serve`; reads are read-only SPARQL over a World generation. Every route,
-body, answer, and refusal code is described in relay/openapi.json (ADR 0060).
+The relay owns no archival state. Writes become proposal directories handed
+to `door serve`; reads are read-only SPARQL or named views over a World
+generation. A relay configured with a circle also serves the circle's
+members, who read what was disclosed to them and assert their own claims
+(ADR 0088). Every route, body, answer, and refusal code is described in
+relay/openapi.json (ADR 0060).
 """
 
 from __future__ import annotations
@@ -24,7 +27,7 @@ import tempfile
 import threading
 import time
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -33,11 +36,23 @@ from urllib.parse import unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "world"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "enrich"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import derived  # noqa: E402
 import world  # noqa: E402
+from world import documents as document_rules  # noqa: E402
+from world import view_records  # noqa: E402
+from world import views as view_rules  # noqa: E402
+
+import access  # noqa: E402
+import practice  # noqa: E402
+from access import Caller  # noqa: E402
+from refusals import DOOR_STATUSES, RELAY_CODES, Refused, coded  # noqa: E402,F401
+from served import FileAnswer, Served  # noqa: E402
 
 MAX_BODY = 1024 * 1024
+# A staged document is at most 64 MiB, sent as base64 in a JSON body.
+MAX_STAGE_BODY = 4 * ((document_rules.MAX_DOCUMENT_BYTES + 2) // 3) + 64 * 1024
 DOOR_TIMEOUT_SECONDS = 600.0
 RECORD_PATH = re.compile(r"records/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json")
 PROTOCOLS = {"admit": "archive-admission/1", "transition": "archive-transition/1"}
@@ -49,27 +64,41 @@ DOOR_ROUTES = {
 }
 # Derived media by content digest (ADR 0069); the template names each route.
 MEDIA_ROUTES = {f"/media/{{digest}}/{kind}": kind for kind in derived.KINDS}
-MEDIA_PATH = re.compile(r"/media/([^/?#]*)/([a-z]+)")
+# Routes whose path names something: each template's {name} is one segment.
+TEMPLATE_ROUTES = {
+    **{path: "GET" for path in MEDIA_ROUTES},
+    "/media/{digest}/bank": "GET",
+    "/media/{digest}/bank/{extractor}/{output}": "GET",
+    "/media/{digest}/practice": "POST",
+    "/media/{digest}/practice/{key}": "GET",
+    "/documents/{digest}": "GET",
+    "/exports/{key}": "GET",
+}
 ROUTES = {"/health": "GET", "/world/query": "POST", **{path: "POST" for path in DOOR_ROUTES},
-          **{path: "GET" for path in MEDIA_ROUTES}}
+          "/world/views": "GET", "/world/view": "POST", "/documents/stage": "POST", "/exports": "POST",
+          **TEMPLATE_ROUTES}
+TEMPLATES = [(template, re.compile(re.sub(r"\\\{([a-z]+)\\\}", "([^/?#]*)", re.escape(template))),
+              re.findall(r"\{([a-z]+)\}", template)) for template in TEMPLATE_ROUTES]
 
 
-def route_of(path: str) -> tuple[str, str | None]:
-    """The described route a request path asks for, and the digest a media
-    path names. A path matching no route is returned as it is."""
-    match = MEDIA_PATH.fullmatch(path)
-    if match is not None:
-        route = f"/media/{{digest}}/{match.group(2)}"
-        if route in MEDIA_ROUTES:
-            return route, unquote(match.group(1))
-    return path, None
+def route_of(path: str) -> tuple[str, dict[str, str]]:
+    """The described route a request path asks for, and what its path
+    names. A path matching no route is returned as it is."""
+    if path in ROUTES and path not in TEMPLATE_ROUTES:
+        return path, {}
+    for template, pattern, names in TEMPLATES:
+        match = pattern.fullmatch(path)
+        if match is not None:
+            return template, {name: unquote(value) for name, value in zip(names, match.groups())}
+    return path, {}
 
 
 ROLES = ("shadow", "scratch", "live")
 CONFIG_FIELDS = {
     "listen", "archive_root", "door_socket", "world_store", "archive_command", "staging",
     "writes", "role", "origins", "callers", "query_timeout_seconds", "max_rows",
-    "query_workers", "cache_bytes", "media_root",
+    "query_workers", "cache_bytes", "media_root", "circle", "bank_root", "bank_parameters",
+    "practice_features", "renderers", "exporters", "render_timeout_seconds", "export_timeout_seconds",
 }
 # Answers smaller than this go out uncompressed: gzip would not pay for itself.
 GZIP_MIN_BYTES = 1024
@@ -77,66 +106,6 @@ GZIP_MIN_BYTES = 1024
 WARM_POLL_SECONDS = 1.0
 # How many recently asked queries the warmer answers again for a new generation.
 WARM_QUERIES = 32
-
-# The relay's own refusal codes and their statuses (ADR 0060). Door's codes
-# (ADR 0058) pass through unchanged with the statuses in DOOR_STATUSES.
-RELAY_CODES: dict[str, HTTPStatus] = {
-    "request_malformed": HTTPStatus.BAD_REQUEST,
-    "forbidden_identity": HTTPStatus.FORBIDDEN,
-    "forbidden_origin": HTTPStatus.FORBIDDEN,
-    "agent_mismatch": HTTPStatus.FORBIDDEN,
-    "commits_disabled": HTTPStatus.FORBIDDEN,
-    "not_found": HTTPStatus.NOT_FOUND,
-    "method_not_allowed": HTTPStatus.METHOD_NOT_ALLOWED,
-    "length_required": HTTPStatus.LENGTH_REQUIRED,
-    "body_too_large": HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
-    "unsupported_media_type": HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
-    "content_not_relayed": HTTPStatus.UNPROCESSABLE_ENTITY,
-    "query_invalid": HTTPStatus.BAD_REQUEST,
-    "query_refused": HTTPStatus.BAD_REQUEST,
-    "query_too_many_rows": HTTPStatus.UNPROCESSABLE_ENTITY,
-    "projection_not_served": HTTPStatus.NOT_FOUND,
-    "query_timeout": HTTPStatus.GATEWAY_TIMEOUT,
-    "world_unavailable": HTTPStatus.SERVICE_UNAVAILABLE,
-    "door_unreachable": HTTPStatus.SERVICE_UNAVAILABLE,
-    "door_failed": HTTPStatus.BAD_GATEWAY,
-    "internal_error": HTTPStatus.INTERNAL_SERVER_ERROR,
-    "media_forbidden": HTTPStatus.FORBIDDEN,
-    "media_unknown_digest": HTTPStatus.NOT_FOUND,
-    "media_not_derived": HTTPStatus.NOT_FOUND,
-    "range_not_satisfiable": HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE,
-}
-DOOR_STATUSES: dict[str, HTTPStatus] = {
-    "request_malformed": HTTPStatus.BAD_GATEWAY,
-    "proposal_malformed": HTTPStatus.UNPROCESSABLE_ENTITY,
-    "proposal_refused": HTTPStatus.UNPROCESSABLE_ENTITY,
-    "expected_head_stale": HTTPStatus.CONFLICT,
-    "archive_unreadable": HTTPStatus.SERVICE_UNAVAILABLE,
-    "integrity_failure": HTTPStatus.INTERNAL_SERVER_ERROR,
-    "configuration_failure": HTTPStatus.INTERNAL_SERVER_ERROR,
-    "io_failure": HTTPStatus.INTERNAL_SERVER_ERROR,
-    "subprocess_failure": HTTPStatus.INTERNAL_SERVER_ERROR,
-    "operation_failed": HTTPStatus.INTERNAL_SERVER_ERROR,
-    "outcome_uncertain": HTTPStatus.SERVICE_UNAVAILABLE,
-    "internal_error": HTTPStatus.INTERNAL_SERVER_ERROR,
-}
-
-
-class Refused(Exception):
-    """A request the relay will not answer with success: a code, its HTTP
-    status, and a message. ``extra`` carries Door's other refusal fields,
-    and ``headers`` any header the refusal must carry."""
-
-    def __init__(self, code: str, message: str, status: HTTPStatus | None = None,
-                 extra: dict[str, Any] | None = None, headers: dict[str, str] | None = None):
-        super().__init__(message)
-        self.code = code
-        self.status = status or RELAY_CODES[code]
-        self.extra = extra or {}
-        self.headers = headers or {}
-
-    def error(self) -> dict[str, Any]:
-        return {"code": self.code, "message": str(self), **self.extra}
 
 
 @dataclass(frozen=True)
@@ -158,6 +127,17 @@ class Config:
     cache_bytes: int = 64 * 1024 * 1024
     # The derived-media root (ADR 0069); None leaves the media routes refusing.
     media_root: Path | None = None
+    # The circle of bandmates (ADR 0088), as configured; None serves only the operator.
+    circle: dict[str, Any] | None = None
+    # Practice audio and exports (ADR 0089): the feature bank, the features
+    # served, and the renderers and exporters installed on this host.
+    bank_root: Path | None = None
+    bank_parameters: dict[str, Any] | None = None
+    practice_features: tuple[str, ...] = ()
+    renderers: dict[str, Any] = field(default_factory=dict)
+    exporters: dict[str, Any] = field(default_factory=dict)
+    render_timeout_seconds: float = 3600.0
+    export_timeout_seconds: float = 120.0
 
 
 def load_config(path: Path) -> Config:
@@ -185,8 +165,19 @@ def load_config(path: Path) -> Config:
     for field in ("archive_root", "door_socket", "world_store", "staging"):
         if not isinstance(data.get(field), str):
             raise ValueError(f"{field} must be a path")
-    if "media_root" in data and not isinstance(data["media_root"], str):
-        raise ValueError("media_root must be a path")
+    for optional in ("media_root", "bank_root"):
+        if optional in data and not isinstance(data[optional], str):
+            raise ValueError(f"{optional} must be a path")
+    access.check_config(callers, data.get("circle"))
+    features = data.get("practice_features", [])
+    if not isinstance(features, list) or not all(isinstance(name, str) for name in features):
+        raise ValueError("practice_features must list feature names, <extractor>/<output>")
+    if "bank_parameters" in data and not isinstance(data["bank_parameters"], dict):
+        raise ValueError("bank_parameters must map extractors to their parameters")
+    practice.Features(Path(data["bank_root"]) if "bank_root" in data else None, tuple(features),
+                      data.get("bank_parameters"))
+    renderers = practice.check_renderers(data.get("renderers"), "renderers")
+    exporters = practice.check_renderers(data.get("exporters"), "exporters")
     return Config(
         host=listen["host"],
         port=int(listen["port"]),
@@ -204,7 +195,22 @@ def load_config(path: Path) -> Config:
         query_workers=_count(data, "query_workers", 3, minimum=1),
         cache_bytes=_count(data, "cache_bytes", 64 * 1024 * 1024, minimum=0),
         media_root=Path(data["media_root"]) if "media_root" in data else None,
+        circle=data.get("circle"),
+        bank_root=Path(data["bank_root"]) if "bank_root" in data else None,
+        bank_parameters=data.get("bank_parameters"),
+        practice_features=tuple(features),
+        renderers=renderers,
+        exporters=exporters,
+        render_timeout_seconds=_seconds(data, "render_timeout_seconds", 3600.0),
+        export_timeout_seconds=_seconds(data, "export_timeout_seconds", 120.0),
     )
+
+
+def _seconds(data: dict[str, Any], field_name: str, default: float) -> float:
+    value = data.get(field_name, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        raise ValueError(f"{field_name} must be a positive number of seconds")
+    return float(value)
 
 
 def _count(data: dict[str, Any], field: str, default: int, minimum: int) -> int:
@@ -236,8 +242,11 @@ def read_archive_manifest(archive_root: Path) -> tuple[str, str]:
     return archive_id, spec
 
 
-def check_proposal(kind: str, body: Any, agent: str) -> tuple[dict[str, Any], list[tuple[str, Any]]]:
-    """Return the manifest and the drafts in manifest order, or refuse."""
+def check_proposal(kind: str, body: Any, agent: str, member: bool = False) -> tuple[dict[str, Any], list[tuple[str, Any]]]:
+    """Return the manifest and the drafts in manifest order, or refuse. An
+    admission listing content is checked by the relay afterwards: only
+    documents it staged pass (ADR 0085). A member's drafts are checked by the
+    circle's rules instead of here (ADR 0088)."""
     if not isinstance(body, dict) or set(body) != {"manifest", "records"}:
         raise Refused("request_malformed", "a proposal must be exactly {manifest, records}")
     manifest, records = body["manifest"], body["records"]
@@ -253,12 +262,11 @@ def check_proposal(kind: str, body: Any, agent: str) -> tuple[dict[str, Any], li
             raise Refused("request_malformed", f"draft path is not records/<name>.json: {name!r}")
     if len(set(order)) != len(order) or set(order) != set(records):
         raise Refused("request_malformed", "records must hold exactly the drafts manifest.records names")
-    if kind == "admit" and manifest.get("contents") != []:
-        raise Refused("content_not_relayed",
-                      "the relay admits no content; content admission stays with operator tools (ADR 0056)")
+    if kind == "admit" and not isinstance(manifest.get("contents"), list):
+        raise Refused("request_malformed", "an admission's manifest.contents must be a list")
     drafts = [(name, records[name]) for name in order]
     for name, draft in drafts:
-        if not isinstance(draft, dict) or draft.get("agent") != agent:
+        if not isinstance(draft, dict) or (not member and draft.get("agent") != agent):
             raise Refused("agent_mismatch", f"{name} must name the caller's agent {agent} (ADR 0056)")
     return manifest, drafts
 
@@ -323,15 +331,21 @@ def _query_worker(store_root: str, max_rows: int, requests: Any) -> None:
     """Answer queries against the selected generation of each projection
     version, reopening one when its pointer moves."""
     opened: dict[int, tuple[str, Any]] = {}
+    held: dict[str, list[dict[str, Any]]] = {}
     store = Path(store_root)
     while True:
-        sparql, version, rdf_format = requests.recv()
+        message = requests.recv()
         try:
+            version = message[1]
             pointer = store / f"CURRENT-p{version}"
             selected = (pointer if pointer.exists() else store / "CURRENT").read_text(encoding="ascii").strip()
             if version not in opened or opened[version][0] != selected:
                 opened[version] = (selected, world._read_current(store, version))
             projection = opened[version][1]
+            if message[0] == VIEW:
+                requests.send(_view_answer(projection, selected, held, *message[2:]))
+                continue
+            sparql, version, rdf_format = message
             answer = world.query(projection, sparql, max_rows, rdf_format)
             # Encoded here, in parallel with the other workers, and sent as
             # bytes, which cross the pipe far faster than the parsed value.
@@ -345,11 +359,38 @@ def _query_worker(store_root: str, max_rows: int, requests: Any) -> None:
             requests.send(("query_too_many_rows", str(exc)))
         except SyntaxError as exc:
             requests.send(("query_invalid", str(exc)))
-        except (world.ProjectionError, OSError) as exc:
+        except (world.ProjectionError, OSError, view_records.RecordsUnreadable) as exc:
             requests.send(("world_unavailable", str(exc)))
         except ValueError as exc:
             # The engine reports evaluation errors, such as a bad IRI, this way.
             requests.send(("query_invalid", str(exc)))
+
+
+VIEW = "\0view"
+
+
+def _view_answer(projection: Any, selected: str, held: dict[str, list[dict[str, Any]]], request: Any,
+                 caller: str, readable: list[str] | None) -> tuple:
+    """One named view (ADR 0082) from the generation's records, given only
+    what the caller may read; the answer says how many were withheld."""
+    if selected not in held:
+        held.clear()
+        held[selected] = view_records.records(projection)
+    records = held[selected]
+    if readable is None:
+        given = records
+    else:
+        allowed = set(readable)
+        given = [record for record in records if record["revision_id"] in allowed]
+    try:
+        result = view_rules.run_view(request, given, caller=caller, withheld=len(records) - len(given))
+    except view_rules.ViewError as exc:
+        return exc.code, str(exc)
+    except Exception as exc:  # noqa: BLE001 - a rule's failure is answered, and the worker goes on
+        return "internal_error", f"the view failed: {type(exc).__name__}: {exc}"
+    answer = {"snapshot": projection.snapshot, "projection": projection.version, **result}
+    data = json.dumps(answer, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return "ok", selected, projection.snapshot, "application/json", data
 
 
 class QueryWorker:
@@ -375,17 +416,20 @@ class QueryWorker:
         self.process = self.connection = None
 
     def query(self, sparql: str, version: int, rdf_format: str) -> tuple[str, str, Any]:
+        return self.ask((sparql, version, rdf_format), "query")
+
+    def ask(self, message: tuple, what: str) -> tuple[str, str, Any]:
         if self.process is None or not self.process.is_alive():
             self._start()
-        self.connection.send((sparql, version, rdf_format))
+        self.connection.send(message)
         if not self.connection.poll(self.timeout):
             self.stop()
-            raise Refused("query_timeout", f"the query ran longer than {self.timeout:g} seconds")
+            raise Refused("query_timeout", f"the {what} ran longer than {self.timeout:g} seconds")
         try:
             answer = self.connection.recv()
         except EOFError as exc:
             self.stop()
-            raise Refused("internal_error", "the query worker stopped") from exc
+            raise Refused("internal_error", f"the {what} worker stopped") from exc
         if answer[0] != "ok":
             raise Refused(answer[0], answer[1])
         return answer[1:]
@@ -410,6 +454,14 @@ class QueryPool:
         worker = self.idle.get()
         try:
             return worker.query(sparql, version, rdf_format)
+        finally:
+            self.idle.put(worker)
+
+    def view(self, version: int, request: Any, caller: str, readable: list[str] | None) -> tuple[str, str, str, bytes]:
+        """(generation, snapshot, media type, encoded answer) for one view."""
+        worker = self.idle.get()
+        try:
+            return worker.ask((VIEW, version, request, caller, readable), "view")
         finally:
             self.idle.put(worker)
 
@@ -638,11 +690,14 @@ def copy_range(source: Any, start: int, length: int, destination: Any) -> bool:
     return True
 
 
-class Relay:
+class Relay(Served):
     def __init__(self, config: Config):
         private_directory(config.staging)
         self.config = config
         self.archive_id, _ = read_archive_manifest(config.archive_root)
+        # The operator is the one caller who is not a member (ADR 0088).
+        self.operator, self.circle = access.check_config(config.callers, config.circle)
+        self.setup_served()
         self.queries = QueryPool(config.world_store, config.max_rows, config.query_timeout_seconds,
                                  config.query_workers)
         self.cache = AnswerCache(config.cache_bytes)
@@ -662,16 +717,23 @@ class Relay:
         self.warm_now.set()
         self.warmer.join(timeout=30)
         self.queries.stop()
+        self.renderer.stop()
 
-    def archive(self) -> dict[str, Any]:
-        """What every authorized answer says about the archive and World. The
+    def archive(self, caller: Caller) -> dict[str, Any]:
+        """What every authorized answer says about the archive, World, the
+        relay's writes, and who is calling as what (ADR 0088). The
         specification is read again for each answer, so an upgrade committed
         while the relay runs is reported from the next answer on."""
         archive_id, spec = read_archive_manifest(self.config.archive_root)
         if archive_id != self.archive_id:
             raise ValueError(f"{self.config.archive_root / 'archive.json'} names another archive")
-        return {"archive_id": self.archive_id, "spec": spec, "role": self.config.role,
-                "projections": world.served_projections(self.config.world_store)}
+        block = {"archive_id": self.archive_id, "spec": spec, "role": self.config.role,
+                 "projections": world.served_projections(self.config.world_store), "writes": self.config.writes,
+                 "caller": {"agent": caller.agent, "capacity": caller.capacity}}
+        if self.circle is not None:
+            block["circle"] = {"destination": self.circle.destination,
+                               **({"band": self.circle.band} if self.circle.band else {})}
+        return block
 
     def health(self) -> tuple[HTTPStatus, dict[str, Any]]:
         door = "reachable"
@@ -751,7 +813,8 @@ class Relay:
             if generation is None or previous in (None, generation):
                 continue
             for key in self.cache.recent(WARM_QUERIES):
-                if key[0] == version and key[1] == previous and not self.stopping.is_set():
+                # Queries only: a view's answer depends on its caller.
+                if key[0] == version and key[1] == previous and isinstance(key[2], str) and not self.stopping.is_set():
                     try:
                         self.answer(key[3], version, key[2])
                         warmed += 1
@@ -772,34 +835,23 @@ class Relay:
         self.media = index
         return index
 
-    def media_file(self, kind: str, digest: str, agent: str) -> Path:
-        """Where the derivative a caller may have is, or the refusal."""
-        if not derived.is_digest(digest):
-            raise Refused("request_malformed", "a media route names a content digest, sha256:<64 lowercase hex>")
-        if self.config.media_root is None:
-            raise Refused("media_not_derived", "this relay has no derived-media root configured")
-        index = self.media_index()
-        operator = index.operator()
-        if operator is None:
-            raise Refused("media_forbidden", "World names no single active operator, so media are served to no one")
-        if agent != operator:
-            raise Refused("media_forbidden", "media are served only to the active operator's person (ADR 0069)")
-        if not index.serves(digest):
-            raise Refused("media_unknown_digest", "no Artifact in World's selected generation has this content")
-        return derived.path(self.config.media_root, digest, kind)
-
-    def door(self, path: str, body: Any, agent: str) -> dict[str, Any]:
+    def door(self, path: str, body: Any, caller: Caller) -> dict[str, Any]:
         with self.writes:
-            answer = self._door(path, body, agent)
+            answer = self._door(path, body, caller)
         if "world" in answer:
             self.warm_now.set()
         return answer
 
-    def _door(self, path: str, body: Any, agent: str) -> dict[str, Any]:
+    def _door(self, path: str, body: Any, caller: Caller) -> dict[str, Any]:
         kind, dry_run = DOOR_ROUTES[path]
         if not dry_run and self.config.writes != "commit":
             raise Refused("commits_disabled", "commits are off: the relay runs in dry-run mode (ADR 0056)")
-        manifest, drafts = check_proposal(kind, body, agent)
+        member = caller.capacity == "member"
+        manifest, drafts = check_proposal(kind, body, caller.agent, member)
+        if kind == "admit" and manifest["contents"]:
+            self.check_contents(manifest, drafts, caller)
+        if member:
+            self.access().check_drafts(drafts, caller)
         try:
             directory = stage_proposal(self.config.staging, manifest, drafts)
         except OSError as exc:
@@ -878,31 +930,59 @@ def make_handler(relay: Relay) -> type[BaseHTTPRequestHandler]:
                 self.wfile.write(body)
 
         def _answer(self, method: str) -> None:
-            authorized = False
-            route, digest = route_of(self.path)
+            authorized = None
+            route, named = route_of(self.path)
             try:
-                agent = self._agent()
-                authorized = True
+                caller = relay.caller(self._agent())
+                authorized = caller
                 expected = ROUTES.get(route)
                 if expected is None:
                     raise Refused("not_found", "no such route")
                 if expected != method:
                     raise Refused("method_not_allowed", f"{route} answers {expected} only")
+                if caller.capacity != "operator" and route in access.OPERATOR_ROUTES:
+                    raise Refused("operator_only", f"{route} answers the operator only (ADR 0088)")
+                status, result = HTTPStatus.OK, None
                 if route == "/health":
                     status, result = relay.health()
                 elif route == "/world/query":
-                    self._send_answer(*relay.query(self._body()))
+                    self._send_answer(*relay.query(self._body()), caller)
                     return
+                elif route == "/world/view":
+                    self._send_answer(*relay.view(self._body(), caller), caller)
+                    return
+                elif route == "/world/views":
+                    result = {"views": view_rules.catalogue()}
                 elif route in MEDIA_ROUTES:
-                    self._send_media(MEDIA_ROUTES[route], digest, agent)
+                    self._send_file(relay.media_file(MEDIA_ROUTES[route], named["digest"], caller))
+                    return
+                elif route == "/media/{digest}/bank":
+                    result = relay.bank_listing(named["digest"], caller)
+                elif route == "/media/{digest}/bank/{extractor}/{output}":
+                    self._send_file(relay.bank_file(named["digest"], named["extractor"], named["output"], caller))
+                    return
+                elif route == "/media/{digest}/practice":
+                    result = relay.practice(named["digest"], self._body(), caller)
+                elif route == "/media/{digest}/practice/{key}":
+                    self._send_file(relay.practice_file(named["digest"], named["key"], caller))
+                    return
+                elif route == "/documents/stage":
+                    result = relay.stage_document(self._body(MAX_STAGE_BODY), caller)
+                elif route == "/documents/{digest}":
+                    self._send_file(relay.document_file(named["digest"], caller))
+                    return
+                elif route == "/exports":
+                    result = relay.export(self._body(), caller)
+                elif route == "/exports/{key}":
+                    self._send_file(relay.export_file(named["key"], caller))
                     return
                 else:
-                    status, result = HTTPStatus.OK, relay.door(route, self._body(), agent)
-                self._send(status, {"ok": status == HTTPStatus.OK, "archive": relay.archive(), "result": result})
+                    result = relay.door(route, self._body(), caller)
+                self._send(status, {"ok": status == HTTPStatus.OK, "archive": relay.archive(caller), "result": result})
             except Refused as refused:
                 answer: dict[str, Any] = {"ok": False, "error": refused.error()}
-                if authorized:
-                    answer["archive"] = relay.archive()
+                if authorized is not None:
+                    answer["archive"] = relay.archive(authorized)
                 allow = ROUTES.get(route) if refused.code == "method_not_allowed" else None
                 self._send(refused.status, answer, allow, headers=refused.headers)
             except Exception as exc:  # noqa: BLE001 - every request gets an answer
@@ -910,23 +990,22 @@ def make_handler(relay: Relay) -> type[BaseHTTPRequestHandler]:
                 self._send(HTTPStatus.INTERNAL_SERVER_ERROR,
                            {"ok": False, "error": {"code": "internal_error", "message": "the relay failed unexpectedly"}})
 
-        def _send_media(self, kind: str, digest: str, agent: str) -> None:
-            """A derivative's bytes, all of them or the one range asked for.
-            Only a regular file at the layout path is served, never a link
-            that could lead to an original."""
-            path = relay.media_file(kind, digest, agent)
+        def _send_file(self, found: FileAnswer) -> None:
+            """A file's bytes, all of them or the one range asked for. Only a
+            regular file at the path is served, never through a link that
+            could lead to an original."""
             try:
-                descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+                descriptor = os.open(found.path, os.O_RDONLY | os.O_NOFOLLOW)
             except FileNotFoundError as exc:
-                raise Refused("media_not_derived", f"no {kind} has been made for this content yet") from exc
+                raise Refused("media_not_derived", found.missing) from exc
             except OSError as exc:
                 raise Refused("internal_error", f"the derived-media root could not be read: {exc.strerror}") from exc
-            found = os.fstat(descriptor)
-            if not stat.S_ISREG(found.st_mode):
+            status = os.fstat(descriptor)
+            if not stat.S_ISREG(status.st_mode):
                 os.close(descriptor)
                 raise Refused("internal_error", "a derived-media path is not a regular file")
             with os.fdopen(descriptor, "rb") as source:
-                size, tag = found.st_size, derived.etag(digest, kind)
+                size, tag = status.st_size, found.etag
                 # A range of another version of the file would splice two files.
                 if_range = self.headers.get("If-Range")
                 wanted = byte_range(self.headers.get("Range"), size) if if_range in (None, tag) else None
@@ -941,7 +1020,7 @@ def make_handler(relay: Relay) -> type[BaseHTTPRequestHandler]:
                 # reused for a listed origin's request, which needs the
                 # CORS headers.
                 self.send_header("Vary", "Origin")
-                self.send_header("Content-Type", derived.KINDS[kind].media_type)
+                self.send_header("Content-Type", found.media_type)
                 self.send_header("Content-Length", str(last - first + 1))
                 if wanted is not None:
                     self.send_header("Content-Range", f"bytes {first}-{last}/{size}")
@@ -958,10 +1037,10 @@ def make_handler(relay: Relay) -> type[BaseHTTPRequestHandler]:
                 if not finished:
                     self.close_connection = True
 
-        def _send_answer(self, key: tuple, entry: dict[str, Any]) -> None:
-            """A query answer from its cached ``result`` bytes, with the
+        def _send_answer(self, key: tuple, entry: dict[str, Any], caller: Caller) -> None:
+            """A query or view answer from its cached ``result`` bytes, with the
             archive block as of now and, when asked, the cached gzip body."""
-            archive = json.dumps(relay.archive(), ensure_ascii=False, sort_keys=True).encode("utf-8")
+            archive = json.dumps(relay.archive(caller), ensure_ascii=False, sort_keys=True).encode("utf-8")
             body = b'{"archive": ' + archive + b', "ok": true, "result": ' + entry["result"] + b"}"
             compressed = None
             if accepts_gzip(self.headers.get("Accept-Encoding")) and len(body) >= GZIP_MIN_BYTES:
@@ -972,7 +1051,7 @@ def make_handler(relay: Relay) -> type[BaseHTTPRequestHandler]:
                     relay.cache.add_gzip(key, archive, compressed)
             self._send(HTTPStatus.OK, None, body=body, compressed=compressed)
 
-        def _body(self) -> Any:
+        def _body(self, limit: int = MAX_BODY) -> Any:
             if self.headers.get_content_type() != "application/json":
                 raise Refused("unsupported_media_type", "send application/json")
             declared = self.headers.get("Content-Length")
@@ -984,8 +1063,8 @@ def make_handler(relay: Relay) -> type[BaseHTTPRequestHandler]:
                 raise Refused("request_malformed", "Content-Length must be a number of bytes") from exc
             if length < 0:
                 raise Refused("request_malformed", "Content-Length must not be negative")
-            if length > MAX_BODY:
-                raise Refused("body_too_large", f"bodies are limited to {MAX_BODY} bytes")
+            if length > limit:
+                raise Refused("body_too_large", f"bodies are limited to {limit} bytes")
             try:
                 return json.loads(self.rfile.read(length))
             except (json.JSONDecodeError, UnicodeDecodeError) as exc:

@@ -40,6 +40,136 @@ design). Its tests run alone:
 python3 -m unittest world.tests.test_contributions
 ```
 
+## Specification 0.0.10
+
+These modules hold the rules of the 0.0.10 records. Specification 0.0.10
+installs their contracts (D-18), and World re-checks each claim with its
+module before it projects it ([`contract_graphs.py`](contract_graphs.py),
+projection 6, revision 6; revision 7 adds the amendments of 2026-10-19:
+syllables and the notes that carry them, articulation, the bass line, and
+publication approval and withdrawal version 2). Each module needs only the
+standard library.
+
+| Module | Record | Holds |
+|---|---|---|
+| [`harmony.py`](harmony.py) | [ADR 0079](../docs/decisions/0079-machine-harmony-claims.md) | chord stacks and chord sequence version 2, the bank citation of a stem, `derived_from` |
+| [`tonality.py`](tonality.py) | [ADR 0080](../docs/decisions/0080-key-and-tuning.md) | key sequences, key regions, tuning, spelling by key |
+| [`judgments.py`](judgments.py) | [ADR 0081](../docs/decisions/0081-judgments-and-annotations.md) | judgment version 2, standing, span annotations |
+| [`views.py`](views.py) | [ADR 0082](../docs/decisions/0082-views-and-current.md) | the named views and the first current rule |
+| [`form.py`](form.py) | [ADR 0083](../docs/decisions/0083-form-and-work-meter.md) | form, form spans, meter layers version 2 (with ADR 0079's additions) |
+| [`lead_sheets.py`](lead_sheets.py) | [ADR 0084](../docs/decisions/0084-lead-sheets.md) | lead sheets, changes since, a render's export request |
+| [`documents.py`](documents.py) | [ADR 0085](../docs/decisions/0085-documents-lyrics-rights.md) | document sources, timed lyrics and their syllables, sensitivity, rights, reach (`Reacher`, read once per set of records), staging checks |
+| [`notes.py`](notes.py) | [ADR 0086](../docs/decisions/0086-notes-and-melody.md) | notes, melody, melody spans, articulation, the bass line, written lengths and written rhythm, instrument fields |
+| [`catalogue.py`](catalogue.py) | [ADR 0087](../docs/decisions/0087-tracklists-and-correspondence.md) | tracklists, recording audio, catalogue correspondence, credits per track |
+| [`circle.py`](circle.py) | [ADR 0088](../docs/decisions/0088-bandmates.md) | the relay's circle, the readable set, work origin, sharing consent and gate, publication approval and withdrawal version 2, the check beyond the circle, `may_publish` |
+| [`exports.py`](exports.py) | [ADR 0089](../docs/decisions/0089-practice-audio-and-exports.md) | practice requests and keys, transposition, export requests, keys and claims, MusicXML `<harmony>` |
+
+Their tests run with the rest: `python3 -m unittest discover -s world/tests`.
+
+[`contract_graphs.py`](contract_graphs.py) holds the table of which module
+re-checks which contract, with what it reads (the stream, sequence, form,
+tuning, or notes a claim pins, the agent's Entity kind, the active
+operator), and projects each checked claim into its own graph by its
+contract's context: a field is the predicate its context names, an object a
+node `<{revision}:{field}>`, an array's item `<{revision}:{item}={n}>` with
+its position as `rdf:value`, and a reference the predicate its role names.
+It lists where World departs from that reading, and why: fields the context
+leaves to the core context (`kind`, `label`, `role`, `at`, `name`) and terms
+earlier shapes already target get World's own terms; an index into a form's
+sections, a sequence's entries, a meter's bars, or a key sequence's regions
+names that node, in this claim's graph or in the pinned claim's; a rights
+statement is its concept of D-18's rights scheme, which the domain graph
+holds; and a grouping, a spelling, or open strings stay one text in order. A
+claim of a contract new in 0.0.10 is typed `arch:Claim` in its own graph;
+the versions 2 of chord stacks, chord sequence, meter layers, and judgment
+keep their versions 1's shapes. A claim a module refuses fails the
+projection, naming why; nothing is projected in part.
+
+Until Door enforces 0.0.10's profile rules the fixture archive cannot hold
+these claims, so World's tests draft them as `fixture/build.py` would
+([`tests/plan0010.py`](tests/plan0010.py), from
+[`tests/fixtures/plan-0010.json`](tests/fixtures/plan-0010.json) after the
+fixture plan) and project the drafts. Once Door admits them, the fixture
+plan holds them and the drafts can go.
+
+## Named views
+
+A named view is a question World answers by a stated rule
+([ADR 0082](../docs/decisions/0082-views-and-current.md)), computed from the
+selected generation when asked and never stored. [`views.py`](views.py) holds
+the registry, the request rules ([`view_requests.py`](view_requests.py)), and
+the chord views; [`record_views.py`](record_views.py) adds the views of
+0.0.10's other records to the same registry. Every view is version 1 but
+`written_rhythm` and `bass_line`, which are version 2 (version 1 was never
+released):
+
+| View | Subject | Answer |
+|---|---|---|
+| `chord_names` | `readings` | `names` (per reading: `form`, `resolutions` of `tones` and `names`), `spelling` |
+| `chord_corrections` | `source` | `segments` of `shown`, `corrected`, `conflict` |
+| `chord_differences` | `source` | `differences` (`kind`, `label`, both sides, `only_in_a`, `only_in_b`, basses), `not_compared` |
+| `chords_current` | `source` | `rule`, `segments` (`chosen`, `stack`, `names`, `held`, `bass_from`, or `conflict`; `why`, `others`; `spelling` with a key), `unresolved_runs` |
+| `lead_sheet_current` | `work`, optional `recording` | `by`, `chosen` or `conflict`, `others`, a band's `members` |
+| `standing` | `claim` (a pin) | `verdict`, `conflict`, `judgments`, `why` |
+| `reach` | `object` | `labelled`, `rights`, `furthest`, `why` |
+| `readable_set` | `circle` (`destination`, `members`, optional `band`) | `revisions`, `withheld`, `why`; with a `reader`, `readable` |
+| `lead_sheet_changes` | `lead_sheet` (a pin) | `changes` (`role`, `pinned`, `kind`, `by`, `verdict`) |
+| `played_sections` | `form` (a pin) | `played` (`section`, `label`, `kind`) |
+| `played_bars` | `meter` (a pin) | `form`, `played` (`bar`, `section`, `numerator`, `denominator`) |
+| `tune` | `melody_spans` (a pin) | `notes` (each with `from`), `handoffs`, `left_out` (a machine's spans on the bass line) |
+| `track_credits` | `recording` (an Entity) | `credits` (`claim`, `scope`, `via`, `why`, `refined_by`) |
+| `written_rhythm` | `notes` or `melody_spans` (a pin) | `rule`, `written` (chords and rests: `position`, `duration`, `bar`, `at`; a chord's `notes`, `pitches`, `sounded_share`, `articulation`; a rest's `boundary`), `feel`, `clef`, `counts`, `left_out`, or `why` |
+| `bass_line` | `source` (the recording's Artifact) | `lines`: each head notes claim saying `bass`, with `clef` and its written rhythm |
+| `may_publish` | `approval` (a pin) | `may_publish`, `blockers`, `class`, `destination`, `on` |
+
+`chord_names` and `chords_current` take `transpose` (ADR 0089) and `key`: a
+key reading for `chord_names`; for `chords_current`, `{"reading": …}` or
+`{"claim": <key regions pin>}`, whose region over each stretch spells it
+(ADR 0080 names no current key, so the reader chooses). Absent, World's
+default spelling names the chord, as before. `standing` takes `judge` (the
+caller's person by default), `at`, and `reading`; `reach` and
+`readable_set` take `on`, the date terms are read on (today by default);
+`played_bars` takes `layer` (0). `may_publish` takes `on`: a publisher asks
+it when it publishes, since rights expire and consents change (ADR 0085,
+amended); it applies `circle.beyond_circle`, the rule Door applies to an
+approval beyond the circle on the day it is made. `written_rhythm` and
+`bass_line` take `meter` (a timed meter claim's pin; without one nothing is
+written and `why` says so) and `layer` (0); `written_rhythm` also takes
+`lyrics`, up to 8 timed lyrics pins whose line ends and words mark phrase
+boundaries. Its rule (ADR 0086, amended) is named by its version
+(`notes.RHYTHM_RULES`, every parameter a named exact decimal repeated in
+`rule`): a constant onset offset is removed and swung eighths are written
+straight; each phrase's onsets are placed by timing error plus notation
+cost; each note fills to the next onset; a rest is written only at a
+`line_end` or `breath`; `staccato` only for a clearly detached short note
+and `tenuto` on a held phrase end; every syllable of the named lyrics lands
+on a note (a held note split, or a note added at the previous pitch, `from`
+says so), and a syllable whose `carried_by` names notes being written is
+put on them whatever the timing says; octave errors are folded (`folded`,
+`counts.octave_folded`); and a clef is suggested (`clef`, `clef_basis`; the
+bass line's is always `bass`). Folding and filling syllables are the rule's
+`switches`, `fold_octaves` and `fill_syllables`, which both views take as
+true or false: by default on for a vocal line and off for a bass line (a
+notes claim saying `bass`), repeated in `rule.switches`; they only ever
+change a machine's notes, never those of a claim a person asserted or one
+read from a document. The answer adds `feel`, `offbeat_position`,
+`onset_offset_samples`, and `counts`.
+
+```sh
+world/world.py view --list
+world/world.py view --store /path/to/world-store --request-file request.json [--caller <person>]
+```
+
+answers `{"status": "ok", "result": {snapshot, projection, view, version,
+subject, parameters, answer, withheld}}`, with every default filled in
+`parameters`. A refused request exits 4 with `{"status": "refused", "code",
+"detail"}`, the code the relay answers (`view_unknown`, `view_not_served`,
+`view_request_invalid`, `view_subject_not_found`).
+[`view_records.py`](view_records.py) reads the records a view takes back
+from the records graph, exactly as committed, and narrows them to a
+caller's readable set when the relay gives one, stating how many it
+withheld.
+
 ## Install
 
 Use a virtual environment and the dependency pinned to the initial Oxigraph
@@ -214,7 +344,13 @@ meter claim's layers hold bars or beat samples; a link's
 projected. A contribution qualifies its subject with a `prov:Attribution`
 whose `prov:hadRole` is a concept of the specification's role scheme, and a
 band membership is an `org:Membership`. Chord names are views and are not
-projected. World does not answer `current` yet.
+projected. World answers no generic `current`; a named current rule is
+asked for with `world view` (below).
+
+Specification 0.0.10's claims (revisions 6 and 7) are re-checked by their modules
+and projected by `contract_graphs.py`, as the section above says; the
+shapes of [`projection/6/`](projection/6/projection.json) declare each
+field, and the domain graph holds D-18's rights scheme.
 
 ## What World emits
 

@@ -26,7 +26,9 @@ import Archive.Door.AdmissionDryRun
   , validateProposalContracts
   )
 import Archive.Door.Canonical (canonicalizeDraftStrict)
-import Archive.Door.Contracts (ContractBundle)
+import Archive.Door.BeyondCircle (validateBeyondCircle)
+import Archive.Door.Contracts (ContractBundle (..))
+import Archive.Door.Reach (Held (..))
 import Archive.Door.Json (decodeUnique)
 import Archive.Door.Layout
   ( archiveManifestBytes
@@ -89,6 +91,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
+import Data.Time (Day, getCurrentTime, utctDay)
 
 data TransitionPlan = TransitionPlan
   { plannedTransitionSnapshot :: Text
@@ -148,6 +151,8 @@ transitionDispatchTable =
   , (("archive.transition/destroy", "2"), Destroy)
   , (("archive.transition/publication_approval", "1"), PublicationApproval)
   , (("archive.transition/publication_withdrawal", "1"), PublicationWithdrawal)
+  , (("archive.transition/publication_approval", "2"), PublicationApproval)
+  , (("archive.transition/publication_withdrawal", "2"), PublicationWithdrawal)
   , ((upgradeContractId, upgradeContractVersion), SpecificationUpgrade)
   ]
 
@@ -223,6 +228,8 @@ dryRunTransitionVerified
   -> IO (Either TransitionPlanningError (TransitionPlan, SnapshotData))
 dryRunTransitionVerified root proposal = do
   snapshotResult <- Git.resolveSnapshot root
+  -- The day the archive's own limits are read on (S-30): today, in UTC.
+  today <- utctDay <$> getCurrentTime
   case snapshotResult of
     Left problem -> pure (Left (TransitionSnapshotFailure problem))
     Right gitSnapshot -> do
@@ -242,7 +249,7 @@ dryRunTransitionVerified root proposal = do
               case contracts of
                 Left problem -> pure (Left (TransitionProposalRejected problem))
                 Right () -> do
-                  let result = planTransition planning proposal
+                  let result = planTransition today planning proposal
                   case result of
                     Left (PlanRefused problem) -> pure (Left (TransitionProposalRejected problem))
                     Left (PlanStale problem) -> pure (Left (TransitionProposalStale problem))
@@ -385,8 +392,8 @@ transitionSnapshotError problem = case problem of
   AdmissionSnapshotGitError issue -> TransitionSnapshotFailure issue
   AdmissionSnapshotIntegrityError message -> TransitionSnapshotIntegrityFailure message
 
-planTransition :: SnapshotData -> Proposal -> Either PlanRefusal TransitionPlan
-planTransition snapshot proposal = do
+planTransition :: Day -> SnapshotData -> Proposal -> Either PlanRefusal TransitionPlan
+planTransition today snapshot proposal = do
   refuse $ if proposalKind proposal /= TransitionProposal
     then Left "transition planning requires a transition proposal"
     else pure ()
@@ -409,6 +416,7 @@ planTransition snapshot proposal = do
   finalState <- refuse $ if retry
     then pure (TransitionState (factRetired facts) (factDestroyed facts))
     else validateTransitions facts keys prepared
+  refuse (if retry then pure () else mapM_ (validatePublicationReach today snapshot facts) prepared)
   pure TransitionPlan
     { plannedTransitionSnapshot = ""
     , plannedGitExecutableIdentity = ""
@@ -420,6 +428,21 @@ planTransition snapshot proposal = do
     , resultingDestroyedDigests = destroyedDigests finalState
     , plannedSpecificationFiles = []
     }
+
+-- | A publication approval beyond the circle must pass the archive's own
+-- sensitivity, rights, and consent on the day it is made (S-30). Only a
+-- new transition is checked: a committed one stands as it was approved.
+validatePublicationReach :: Day -> SnapshotData -> SnapshotFacts -> Prepared -> Either Text ()
+validatePublicationReach today snapshot facts item =
+  validateBeyondCircle today (factActiveOperator facts) held draft schemas
+  where
+    draft = preparedDraft item
+    held = [ Held (entryObject entry) (entryRevision entry) (storedAt (entryEnvelope entry)) (storedDraft (entryEnvelope entry))
+           | entry <- Map.elems (factByRevision facts) ]
+    schemas = [ contractBundleSchema bundle
+              | citation <- envelopeContracts draft
+              , Just bundle <- [Map.lookup (contractId citation, contractVersion citation, contractDigest citation)
+                                  (snapshotInstalled snapshot)] ]
 
 prepare :: ProposalRecord -> Either Text Prepared
 prepare record = do
@@ -893,7 +916,7 @@ validateOne facts state (key, item) = do
     PublicationWithdrawal -> do
       reference <- oneReference "withdraws" (envelopeReferences draft)
       approval <- resolveReference facts reference
-      if citesContract "archive.transition/publication_approval" "1" (storedDraft (entryEnvelope approval))
+      if any (\version -> citesContract "archive.transition/publication_approval" version (storedDraft (entryEnvelope approval))) ["1", "2"]
         then pure ()
         else Left "withdraws reference must target a publication approval"
       revision <- maybe (Left "withdraws must pin an exact revision") (Right . revisionText)
@@ -944,14 +967,15 @@ citesContract identifier version draft =
   any (\citation -> contractId citation == identifier && contractVersion citation == version)
     (envelopeContracts draft)
 
--- | Approval revisions named by a committed withdrawal.  During replay the
--- facts hold only earlier records, so this is the then-current set.
+-- | Approval revisions named by a committed withdrawal of either version,
+-- so no approval is withdrawn twice across them.  During replay the facts
+-- hold only earlier records, so this is the then-current set.
 withdrawnApprovals :: SnapshotFacts -> [Text]
 withdrawnApprovals facts =
   [ revisionText revision
   | entry <- Map.elems (factByRevision facts)
   , let draft = storedDraft (entryEnvelope entry)
-  , citesContract "archive.transition/publication_withdrawal" "1" draft
+  , any (\version -> citesContract "archive.transition/publication_withdrawal" version draft) ["1", "2"]
   , reference <- envelopeReferences draft
   , referenceRole reference == "withdraws"
   , Just revision <- [referenceRevision reference]

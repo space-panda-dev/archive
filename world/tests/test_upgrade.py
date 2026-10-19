@@ -30,7 +30,7 @@ from world.world import PROJECTION_VERSION, build_projection, nquads, refresh_st
 from test_conformance import integration_binaries, remove_tree
 
 ROOT = Path(__file__).resolve().parents[2]
-PREVIOUS, CURRENT = "0.0.8", "0.0.9"
+PREVIOUS, CURRENT = "0.0.9", "0.0.10"
 UPGRADE = "archive.transition/specification_upgrade"
 BY = "pkg:generic/archive-world-upgrade-test@0"
 

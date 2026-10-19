@@ -1,8 +1,8 @@
 {
  "contract": "archive-extractor/1",
  "id": "tonal",
- "version": "5",
- "description": "Reference tuning and its drift (a histogram of spectral peaks' distance from the tempered grid, with mains hum left out), pitch-class profiles of the treble and the bass referenced to that tuning, the key as a note collection with its tonic and mode where the tonic leads, and sensory dissonance, by Essentia and NumPy. Decodes twice more and repeats frames' spectral peak picking, which the bank does not hold: about 1.5 times frames' time (ADR 0074). Version 3 replaced TuningFrequency, added the profiles, mode, and key regions, and moved chords to the chords extractor; version 4 leaves mains hum out of the pitch gate, the tuning, and the profiles, names a tonic only where it leads by a margin, lays the key regions out by note collection, and counts the tuning's windows; version 5 reports a recording's tuning only from enough of its windows, and chooses the tonic among the collection's notes by their share of the bass, favouring its major or minor tonic, with a calibrated confidence.",
+ "version": "6",
+ "description": "Reference tuning and its drift (a histogram of spectral peaks' distance from the tempered grid, with mains hum left out), pitch-class profiles of the treble and the bass referenced to that tuning, the key as a note collection (its likeliest tonic and mode a guess, never named), and sensory dissonance, by Essentia and NumPy. Decodes twice more and repeats frames' spectral peak picking, which the bank does not hold: about 1.5 times frames' time (ADR 0074). Version 3 replaced TuningFrequency, added the profiles, mode, and key regions, and moved chords to the chords extractor; version 4 leaves mains hum out of the pitch gate, the tuning, and the profiles, names a tonic only where it leads by a margin, lays the key regions out by note collection, and counts the tuning's windows; version 5 reports a recording's tuning only from enough of its windows, and chooses the tonic among the collection's notes by their share of the bass, favouring its major or minor tonic, with a calibrated confidence; version 6 names no tonic: every span is labelled and valued by its note collection, and tonic_named is false everywhere.",
  "command": [
   "${python}",
   "tonal.py"
@@ -138,7 +138,7 @@
     ],
     "favour": "0.08",
     "temperature": "0.07",
-    "min_confidence": "0.5"
+    "named": "never"
    },
    "window_frames": 324,
    "hop_frames": 162,
@@ -256,17 +256,17 @@
   "tonic_named": {
    "kind": "scalar",
    "unit": "1",
-   "description": "true when tonic_confidence is at least 0.5: below it key, mode, and scale are the best guess among the collection's modes, and only collection and scale_notes' notes are reliable"
+   "description": "false everywhere since version 6 (version 5: true when tonic_confidence was at least 0.5): key, mode, and scale are the best guess among the collection's modes, and only collection and scale_notes' notes are to be read"
   },
   "keys": {
    "kind": "spans",
    "unit": "s",
-   "description": "windows of about 30 s every 15 s that are at least half pitched; label: tonic and mode (F dorian) where the tonic's confidence is at least 0.5, else the note collection (Eb major scale); value: the tonic's confidence"
+   "description": "windows of about 30 s every 15 s that are at least half pitched; label: the note collection (Eb major scale); value: its collection_margin"
   },
   "key_regions": {
    "kind": "spans",
    "unit": "s",
-   "description": "the timeline of note collections: the keys windows' collections on a path that pays 0.1 for each change, laid end to end (each keeping the stretch nearer its centre than its neighbours'), runs of one collection merged; label: the region's own tonic and mode, chosen among that collection's notes from its frames, where its confidence is at least 0.5, else the collection; value: the tonic's confidence"
+   "description": "the timeline of note collections: the keys windows' collections on a path that pays 0.1 for each change, laid end to end (each keeping the stretch nearer its centre than its neighbours'), runs of one collection merged; label: the collection; value: how far the collection's best correlation over the region's own frames leads the best reading on other notes (negative where another collection fits them better)"
   },
   "chroma": {
    "kind": "series",

@@ -51,6 +51,16 @@ def object_id(archive_id: str, namespace: str, name: str) -> str:
     return "urn:uuid:" + str(uuid.uuid5(uuid.UUID(archive_id.removeprefix("urn:uuid:")), namespace + "\0" + name))
 
 
+def export_key(payload: dict[str, Any], refs: list[dict[str, Any]]) -> str:
+    """An export's key (D-18): the SHA-256 of the canonical JSON of its
+    format, exporter, options, and rendered and joined revisions in order."""
+    def pins(role: str) -> list[list[str]]:
+        return [[ref["id"], ref["revision_id"]] for ref in refs if ref["role"] == role]
+    material = {"format": payload["format"], "exporter": payload["exporter"], "options": payload.get("options", {}),
+                "rendered": pins("rendered"), "joined": pins("joined")}
+    return "sha256:" + hashlib.sha256(canonical(material)).hexdigest()
+
+
 class Builder:
     def __init__(self, root: Path, plan: dict[str, Any], content: Path, door: str, archive: str,
                  git: str, annex: str, environment: dict[str, str]):
@@ -122,6 +132,9 @@ class Builder:
         if isinstance(value, str) and value.startswith("$content:"):
             declared = self.contents[value.removeprefix("$content:")]
             return {"digest": declared["digest"], "size": declared["size"]}
+        if isinstance(value, str) and value.startswith("$revision:"):
+            # A payload that names a pinned revision, as melody spans do.
+            return self.pin(value.removeprefix("$revision:"))[1]
         if isinstance(value, dict):
             return {key: self.resolve(item) for key, item in value.items()}
         if isinstance(value, list):
@@ -155,10 +168,17 @@ class Builder:
             target, revision = self.pin(ref["pin"])
             refs.append({"role": ref["role"], "id": target, "revision_id": revision})
         # The operator asserts every record, except a derivation run and its
-        # outputs, whose agent is the tool's Package URL (ADR 0064).
+        # outputs, whose agent is the tool's Package URL (ADR 0064), and a
+        # record a contract gives another person or a band, whose agent names
+        # that Entity by its plan key (`@guest`, D-18).
         agent = record.get("agent", self.operator_id)
-        if not isinstance(agent, str) or not (agent == self.operator_id or agent.startswith("pkg:")):
-            raise BuildError(f"plan key {key!r} names agent {agent!r}, which is neither the operator nor a Package URL")
+        if isinstance(agent, str) and agent.startswith("@"):
+            agent = self.pin(agent.removeprefix("@"))[0]
+        elif not isinstance(agent, str) or not (agent == self.operator_id or agent.startswith("pkg:")):
+            raise BuildError(f"plan key {key!r} names agent {agent!r}, which is neither the operator nor a Package URL, "
+                             f"nor an Entity's plan key")
+        if payload.get("key") == "$export-key":
+            payload["key"] = export_key(payload, refs)
         draft = {"spec": self.spec, "object_id": target_id, "shape": record["shape"], "by": BY,
                  "agent": agent, "payload": payload, "refs": refs, "supersedes": supersedes}
         if "source" in record:

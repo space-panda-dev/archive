@@ -345,7 +345,7 @@ parameters are in the manifest's descriptions and in the
 | `chords-jiang` | 1 | none | scalars `chord_count`, `decoded_in_top3`; spans `chords`; files `readings` |
 | `frames` | 1 | none | series `hpcp`, `rms_db`, `centroid`, `rolloff`, `flatness`, `flux`, `onset_hfc`, `mfcc`, `melbands`; scalars `samples`, `seconds` |
 | `colour` | 3 | `frames`: centroid, hpcp, rms_db | series `colour`; files `palette`, `preview` |
-| `f0-pesto` | 1 | none | series `f0`; scalars `rows_from_tracker` |
+| `f0-pesto` | 2 | none | series `f0`, `level_db`; scalars `rows_from_tracker`, `loud_db` |
 | `f0-torchcrepe` | 1 | none | series `f0`; scalars `rows_from_tracker` |
 | `loudness-r128` | 1 | none | scalars `integrated` |
 | `melody` | 3 | none | series `pitch`, `confidence`, `voiced`, `midi`, `cents`, `level_db`; scalars `voiced_fraction`, `melodia_voiced_fraction`, `measured_fraction`, `loud_db`, `gate_db`, `reference_hz`, `samples`; spans `notes` |
@@ -355,7 +355,7 @@ parameters are in the manifest's descriptions and in the
 | `stems` | 1 | none | series `levels`; scalars `vocals_rms_db`, `vocals_peak_db`, `vocals_clamped`, `drums_rms_db`, `drums_peak_db`, `drums_clamped`, `bass_rms_db`, `bass_peak_db`, `bass_clamped`, `other_rms_db`, `other_peak_db`, `other_clamped`, `mix_rms_db`, `samples`, `seconds`; files `vocals`, `drums`, `bass`, `other` |
 | `stems-6s` | 1 | none | series `levels`; scalars `vocals_rms_db`, `vocals_peak_db`, `vocals_clamped`, `drums_rms_db`, `drums_peak_db`, `drums_clamped`, `bass_rms_db`, `bass_peak_db`, `bass_clamped`, `guitar_rms_db`, `guitar_peak_db`, `guitar_clamped`, `piano_rms_db`, `piano_peak_db`, `piano_clamped`, `other_rms_db`, `other_peak_db`, `other_clamped`, `mix_rms_db`, `samples`, `seconds`; files `vocals`, `drums`, `bass`, `guitar`, `piano`, `other` |
 | `structure` | 2 | `frames`: hpcp, rms_db, mfcc, seconds; `rhythm`: onsets, beats | series `novelty`; scalars `floor_db`, `floor`, `reference_db`, `threshold_db`; spans `playing`, `tuning`, `count_ins`, `false_starts`, `endings`, `sections`, `loops` |
-| `tonal` | 5 | `frames`: rms_db | series `pitched`, `tuning_windows`, `chroma`, `bass_chroma`, `dissonance`; scalars `tuning_frequency`, `tuning_cents`, `tuning_confidence`, `tuning_window_count`, `drift_spread_cents`, `detuned`, `key`, `scale`, `mode`, `scale_notes`, `key_strength`, `collection`, `collection_margin`, `tonic_margin`, `tonic_confidence`, `tonic_named`; spans `tuning_drift`, `detuned_spans`, `keys`, `key_regions` |
+| `tonal` | 6 | `frames`: rms_db | series `pitched`, `tuning_windows`, `chroma`, `bass_chroma`, `dissonance`; scalars `tuning_frequency`, `tuning_cents`, `tuning_confidence`, `tuning_window_count`, `drift_spread_cents`, `detuned`, `key`, `scale`, `mode`, `scale_notes`, `key_strength`, `collection`, `collection_margin`, `tonic_margin`, `tonic_confidence`, `tonic_named`; spans `tuning_drift`, `detuned_spans`, `keys`, `key_regions` |
 
 Eight of them run a model in an environment of the operator's, never the
 archive's, each under a program name the operator configures, so `run all`
@@ -394,10 +394,19 @@ what each changed:
   and half of those at least half pitched), chooses the tonic among the
   collection's notes by their share of the bass, favouring the major or
   minor tonic, adds a calibrated `tonic_confidence` that decides
-  `tonic_named`, and drops `key_margin`.
+  `tonic_named`, and drops `key_margin`; 6 names no tonic (`tonic_named` is
+  false everywhere, every `keys` and `key_regions` span is labelled with its
+  collection and valued by its `collection_margin`), since on a test album
+  the confidence did not rank (Brier 0.316 against a constant's 0.247) and
+  7 of version 5's 12 named tonics disagreed with the published keys:
+  readers use `collection` and `scale_notes`.
 - `structure` 2 measures the playing threshold from a noise floor only
   when the recording has one (steady or unpitched quiet), so a master is
   all playing, and says which in `floor`.
+- `f0-pesto` 2 adds `level_db` (the RMS of the 20 ms centred on each row,
+  on the pitch track's own grid) and `loud_db`, so the note builder of the
+  `notes` and `bass-line` proposers finds re-articulations and gates
+  voicing without decoding the audio again.
 - `quality` 2 scaled the detectors' frames with the sample rate and
   dropped quantisation-level bursts; 3 reports
   clipping only at full scale or as long flat runs at the recording's own

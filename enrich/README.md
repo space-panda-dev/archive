@@ -19,6 +19,7 @@ here writes a record: Door decides every revision.
 | [`windows.py`](windows.py) | The whole-recording window search: candidate pass, regions, snapping, claim rounds, and decisions, a standalone tool ([ADR 0072](../docs/decisions/0072-windowed-work-matches.md)) |
 | [`calibrate_windows.py`](calibrate_windows.py) | Checks the window matcher's thresholds against an archive's accepted occurrences; proposes nothing |
 | [`enrich.py`](enrich.py) | The `enrich` command that runs a tool against an archive's records |
+| [`propose.py`](propose.py), [`proposers.py`](proposers.py), [`chord_labels.py`](chord_labels.py) | `enrich propose`: the proposers, which read the feature bank's entries of one recording as claims, and the chord labels they read ([ADR 0079](../docs/decisions/0079-machine-harmony-claims.md)) |
 | [`bank.py`](bank.py), [`extract.py`](extract.py), [`remote.py`](remote.py), [`extractors/`](extractors/frames/extractor.json) | The feature bank's format and reader, the runner that fills it, the same run through Spool on another machine ([ADR 0090](../docs/decisions/0090-extractor-runs-travel-through-spool.md)), and the extractors (one table under [`extract.py`: the feature bank](#extractpy-the-feature-bank) says what each writes): `frames`, `loudness-r128`, `rhythm`, `tonal`, `melody`, `structure`, `quality`, `colour`, `stems`, `stems-6s`, `beats-beatthis`, `chords-jiang`, `chords-chordino`, `notes-basic-pitch`, `f0-pesto`, and `f0-torchcrepe` ([ADR 0073](../docs/decisions/0073-feature-bank.md), [ADR 0074](../docs/decisions/0074-extractor-contract.md), [ADR 0075](../docs/decisions/0075-stems-as-content.md)) |
 | [`hue_range.py`](hue_range.py) | The `colour` extractor's centroid hue limits taken from a set of recordings' `frames` entries, printed as a `--config` ([its README](extractors/colour/README.md#the-hue-range)) |
 | [`media.py`](media.py), [`waveform.py`](waveform.py), [`derived.py`](derived.py) | Derived media, a standalone tool that never touches an archive; the waveform peaks' format and decode; and the layout ([ADR 0069](../docs/decisions/0069-derived-media.md)) |
@@ -575,6 +576,86 @@ The workset and the windows file are regenerable: they are measured again
 from the audio. They are derived from the operator's recordings, so they stay
 outside this repository.
 
+## `enrich propose`
+
+```sh
+enrich/enrich.py propose --archive <dir> (--artifact <object id> [--stream <claim id>] | --all)
+                 [--proposers chords-jiang,chords-chordino,beats,bass] [--bank <root>] [--config <file>]
+                 [--staging <annex>] [--export <file>] [--dry-run]
+```
+
+Reads the feature bank's entries of a recording and proposes claims from
+them ([ADR 0079](../docs/decisions/0079-machine-harmony-claims.md), D1.4).
+Features become claims only here: a *proposer* never runs an extractor and
+never measures audio; what it reads is in the bank, found by the keys the
+installed extractors give (with the parameters and extractor directories of
+`--config`, the runner's own configuration, so the keys agree), or it
+proposes nothing and says which features it lacked.
+
+- `--artifact` names the mix; `--stream` chooses its audio stream claim when
+  it has several, as `enrich detect` does, and must describe the first audio
+  stream, the one every extractor decodes. `--all` proposes for every
+  Artifact with exactly one audio stream claim, one at a time (an Artifact
+  with several is reported and left for `--artifact`): the backfill. A
+  recording never probed has no audio stream claim, so `--all` cannot propose
+  for it: the answer lists each Artifact with no such claim whose local
+  content's first bytes are audio or video under `unprobed`, says in
+  `detail` to run `enrich probe` on them first, and counts the Artifacts
+  with no claim and no local content it can read. It never probes for you: a probe is
+  its own proposal to Door.
+- `--bank` defaults to `ARCHIVE_FEATURE_BANK`; with neither, the command
+  fails.
+- Each proposer is one derivation run and its claims, in one Door batch. The
+  run's method is the proposer's id and version, which is how the first
+  current rule of ADR 0082 ranks machines (`chords-jiang` before
+  `chords-chordino`); its `used` pins the mix Artifact revision and the
+  stream claim; its parameters Artifact holds the proposer's settings and,
+  for each feature read, the feature's name, its extractor, its entry's key,
+  the content it measured and the content it is filed under, and a file's
+  digest; its software is `archive-enrich-propose` and every read entry's
+  recorded software. Each claim pins the mix as `source`, the stream claim,
+  and the run, and its agent is `pkg:generic/archive-enrich-propose@0.1.0`.
+  World's own check of the contract (`world/harmony.py`, `form.py`,
+  `tonality.py`, `notes.py`) runs on every claim before Door sees it.
+- **History stays quiet.** A run equivalent to a recorded one (same method,
+  parameters, inputs, and software) proposes nothing and answers
+  `unchanged`. A new extractor version or a stem made again with other bits
+  is a new key or digest, so a new run, whose claims sit beside the old ones.
+- **Times.** Bank times are seconds from the start of the decoded first
+  audio stream. A time `t` is sample `round(t × sample_rate)` of the pinned
+  stream, half to even, computed exactly from the decimal text the bank
+  wrote (not from a floating-point product), clamped to 0 and `sample_count`.
+  An empty span is dropped; events on one sample are one.
+
+| Proposer | Reads | Proposes |
+|---|---|---|
+| `chords-jiang` | `chords-jiang/chords` and `readings` of the mix | one `chord_stacks` version 2 claim: per span (end asserted), the extractor's three weighted candidates in its order, each read from its Harte label (root, the bass from `/degree` or the root, the quality's other classes as `tones`, the label as `text`; `N` no chord; a label it cannot read is text only), weights as the extractor's own decimal text under the scale its parameters name |
+| `chords-chordino` | `chords-chordino/chords` of the mix | one `chord_stacks` version 2 claim, one unweighted reading a span read from Chordino's label (`Am7`, `F/A`) |
+| `beats` | `rhythm/pulse` and `rhythm/downbeats` of the mix | one `meter_layers` version 2 claim: a beat-only layer of the pulse (no downbeats, no role) and, where any downbeat is published, a bars layer: a bar from each downbeat to the pulse its value of beats later, in the meter its label states, the pulses inside as its beats when their count is the numerator or divides it evenly (as equal groups) |
+| `bass` | `stems/bass`, `tonal/bass_chroma` and `tonal/pitched` of that stem (`extract.py run tonal --from stems/bass`), and `rhythm/pulse` of the mix | one `chord_stacks` version 2 claim citing the bass stem by bank key in `stem`: for each interval between two pulses whose frames are at least half pitched, the strongest class of the mean bass chroma (bin 0 is A) when it leads the next by at least 0.2 of itself, as one bass-only reading weighted by that lead; neighbouring intervals with the same bass are one span, at their least lead |
+| `key` | `tonal/key_regions` of the mix | one `key_regions` claim: a region a span, its reading the label's note collection (`Eb major scale`; a tonic and mode, `F dorian`, only from `tonal` 5 or earlier, which named one), weighted by the span's value: from `tonal` 6 the collection's margin, before it the tonic's confidence |
+| `tuning` | `tonal/tuning_cents`, `tuning_confidence`, `tuning_drift`, `tuning_windows` of the mix | one `tuning` claim: the reference in cents to two places, brought into [-50, 50), with its confidence; drift spans where windows depart from it by more than 10 cents, overlapping ones merged at their mean tuning and concentration. Nothing when the extractor reports no tuning |
+| `notes` (version 3) | on melody's default input when it is a vocal stem, `f0-pesto/f0` and `f0-pesto/level_db` of it (`extract.py run f0-pesto --from stems/vocals`), with `tonal/tuning_cents` and `rhythm/pulse` of the recording when the bank holds them; else `melody/notes` of that input (the vocal stem where its measure is voiced enough, else the mix; never the bass); on the vocal stem also `level_db` and `loud_db` of the entry the notes came from, and the bass line's inputs below | one `notes` claim, `part` the stem's output (citing the stem) or `mix`. From PESTO's track the note builder ([`note_builder.py`](note_builder.py), `VOICE`) makes one note per held pitch: slides, scoops and vibrato stay inside the note, a gap under 100 ms on one pitch is bridged, a plateau shorter than 70 ms or 0.4 of an eighth note is no note, and a note's pitch is the mean of its central rows less the tuning, rounded to a MIDI note; otherwise each `melody/notes` span is a note at its value rounded to a MIDI note. A vocal line drops separation bleed (ADR 0086): a note more than 7 semitones below the duration-weighted 10th percentile of the run's pitches, and a note sounding for at least half its length with bass line notes of its class within an octave of its pitch (12 semitones; never G4 over a G2) while the vocal stem's median level over it is more than 20 dB below its loud level. Without the bass line in the bank only the first rule applies; the run's settings say which source and rules applied and how many notes each rule dropped |
+| `bass-line` (version 2) | `stems/bass`; `f0-pesto/f0` and `f0-pesto/level_db` of that stem (`--from stems/bass`), or `notes-basic-pitch/notes` of it, or both; `tonal/bass_chroma` and `tonal/pitched` of that stem; `tonal/tuning_cents` of the recording when present | one `notes` claim, `part` `bass`, `bass: true`, citing the bass stem. From PESTO's track the note builder (`BASS`, measured on real separated single lines: no gap bridged, a 3 dB level dip splits a held pitch, notes and plateaus from 30 ms) makes the notes, onsets unshifted; without PESTO's track, Basic Pitch's notes. A note is kept when the frames within it are at least half pitched and, where the strongest bass class leads by 0.2, it is the note's class (the `bass` proposer's thresholds); then one note at a time, the lowest on an onset, a lower note cutting the one it starts under. Never a melody |
+| `sections` | `structure/sections` of the mix | one `form_spans` claim with the extractor's labels |
+| `timed-lyrics` | nothing yet | refuses: `nothing_proposed` with `code` `not_yet` and what forced alignment needs (an aligner run under its own interpreter with a pinned acoustic model, the lyric document's text given to it, a pinned syllabification rule, and the document's revision to pin). `proposers.ALIGNMENT_REQUEST` declares its inputs (ADR 0085) |
+
+`--proposers` defaults to the first four, which `capture import` runs; the
+others run only when named. No proposer makes a `melody` or `melody_spans`
+claim, so no machine names a bass notes claim as a melody. A chord claim holds at most 100,000 spans: a
+longer output is split into consecutive claims of one run.
+
+It prints one JSON object per command: for one Artifact, `status`,
+`artifact` and `stream` (`{id, revision_id}`), and each proposer's `name`,
+`status` (`committed`, `predicted`, `unchanged`, or `nothing_proposed` with
+`missing` features or a `detail`), `run`, and `claims`; for `--all`,
+`status` and that object for each Artifact under `artifacts`. The status is
+the strongest of its parts'. It exits 0, or 3 when nothing was proposed, 1
+on any failure, and 2 when the arguments are not understood. A failed
+proposer fails the command once the proposers before it have finished: what
+they made is kept, and stderr's `{"status": "failed", "detail", ...}` lists
+them.
+
 ## The adapter interface
 
 A new tool (a detector, a matcher) uses the adapter like this:
@@ -719,7 +800,7 @@ to stderr and exits 1. It needs `ffmpeg` and `ffprobe` (`--ffmpeg` and
 ```sh
 enrich/extract.py list
 enrich/extract.py run <extractor|all> --content <file> --bank <dir> [--digest sha256:<hex>] [--jobs n]
-                  [--from <extractor>/<output>] [--config <file>] [--program name=path]...
+                  [--media-type <type>] [--from <extractor>/<output>] [--config <file>] [--program name=path]...
                   [--extractors <dir>]... [--dry-run]
 ```
 
@@ -733,7 +814,10 @@ program in any language; the runner orders an extractor after the features
 it needs, runs only what is missing, checks every output against the
 manifest, and renames a complete entry into place. It prints each extractor's
 `hit`, `ran`, `failed`, `blocked`, or `skipped` and exits 0 only when none
-failed or was blocked. `bank.py` reads entries back
+failed or was blocked. The content's media type is `--media-type`, or else
+its suffix, or else, for a file whose name tells nothing (an archive's
+`.blob` content), its first bytes (WAV, FLAC, Ogg, AIFF, MP3, Matroska,
+MP4/QuickTime, JPEG, PNG, HEIC); a file none of these name is refused. `bank.py` reads entries back
 (`bank.Bank(root).entry(digest, "frames").series("hpcp")`), and
 `cover.py --bank <dir>` reads whole files' pitch-class profiles from it.
 
@@ -745,7 +829,7 @@ Versions, needs, and outputs by kind are listed together in
 | `frames` | Python, Essentia 2.1b6.dev1438 | on one grid of 4,096-sample frames every 2,048 at 22,050 Hz: `hpcp` (the bits `cover.py` measures), `rms_db`, `centroid`, `rolloff`, `flatness`, `flux`, `onset_hfc`, `mfcc`, `melbands`; scalars `samples`, `seconds` |
 | `loudness-r128` | POSIX shell, ffmpeg | `integrated`: EBU R 128 integrated loudness in LUFS |
 | `rhythm` | Python, Essentia 2.1b6.dev1438 | from its own 44,100 Hz decode (both algorithms need that rate and hops finer than `frames`), in 300 s chunks overlapping by 30 s: events `beats` (RhythmExtractor2013 multifeature, moved onto the onsets' time base, kept only on an onset or between onsets) and `onsets` (OnsetRate, a few ms before each attack); on a 1 s grid of 10 s windows `tempo`, `onset_count`, `onset_deviation` (ms from the beat grid divided into 4), `offgrid`; per chunk `chunk_bpm`, `chunk_confidence`; scalars `bpm` (the tracker's median, which can be a level never played), `confidence`, `onset_rate`, `seconds`. From the beats and its own spectral flux and chroma ([`meter.py`](extractors/rhythm/meter.py)): on the 1 s grid `primary_tempo` (the level among 1:2, 2:3, 3:4, 1:1, 4:3, 3:2, 2:1 of the tracker's with the most onset support, octaves settled by a preference near `prior_bpm` and one for the tracker's own octave; each take on its own), `tempo_support` (7 columns: the support of those relations of the primary) and `downbeat_margin` (how clearly the bar lines are placed); events `pulse` (the primary level's beats, valued by place in the bar, 0 where that is a guess) and `downbeats` (valued by the bar's beats, labelled by its meter, only where `downbeat_margin` reaches its setting; bar lines from the low accent less the backbeat's and the beat-synchronous chroma's moves); spans `tempo_spans` (one level and one meter: `4/4`, `3/4`, `5/4`, `7/4`, `12/8`, `9/8`, ...); events `tempo_changes` (`meter` where the beat or a subdivision persists, `tempo` otherwise); scalars `primary_bpm`, `meter` |
-| `tonal` | Python, Essentia 2.1b6.dev1438, numpy, ffmpeg | from `frames/rms_db`, plus two decodes that repeat `frames`' framing for its spectral peaks (the first for the tuning, the second for profiles referenced to it): scalars `tuning_frequency`, `tuning_cents`, `tuning_confidence` (the confidence-weighted median of 20 s windows' tunings, each the densest stretch of a histogram of the loud peaks' distance from the tempered grid, mains hum left out; not reported from fewer than four confident windows or fewer than half the pitched ones), `tuning_window_count`, `drift_spread_cents`, `detuned`, `collection` (the note collection, such as `Eb major scale`), `collection_margin`, `key`, `mode` (ionian to locrian, harmonic or melodic minor), `scale` (major or minor, as before), `scale_notes`, `key_strength`, `tonic_margin`, `tonic_confidence` (the tonic chosen among the collection's notes by its share of the bass, the major or minor tonic favoured; the chance it is right, calibrated in the mean on one album), `tonic_named` (whether that confidence is at least one half; if not, read `collection`); series `tuning_windows` (grid `tuning`); spans `tuning_drift`, `detuned_spans`, `keys`, `key_regions` (a timeline of note collections, the tonic and mode named where they lead); on the `frames` grid, `pitched`, `dissonance`, and `chroma` and `bass_chroma` (twelve-bin profiles of 100-5,000 Hz and 40-250 Hz, referenced to the local tuning). Version 3 moved chords to `chords` (since retired); version 4 leaves mains hum out and names a tonic only where it leads; version 5 guards the tuning and chooses the tonic by the bass |
+| `tonal` | Python, Essentia 2.1b6.dev1438, numpy, ffmpeg | from `frames/rms_db`, plus two decodes that repeat `frames`' framing for its spectral peaks (the first for the tuning, the second for profiles referenced to it): scalars `tuning_frequency`, `tuning_cents`, `tuning_confidence` (the confidence-weighted median of 20 s windows' tunings, each the densest stretch of a histogram of the loud peaks' distance from the tempered grid, mains hum left out; not reported from fewer than four confident windows or fewer than half the pitched ones), `tuning_window_count`, `drift_spread_cents`, `detuned`, `collection` (the note collection, such as `Eb major scale`), `collection_margin`, `key`, `mode` (ionian to locrian, harmonic or melodic minor), `scale` (major or minor, as before), `scale_notes`, `key_strength`, `tonic_margin`, `tonic_confidence` (the tonic chosen among the collection's notes by its share of the bass, the major or minor tonic favoured; the chance it is right, calibrated in the mean on one album), `tonic_named` (false everywhere since version 6: read `collection` and `scale_notes`' notes, not the tonic); series `tuning_windows` (grid `tuning`); spans `tuning_drift`, `detuned_spans`, `keys`, `key_regions` (a timeline of note collections, labelled and valued by the collection); on the `frames` grid, `pitched`, `dissonance`, and `chroma` and `bass_chroma` (twelve-bin profiles of 100-5,000 Hz and 40-250 Hz, referenced to the local tuning). Version 3 moved chords to `chords` (since retired); version 4 leaves mains hum out and names a tonic only where it leads; version 5 guards the tuning and chooses the tonic by the bass; version 6 names no tonic |
 | `structure` | Python, numpy; decodes nothing | from `frames` and `rhythm`: spans `playing`, `tuning` (held single pitches between the playing, labelled by pitch class), `count_ins` (three or more regular onsets before playing), `false_starts` (playing of at most 30 s and a restart, with the openings' similarity), `endings` (`stop`, `fade`, or `abrupt`), `sections` (self-similarity novelty peaks, labelled `A`, `B`, ...), `loops` (a pitch-class period repeated three or more times); series `novelty` a block of about 1 s; scalars `floor_db`, `reference_db`, `threshold_db`, and `floor` (whether the recording has a noise floor, as a rehearsal's room noise is: steady, onset-free quiet at least 26 dB under the playing, or unpitched quiet, a flat pitch-class profile at least 12 dB under it, struck or not; a master, whose quiet is pitched music, has none, so all of it is playing and it has no tuning, count-ins, or false starts); every span but `playing` with a confidence. Not claims: span suggestions are the span detector's |
 | `quality` | Python, Essentia 2.1b6.dev1438, ffmpeg | how well a recording was captured, from one more decode at the stream's own rate with every channel: EBU R 128 `integrated`, `loudness_range`, and `true_peak`; `sample_peak`, `full_scale_samples`, `clipped_seconds`, `dc_offset`, `whole_correlation`, `anti_phase`, `false_stereo`, `noise_floor`, `snr`, `bandwidth`, `band_limited`; per channel, `clipping` (flat tops at full scale, or long ones at the recording's own peak), `overs` (0 dBTP reached between samples, 4x oversampled), `gaps`, `noise_bursts` (spans) and `clicks`, `discontinuities` (events), each of the last three kept only where it stands out from the transients around it or (clicks and discontinuities) stands alone among the steps of the 150 ms around it, so that drums and limiters on a finished master are not defects while crackle still is; `hum` (spans: narrow, steady peaks at 50 or 60 Hz and their harmonics that persist through the quiet or sound in it); on the `frames` grid, `correlation` and `peak_db` |
 | `melody` | Python, Essentia 2.1b6.dev1438 | on a grid of 2,048-sample frames every 128 (the `hop_size` stride) at 44,100 Hz: `pitch` (MELODIA, in `bin_cents` bins: 5, or 2 on the vocal stem), `confidence`, `voiced`, `midi`, `cents`, `level_db`; `notes` spans; scalars `voiced_fraction`, `melodia_voiced_fraction`, `measured_fraction`, `loud_db`, `gate_db`, `reference_hz`, `samples`. The predominant melody of the vocal stem where the bank holds one voicing at least a fifth of its rows (it prefers `stems/vocals`, then `stems-6s/vocals`), else of the content; `voiced` is MELODIA's decision kept where a contour is mostly above a gate relative to the recording's loud level, and MELODIA runs only within a second of a row that reaches the gate |
@@ -756,7 +840,7 @@ Versions, needs, and outputs by kind are listed together in
 | `chords-chordino` | Python under `${chordino-python}` (the vamp host, chord-extractor 0.1.3's Chordino build, librosa) | from its own 44,100 Hz mono decode: spans `chords` (Chordino's simple chord labels in its own spelling, such as `Am7` or `F/A`, `N` for none, tiling the decoded length); scalars `chord_count`, `seconds`. Not learned: a second opinion beside `chords-jiang`. On the same album, 0.042 CPU-seconds a second and 0.56 GB at most |
 | `stems-6s` | Python under `${stems-6s-python}` (Demucs 4.1.0, PyTorch), ffmpeg | the `stems` program with pinned htdemucs_6s weights: `vocals`, `drums`, `bass`, `guitar`, `piano`, `other` as 44.1 kHz stereo 16-bit FLAC, `levels` (six columns), each stem's `_rms_db`, `_peak_db`, `_clamped`; `mix_rms_db`, `samples`, `seconds`. A second separator: its stems are other content than `stems`', so their measures sit beside each other. The names are the model's sources, not instruments: on dense neo-soul a Rhodes came out in `guitar` and `piano` was near silent |
 | `notes-basic-pitch` | Python under `${basic-pitch-python}` (Basic Pitch 0.4.0 by ONNX Runtime, librosa; no TensorFlow), ffmpeg | file `notes` (JSON): every note's `onset_s`, `offset_s`, `midi`, `amplitude`, `cents` (its median distance from the equal-tempered note, read from the model's pitch contour one bin above Basic Pitch's own mapping, where the pinned model puts a note; within 10 cents of the truth on synthetic tones, where Basic Pitch's own mapping read 31 cents sharp), and `bends` (per model frame, in thirds of a semitone); scalars `note_count`, `seconds`. Of the mix or, better, a stem: `--from stems/bass` gives the bass line |
-| `f0-pesto` | Python under `${f0-python}` (PESTO 2.0.1, PyTorch), ffmpeg | series `f0` on grid `f0` (16 kHz, a row every 160 samples, 10 ms): the pitch in Hz (0 where none) and PESTO's confidence; scalar `rows_from_tracker`. One voice: `--from stems/vocals` |
+| `f0-pesto` | Python under `${f0-python}` (PESTO 2.0.1, PyTorch), ffmpeg | series `f0` on grid `f0` (16 kHz, a row every 160 samples, 10 ms): the pitch in Hz (0 where none) and PESTO's confidence; scalar `rows_from_tracker`; since version 2 series `level_db` on the same grid (the RMS of the 20 ms centred on each row) and scalar `loud_db` (its 99th percentile), which the note builder reads. One line: `--from stems/vocals` or `--from stems/bass` |
 | `f0-torchcrepe` | Python under `${f0-python}` (torchcrepe 0.0.24 tiny model, PyTorch), ffmpeg | as `f0-pesto`, with the model's periodicity as the confidence: a second opinion. The pitch is decoded here (Viterbi path, then CREPE's local average) because torchcrepe's own decoders add random noise of up to 20 cents |
 
 `--from stems/vocals` measures a stem as content: every extractor runs on it

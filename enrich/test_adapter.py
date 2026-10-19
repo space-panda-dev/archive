@@ -575,5 +575,23 @@ class Reading(unittest.TestCase):
             adapter.ArchiveReader(self.tmp, str(self.tmp / "no-archive"))
 
 
+
+class RefusalText(unittest.TestCase):
+    """Door's command line ends a refusal with its JSON reply; a person
+    reads the line that says it, with the code."""
+
+    def test_the_reply_line_becomes_the_code(self):
+        stderr = ('door: reference revision sha256:ab is not an admitted revision of urn:uuid:x\n'
+                  '{"error":{"code":"proposal_refused","message":"reference revision sha256:ab is not an admitted '
+                  'revision of urn:uuid:x"},"ok":false}\n')
+        self.assertEqual(adapter.refusal_text(stderr),
+                         "door: reference revision sha256:ab is not an admitted revision of urn:uuid:x "
+                         "(refusal code proposal_refused)")
+
+    def test_other_stderr_is_kept_as_it_is(self):
+        for stderr in ("plain failure\n", 'door: a\n{"ok":true,"result":{}}', 'x\n["not", "a reply"]', "", "{"):
+            self.assertEqual(adapter.refusal_text(stderr), stderr.strip(), stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

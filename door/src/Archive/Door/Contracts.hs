@@ -32,6 +32,16 @@ module Archive.Door.Contracts
   ) where
 
 import Archive.Door.Json (decodeUnique)
+import Archive.Door.RecordRules (validateRecordRules)
+import Archive.Door.RuleSyntax (releaseRuleNames, validateReleaseRules)
+import Archive.Door.SpanRules (sequentialSpansRule, validateSequentialSpans, withinGroups)
+import Archive.Door.WhenPinned (effectiveSchema)
+import Archive.Door.SchemaObjectKeywords
+  ( evaluateObjectKeywords
+  , objectKeywordNames
+  , objectKeywordSchemas
+  , validateObjectKeywordTypes
+  )
 import Archive.Door.Layout
   ( archiveRoot
   , contractPath
@@ -198,6 +208,7 @@ validateCoreContextForSpecification specification value = do
         "archive/0.0.7" -> Set.fromList reviewContextKeys
         "archive/0.0.8" -> Set.fromList reviewContextKeys
         "archive/0.0.9" -> Set.fromList creditContextKeys
+        "archive/0.0.10" -> Set.fromList creditContextKeys
         _ -> Set.empty
   if not (Set.null expected) && keys == expected
     then Right ()
@@ -298,7 +309,7 @@ validateSchema schema@(Object fields) = do
     _ -> Right ()
   maybe (Right ()) validateOrderedInstantsRule
     (KeyMap.lookup "x-archive-ordered-instants" fields)
-  maybe (Right ()) (validateWithinFieldsRule "sequential spans rule" ["payload", "start", "end"])
+  maybe (Right ()) (fmap (const ()) . sequentialSpansRule)
     (KeyMap.lookup "x-archive-sequential-spans" fields)
   _ <- targetMeasureRule schema
   _ <- sameSubjectRule schema
@@ -319,6 +330,7 @@ validateSchema schema@(Object fields) = do
   maybe (Right ()) validateNestedRangesRule (KeyMap.lookup "x-archive-nested-ranges" fields)
   _ <- targetSamplesRule schema
   _ <- targetIndexRule schema
+  validateReleaseRules nestedRules fields
   walkSchema schema [] schema
 validateSchema _ = Left "contract schema must be a JSON object"
 
@@ -333,7 +345,12 @@ profileRuleNames =
   , "x-archive-metric-modulations", "x-archive-target-bound", "x-archive-partial-dates"
   , "x-archive-subset", "x-archive-document-order", "x-archive-nested-ranges"
   , "x-archive-target-samples", "x-archive-target-index"
-  ]
+  ] <> releaseRuleNames
+
+-- | The schema one map of @x-archive-when-pinned@ makes (D-18), checked as
+-- a bundle's schema is.
+nestedRules :: KeyMap.KeyMap Value -> Either Text ()
+nestedRules = validateSchema . Object
 
 walkSchema :: Value -> [Text] -> Value -> Either Text ()
 walkSchema root path (Object fields) = do
@@ -359,7 +376,7 @@ schemaKeywords =
   , "minLength", "maxLength", "format", "minimum", "maximum"
   , "$comment", "title", "description", "default", "deprecated"
   , "examples", "readOnly", "writeOnly"
-  ] <> profileRuleNames
+  ] <> objectKeywordNames <> profileRuleNames
 
 rejectUnknownSchemaKeywords :: [Text] -> KeyMap.KeyMap Value -> Either Text ()
 rejectUnknownSchemaKeywords path fields =
@@ -766,7 +783,7 @@ validateAscendingItemsInstance rule instanceValue = do
     isInteger _ = False
 
 -- | @x-archive-pitch-stacks@: every object @payload@ reaches that has a
--- @bass@ is a stack of pitch classes (0 to 11): @tones@ above the bass, and
+-- @bass@ and @tones@ is a stack of pitch classes (0 to 11): @tones@ above the bass, and
 -- optional @uncertain@ groups of @classes@ and a @voicing@ of MIDI notes.
 -- No uncertain class is the bass, a tone, or in another group; the groups
 -- are in ascending order of their classes; the voicing's lowest note is the
@@ -793,7 +810,10 @@ validatePitchStacksInstance rule instanceValue = do
   voicingName <- requiredString "voicing" rule
   payload <- requiredObject "payload" instanceValue
   holders <- pathHolders (path <> [bassName]) payload
-  let stacks = filter (KeyMap.member (Key.fromText bassName)) holders
+  -- A stack has a bass and its tones; a bass-only reading (specification
+  -- 0.0.10) has a bass and no tones, and nothing for this rule to check.
+  let stacks = filter (\fields -> KeyMap.member (Key.fromText bassName) fields
+        && KeyMap.member (Key.fromText tonesName) fields) holders
   mapM_ (stack bassName tonesName uncertainName classesName voicingName) stacks
   where
     stack bassName tonesName uncertainName classesName voicingName fields = do
@@ -1295,6 +1315,7 @@ validateSchemaKeywordTypes fields = do
     then Left "contract schema then/else require if"
     else Right ()
   validateContainsBounds fields
+  validateObjectKeywordTypes fields
 
 validateTypeKeyword :: Value -> Either Text ()
 validateTypeKeyword (String name)
@@ -1415,7 +1436,7 @@ integerValue name (Just (Number value)) = case floatingOrInteger value :: Either
 integerValue name (Just _) = Left ("contract schema " <> name <> " must be a non-negative integer")
 
 nestedSchemas :: KeyMap.KeyMap Value -> [(Key.Key, Value)]
-nestedSchemas fields = concatMap one (KeyMap.toList fields)
+nestedSchemas fields = concatMap one (KeyMap.toList fields) <> objectKeywordSchemas fields
   where
     one (key, value) = case Key.toText key of
       "$defs" -> case value of
@@ -1451,8 +1472,15 @@ validateContractInstance schema instanceValue = do
   validateSchema schema
   matches <- evaluateSchema schema [] schema instanceValue
   if not matches
-    then Left "contract instance does not satisfy its schema"
-    else validateContractProfile schema instanceValue
+    then do
+      reason <- explainMismatch schema [] [] schema instanceValue
+      Left ("contract instance does not satisfy its schema: " <> reason)
+    else do
+      effective <- effectiveSchema schema instanceValue
+      validateContractProfile effective instanceValue
+      case (effective, instanceValue) of
+        (Object root, Object fields) -> validateRecordRules root fields
+        _ -> Right ()
 
 validateContractProfile :: Value -> Value -> Either Text ()
 validateContractProfile (Object schema) (Object instanceValue) = do
@@ -1486,8 +1514,10 @@ validateContractProfile (Object schema) (Object instanceValue) = do
     Just _ -> Left "ordered instants rule must be an object"
   case KeyMap.lookup "x-archive-sequential-spans" schema of
     Nothing -> pure ()
-    Just (Object rule) -> validateSequentialSpansInstance rule instanceValue
-    Just _ -> Left "sequential spans rule must be an object"
+    Just rule -> do
+      rules <- sequentialSpansRule rule
+      payload <- requiredObject "payload" instanceValue
+      validateSequentialSpans rules payload
   case KeyMap.lookup "x-archive-ascending-items" schema of
     Nothing -> pure ()
     Just (Object rule) -> validateAscendingItemsInstance rule instanceValue
@@ -1633,54 +1663,6 @@ parseUtcInstant value
       parseTimeM False defaultTimeLocale "%Y-%m-%dT%H:%M:%S%QZ" (Text.unpack value)
   | otherwise = Nothing
 
--- | A nonempty payload array of spans with integer bounds where
--- @0 <= start < end@, each starting at or after the previous one's end.
-validateSequentialSpansInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
-validateSequentialSpansInstance rule instanceValue = do
-  payloadName <- requiredString "payload" rule
-  within <- optionalWithin rule
-  optional <- optionalFlag rule
-  payload <- requiredObject "payload" instanceValue
-  groups <- withinGroups within payload
-  if optional && not (KeyMap.member (Key.fromText (maybe payloadName id within)) payload)
-    then Right ()
-    else mapM_ (sequentialSpans rule payloadName) groups
-
--- | The objects a rule's array lives in: the payload itself, or, with
--- @within@, each element of the payload array @within@ (one layer of bars,
--- say), so that order is checked inside each group and never across them.
-withinGroups :: Maybe Text -> KeyMap.KeyMap Value -> Either Text [KeyMap.KeyMap Value]
-withinGroups Nothing payload = Right [payload]
-withinGroups (Just name) payload = case KeyMap.lookup (Key.fromText name) payload of
-  Just (Array values) -> mapM asObject (toList values)
-  _ -> Left (name <> " must be an array")
-  where
-    asObject (Object group) = Right group
-    asObject _ = Left (name <> " must contain objects")
-
-sequentialSpans :: KeyMap.KeyMap Value -> Text -> KeyMap.KeyMap Value -> Either Text ()
-sequentialSpans rule payloadName payload = do
-  startName <- requiredString "start" rule
-  endName <- requiredString "end" rule
-  within <- optionalWithin rule
-  spans <- case KeyMap.lookup (Key.fromText payloadName) payload of
-    Just (Array values) | not (null values) -> Right (toList values)
-    -- With within, an element without the array (a beat-only layer beside
-    -- layers of bars) has no spans to order.
-    Nothing | within /= Nothing -> Right []
-    _ -> Left "sequential spans payload must be a nonempty array"
-  bounds <- mapM (spanBounds startName endName) spans
-  if all (\(start, end) -> start >= 0 && end > start) bounds
-    then Right ()
-    else Left "each span requires 0 <= start < end"
-  if and (zipWith (\(_, previousEnd) (start, _) -> start >= previousEnd) bounds (drop 1 bounds))
-    then Right ()
-    else Left "spans must be in order and must not overlap"
-  where
-    spanBounds startName endName (Object piece) =
-      (,) <$> requiredInteger startName piece <*> requiredInteger endName piece
-    spanBounds _ _ _ = Left "span must be an object"
-
 validateDistinctRefsInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
 validateDistinctRefsInstance rule instanceValue = do
   roles <- requiredStrings "roles" rule
@@ -1797,6 +1779,7 @@ evaluateSchema root path (Object fields) value = do
     , evaluateAnyOf root path fields value
     , evaluateNot root path fields value
     , evaluateConditional root path fields value
+    , evaluateObjectKeywords (\schema item -> evaluateSchema root ("propertyNames" : path) schema item) fields value
     ]
   pure (referenceMatch && keywordMatch)
 evaluateSchema _ path _ _ = Left (schemaPath path <> " must be an object")
@@ -1806,6 +1789,134 @@ validateSchemaNodeForEvaluation root path fields = do
   rejectUnknownSchemaKeywords path fields
   validateRef root fields
   validateSchemaKeywordTypes fields
+
+-- | Name the first rule an instance breaks, for a refusal a person can act
+-- on: where in the instance (a JSON Pointer from @{"payload", "refs"}@) and
+-- which keyword of which part of the schema. Called only after
+-- 'evaluateSchema' answered no; it descends into the first failing
+-- property, item, @allOf@ branch, @$ref@, or applicable @then@/@else@, and
+-- otherwise names the keyword at the node where the instance fails.
+explainMismatch :: Value -> [Text] -> [Text] -> Value -> Value -> Either Text Text
+explainMismatch root path location (Object fields) value = do
+  let fails schemaPath' schema item = not <$> evaluateSchema root schemaPath' schema item
+      at = instancePointer location
+      leaf keyword = Right (at <> " breaks " <> keyword <> " of the " <> schemaPath path)
+      firstJust [] = Right Nothing
+      firstJust (step : rest) = step >>= maybe (firstJust rest) (pure . Just)
+      reasons = firstJust
+        [ case KeyMap.lookup "$ref" fields of
+            Just (String reference) | Just target <- resolvePointer root reference -> do
+              broken <- fails path target value
+              if broken then Just <$> explainMismatch root path location target value else pure Nothing
+            _ -> pure Nothing
+        , firstJust
+            [ do
+                broken <- not <$> evaluateLeaf keyword
+                if broken then Just <$> leaf keyword else pure Nothing
+            | keyword <- leafKeywords, KeyMap.member (Key.fromText keyword) fields ]
+        , objectReason
+        , arrayReason
+        , case KeyMap.lookup "allOf" fields of
+            Just (Array schemas) -> firstJust
+              [ do
+                  let branchPath = ("allOf[" <> Text.pack (show index) <> "]") : path
+                  broken <- fails branchPath schema value
+                  if broken then Just <$> explainMismatch root branchPath location schema value else pure Nothing
+              | (index, schema) <- zip [0 :: Int ..] (toList schemas) ]
+            _ -> pure Nothing
+        , case KeyMap.lookup "anyOf" fields of
+            Just (Array schemas) -> do
+              matched <- or <$> mapM (\schema -> evaluateSchema root ("anyOf" : path) schema value) (toList schemas)
+              if matched then pure Nothing else Just <$> leaf "anyOf (it matches none of the choices)"
+            _ -> pure Nothing
+        , case KeyMap.lookup "not" fields of
+            Just schema -> do
+              matched <- evaluateSchema root ("not" : path) schema value
+              if matched then Just <$> leaf "not (it matches what is forbidden)" else pure Nothing
+            Nothing -> pure Nothing
+        , case KeyMap.lookup "if" fields of
+            Just condition -> do
+              holds <- evaluateSchema root ("if" : path) condition value
+              let name = if holds then "then" else "else"
+              case KeyMap.lookup (Key.fromText name) fields of
+                Just schema -> do
+                  broken <- fails (name : path) schema value
+                  if broken then Just <$> explainMismatch root (name : path) location schema value else pure Nothing
+                Nothing -> pure Nothing
+            Nothing -> pure Nothing
+        , do
+            broken <- not <$> evaluateObjectKeywords
+              (\schema item -> evaluateSchema root ("propertyNames" : path) schema item) fields value
+            if broken
+              then Just <$> leaf (Text.intercalate ", " [k | k <- objectKeywordNames, KeyMap.member (Key.fromText k) fields])
+              else pure Nothing
+        ]
+      evaluateLeaf keyword =
+        let only = KeyMap.filterWithKey (\key _ -> Key.toText key == keyword) fields
+        in and <$> sequence [ evaluateType only value, evaluateConst only value, evaluateEnum only value
+                            , evaluateMinimum only value, evaluateMaximum only value, evaluateString only value ]
+      objectReason = case value of
+        Object object -> do
+          let missing = case KeyMap.lookup "required" fields of
+                Just (Array names) -> [name | String name <- toList names, not (KeyMap.member (Key.fromText name) object)]
+                _ -> []
+              properties = case KeyMap.lookup "properties" fields of
+                Just (Object definitions) -> definitions
+                _ -> KeyMap.empty
+              property (key, item) = case KeyMap.lookup key properties of
+                Just schema -> nested (Key.toText key : path) schema
+                Nothing -> case KeyMap.lookup "additionalProperties" fields of
+                  Just (Bool False) -> pure (Just (instancePointer (Key.toText key : location)
+                    <> " is a member the " <> schemaPath path <> " does not allow"))
+                  Just schema@(Object _) -> nested ("additionalProperties" : path) schema
+                  _ -> pure Nothing
+                where
+                  nested schemaPath' schema = do
+                    broken <- fails schemaPath' schema item
+                    if broken
+                      then Just <$> explainMismatch root schemaPath' (Key.toText key : location) schema item
+                      else pure Nothing
+          if not (null missing)
+            then Just <$> leaf ("required (" <> Text.intercalate ", " missing <> " missing)")
+            else firstJust (map property (KeyMap.toList object))
+        _ -> pure Nothing
+      arrayReason = case value of
+        Array values -> do
+          let items = toList values
+          fromItems <- case KeyMap.lookup "items" fields of
+            Just schema@(Object _) -> firstJust
+              [ do
+                  broken <- fails ("items" : path) schema item
+                  if broken
+                    then Just <$> explainMismatch root ("items" : path) (Text.pack (show index) : location) schema item
+                    else pure Nothing
+              | (index, item) <- zip [0 :: Int ..] items ]
+            _ -> pure Nothing
+          case fromItems of
+            Just reason -> pure (Just reason)
+            Nothing -> firstJust
+              [ do
+                  let only = KeyMap.filterWithKey (\key _ -> Key.toText key `elem` (name : companions)) fields
+                  broken <- not <$> evaluateArray root path only value
+                  if broken then Just <$> leaf name else pure Nothing
+              | (name, companions) <- [("minItems", []), ("maxItems", []), ("uniqueItems", []),
+                                       ("contains", ["minContains", "maxContains"])]
+              , KeyMap.member (Key.fromText name) fields ]
+        _ -> pure Nothing
+  found <- reasons
+  pure (maybe (instancePointer location <> " does not satisfy the " <> schemaPath path) id found)
+explainMismatch _ path location _ _ = Right (instancePointer location <> " does not satisfy the " <> schemaPath path)
+
+leafKeywords :: [Text]
+leafKeywords = ["type", "const", "enum", "minimum", "maximum", "pattern", "minLength", "maxLength", "format"]
+
+-- | A JSON Pointer to a place in the instance, from its reversed path.
+instancePointer :: [Text] -> Text
+instancePointer [] = "the instance"
+instancePointer location =
+  "/" <> Text.intercalate "/" (map escape (reverse location))
+  where
+    escape = Text.replace "/" "~1" . Text.replace "~" "~0"
 
 evaluateType :: KeyMap.KeyMap Value -> Value -> Either Text Bool
 evaluateType fields value = case KeyMap.lookup "type" fields of

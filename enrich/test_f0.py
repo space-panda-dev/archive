@@ -133,7 +133,8 @@ class Manifests(unittest.TestCase):
                 extractor = catalog[extractor_id]
                 self.assertEqual(extractor.manifest["parameters"], program.parameters())
                 self.assertEqual(extractor.manifest["command"][0], "${f0-python}")
-                self.assertEqual(set(extractor.outputs), {"f0", "rows_from_tracker"})
+                self.assertEqual(set(extractor.outputs), {"f0", "rows_from_tracker"} | (
+                    {"level_db", "loud_db"} if extractor_id == "f0-pesto" else set()))
                 self.assertEqual(extractor.outputs["f0"]["columns"], 2)
                 self.assertEqual(extractor.outputs["f0"]["grid"], "f0")
 
@@ -146,6 +147,19 @@ class Manifests(unittest.TestCase):
         for program in TRACKERS.values():
             top = Path(program.__file__).read_text().split("\nclass ", 2)
             self.assertNotIn("import torch", top[0] + top[1])
+
+
+class Levels(unittest.TestCase):
+    def test_a_row_level_is_the_rms_of_the_20_ms_centred_on_it_silence_outside(self) -> None:
+        signal = numpy.zeros(1600, dtype=numpy.float32)
+        signal[800:] = 0.5
+        level = f0_pesto.row_levels(signal, 11)
+        self.assertEqual(level.shape, (11, 1))
+        self.assertEqual(level.dtype, numpy.dtype("<f4"))
+        self.assertEqual(level[0, 0], -120.0)                       # rows 0 to 3 hear only silence
+        self.assertAlmostEqual(float(level[5, 0]), 10 * numpy.log10(0.125), places=4)  # half of it sounds
+        self.assertAlmostEqual(float(level[7, 0]), 20 * numpy.log10(0.5), places=4)
+        self.assertAlmostEqual(float(level[10, 0]), 10 * numpy.log10(0.125), places=4)  # past the end: silence
 
 
 class Grid(unittest.TestCase):
@@ -207,6 +221,17 @@ class Tracking(unittest.TestCase):
                 self.assertLess(numpy.abs(cents(numpy.median(track[10:90, 0]), 220.0)), 5)
                 self.assertLess(numpy.abs(cents(numpy.median(track[110:190, 0]), 329.63)), 5)
                 self.assertEqual(track[215:, 0].tolist(), [0.0] * (251 - 215))
+                if extractor_id == "f0-pesto":
+                    level = entry.series("level_db")
+                    self.assertEqual(level.shape, (251, 1))
+                    self.assertEqual(entry.grid("level_db"), entry.grid("f0"))
+                    # Each tone's RMS is -15.8 dBFS; from row 202 on, whose 20 ms
+                    # reach starts past 2.0 s and the resampler's ringing, there
+                    # is silence: the floor.
+                    self.assertTrue(numpy.all(numpy.abs(level[10:190, 0] + 15.8) < 1.5), level[10:190, 0])
+                    self.assertLess(level[201, 0], -40)
+                    self.assertEqual(level[202:, 0].tolist(), [-120.0] * (251 - 202))
+                    self.assertLess(abs(entry.scalar("loud_db") - float(numpy.percentile(level, 99))), 1e-3)
                 names = {s["name"] for s in entry.manifest["software"]}
                 self.assertTrue({"fake-tracker", "ffmpeg", "numpy", "python"} <= names)
                 with patch.object(extract.subprocess, "Popen", side_effect=AssertionError("ran")):

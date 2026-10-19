@@ -39,11 +39,13 @@ except ImportError as exc:  # pragma: no cover - exercised by CLI installation
         "World needs pyoxigraph; install world/requirements.txt"
     ) from exc
 
-try:
-    from world import contributions, harmony
-except ImportError:  # run as world/world.py, with world/ on the path
-    import contributions  # type: ignore[no-redef]
-    import harmony  # type: ignore[no-redef]
+if __name__ in ("__main__", "world"):
+    # Run as world/world.py, or imported as `world` with world/ on the path
+    # (the relay): `world.<module>` names this directory's modules, as it does
+    # from the repository root, so the rule modules import one another alike.
+    __path__ = [str(Path(__file__).resolve().parent)]
+    sys.modules.setdefault("world", sys.modules[__name__])
+from world import contract_graphs, contributions, harmony  # noqa: E402
 
 
 PROV = "http://www.w3.org/ns/prov#"
@@ -59,7 +61,7 @@ PROJECTION_VERSION = 6
 # build writes, so each addition raises the version's revision. A generation
 # built at an earlier revision is rebuilt in full rather than extended, or its
 # older records would lack what the addition projects.
-PROJECTION_REVISIONS = {6: 5}
+PROJECTION_REVISIONS = {6: 7}
 XSD = "http://www.w3.org/2001/XMLSchema#"
 UTC_INSTANT = re.compile(r"([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.([0-9]+))?Z\Z")
 DECIMAL = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?\Z")
@@ -416,7 +418,19 @@ def _project(store: Store, data: ExportData, known_object: Any = None) -> None:
     _add(store, domain_graph, local_scheme, RDF + "type", nn(SKOS + "ConceptScheme"))
     _add(store, domain_graph, mb_scheme, RDF + "type", nn(SKOS + "ConceptScheme"))
     kind_scheme = nn(archive_id + "#catalogue:performance-kinds")
+    lookups = contract_graphs.lookups(store, records_graph, records_by_revision)
     for claim in records:
+        contract_0010 = contract_graphs.contract_of(claim)
+        if claim.get("shape") in {"claim", "assessment"} and contract_0010 in contract_graphs.RECHECKS:
+            # Specification 0.0.10's contracts (revision 6): re-checked by
+            # their modules, then projected in their own graphs.
+            try:
+                contract_graphs.project(store, _record_uri(archive_id, claim["revision_id"]), claim,
+                                        contract_0010, core_terms, contract_contexts[contract_0010], lookups,
+                                        lambda revision: _record_uri(archive_id, revision), _object_uri,
+                                        domain_graph)
+            except contract_graphs.ContractGraphError as exc:
+                raise ProjectionError(str(exc)) from exc
         if claim.get("shape") == "assessment":
             _project_review_assessment(store, archive_id, core_terms, contract_contexts, claim, records_by_revision)
             continue
@@ -2032,10 +2046,17 @@ def _main(argv: Iterable[str] | None = None) -> int:
     query_parser.add_argument("--projection", type=int, help="the projection version to answer from (default: the newest)")
     query_parser.add_argument("--rdf-format", choices=list(GRAPH_FORMATS), default=N_TRIPLES,
                               help="the media type of a CONSTRUCT or DESCRIBE answer")
+    view_parser = subparsers.add_parser(
+        "view", help="answer a named view (ADR 0082) from the selected World store generation, or list them")
+    view_parser.add_argument("--store", type=Path)
+    view_parser.add_argument("--request-file", type=Path, help="the view request: {view, version, subject, parameters?}")
+    view_parser.add_argument("--caller", help="the person object the caller is bound to: the default person or judge")
+    view_parser.add_argument("--projection", type=int, help="the projection version to answer from (default: the newest)")
+    view_parser.add_argument("--list", action="store_true", help="list every view and version served")
     candidate_parser = subparsers.add_parser("musicbrainz-work", help="fetch one disposable MusicBrainz Work candidate by MBID")
     candidate_parser.add_argument("mbid")
     for unsupported_name, description in (
-        ("current", "no accepted per-kind rule defines a winning current claim"),
+        ("current", "no accepted per-kind rule defines a winning current claim; ask a named current rule with world view"),
         ("promote", "World does not submit claims to Door; claim admission is not implemented here"),
     ):
         unsupported_parser = subparsers.add_parser(unsupported_name, help=description)
@@ -2073,6 +2094,22 @@ def _main(argv: Iterable[str] | None = None) -> int:
             if refreshed.reason:
                 report["reason"] = refreshed.reason
             json.dump(report, sys.stdout, sort_keys=True)
+            sys.stdout.write("\n")
+        elif args.command == "view":
+            from world import view_records, views
+            if args.list:
+                json.dump({"views": views.catalogue()}, sys.stdout, sort_keys=True, indent=2)
+            elif args.store is None or args.request_file is None:
+                raise ValueError("world view needs --store and --request-file, or --list")
+            else:
+                projection = _read_current(args.store, args.projection)
+                try:
+                    result = view_records.answer(projection, json.loads(args.request_file.read_text(encoding="utf-8")),
+                                                 caller=args.caller)
+                except views.ViewError as exc:
+                    print(json.dumps({"status": "refused", "code": exc.code, "detail": str(exc)}), file=sys.stderr)
+                    return 4
+                json.dump({"status": "ok", "result": result}, sys.stdout, ensure_ascii=False, sort_keys=True, indent=2)
             sys.stdout.write("\n")
         elif args.command == "musicbrainz-work":
             json.dump(musicbrainz_work_candidate(args.mbid), sys.stdout, ensure_ascii=False, sort_keys=True, indent=2)

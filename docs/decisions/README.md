@@ -93,5 +93,16 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0076](0076-preferred-inputs.md) | An extractor may prefer a file feature of its content as its default input (accepted 2026-10-19, amended: a mostly unvoiced stem falls back) |
 | [0077](0077-chord-stacks-and-meter.md) | Chords are stacks and meter is a timeline, each asserted by someone |
 | [0078](0078-contributions.md) | A contribution names who did what, in which role, to how much of the music |
+| [0079](0079-machine-harmony-claims.md) | Machine harmony becomes claims; stems are cited by bank key |
+| [0080](0080-key-and-tuning.md) | Key regions and tuning are claims |
+| [0081](0081-judgments-and-annotations.md) | Judgments can scope to a span or reading; people can annotate spans |
+| [0082](0082-views-and-current.md) | Named views: the first current rule, correction overlay, differences, and chord names over the relay |
+| [0083](0083-form-and-work-meter.md) | Form is a claim, and a Work can have meter without a recording |
+| [0084](0084-lead-sheets.md) | A lead sheet is a claim that pins the parts it chose |
+| [0085](0085-documents-lyrics-rights.md) | Documents arrive through the relay; lyrics are timed by reference; sensitivity and rights are claims (amended 2026-10-19: syllables and their notes; Door checks an approval beyond the circle, World's `may_publish`) |
+| [0086](0086-notes-and-melody.md) | Note events per part, and melody at two levels (amended 2026-10-19: articulation, written rhythm, the bass line) |
+| [0087](0087-tracklists-and-correspondence.md) | Releases list their tracks; artists, releases and recordings correspond to MusicBrainz and Discogs |
+| [0088](0088-bandmates.md) | Bandmates read their circle and assert their own claims |
+| [0089](0089-practice-audio-and-exports.md) | Practice audio from the stems, transposition, and exports that are views until shared |
 | [0090](0090-extractor-runs-travel-through-spool.md) | An extractor run travels through Spool, and its files come back as result attachments |
 | [0091](0091-talk-needs-level.md) | Talk needs level, and a studio preset never says talk (amends 0066's presets) |

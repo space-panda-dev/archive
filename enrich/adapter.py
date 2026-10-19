@@ -186,8 +186,24 @@ def _run(arguments: list[str], cwd: Path, what: str, env: dict[str, str] | None 
         raise AdapterError(f"{what} could not run: {exc}") from exc
     if completed.returncode != 0:
         raise AdapterError(f"{what} failed ({completed.returncode}): "
-                           f"{completed.stderr.strip() or completed.stdout.strip()}")
+                           f"{refusal_text(completed.stderr) or completed.stdout.strip()}")
     return completed.stdout
+
+
+def refusal_text(stderr: str) -> str:
+    """A command's stderr for a person. Door ends a refusal with its JSON
+    reply, `{"ok": false, "error": {"code", "message"}}`, after the line that
+    says it; that line is kept and the code added, not the JSON repeated."""
+    text = stderr.strip()
+    head, _, last = text.rpartition("\n")
+    try:
+        reply = json.loads(last)
+    except ValueError:
+        return text
+    error = reply.get("error") if isinstance(reply, dict) and reply.get("ok") is False else None
+    if not isinstance(error, dict) or not isinstance(error.get("code"), str):
+        return text
+    return f"{head.strip() or error.get('message', '')} (refusal code {error['code']})"
 
 
 class ArchiveReader:

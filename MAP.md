@@ -59,9 +59,9 @@ Build: [archive.cabal](archive.cabal) (149): library `door/src`, executables
 | `archive/app/Main.hs` | 373 | `main`: `init`, `maintenance repack/prune-packed`, `status`, `doctor`, `ls`, `show`, `export [--since]`; `current` is unsupported |
 | `door/src/Archive/Door/AdmissionDryRun.hs` | 1574 | `dryRunAdmission`, `loadSnapshot`, `validateProposalContract` |
 | `door/src/Archive/Door/AdmissionCommit.hs` | 335 | `commitAdmission`, `refreshVerificationCheckpoint` |
-| `door/src/Archive/Door/TransitionDryRun.hs` | 1095 | `dryRunTransition`, `transitionDispatchTable` (contract id/version to kind) |
+| `door/src/Archive/Door/TransitionDryRun.hs` | 1119 | `dryRunTransition`, `transitionDispatchTable` (contract id/version to kind) |
 | `door/src/Archive/Door/TransitionCommit.hs` | 114 | `commitTransition` |
-| `door/src/Archive/Door/Contracts.hs` | 2337 | bundle loading; `validateSchema` (line ~274) parses the `x-archive-*` rule keywords; `validate*Rule` functions implement them |
+| `door/src/Archive/Door/Contracts.hs` | 2448 | bundle loading; `validateSchema` (line ~274) parses the `x-archive-*` rule keywords; `validate*Rule` functions implement them |
 | `door/src/Archive/Door/RecordCommit.hs` | 3015 | `commitRecordBatch*`, write lock, git-annex content |
 | `door/src/Archive/Door/Bootstrap.hs` | 1627 | `initArchive` |
 | `door/src/Archive/Door/VerifiedCheckpoint.hs` | 416 | incremental verification checkpoint (ADR 0052) |
@@ -70,7 +70,7 @@ Build: [archive.cabal](archive.cabal) (149): library `door/src`, executables
 | `door/src/Archive/GitSnapshot.hs`, `Process.hs`, `ProcessPinned.c` | 660, 320, 799 | Git snapshot reads, pinned process launch (ADR 0033) |
 | `door/service.schema.json` | 304 | published service and refusal codes |
 
-Tests: suite `haskell`. `door/test/Main.hs` (7758) and `archive/test/Main.hs`
+Tests: suite `haskell`. `door/test/Main.hs` (7827) and `archive/test/Main.hs`
 (1001) are single sequential programs of named `assert "..."` checks with no
 filter; find one with `rg -n 'assert "<words>' door/test/Main.hs`.
 Rules: INV-1, INV-2, INV-5; record envelope ADR 0022; admission ADR 0023;
@@ -80,15 +80,21 @@ transitions ADR 0028, 0030; power-loss durability is accepted but not yet met
 `service.schema.json` (a `door-test` check).
 Find: per-contract payload rules are `x-archive-*` keys in the bundle JSON,
 implemented in `Contracts.hs` (`rg -n 'x-archive-' door/src`); transition
-kinds in `transitionDispatchTable`.
+kinds in `transitionDispatchTable`. The span rules' list and path forms are
+`SpanRules.hs`; the check beyond the circle (S-30) is `BeyondCircle.hs` over
+`Reach.hs` (sensitivity, rights) and `SharingGate.hs` (co-writers' consent),
+run by `planTransition` on today's UTC date, never on replay; pure checks in
+`door/test/BeyondCircle010.hs`, agreement with World in
+`world/tests/test_door_agreement_beyond_circle.py`.
 
 ## Spec: what every archive must satisfy, copied into each
 
-- `spec/VERSION` (current `0.0.9`); `spec/archive-spec.md` (1997) is a byte
-  copy of `spec/0.0.9/archive-spec.md`. Navigate by heading:
-  `rg -n '^##' spec/archive-spec.md` (section 6, "Reading commands", runs
-  from line 744 to 1980).
-- `spec/<version>/contracts.json` (0.0.9: 185 lines, 36 contracts) lists
+- `spec/VERSION` (current `0.0.10`, unreleased); `spec/archive-spec.md`
+  (2620) is a byte copy of `spec/0.0.10/archive-spec.md`. Navigate by
+  heading: `rg -n '^##' spec/archive-spec.md` (section 6, "Reading
+  commands", runs from line 757 to 2602; D-18 holds 0.0.10's contracts).
+  Release notes: [docs/releases/0.0.10.md](docs/releases/0.0.10.md).
+- `spec/<version>/contracts.json` (0.0.10: 315 lines, 62 contracts) lists
   `{id, version, digest}`; each digest names `spec/contracts/sha256-<hex>.json`.
 - `spec/<version>/context.jsonld` is the JSON-LD context (ADR 0025).
 
@@ -102,9 +108,11 @@ upgrades: ADR 0068.
 
 | File | Lines | What |
 |---|---|---|
-| `world/world.py` | 2101 | `_main` (line ~2013): `build`, `rebuild`, `refresh`, `query`, `musicbrainz-work`; `_project` (271), `_project_review_claim` (592), `_project_derivation_claim` (838), `_project_music_claim` (1083), `refresh_store`, `query` |
+| `world/world.py` | 2138 | `_main` (line ~2013): `build`, `rebuild`, `refresh`, `query`, `musicbrainz-work`; `_project` (271), `_project_review_claim` (592), `_project_derivation_claim` (838), `_project_music_claim` (1083), `refresh_store`, `query` |
 | `world/harmony.py` | 889 | chord stacks, sequences, meter (ADR 0077) |
 | `world/contributions.py` | 810 | contributions, membership (ADR 0078) |
+| `world/documents.py`, `notes.py`, `circle.py` | 1081, 1365, 765 | documents, timed lyrics and syllables, sensitivity and rights, `Reacher` (0085); notes, melody, `tune_notes`, `written_rhythm` (0086); sharing gate, readable set, `beyond_circle`, `may_publish` (0088, 0085) |
+| `world/record_views.py`, `contract_graphs.py` | 588, 565 | the record views (`VIEWS` at the end); `RECHECKS`, contract to checker |
 | `world/conformance.py` | 176 | checks a store against `world/projection/6/` |
 | `world/projection/6/*.ttl`, `projection.json` | 18-440 | named graphs, SHACL shapes, vocabulary |
 | `world/examples/*.sparql` | | example queries, checked by tests |
@@ -140,9 +148,11 @@ command, `rg -n '^##' enrich/README.md`).
 |---|---|---|
 | `enrich/enrich.py` | 685 | `main` (619): `probe`, `detect`, `match`, `match-windows` (`run_probe`, `run_detect`, `run_match`, `run_match_windows`) |
 | `enrich/adapter.py` | 588 | `propose`: a tool result to a Door proposal (ADR 0064) |
+| `enrich/propose.py`, `proposers.py` | 266, 999 | `enrich propose`; `PROPOSERS` (registry at the end): bank features as claims, the bass line and vocal bleed filter (`bass_line`, `read_bass_line`, `drop_bleed`), lines built from `f0-pesto` (`build_line`), forced alignment declared and refused `not_yet` |
+| `enrich/note_builder.py` | 356 | `build`: one note per held pitch from a pitch track and its level (ADR 0086); settings `VOICE`, `BASS`; tests `enrich/test_note_builder.py` |
 | `enrich/probe.py`, `detector.py` | 234, 674 | stream facts (0065), span suggestions (0066; presets and the talk gate, 0091) |
 | `enrich/match.py`, `cover.py`, `windows.py` | 358, 1073, 517 | work matching (0067, 0071, 0072) |
-| `enrich/extract.py` | 717 | feature-bank runner: `main` (`list`, `run`), `run_default`, `run_from` |
+| `enrich/extract.py` | 756 | feature-bank runner: `main` (`list`, `run`), `run_default`, `run_from` |
 | `enrich/bank.py` | 819 | `Catalog` (326), `Bank` (704): the bank format |
 | `enrich/remote.py` | 494 | extractor runs through Spool: `put`, `work`, `collect` (ADR 0090) |
 | `enrich/media.py`, `waveform.py`, `derived.py` | 193, 161, 62 | derived media (ADR 0069) |
@@ -202,7 +212,7 @@ catalog except the specification upgrade, so a new contract needs a plan step.
 | `spec/0.0.*/archive-spec.md` (old versions) | read `spec/archive-spec.md` by heading; `git diff --no-index spec/0.0.8/archive-spec.md spec/0.0.9/archive-spec.md` for a change |
 | `world/tests/fixtures/*.json` (one-line exports, up to 133 KB) | `python3 -c` with `json` to count or pick; regenerate via `door-test` with `ARCHIVE_TEST_WORLD_EXPORT` (world/README.md, Tests) |
 | `fixture/content/*` (binary) | `fixture/README.md` says how each was made |
-| `door/test/Main.hs` (7758), `RecordCommit.hs` (3015), `Contracts.hs` (2337) | `rg -n` the function or assert text, then read around it |
+| `door/test/Main.hs` (7856), `RecordCommit.hs` (3015), `Contracts.hs` (2448) | `rg -n` the function or assert text, then read around it |
 | `relay/openapi.json` (1935) | `python3 -c` with `json` on `["paths"]["/route"]` |
 | `docs/port-ledger.md` (520) | `rg -n '<unit>' docs/port-ledger.md` |
 | `flake.lock`, `dist-newstyle/`, `cabal.project.local` | not source; never edit by hand |
