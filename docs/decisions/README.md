@@ -109,3 +109,4 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0092](0092-internet-exposure.md) | Internet exposure through Cloudflare Access; internet logins are members (proposed) |
 | [0093](0093-audiences.md) | A relay has several named audiences (proposed) |
 | [0094](0094-peoples-writes.md) | People's writes: grants are transitions, and members set their own limits (proposed) |
+| [0095 proposed](0095-participation.md) | Participation is a contribution at session scope, and only the operator counts it |
