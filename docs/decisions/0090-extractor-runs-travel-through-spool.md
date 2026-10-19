@@ -1,6 +1,6 @@
 # 0090. An extractor run travels through Spool, and its files come back as result attachments
 
-Status: proposed
+Status: accepted (operator, 2026-10-19)
 
 [ADR 0074](0074-extractor-contract.md) made every extractor run describable
 without shared memory and named the Spool capability a worker would offer,

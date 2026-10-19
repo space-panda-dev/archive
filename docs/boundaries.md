@@ -141,7 +141,7 @@ derived media by content digest
 ([ADR 0073](decisions/0073-feature-bank.md),
 [format](feature-bank.md), [adding an extractor](adding-an-extractor.md)). `enrich/remote.py` hands one
 extractor run to a Spool worker and files what comes back the same way
-([proposed ADR 0090](decisions/0090-extractor-runs-travel-through-spool.md)).
+([ADR 0090](decisions/0090-extractor-runs-travel-through-spool.md)).
 It needs only the standard library; each extractor brings its own
 environment, named by configuration. Its graph is the few extractors one
 content needs, run in order on one machine; handing a run to another machine

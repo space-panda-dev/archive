@@ -88,9 +88,9 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0071](0071-essentia-cover-similarity.md) | Cover similarity is measured with Essentia, as the V2 system calibrated it (amended 2026-10-18, accepted) |
 | [0072](0072-windowed-work-matches.md) | A work match can suggest a window of a recording (amended 2026-10-18, accepted) |
 | [0073](0073-feature-bank.md) | A feature bank holds regenerable features, keyed by content and method |
-| [0074](0074-extractor-contract.md) | An extractor is any program with a manifest, run by request |
+| [0074](0074-extractor-contract.md) | An extractor is any program with a manifest, run by request (amended 2026-10-19, accepted) |
 | [0075](0075-stems-as-content.md) | Stems are separated outside the archive's environment, and a stem is content to every extractor |
-| [0076](0076-preferred-inputs.md) | An extractor may prefer a file feature of its content as its default input (proposed) |
+| [0076](0076-preferred-inputs.md) | An extractor may prefer a file feature of its content as its default input (accepted 2026-10-19, amended: a mostly unvoiced stem falls back) |
 | [0077](0077-chord-stacks-and-meter.md) | Chords are stacks and meter is a timeline, each asserted by someone |
 | [0078](0078-contributions.md) | A contribution names who did what, in which role, to how much of the music |
-| [0090](0090-extractor-runs-travel-through-spool.md) | An extractor run travels through Spool, and its files come back as result attachments (proposed) |
+| [0090](0090-extractor-runs-travel-through-spool.md) | An extractor run travels through Spool, and its files come back as result attachments |
