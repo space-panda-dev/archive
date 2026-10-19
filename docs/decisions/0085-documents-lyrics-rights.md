@@ -1,6 +1,7 @@
 # 0085. Documents arrive through the relay; lyrics are timed by reference; sensitivity and rights are claims
 
-Status: accepted (operator, 2026-10-18)
+Status: accepted (operator, 2026-10-18); amendment proposed 2026-10-19
+(syllables, their notes, and forced alignment), awaiting the operator
 
 A lead sheet joins chords, meter, form, melody, and lyrics. Specification
 0.0.9 holds chords and meter ([ADR 0077](0077-chord-stacks-and-meter.md)),
@@ -492,3 +493,121 @@ to what the relay shows), and hold no state outside the claims Door admits.
   is for works that a licence does not cover, and ADR 0010 chose it. A
   later version may add licences for the operator's own works when
   publication is built.
+
+## Amendment, 2026-10-19 (proposed): syllables, their notes, and forced alignment
+
+Status: proposed. Drafted at the operator's request on 2026-10-19 from the
+decisions they confirmed on 2026-10-18, for specification 0.0.10, which is
+unreleased, so `timed_lyrics` version 1 is amended in place. The operator
+decides acceptance. Until they do, the text above holds.
+
+### Context of the amendment
+
+Timed lyrics stop at the word. A lead sheet and its MusicXML export put
+lyrics under notes a syllable at a time, and a word of three syllables over
+three notes cannot be written from a word's span. Nor does anything say
+which notes carry a syllable, so a melisma (one syllable over several notes)
+has no extender. Machine timing so far came from ASR text, which is not the
+lyric document's words.
+
+Forced alignment of the known lyric document to the vocal stem, tried on
+the experimental data, placed 50.5% of line starts within ±300 ms of the
+reference timings, but those references were themselves off by 0.5 to 0.8
+seconds, so the figure bounds the references as much as the aligner. About
+half of the syllables had no note of the vocal line under them. It cost
+about 29 seconds of wall time per minute of sung audio on the x86-64
+laptop.
+
+### Decision of the amendment
+
+**A word may hold syllables.** A word of a `timed_lyrics` line gains
+optional `syllables`: 1 to 32 objects, each a `syllable` number (from 1)
+within the word, `start_char` and `end_char` (Unicode code point offsets
+into the word, from 0, end exclusive), `start_sample`, `end_sample`, and
+optional `end`, `confidence`, and `carried_by`. Syllables lie within their
+word's span, in order, never overlapping, with strictly increasing numbers
+and character ranges. The locator is line, word, syllable; the characters
+stay in the document, as words do, and `check_locators` checks that a
+syllable's offsets fall within its word.
+
+```json
+{"word": 2, "start_sample": 595200, "end_sample": 624000,
+ "syllables": [
+   {"syllable": 1, "start_char": 0, "end_char": 3, "start_sample": 595200, "end_sample": 604800,
+    "carried_by": {"notes": "sha256:…(vocals)", "onsets": [595200]}},
+   {"syllable": 2, "start_char": 3, "end_char": 6, "start_sample": 604800, "end_sample": 624000,
+    "carried_by": {"notes": "sha256:…(vocals)", "onsets": [604800, 614400]}}
+ ]}
+```
+
+**A syllable may name the notes that carry it.** A timed lyrics claim pins
+zero to 8 `notes`, notes version 1 Claim revisions (ADR 0086) about the same
+`source`. `carried_by` names one pinned claim's revision and 1 to 64
+strictly increasing `onsets`, each the `onset_sample` of a note in it; the
+highest note at an onset is meant. Several onsets are a melisma, and the
+extender is drawn to the last. Every pinned notes claim is named by at least
+one syllable. A syllable with no `carried_by` is placed on the samples only.
+
+**Machine timing is forced alignment, recorded as a run.** A machine's
+timed lyrics claim comes from aligning the known lyric document to the vocal
+stem, never from ASR text: an ASR transcript is a document of its own. Its
+`run` (ADR 0064) uses the lyric document's revision and the stem by bank key
+(ADR 0079), and its `parameters` Artifact names the aligner, its version,
+the language, and the syllabification rule. Its `alignment.method` is
+`forced alignment`. A person corrects it with their own claim citing it in
+`corrects`.
+
+**Exports write syllables under their notes.** The MusicXML exporter of
+[ADR 0089](0089-practice-audio-and-exports.md) writes each carried syllable
+as a `<lyric>` on its first note, with `<syllabic>` `single`, `begin`,
+`middle`, or `end`, and `<extend>` to the last note of a melisma. The words
+are joined from the document only for a viewer who may see it, as
+`lyric_view` joins them, so an export with lyrics reaches no further than
+the lyric document.
+
+### Contract changes the amendment implies
+
+1. `archive.claim/timed_lyrics` version 1: a word gains optional
+   `syllables`; the claim gains zero to 8 `notes` references; a syllable
+   gains optional `carried_by`.
+2. Door profile rules: syllables within the word's span, ordered, not
+   overlapping, numbers and character ranges increasing; `confidence` on
+   every line, word, and syllable exactly with a `confidence_scale`; `end`
+   and `hold_rule` as for words; `carried_by` names a pinned notes claim,
+   every pinned one is named, onsets increasing; the same-subject rule for
+   `notes`.
+3. World checks that each `carried_by` onset is a note of the named claim,
+   and `check_locators` checks syllable offsets.
+4. A forced-alignment extractor with a manifest (ADR 0074), whose run
+   records the document, the stem, and its parameters.
+5. ADR 0089's MusicXML exporter writes `<lyric>`; LilyPond's writes
+   `\lyricmode` with hyphens and extenders.
+
+### Consequences of the amendment
+
+- A lead sheet can put each syllable under its note, and an export carries
+  them, without a character of the lyrics in any claim.
+- With about half of the syllables carried by no note, a view must place
+  the rest somehow; how is
+  [open](../open-questions.md#claims-and-provenance).
+- A machine's alignment states no `max_error_samples` until it is measured
+  against references better than those tried.
+- About 29 seconds of wall time per sung minute makes alignment a run by
+  request, not part of every import.
+- Syllable and carried-by enter the [vocabulary](../vocabulary.md) when the
+  amendment is accepted.
+- No invariant changes.
+
+### Alternatives considered in the amendment
+
+- **Syllable text in the claim.** It would carry the words past the
+  document's sensitivity and rights, which the decision above refuses.
+- **A separate contract linking syllables to notes.** The link is part of
+  how a line is sung, made by the same aligner from the same stem; a second
+  claim would have to repeat every locator.
+- **Timing from ASR output.** ASR guesses words; the document has them.
+  Aligning the known words gives timings for the operator's text, not a
+  transcription to reconcile.
+- **Linking a syllable to a Work-level melody item.** The timed claim is of
+  one recording; the untimed tune has no samples to align. Syllables under
+  a Work's melody wait on the note-by-note alignment already left open.
