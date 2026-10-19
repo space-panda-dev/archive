@@ -241,7 +241,7 @@ on the CPU, and possibly on its thread count. So:
 
 The tests check that one and two processes give the same bits on one machine,
 with these pins. On real recordings, the calibration workset was searched on
-an Apple M2 with Accelerate and on a Haswell ThinkPad with OpenBLAS, at the
+an Apple M2 with Accelerate and on an x86-64 (Haswell) laptop with OpenBLAS, at the
 margin of 0.01475: the kept windows, hits, decisions, and judged counts were
 identical. 22,176 of the 22,177 quarter-rate distances were bit-equal; the
 other differed by 2.4 × 10⁻⁴, at rank 5, and changed no decision. All 552
