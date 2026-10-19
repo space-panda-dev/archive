@@ -59,9 +59,9 @@ Build: [archive.cabal](archive.cabal) (149): library `door/src`, executables
 | `archive/app/Main.hs` | 373 | `main`: `init`, `maintenance repack/prune-packed`, `status`, `doctor`, `ls`, `show`, `export [--since]`; `current` is unsupported |
 | `door/src/Archive/Door/AdmissionDryRun.hs` | 1574 | `dryRunAdmission`, `loadSnapshot`, `validateProposalContract` |
 | `door/src/Archive/Door/AdmissionCommit.hs` | 335 | `commitAdmission`, `refreshVerificationCheckpoint` |
-| `door/src/Archive/Door/TransitionDryRun.hs` | 1095 | `dryRunTransition`, `transitionDispatchTable` (contract id/version to kind) |
+| `door/src/Archive/Door/TransitionDryRun.hs` | 1119 | `dryRunTransition`, `transitionDispatchTable` (contract id/version to kind) |
 | `door/src/Archive/Door/TransitionCommit.hs` | 114 | `commitTransition` |
-| `door/src/Archive/Door/Contracts.hs` | 2337 | bundle loading; `validateSchema` (line ~274) parses the `x-archive-*` rule keywords; `validate*Rule` functions implement them |
+| `door/src/Archive/Door/Contracts.hs` | 2318 | bundle loading; `validateSchema` (line ~274) parses the `x-archive-*` rule keywords; `validate*Rule` functions implement them |
 | `door/src/Archive/Door/RecordCommit.hs` | 3015 | `commitRecordBatch*`, write lock, git-annex content |
 | `door/src/Archive/Door/Bootstrap.hs` | 1627 | `initArchive` |
 | `door/src/Archive/Door/VerifiedCheckpoint.hs` | 416 | incremental verification checkpoint (ADR 0052) |
@@ -70,7 +70,7 @@ Build: [archive.cabal](archive.cabal) (149): library `door/src`, executables
 | `door/src/Archive/GitSnapshot.hs`, `Process.hs`, `ProcessPinned.c` | 660, 320, 799 | Git snapshot reads, pinned process launch (ADR 0033) |
 | `door/service.schema.json` | 304 | published service and refusal codes |
 
-Tests: suite `haskell`. `door/test/Main.hs` (7758) and `archive/test/Main.hs`
+Tests: suite `haskell`. `door/test/Main.hs` (7827) and `archive/test/Main.hs`
 (1001) are single sequential programs of named `assert "..."` checks with no
 filter; find one with `rg -n 'assert "<words>' door/test/Main.hs`.
 Rules: INV-1, INV-2, INV-5; record envelope ADR 0022; admission ADR 0023;
@@ -108,9 +108,11 @@ upgrades: ADR 0068.
 
 | File | Lines | What |
 |---|---|---|
-| `world/world.py` | 2101 | `_main` (line ~2013): `build`, `rebuild`, `refresh`, `query`, `musicbrainz-work`; `_project` (271), `_project_review_claim` (592), `_project_derivation_claim` (838), `_project_music_claim` (1083), `refresh_store`, `query` |
+| `world/world.py` | 2138 | `_main` (line ~2013): `build`, `rebuild`, `refresh`, `query`, `musicbrainz-work`; `_project` (271), `_project_review_claim` (592), `_project_derivation_claim` (838), `_project_music_claim` (1083), `refresh_store`, `query` |
 | `world/harmony.py` | 889 | chord stacks, sequences, meter (ADR 0077) |
 | `world/contributions.py` | 810 | contributions, membership (ADR 0078) |
+| `world/documents.py`, `notes.py`, `circle.py` | 1081, 793, 765 | documents, timed lyrics and syllables, sensitivity and rights, `Reacher` (0085); notes, melody, `tune_notes`, `written_rhythm` (0086); sharing gate, readable set, `beyond_circle`, `may_publish` (0088, 0085) |
+| `world/record_views.py`, `contract_graphs.py` | 540, 565 | the record views (`VIEWS` at the end); `RECHECKS`, contract to checker |
 | `world/conformance.py` | 176 | checks a store against `world/projection/6/` |
 | `world/projection/6/*.ttl`, `projection.json` | 18-440 | named graphs, SHACL shapes, vocabulary |
 | `world/examples/*.sparql` | | example queries, checked by tests |
@@ -209,7 +211,7 @@ catalog except the specification upgrade, so a new contract needs a plan step.
 | `spec/0.0.*/archive-spec.md` (old versions) | read `spec/archive-spec.md` by heading; `git diff --no-index spec/0.0.8/archive-spec.md spec/0.0.9/archive-spec.md` for a change |
 | `world/tests/fixtures/*.json` (one-line exports, up to 133 KB) | `python3 -c` with `json` to count or pick; regenerate via `door-test` with `ARCHIVE_TEST_WORLD_EXPORT` (world/README.md, Tests) |
 | `fixture/content/*` (binary) | `fixture/README.md` says how each was made |
-| `door/test/Main.hs` (7758), `RecordCommit.hs` (3015), `Contracts.hs` (2337) | `rg -n` the function or assert text, then read around it |
+| `door/test/Main.hs` (7827), `RecordCommit.hs` (3015), `Contracts.hs` (2318) | `rg -n` the function or assert text, then read around it |
 | `relay/openapi.json` (1935) | `python3 -c` with `json` on `["paths"]["/route"]` |
 | `docs/port-ledger.md` (520) | `rg -n '<unit>' docs/port-ledger.md` |
 | `flake.lock`, `dist-newstyle/`, `cabal.project.local` | not source; never edit by hand |

@@ -48,7 +48,6 @@ from world.tests.test_door_agreement import (
     whole,
 )
 from world.tests.test_conformance import build_fixture_archive, integration_binaries, remove_tree
-from world.tests.test_door_agreement_beyond_circle import TRANSITION_KEYS
 
 
 def agent(key: str) -> Change:
@@ -670,8 +669,6 @@ class Agreement010(unittest.TestCase):
             return {(c["id"], c["version"]) for c in data["contracts"]}
         added = catalog("0.0.10") - catalog("0.0.9")
         covered = {(c["id"], c["version"]) for key, *_ in ALL + BEYOND for c in self.record(key)["contracts"]}
-        # Transitions go through `door transition`, in the beyond-circle agreement.
-        covered |= {(c["id"], c["version"]) for key in TRANSITION_KEYS for c in self.record(key)["contracts"]}
         self.assertEqual(added, covered)
 
 

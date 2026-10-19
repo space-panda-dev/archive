@@ -702,7 +702,7 @@ class BeyondCircleTest(unittest.TestCase):
         made = approval_v2(0x605, [self.sheet], "open")
         records.append(made)
         self.assertTrue(may_publish(made["revision_id"], index(records), OPERATOR, TODAY)["may_publish"])
-        later = TODAY.replace(year=TODAY.year + 2)
+        later = TODAY + timedelta(days=800)
         self.assertFalse(may_publish(made["revision_id"], index(records), OPERATOR, later)["may_publish"])
 
 
