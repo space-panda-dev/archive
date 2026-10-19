@@ -121,10 +121,6 @@ SHIPPED = {
               "outside": {"cover.py": "sha256:1d3d8e48959d97ec6d633ab683eebea5bcb75616a1d29e218c25da30a7a4884c",
                           "extractors/frames/frames.py":
                               "sha256:acac662e87efbcafcebab714b858e8b42c287de7963156c7e2a14adfd860c565"}},
-    # Version 2: the six-note m11 priced above the five-note chords.
-    "chords": {"version": "2",
-               "code": "sha256:fdfc361ef79a5e0841630078bb3a5799f9ab78185f8dc153d94521e44011200c",
-               "outside": {}},
     "loudness-r128": {"version": "1",
                       "code": "sha256:37384ca259e5a38d61a4f09891b496bfeba339e5a10791aea2dc6b401aed0898",
                       "outside": {}},
@@ -160,6 +156,17 @@ SHIPPED = {
                "outside": {"waveform.py": "sha256:353aceedf74c7a1c2bbaa330fe03847440f1e74213146bcf6bc0b863db39a424",
                            "derived.py": "sha256:d1da556693ea266247cbac481f17672578d5cc90043b3f28730e899cd3c28132"}},
     "stems": {"version": "1", "code": "sha256:235a4c30a38d1f897958ef1354441011e435709c34732cfe4aad503ab1481c3e", "outside": {}},
+    # The learned beat and chord extractors keep the album trial's id, version, and
+    # parameters, so their keys are the trial's (test_beats_chords checks one).
+    "beats-beatthis": {"version": "1",
+                       "code": "sha256:68c308ce04c2874d4f73399fe44491f667de4387e4e5e8760425b8f8ac1abab0",
+                       "outside": {}},
+    "chords-jiang": {"version": "1",
+                     "code": "sha256:d51f91d82354af88e7ba8a6b3f6532e707d9d9e6a5d359580683efdd451a6e30",
+                     "outside": {}},
+    "chords-chordino": {"version": "1",
+                        "code": "sha256:e404cea891963fd123d5d865c8f58ece5191bb5d0ab729aaf3d87de4426881ba",
+                        "outside": {}},
 }
 
 
@@ -768,6 +775,32 @@ class Manifests(unittest.TestCase):
                 self.assertEqual({p.relative_to(enrich).as_posix() for p in reached},
                                  set(SHIPPED[extractor.id]["outside"]))
 
+    def test_a_retired_extractors_entries_stay_readable_and_regenerable(self) -> None:
+        """Retiring an extractor removes it from the catalog
+        (docs/feature-bank.md, retired extractors): `run all` no longer
+        makes or reads its entries, but they stay, read_entry reads them
+        without a catalog, and its directory from history makes the same key."""
+        f = Fixture(self)
+        retired = f.add("retired")
+        f.add("kept")
+        self.assertEqual(f.run()[0], 0)
+        made = f.reader().entry(f.digest, "retired")
+        self.assertIsNotNone(made)
+        kept_aside = f.dir / "history" / "retired"
+        kept_aside.parent.mkdir()
+        shutil.move(str(retired), str(kept_aside))
+        self.assertNotIn("retired", bank.Catalog.load([f.extractors]).extractors)
+        code, answer = f.run()
+        self.assertEqual((code, f.statuses(answer)), (0, {"kept": "hit"}))
+        found = bank.read_entry(made.path)
+        self.assertIsNotNone(found)
+        self.assertEqual(found.manifest, made.manifest)
+        self.assertEqual(found.scalar("y"), made.scalar("y"))
+        before = f.runs()
+        code, answer = f.run("all", "--extractors", str(kept_aside.parent))
+        self.assertEqual((code, f.statuses(answer)), (0, {"kept": "hit", "retired": "hit"}))
+        self.assertEqual(f.runs(), before)
+
     def test_a_code_digest_sees_every_file_but_byte_code(self) -> None:
         f = Fixture(self)
         directory = f.add("a")
@@ -782,7 +815,9 @@ class Manifests(unittest.TestCase):
         catalog = bank.Catalog.load()
         self.assertIn("frames", catalog.extractors)
         self.assertIn("loudness-r128", catalog.extractors)
-        programs = {"python": sys.executable, "sh": "/bin/sh", "demucs-python": sys.executable}
+        programs = {"python": sys.executable, "sh": "/bin/sh", "demucs-python": sys.executable,
+                    "beatthis-python": sys.executable, "beatthis-checkpoint": "/model.ckpt",
+                    "jiang-python": sys.executable, "jiang-repo": "/jiang", "chordino-python": sys.executable}
         for extractor in catalog.extractors.values():
             command = extract.resolve_command(extractor, programs)
             self.assertTrue(any(Path(word).is_file() and Path(word).parent == extractor.directory

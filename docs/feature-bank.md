@@ -265,16 +265,18 @@ parameters are in the manifest's descriptions and in the
 
 | Extractor | Version | Needs | Outputs |
 |---|---|---|---|
+| `beats-beatthis` | 1 | none | scalars `beat_count`, `downbeat_count`, `median_bpm`; events `beats`, `downbeats` |
+| `chords-chordino` | 1 | none | scalars `chord_count`, `seconds`; spans `chords` |
+| `chords-jiang` | 1 | none | scalars `chord_count`, `decoded_in_top3`; spans `chords`; files `readings` |
 | `frames` | 1 | none | series `hpcp`, `rms_db`, `centroid`, `rolloff`, `flatness`, `flux`, `onset_hfc`, `mfcc`, `melbands`; scalars `samples`, `seconds` |
-| `rhythm` | 3 | none | series `tempo`, `onset_count`, `onset_deviation`, `offgrid`, `chunk_bpm`, `chunk_confidence`, `primary_tempo`, `tempo_support`, `downbeat_margin`; scalars `bpm`, `confidence`, `onset_rate`, `seconds`, `primary_bpm`, `meter`; events `beats`, `onsets`, `pulse`, `downbeats`, `tempo_changes`; spans `tempo_spans` |
-| `tonal` | 4 | `frames`: rms_db | series `pitched`, `tuning_windows`, `chroma`, `bass_chroma`, `dissonance`; scalars `tuning_frequency`, `tuning_cents`, `tuning_confidence`, `tuning_window_count`, `drift_spread_cents`, `detuned`, `key`, `scale`, `mode`, `scale_notes`, `key_strength`, `key_margin`, `collection`, `collection_margin`, `tonic_margin`, `tonic_named`; spans `tuning_drift`, `detuned_spans`, `keys`, `key_regions` |
-| `chords` | 2 | `frames`: samples; `rhythm`: beats; `tonal`: bass_chroma, chroma, pitched | scalars `changes_per_minute`, `beat_share`; spans `chords`, `chord_candidates` |
 | `colour` | 3 | `frames`: centroid, hpcp, rms_db | series `colour`; files `palette`, `preview` |
 | `loudness-r128` | 1 | none | scalars `integrated` |
 | `melody` | 2 | none | series `pitch`, `confidence`, `voiced`, `midi`, `cents`, `level_db`; scalars `voiced_fraction`, `melodia_voiced_fraction`, `loud_db`, `gate_db`, `reference_hz`, `samples`; spans `notes` |
 | `quality` | 3 | `frames`: samples | series `correlation`, `peak_db`; scalars `sample_rate`, `channels`, `seconds`, `integrated`, `loudness_range`, `true_peak`, `sample_peak`, `full_scale_samples`, `clipped_seconds`, `dc_offset`, `whole_correlation`, `anti_phase`, `false_stereo`, `noise_floor`, `snr`, `bandwidth`, `band_limited`, `hum_examined`; events `clicks`, `discontinuities`; spans `clipping`, `overs`, `gaps`, `noise_bursts`, `hum` |
+| `rhythm` | 3 | none | series `tempo`, `onset_count`, `onset_deviation`, `offgrid`, `chunk_bpm`, `chunk_confidence`, `primary_tempo`, `tempo_support`, `downbeat_margin`; scalars `bpm`, `confidence`, `onset_rate`, `seconds`, `primary_bpm`, `meter`; events `beats`, `onsets`, `pulse`, `downbeats`, `tempo_changes`; spans `tempo_spans` |
 | `stems` | 1 | none | series `levels`; scalars `vocals_rms_db`, `vocals_peak_db`, `vocals_clamped`, `drums_rms_db`, `drums_peak_db`, `drums_clamped`, `bass_rms_db`, `bass_peak_db`, `bass_clamped`, `other_rms_db`, `other_peak_db`, `other_clamped`, `mix_rms_db`, `samples`, `seconds`; files `vocals`, `drums`, `bass`, `other` |
 | `structure` | 2 | `frames`: hpcp, rms_db, mfcc, seconds; `rhythm`: onsets, beats | series `novelty`; scalars `floor_db`, `floor`, `reference_db`, `threshold_db`; spans `playing`, `tuning`, `count_ins`, `false_starts`, `endings`, `sections`, `loops` |
+| `tonal` | 4 | `frames`: rms_db | series `pitched`, `tuning_windows`, `chroma`, `bass_chroma`, `dissonance`; scalars `tuning_frequency`, `tuning_cents`, `tuning_confidence`, `tuning_window_count`, `drift_spread_cents`, `detuned`, `key`, `scale`, `mode`, `scale_notes`, `key_strength`, `key_margin`, `collection`, `collection_margin`, `tonic_margin`, `tonic_named`; spans `tuning_drift`, `detuned_spans`, `keys`, `key_regions` |
 
 A version changes whenever an extractor's code or outputs do, so an older
 entry is never read as a newer one (ADR 0073). The versions above 1, and
@@ -294,9 +296,6 @@ what each changed:
   a tonic and mode while keeping `key` and `scale`, and moves chords to
   `chords`; 4 leaves mains hum out of the tuning and profiles, names a
   tonic only where it leads, and draws `key_regions` by note collection.
-- `chords` 1 named a chord per half beat from `tonal`'s profiles by a
-  Viterbi path, with a bass of its own and three candidates a span; 2
-  prices the six-note m11 above the five-note chords.
 - `structure` 2 measures the playing threshold from a noise floor only
   when the recording has one (steady or unpitched quiet), so a master is
   all playing, and says which in `floor`.
@@ -312,3 +311,28 @@ what each changed:
   default range to 500 Hz to 4 kHz, which
   [`enrich/hue_range.py`](../enrich/hue_range.py) can replace with a
   collection's own.
+
+### Retired extractors
+
+An extractor is retired by removing it from the catalog: `run all` no longer
+makes its entries, and nothing that ships reads them. Its entries stay where
+they are and stay readable, since an entry is described by its own
+`entry.json` (`bank.read_entry` on its directory needs no catalog), and they
+are regenerable: run the retired extractor's directory, from the history,
+with `--extractors <dir>`, and the same version and parameters give the same
+key. A retired id is not reused for another method, so an old entry is never
+read as a new one.
+
+- `chords` (Essentia profiles, retired after version 2). Version 1 named a
+  chord per half beat from `tonal`'s profiles by a Viterbi path, with a bass
+  of its own and three candidates a span; 2 priced the six-note m11 above
+  the five-note chords. On an album of 18 adversarial jazz and soul masters
+  it was the worst of five chord tools on every measure: in practice it
+  named only major and minor triads, 53% of its spans were shorter than
+  half a second, its bass matched three transcribed bass lines 18 to 53% of
+  the time where `chords-jiang`'s matched 47 to 63%, and its roots matched
+  another machine's labels on ten tracks 40% of the time where
+  `chords-chordino`'s matched 53%.
+  `chords-jiang` (a learned large vocabulary, with weighted readings) and
+  `chords-chordino` (a second opinion of another kind) replace it. Its last
+  source is `enrich/extractors/chords/` at the commit before its removal.

@@ -6,7 +6,9 @@ three-minute synthetic recording shaped like a recorder's file (48 kHz
 stereo FLAC: room noise, a chord progression with a tune and a click on the
 beat, room noise) goes through `run all`, with `stems` run by the stand-in
 for Demucs's interpreter that `test_stems` uses (the real `stems.py` with
-only the model replaced). Then a second run must run and hash nothing, the
+only the model replaced), and the learned beat and chord extractors by the
+stand-ins `test_beats_chords` uses (their real programs with fixed answers
+for the models). Then a second run must run and hash nothing, the
 whole bank must be what `bank.py` accepts, and `cover.py` must find in it
 the profiles it would measure.
 
@@ -37,6 +39,7 @@ import extract
 import support
 from support import needs_ffmpeg
 from test_cover import needs_essentia
+from test_beats_chords import stand_in_programs
 from test_stems import fake_python
 
 RATE = 48000
@@ -138,7 +141,7 @@ class EveryExtractor(unittest.TestCase):
         catalog = bank.Catalog.load()
         everything = set(catalog.extractors)
         argv = ["run", "all", "--content", str(audio), "--bank", str(root),
-                "--program", f"demucs-python={fake_python(directory)}"]
+                "--program", f"demucs-python={fake_python(directory)}", *stand_in_programs(directory)]
 
         code, answer = run(argv)
         self.assertEqual(code, 0, answer)
