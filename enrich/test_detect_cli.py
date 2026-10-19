@@ -65,9 +65,11 @@ class DetectCommand(unittest.TestCase):
         self.assertEqual((code, answer["status"]), (0, "committed"), answer)
         [output] = answer["outputs"]
         claim = self.show(output["object_id"])
+        # The second break is a hop before the gap's middle: the quiet talk's
+        # last hop is already below the silence threshold.
         self.assertEqual(claim["payload"], {"sample_rate": 8000, "spans": [
             {"start_sample": s, "end_sample": e, "class": c} for s, e, c in (
-                (0, 344000, "music"), (344000, 712000, "talk"), (712000, 1080000, "music"),
+                (0, 344000, "music"), (344000, 711200, "talk"), (711200, 1080000, "music"),
                 (1080000, self.edges[7], "talk"), (self.edges[7], self.edges[8], "quiet"),
                 (self.edges[8], self.edges[9], "music"))]})
         self.assertEqual(claim["payload"], {key: answer["detection"][key] for key in ("sample_rate", "spans")})

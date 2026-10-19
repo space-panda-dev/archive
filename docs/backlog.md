@@ -46,9 +46,15 @@ scratch copy.
 - **Identical corpus pieces.** Two pairs of corpus occurrences in the
   studio-test scratch copy have identical pieces (the profile cache shares
   one entry per pair); find out why.
-- **Detector presets.** The detector preset copied from live jams labels
-  studio vocals as talk. A studio preset is needed; an audit of accepted
-  occurrences is under way.
+- **Label candidate talk by ear.** The span detector's talk margin (ADR 0091)
+  was fitted on accepted song time alone; nothing labels real talk. Listen
+  to the 30 candidate spans given to the operator with ADR 0091 (recording
+  and seconds; kept outside this repository, which holds no archival data):
+  talk the rule keeps, outside and inside songs, and nominated spans it
+  demotes near and far from the margin. Mark each talk or not. Then refit
+  `talk_margin_db` (and check `talk_reference_percentile`)
+  leave-one-session-out on both kinds of label, and change the preset only
+  if the labels move it and the window calibration still holds.
 - **Stem separation cost.** CPU separation takes about 33 s per minute of
   audio; GPU separation through Spool (ADR 0090) waits for Spool 0.0.4 on both
   machines and a grant.

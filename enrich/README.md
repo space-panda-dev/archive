@@ -88,7 +88,7 @@ is involved.
 ## `enrich detect`
 
 ```sh
-enrich/enrich.py detect --archive <dir> --artifact <object id> [--stream <claim id>] [--preset jam|show]
+enrich/enrich.py detect --archive <dir> --artifact <object id> [--stream <claim id>] [--preset jam|show|studio]
                         [--staging <annex>] [--dry-run]
 ```
 
@@ -118,14 +118,14 @@ decodes always gets at least one span, and one that cannot be analysed fails.
   "decoder", "decode_arguments"}`), one Artifact per preset, admitted by the
   first run that uses it and reused afterwards. Its software is `ffmpeg`, the
   libav libraries it reports, and `numpy`. The method is
-  `archive-enrich/detect-spans` version 1, and the agent is
-  `pkg:generic/archive-enrich-detect@0.1.0`.
+  `archive-enrich/detect-spans` version 2 (version 1 classed talk by rank
+  alone), and the agent is `pkg:generic/archive-enrich-detect@0.2.0`.
 - A rerun with the same preset, software, Artifact revision, and stream claim
   answers `unchanged` before decoding anything and writes nothing (INV-5).
   Another preset is another run; both runs' suggestions remain, and neither
   supersedes the other (ADR 0066).
 
-`detector.py <file> [--preset jam|show] [--stream-index n]` probes the file,
+`detector.py <file> [--preset jam|show|studio] [--stream-index n]` probes the file,
 detects, and prints the plain result; no archive is involved.
 
 ### How spans are found
@@ -180,19 +180,30 @@ with exactly its edges. Its edges replace any boundary inside it or less than
 `min_segment_ms` from it.
 
 **Classes.** A quiet run's span is `quiet`. Every other span is classed by
-the V2 detector's session-relative rule. For each span at least
-`classify_min_ms` long, two features are computed from its hops: **key
-confidence**, the best Pearson correlation of its mean chroma with the 24
-rotated Krumhansl-Schmuckler major and minor profiles, and the mean
-**spectral flatness**. Each feature is ranked among the recording's other
-unquiet spans, from 0 to 1 exactly (equal values rank in span order; a lone
-value has no rank), with flatness inverted. The mean of a span's ranks is
-`music` at or above `rank_threshold_percent + rank_band_percent` percent,
-`talk` at or below `rank_threshold_percent - rank_band_percent` percent, and
-`unknown` in between, without a rank, or when the span is too short. The rule
-is relative: in every recording with two or more classifiable spans, the
-least tonal is ranked lowest, so one span of a recording of only music is
-likely to be called `talk`.
+the V2 detector's session-relative rule, gated by level
+([ADR 0091](../docs/decisions/0091-talk-needs-level.md)). For each span at
+least `classify_min_ms` long, three features are computed from its hops:
+**key confidence**, the best Pearson correlation of its mean chroma with the
+24 rotated Krumhansl-Schmuckler major and minor profiles; the mean
+**spectral flatness**; and the **median hop level**. Key confidence and
+flatness are ranked among the recording's other unquiet spans, from 0 to 1
+exactly (equal values rank in span order; a lone value has no rank), with
+flatness inverted. The mean of a span's ranks is `music` at or above
+`rank_threshold_percent + rank_band_percent` percent. At or below
+`rank_threshold_percent - rank_band_percent` percent the rank only
+*nominates* talk: the span is `talk` when `assign_talk` is 1 and its median
+hop level is more than `talk_margin_db` below the recording's reference
+level, the `talk_reference_percentile` of all its hop levels; otherwise it is
+`unknown`. A span is also `unknown` between the two rank thresholds, without
+a rank, or when it is too short.
+
+The rank is relative: in every recording with two or more classifiable
+spans the least tonal ranks lowest, so about a fifth of every recording's
+spans are nominated, loud singing among them. Level is the absolute evidence
+the rank lacks: talk between songs is quieter than the band. The `studio`
+preset is `jam` with `assign_talk` 0, for masters and studio recordings,
+which hold no talk; no rank threshold could say that, because the
+lowest-ranked span always reaches it.
 
 **Failing loudly.** A signal that cannot be computed refuses the whole
 detection and nothing is proposed: loudness when the stream fills fewer than
@@ -236,15 +247,17 @@ produces evidence, so:
   are `music`, `talk`, and `unknown`.
 - **Presets are evidence.** The `jam` and `show` values are V2's, written as
   integer milliseconds and decibels, and recorded as the run's parameters
-  Artifact. V2's `strict-silence` preset, its spectral-balance values, and its
+  Artifact. The level gate and the `studio` preset are new (ADR 0091). V2's `strict-silence` preset, its spectral-balance values, and its
   1,000 Hz loudness rate are not carried over.
 
-**The presets are not calibrated.** V2's values were tuned against V2's
-signals; this detector's signals differ (FFT chroma, hop-level silence, the
-quiet rule), and it has been tested only on synthetic audio of known
-structure. Calibrating `jam` and `show` on real recordings is a follow-up for
-the operator. A changed preset is a new parameters Artifact and a new run, so
-earlier suggestions keep the values that made them.
+**The presets are mostly not calibrated.** V2's values were tuned against
+V2's signals; this detector's signals differ (FFT chroma, hop-level silence,
+the quiet rule). Only the talk gate was fitted on real recordings: the
+10 dB margin below the 80th percentile, leave-one-session-out on the
+calibration workset's accepted occurrences (ADR 0091), which has no labelled
+talk yet. The rest is tested only on synthetic audio of known structure. A
+changed preset is a new parameters Artifact and a new run, so earlier
+suggestions keep the values that made them.
 
 ## `enrich match`
 
