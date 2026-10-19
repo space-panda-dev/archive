@@ -97,7 +97,8 @@ class Manifest(unittest.TestCase):
         self.assertEqual(extractor.needs, [])
         self.assertNotIn("optional", extractor.manifest)
         # It prefers the vocal stem, in finer bins, where the bank holds one (never making it).
-        self.assertEqual(extractor.prefers, [{"input": "stems/vocals", "parameters": {"bin_cents": 2}}])
+        self.assertEqual(extractor.prefers, [{"input": "stems/vocals", "parameters": {"bin_cents": 2},
+                                              "at_least": {"voiced_fraction": "0.2"}}])
         self.assertEqual(melody.settings({**melody.parameters(), **extractor.prefers[0]["parameters"]})
                          ["predominant"]["binResolution"], 2.0)
         self.assertEqual(melody.settings(melody.parameters())["predominant"]["binResolution"], 5.0)
