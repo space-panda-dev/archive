@@ -293,6 +293,21 @@ class CircleChecks(unittest.TestCase):
         self.assertEqual(operator["result"]["answer"], member["result"]["answer"])
         self.assertEqual(member["result"]["parameters"]["transpose"], 0)
 
+    def test_an_object_whose_reach_cannot_be_read_is_withheld(self) -> None:
+        # The swallowed branch of access._reach: a failed reach never widens.
+        lead_sheet = self.pin("lead-sheet-band")["revision_id"]
+        self.assertIn(lead_sheet, self.access.circle_set.revisions)
+        from unittest import mock
+
+        def unreadable(*args, **kwargs):
+            raise ValueError("unreadable")
+        with mock.patch.object(access.documents, "reach", unreadable):
+            found = access.load(self.store, world.PROJECTION_VERSION, self.operator, self.circle, date.today())
+        self.assertEqual(found.circle_set.revisions, frozenset())
+        self.assertIn(lead_sheet, found.circle_set.withheld)
+        own = {rid for rid, r in found.by_revision.items() if r.get("agent") == self.member}
+        self.assertEqual(found.readable(access.Caller(self.member, "member")), frozenset(own))
+
     def test_a_member_may_name_only_what_they_read(self) -> None:
         call = self.relay()
         lead_sheet = self.pin("lead-sheet-band")
