@@ -5,6 +5,7 @@
     extract.py run <extractor|all> --content <file> [--digest sha256:<hex>] [--media-type <type>]
                    --bank <dir> [--from <extractor>/<output>] [--jobs <n>] [--config <file>]
                    [--program <name>=<path>]... [--extractors <dir>]... [--timeout <seconds>] [--dry-run]
+                   [--no-prefer]
 
 `run` resolves what the named extractor needs as a graph over the bank, runs
 only the extractors whose entries are missing, each once, upstream first and
@@ -36,6 +37,14 @@ entries are filed (ADR 0075). An extractor never knows it measures a stem.
 With `all`, an extractor whose command names a program that is not
 configured (`${demucs-python}` on a machine without Demucs) is skipped, and
 said to be; named on its own, it fails.
+
+Without `--from`, an extractor whose manifest `prefers` a file feature
+(a stem) measures the first of those the bank
+already holds for the content, as `--from` would, after everything else has
+run; where the bank holds none, it measures the content. A preference never
+makes the feature, and an extractor run only because another needs it always
+measures the content. `--no-prefer` measures the content regardless.
+`Bank.default_entry` reads back what this made.
 
 The runner uses only Python's standard library. It never reads or writes an
 archive and proposes nothing: features are not claims.
@@ -474,6 +483,8 @@ def run_from(catalog: bank.Catalog, root: Path, content: Path, media_type: str, 
         if source in catalog.order([target]):
             raise RunError(f"{target} would measure {feature}, which it makes or needs; it cannot be its own input")
     first = Run(catalog, root, content, media_type, digest, programs, parameters, timeout)
+    # The source is made with the operator's parameters; what measures it, with those an extractor prefers there.
+    measuring = catalog.overrides_for(feature, parameters)
     made = first.execute([source], jobs, dry_run)
     origin = {"feature": feature, "content": made["content"], "extractors": made["extractors"]}
     status = made["extractors"][source]["status"]
@@ -488,10 +499,48 @@ def run_from(catalog: bank.Catalog, root: Path, content: Path, media_type: str, 
         raise RunError(f"{feature} was made but its entry cannot be found")
     path, stem_digest, stem_type = found
     origin["entry"] = made["extractors"][source]["key"]
-    second = Run(catalog, root, path, stem_type, stem_digest, programs, parameters, timeout,
+    second = Run(catalog, root, path, stem_type, stem_digest, programs, measuring, timeout,
                  filed_under=made["content"], optional=optional)
     answer = second.execute(targets, jobs, dry_run)
     answer["from"] = origin
+    return answer
+
+
+def run_default(catalog: bank.Catalog, root: Path, content: Path, media_type: str, digest: str | None,
+                programs: dict[str, str], parameters: dict[str, dict[str, Any]], timeout: float | None,
+                targets: list[str], jobs: int, dry_run: bool, optional: bool) -> dict[str, Any]:
+    """Run `targets` on the content, each on its default input.
+
+    The targets that prefer no feature run first, with everything they need.
+    Then each target that prefers one measures the first preferred feature
+    the bank now holds (`Bank.default_input`), as `run_from` would, or the
+    content where it holds none. A preferring target's answer says which
+    feature it measured (`input`); what was run to measure that feature is
+    under `inputs`."""
+    run = Run(catalog, root, content, media_type, digest, programs, parameters, timeout, optional=optional)
+    preferring = [t for t in targets if catalog[t].prefers and catalog[t].accepts(media_type)]
+    plain = [t for t in targets if t not in preferring]
+    answer = run.execute(plain, jobs, dry_run) if plain else {
+        "status": "ok", "content": run.content_digest(), "media_type": media_type, "bank": str(root),
+        "extractors": {}}
+    reader = bank.Bank(root, catalog, parameters)
+    on_content: list[str] = []
+    by_feature: dict[str, list[str]] = {}
+    for target in preferring:
+        feature = reader.default_input(run.content_digest(), target)
+        (by_feature.setdefault(feature, []) if feature else on_content).append(target)
+    if on_content:
+        more = run.execute(on_content, jobs, dry_run)
+        answer["extractors"].update(more["extractors"])
+        answer["status"] = "ok" if answer["status"] == more["status"] == "ok" else "failed"
+    for feature, group in by_feature.items():
+        made = run_from(catalog, root, content, media_type, run.content_digest(), programs, parameters, timeout,
+                        feature, group, jobs, dry_run, optional)
+        answer.setdefault("inputs", {})[feature] = {"content": made["content"], "extractors": made["extractors"],
+                                                    "from": made["from"]}
+        for target in group:
+            answer["extractors"][target] = {**made["extractors"][target], "input": feature}
+        answer["status"] = "ok" if answer["status"] == made["status"] == "ok" else "failed"
     return answer
 
 
@@ -548,6 +597,8 @@ def main(argv: list[str] | None = None) -> int:
     running.add_argument("--timeout", type=float)
     running.add_argument("--dry-run", action="store_true")
     running.add_argument("--from", dest="source", metavar="EXTRACTOR/OUTPUT")
+    running.add_argument("--no-prefer", action="store_true",
+                         help="measure the content itself, even where an extractor prefers a feature of it")
     arguments = parser.parse_args(argv)
     try:
         config = load_config(arguments.config)
@@ -587,10 +638,14 @@ def main(argv: list[str] | None = None) -> int:
             answer = run_from(catalog, root, content, media_type, arguments.digest, programs,
                               config.get("parameters", {}), arguments.timeout, arguments.source, targets,
                               arguments.jobs, arguments.dry_run, everything)
-        else:
+        elif arguments.no_prefer:
             run = Run(catalog, root, content, media_type, arguments.digest, programs, config.get("parameters", {}),
                       arguments.timeout, optional=everything)
             answer = run.execute(targets, arguments.jobs, arguments.dry_run)
+        else:
+            answer = run_default(catalog, root, content, media_type, arguments.digest, programs,
+                                 config.get("parameters", {}), arguments.timeout, targets, arguments.jobs,
+                                 arguments.dry_run, everything)
     except (RunError, bank.BankError) as exc:
         print(json.dumps({"status": "failed", "detail": str(exc)}), file=sys.stderr)
         return 1

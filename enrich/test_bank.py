@@ -93,10 +93,13 @@ OUTPUTS = {"x": {"kind": "series", "dtype": "f32", "columns": 2, "grid": "g", "u
 
 
 def manifest(extractor_id: str, needs: tuple[str, ...] = (), version: str = "1", mode: str = "ok",
-             accepts: tuple[str, ...] = ("audio/*",)) -> dict:
-    return {"contract": "archive-extractor/1", "id": extractor_id, "version": version,
-            "command": ["${python}", "program.py"], "accepts": list(accepts), "needs": list(needs),
-            "parameters": {"mode": mode}, "outputs": OUTPUTS}
+             accepts: tuple[str, ...] = ("audio/*",), prefers: list | None = None) -> dict:
+    declared = {"contract": "archive-extractor/1", "id": extractor_id, "version": version,
+                "command": ["${python}", "program.py"], "accepts": list(accepts), "needs": list(needs),
+                "parameters": {"mode": mode}, "outputs": OUTPUTS}
+    if prefers is not None:
+        declared["prefers"] = prefers
+    return declared
 
 
 # Spool's capability grammar, from spool/spec/protocol.md ("Tasks"): name@version,
@@ -814,12 +817,137 @@ class Manifests(unittest.TestCase):
                "unknown kind": {**good, "outputs": {"x": {"kind": "video"}}},
                "file without suffix": {**good, "outputs": {"x": {"kind": "file", "media_type": "audio/flac"}}},
                "wrong contract": {**good, "contract": "archive-extractor/2"},
-               "bad need": {**good, "needs": ["x"]}}
+               "bad need": {**good, "needs": ["x"]},
+               "preference not a list": {**good, "prefers": {"input": "s/f"}},
+               "preference not a feature": {**good, "prefers": [{"input": "s"}]},
+               "preference without input": {**good, "prefers": [{"parameters": {}}]},
+               "preference with other fields": {**good, "prefers": [{"input": "s/f", "when": "always"}]},
+               "preferred parameters undeclared": {**good, "prefers": [{"input": "s/f", "parameters": {"x": 1}}]},
+               "preferred parameters unencodable": {**good, "prefers": [{"input": "s/f",
+                                                                        "parameters": {"mode": 0.5}}]},
+               "a feature preferred twice": {**good, "prefers": [{"input": "s/f"}, {"input": "s/f"}]}}
         for name, value in bad.items():
             with self.subTest(name):
                 with self.assertRaises(bank.BankError):
                     bank.check_manifest(value, name)
         self.assertEqual(bank.check_manifest(good, "good"), good)
+        preferring = {**good, "prefers": [{"input": "s/f", "parameters": {"mode": "fine"}}, {"input": "t/f"}]}
+        self.assertEqual(bank.check_manifest(preferring, "preferring"), preferring)
+
+
+class Preferences(unittest.TestCase):
+    """An extractor that prefers a file feature measures it by default where
+    the bank holds it, with the parameters it prefers there; the runner and
+    the reader decide which by one rule. `sep` stands in for a separator: its
+    file output `f` is the feature."""
+
+    def fixture(self) -> Fixture:
+        f = Fixture(self)
+        f.add("sep")
+        f.add("m", accepts=("audio/*", "application/*"),
+              prefers=[{"input": "sep/f", "parameters": {"mode": "preferred"}}])
+        return f
+
+    def test_without_the_feature_it_measures_the_content_and_never_makes_it(self) -> None:
+        f = self.fixture()
+        code, answer = f.run("m")
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(f.runs(), ["m"])
+        self.assertNotIn("input", answer["extractors"]["m"])
+        entry, feature = f.reader().default_entry(f.digest, "m")
+        self.assertIsNone(feature)
+        self.assertEqual((entry.manifest["content"], entry.manifest["parameters"]), (f.digest, {"mode": "ok"}))
+
+    def test_with_the_feature_it_measures_it_and_the_reader_finds_that(self) -> None:
+        f = self.fixture()
+        self.assertEqual(f.run("sep")[0], 0)
+        code, answer = f.run("m")
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(f.runs(), ["sep", "m"])  # sep made once, by its own run
+        said = answer["extractors"]["m"]
+        self.assertEqual((said["status"], said["input"]), ("ran", "sep/f"))
+        self.assertEqual(answer["inputs"]["sep/f"]["extractors"]["m"]["key"], said["key"])
+        reader = f.reader()
+        _, feature_digest, _ = reader.input_of(f.digest, "sep/f")
+        self.assertNotEqual(feature_digest, f.digest)  # anchor: the feature is other content
+        entry, feature = reader.default_entry(f.digest, "m")
+        self.assertEqual(feature, "sep/f")
+        self.assertEqual(entry.manifest["key"], said["key"])
+        self.assertEqual(entry.manifest["content"], feature_digest)
+        self.assertEqual(entry.manifest["parameters"], {"mode": "preferred"})
+        self.assertIsNone(reader.entry(f.digest, "m"))  # the content itself was not measured
+        # Measured --from the feature, it is the same entry: the preference's parameters apply there too.
+        with patch.object(extract, "run_program", side_effect=AssertionError("ran")):
+            code, again = f.run("m", "--from", "sep/f")
+        self.assertEqual((code, again["extractors"]["m"]["status"]), (0, "hit"))
+        # A reader that does not say which feature it reads is refused, not given nothing.
+        with self.assertRaisesRegex(bank.BankError, "which feature"):
+            reader.entry(feature_digest, "m", filed_under=f.digest)
+        # --no-prefer measures the content.
+        code, plain = f.run("m", "--no-prefer")
+        self.assertEqual((code, plain["extractors"]["m"]["status"]), (0, "ran"))
+        self.assertNotIn("input", plain["extractors"]["m"])
+        self.assertEqual(reader.entry(f.digest, "m").manifest["parameters"], {"mode": "ok"})
+
+    def test_all_measures_the_feature_it_has_just_made(self) -> None:
+        f = self.fixture()
+        f.add("other")
+        code, answer = f.run("all")
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(f.runs()[-1], "m")
+        self.assertEqual(sorted(f.runs()), ["m", "other", "sep"])
+        self.assertEqual(answer["extractors"]["m"]["input"], "sep/f")
+        self.assertEqual(f.reader().default_entry(f.digest, "m")[0].manifest["key"], answer["extractors"]["m"]["key"])
+        # A second run runs nothing.
+        with patch.object(extract, "run_program", side_effect=AssertionError("ran")):
+            code, again = f.run("all")
+        self.assertEqual(code, 0, again)
+        self.assertEqual(set(f.statuses(again).values()), {"hit"})
+
+    def test_a_failure_on_the_feature_fails_the_run(self) -> None:
+        f = self.fixture()
+        self.assertEqual(f.run("sep")[0], 0)
+        with patch.dict(os.environ, {"BANK_TEST_FAIL": "m"}):
+            code, answer = f.run("m")
+        self.assertEqual((code, answer["status"], answer["extractors"]["m"]["status"]), (1, "failed", "failed"))
+
+    def test_a_dry_run_names_the_input_and_runs_nothing(self) -> None:
+        f = self.fixture()
+        self.assertEqual(f.run("sep")[0], 0)
+        code, answer = f.run("m", "--dry-run")
+        self.assertEqual(code, 0, answer)
+        said = answer["extractors"]["m"]
+        self.assertEqual((said["status"], said["input"]), ("would_run", "sep/f"))
+        self.assertEqual(said["task"]["parameters"], {"mode": "preferred"})
+        self.assertEqual(f.runs(), ["sep"])
+
+    def test_what_cannot_be_preferred_is_refused(self) -> None:
+        f = Fixture(self)
+        f.add("sep")
+        f.add("m", prefers=[{"input": "sep/x"}])  # a series, not a file
+        with self.assertRaisesRegex(bank.BankError, "not a file feature"):
+            bank.Catalog.load([f.extractors])
+        g = Fixture(self)
+        g.add("sep")
+        g.add("m", needs=("sep/x",), prefers=[{"input": "sep/f"}])
+        with self.assertRaisesRegex(bank.BankError, "makes or needs"):
+            bank.Catalog.load([g.extractors])
+        h = Fixture(self)
+        h.add("m", prefers=[{"input": "m/f"}])
+        with self.assertRaisesRegex(bank.BankError, "makes or needs"):
+            bank.Catalog.load([h.extractors])
+        # A preference no extractor here can satisfy is never present: the content is measured.
+        i = Fixture(self)
+        i.add("m", prefers=[{"input": "elsewhere/f"}])
+        self.assertEqual(i.run("m")[0], 0)
+        self.assertEqual(i.reader().default_entry(i.digest, "m")[1], None)
+
+    def test_the_preferred_parameters_yield_to_the_operators(self) -> None:
+        catalog = bank.Catalog([bank.Extractor(Path("."), manifest("sep")), bank.Extractor(
+            Path("."), manifest("m", prefers=[{"input": "sep/f", "parameters": {"mode": "preferred"}}]))])
+        self.assertEqual(catalog.overrides_for("sep/f"), {"m": {"mode": "preferred"}})
+        self.assertEqual(catalog.overrides_for("sep/f", {"m": {"mode": "mine"}}), {"m": {"mode": "mine"}})
+        self.assertEqual(catalog.overrides_for("other/f", {"sep": {"mode": "x"}}), {"sep": {"mode": "x"}})
 
 
 @needs_ffmpeg

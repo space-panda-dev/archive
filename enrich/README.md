@@ -729,7 +729,10 @@ Versions, needs, and outputs by kind are listed together in
 
 `--from stems/vocals` measures a stem as content: every extractor runs on it
 unchanged, keyed by the stem's own digest and filed with the recording, after
-the stems are made if they are missing. `stems` runs only where the operator
+the stems are made if they are missing. An extractor whose manifest `prefers`
+a stem measures it without `--from` where
+the bank already holds it, and the content otherwise; `--no-prefer` measures
+the content, and `bank.Bank.default_entry` reads back whichever was made. `stems` runs only where the operator
 configures Demucs's interpreter (`--program demucs-python=<path>`, or
 `programs` in `--config`); `run all` elsewhere skips it and says so.
 

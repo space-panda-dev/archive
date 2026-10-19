@@ -388,6 +388,12 @@ unsupported rather than guess.
     came from (a vocal line's level against the mix's `frames`). Should
     `needs` be able to name the source content's features, and how would the
     key hold them?
+  - An extractor's default input is the first file feature it prefers that
+    the bank holds ([ADR 0076](decisions/0076-preferred-inputs.md)), so on an
+    instrumental recording the default melody is the vocal stem's, nearly
+    empty, where the mix's follows the lead instrument. Should a default fall
+    back to the content when the preferred measure finds nothing, and by what
+    measure of nothing?
   - Stems are separated in 600-second chunks joined by crossfades. How far
     does a long recording's chunked separation differ from a whole-file run
     on real material, and does it matter to any measure?
