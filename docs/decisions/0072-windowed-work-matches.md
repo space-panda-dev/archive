@@ -318,9 +318,9 @@ and 36 unaccepted became 35 under the strict one.
 - The calibration harness measures each recording whole and splits its work
   per recording, not per run. Its second round searches every recording with
   a near tie again, to decide the near ties on the freshly measured windows:
-  on the workset at 0.02, 9 recordings, about 1,020 CPU-seconds on the Mac
+  on the workset at 0.02, 9 recordings, about 1,020 CPU-seconds on the Apple M2
   (their first round's time) on top of the exact comparisons; at 0.01475, 8
-  recordings took about 1,785 CPU-seconds on the ThinkPad. `enrich
+  recordings took about 1,785 CPU-seconds on the x86-64 laptop. `enrich
   match-windows` has no such repeat, because it decodes a near tie's window
   in the same process. Its workset (about 1.9 MB per recording-hour of
   profiles, and the corpus's) and its file of freshly measured windows are
