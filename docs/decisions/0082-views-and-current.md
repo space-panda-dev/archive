@@ -138,7 +138,10 @@ until a key claim's spelling rule is installed
 ([ADR 0080](0080-key-and-tuning.md)). Readings are checked by ADR
 0077's rules first; a malformed one refuses the request. A client may send
 readings that no claim holds yet, such as a chord a person is typing into a
-lead sheet, so writing and reading use one set of names.
+lead sheet, so writing and reading use one set of names. Its one parameter,
+`transpose` (an integer from -11 to 11, default 0), moves each reading by
+that many semitones before naming it, by
+[ADR 0089](0089-practice-audio-and-exports.md)'s rule.
 
 ```json
 {"view": "archive.view/chord_names", "version": "1",
@@ -211,7 +214,9 @@ question is "which chord sounds over these samples of this recording, for
 this person?". Its parameters are `person`, the object identifier of the
 person whose word comes first (by default the person the caller's login is
 bound to), and `machine_order`, 0 to 16 distinct derivation-run method
-identifiers. The default order is the operator's: the two chord extractors
+identifiers, and `transpose` as in `chord_names`, which moves the answer's
+`stack` and `names` but never what `chosen` points at. The default order is
+the operator's: the two chord extractors
 of the feature bank, the learned chord recogniser before the chord-HMM
 estimator, whose method identifiers are in `world/views.py`. Over each
 stretch of samples where any chord claim speaks, it takes these steps:

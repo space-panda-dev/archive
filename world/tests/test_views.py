@@ -241,6 +241,20 @@ class Names(unittest.TestCase):
         return run_view({"view": "archive.view/chord_names", "version": "1",
                          "subject": {"readings": list(readings)}}, [])["answer"]["names"]
 
+    def test_transposition_moves_what_is_named(self):
+        """ADR 0089: a view parameter, repeated in the answer, never a claim."""
+        answer = run_view({"view": "archive.view/chord_names", "version": "1",
+                           "subject": {"readings": [{"bass": E, "tones": [C, G], "root": C}]},
+                           "parameters": {"transpose": 2}}, [])
+        self.assertEqual(answer["parameters"], {"transpose": 2})
+        symbols = [n["symbol"] for n in answer["answer"]["names"][0]["resolutions"][0]["names"]]
+        self.assertEqual(symbols[0], "D/F#")
+        self.assertEqual(run_view({"view": "archive.view/chord_names", "version": "1",
+                                   "subject": {"readings": [triad(C)]}}, [])["parameters"], {"transpose": 0})
+        with self.assertRaises(ViewError):
+            check_request({"view": "archive.view/chord_names", "version": "1",
+                           "subject": {"readings": [triad(C)]}, "parameters": {"transpose": 12}})
+
     def test_one_stack_has_several_names(self):
         (entry,) = self.ask({"bass": G, "tones": [C, Eb, Bb]})
         symbols = [n["symbol"] for n in entry["resolutions"][0]["names"]]
@@ -481,6 +495,13 @@ class FirstCurrentRule(unittest.TestCase):
         answer = current(world)
         self.assertEqual(at(answer, 1)["chosen"]["claim"], held["revision_id"])
         self.assertEqual(at(answer, 3)["chosen"]["claim"], asserted["revision_id"])
+
+    def test_a_transposed_current_chord_keeps_its_reference(self):
+        world, jiang, _ = self.two_machines()
+        segment = at(current(world, transpose=-3), 1)
+        self.assertEqual(segment["chosen"]["claim"], jiang["revision_id"])  # the claim's own reading is named
+        self.assertEqual(segment["stack"], triad(A))
+        self.assertEqual(segment["names"][0]["names"][0]["symbol"], "A")
 
     def test_the_bass_stem_is_the_slash_bass_of_a_machine_chord(self):
         world, _, _ = self.two_machines()

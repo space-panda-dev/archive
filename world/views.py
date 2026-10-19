@@ -39,6 +39,7 @@ from bisect import bisect_right
 from typing import Any, Callable
 
 from world import judgments as judging
+from world.exports import transpose_reading
 from world.harmony import HarmonyError, check_reading_v2, is_bass_only, reading_names, stack_names
 
 VIEW = "archive.view/"
@@ -119,9 +120,21 @@ def _source_subject(subject: Any) -> dict[str, Any]:
     return {"source": _pin(subject["source"], "subject source")}
 
 
-def _no_parameters(params: dict[str, Any], caller: str | None) -> dict[str, Any]:
-    _closed(params, set(), set(), "parameters")
-    return {}
+TRANSPOSE = (-11, 11)
+
+
+def _transpose(params: dict[str, Any]) -> int:
+    """ADR 0089's transposition: semitones moved before naming; a view
+    parameter, never a claim."""
+    value = params.get("transpose", 0)
+    if isinstance(value, bool) or not isinstance(value, int) or not TRANSPOSE[0] <= value <= TRANSPOSE[1]:
+        raise _bad(f"parameters transpose must be an integer in {TRANSPOSE[0]}..{TRANSPOSE[1]}")
+    return value
+
+
+def _names_parameters(params: dict[str, Any], caller: str | None) -> dict[str, Any]:
+    _closed(params, set(), {"transpose"}, "parameters")
+    return {"transpose": _transpose(params)}
 
 
 def _window_parameters(params: dict[str, Any], caller: str | None) -> dict[str, Any]:
@@ -160,13 +173,14 @@ def _person(params: dict[str, Any], caller: str | None, where: str) -> str:
 
 
 def _current_parameters(params: dict[str, Any], caller: str | None) -> dict[str, Any]:
-    _closed(params, set(), {"person", "machine_order", "start_sample", "end_sample"}, "parameters")
+    _closed(params, set(), {"person", "machine_order", "start_sample", "end_sample", "transpose"}, "parameters")
     order = params.get("machine_order", list(DEFAULT_MACHINE_ORDER))
     if not isinstance(order, list) or len(order) > MAX_MACHINES or len(set(map(str, order))) != len(order) \
             or any(not isinstance(m, str) or not METHOD_ID.fullmatch(m) for m in order):
         raise _bad(f"parameters machine_order must be 0 to {MAX_MACHINES} distinct method identifiers")
     start, end = _window(params)
     return {"person": _person(params, caller, "parameters person"), "machine_order": list(order),
+            "transpose": _transpose(params),
             "start_sample": start, **({} if end is None else {"end_sample": end})}
 
 
@@ -195,7 +209,7 @@ def _lead_sheet_parameters(params: dict[str, Any], caller: str | None) -> dict[s
 VIEWS: dict[tuple[str, str], dict[str, Any]] = {
     (VIEW + "chord_names", "1"): {
         "question": "What are the computed names of these chord readings?",
-        "subject": _names_subject, "parameters": _no_parameters},
+        "subject": _names_subject, "parameters": _names_parameters},
     (VIEW + "chord_corrections", "1"): {
         "question": "Over this recording, which chord claims correct which, and where?",
         "subject": _source_subject, "parameters": _window_parameters},
@@ -424,6 +438,7 @@ def chord_names(world: list[dict[str, Any]], subject: dict[str, Any], params: di
     (ADR 0077): one entry per way its uncertain tones can resolve."""
     result = []
     for reading in subject["readings"]:
+        reading = transpose_reading(reading, params["transpose"]) if params["transpose"] else reading
         if is_bass_only(reading):
             result.append({"form": "bass_only", "resolutions": []})
         elif reading.get("no_chord"):
@@ -641,7 +656,7 @@ def chords_current(world: list[dict[str, Any]], subject: dict[str, Any], params:
             found = _candidate(claim, index, a, person, order, judgments, by_revision)
             if found:
                 ranked[claim["revision_id"]] = (claim, index, found)
-        segment = _choose(a, b, cover, ranked, corrects, judgments, basses, person)
+        segment = _choose(a, b, cover, ranked, corrects, judgments, basses, person, params["transpose"])
         if segment:
             segments.append(segment)
     return {"rule": "chosen person, then aligned documents, then machines in the stated order",
@@ -657,7 +672,7 @@ def _unresolved_runs(claims: list[dict[str, Any]], by_revision: dict[str, dict[s
 
 
 def _choose(a: int, b: int, cover: list, ranked: dict, corrects: dict, judgments: Judgments,
-            basses: list, person: str) -> dict[str, Any] | None:
+            basses: list, person: str, transpose: int = 0) -> dict[str, Any] | None:
     if not cover:
         return None
     present = set(ranked)
@@ -708,6 +723,8 @@ def _choose(a: int, b: int, cover: list, ranked: dict, corrects: dict, judgments
             segment["bass_from"] = ref
             why.append("the bass is the machines' bass-stem reading")
     segment["held"] = _in_held_stretch(claim, index, a)
+    # ADR 0089: a transposition moves what is shown, stack and names alike; `chosen` names the claim's own reading.
+    stack = transpose_reading(stack, transpose) if transpose else stack
     segment["stack"] = stack
     segment["names"] = _names(stack) if "bass" in stack else []
     segment["why"] = why
