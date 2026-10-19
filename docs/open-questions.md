@@ -100,8 +100,12 @@ unsupported rather than guess.
   [ADR 0078](decisions/0078-contributions.md), which take MusicBrainz's
   meaning and no LRM class yet.
 - What origin values mark the operator's own work across media (a recording, a
-  book, a photograph), and how are co-authored works (a band's album) handled
-  ([ADR 0010](decisions/0010-publication.md))?
+  book, a photograph) ([ADR 0010](decisions/0010-publication.md))? A musical
+  Work's origin, co-written Works included, is [ADR 0088](decisions/0088-bandmates.md)'s `work_origin`;
+  recordings and other media have none.
+- Does a disclosure to the circle need a policy revision before the policy
+  language exists? [ADR 0088](decisions/0088-bandmates.md) records it as a publication approval, which S-32
+  ties to a policy revision.
 - How are jurisdiction-specific rights terms computed, and from what facts?
 - Does the collection need archival arrangement (collection, series, item, as in
   DACS)? Not at single-operator scale yet.
@@ -162,11 +166,17 @@ unsupported rather than guess.
     claim's payload but never compare its references with the record's own.
     It must also say what counts as the same recording when the
     contribution names a `recording` Entity rather than the Artifact.
-  - An `analysed` Artifact must share the mix's timeline: its sample n is the
-    source's sample n ([ADR 0077](decisions/0077-chord-stacks-and-meter.md)).
+  - An `analysed` Artifact, or a stem cited by bank key ([ADR 0079](decisions/0079-machine-harmony-claims.md)), must share
+    the mix's timeline: its sample n is the source's sample n
+    ([ADR 0077](decisions/0077-chord-stacks-and-meter.md)).
     This is a fact about audio, not about records, so Door has nothing to
     compare until some claim measures it (an alignment between the stem and
     the mix, say); which claim, and what tolerance, is undecided.
+- The 0.0.10 records leave cross-claim rules to World until Door's profile
+  can read a pinned claim's payload and references: a section or entry
+  index inside the pinned form or sequence, a placed bar's time signature
+  ([ADR 0083](decisions/0083-form-and-work-meter.md)), and that a pinned tuning, notes, or contribution claim is about
+  the same source ([ADR 0086](decisions/0086-notes-and-melody.md)). Which of these does a release make Door's?
 - How is operator succession verified? (Author and authorizer are agents in
   PROV roles: [ADR 0012](decisions/0012-inherited-meaning.md).) ADR 0026 defines
   only initial bootstrap; this succession question remains open.
@@ -182,11 +192,13 @@ unsupported rather than guess.
 - What constitutes a claim's identity across kinds?
 - How are annotations, assessments, and enrichment results represented and
   versioned in their contracts? ADR 0027 defines the common contract boundary;
-  ADRs 0044 and 0045 settle audio selection and song occurrence contracts.
-  Review outcomes and other domain contracts remain open.
+  ADRs 0044 and 0045 settle audio selection and song occurrence contracts,
+  and [ADR 0081](decisions/0081-judgments-and-annotations.md) proposes scoped judgments and span annotations. Review outcomes
+  and other domain contracts remain open.
 - Does predicate-specific evidentiary authority need explicit modelling at all?
   (See [provenance.md](provenance.md).)
-- What are the per-kind rules for computing "current"?
+- What are the per-kind rules for computing "current"? [ADR 0082](decisions/0082-views-and-current.md) proposes the
+  first, for chords on a recording; every other kind still has none.
 - Should the work matcher's corpus honour judgments? Today every head
   `performance_work` link counts, including one a person judged `rejected` or
   `withdrawn` ([ADR 0067](decisions/0067-matches-and-alignments-pin-runs.md)
@@ -225,46 +237,38 @@ unsupported rather than guess.
   next run search each recording again
   ([ADR 0072](decisions/0072-windowed-work-matches.md)).
 
-- What is the first current rule for chord stacks and meter layers
-  ([ADR 0077](decisions/0077-chord-stacks-and-meter.md))? Candidates include
-  "a person's reading over a machine's for the same span", "the asserter's
-  first reading", and "agreement of two independent asserters", but each
-  ranks sources in a way INV-8 forbids as a universal rule, so a rule must be
-  per question and name why it chose. Until one is accepted, asking for a
-  current chord or meter is unsupported.
+- What are the current rules for meter layers, a Work's chord sequences, keys,
+  form, and melody ([ADR 0077](decisions/0077-chord-stacks-and-meter.md))?
+  [ADR 0082](decisions/0082-views-and-current.md) proposes one for chords on a recording, as a named view that takes a
+  person; each other kind needs its own named rule, and asking for it stays
+  unsupported until one is accepted.
+- Should another person's correction ever apply in someone's current view?
+  [ADR 0082](decisions/0082-views-and-current.md) lists a bandmate's correction beside the choice and applies it only
+  in the bandmate's own view.
 - How are two asserters' beat grids matched? Two meter claims over the same
   recording place the same beat a few milliseconds apart, and a chart's bar 17
   may be a machine's bar 18. Comparing them needs a tolerance and a
   correspondence between bars that no contract states; until then World shows
   both and pairs nothing.
-- How are pitch names spelled? Stacks hold pitch classes, so a computed name
-  says Eb where a source wrote D#, and the G in Gm(maj13) has an F#, not a Gb.
-  The views use one fixed spelling; spelling from a key, or from the source's
-  own text, is undecided. A source's spelling survives only in its verbatim
-  text.
-- What contract holds a key or mode? JAMS `key_mode` has nothing to export
-  from until one exists, and the feature bank's key estimate is not a claim.
 - Are `exactly_one` and `maybe` enough to express uncertain tones, or does a
   reading need ranked alternatives within a group, or uncertainty about the
   bass?
-- Pitch classes assume twelve-tone equal temperament. How is a reading of a
-  recording far from it (a detuned instrument, a microtonal passage) kept?
-- Which recordings does a release carry? No contract states a tracklist, so a
-  release credit never reaches a recording in the resolved view of credits,
-  and an importer cannot place a release-wide performer on each track
-  ([ADR 0078](decisions/0078-contributions.md)). Is a tracklist a claim about
-  the release, and does a release credit then apply to every track, as
-  MusicBrainz's style guide reads it?
-- How is an Entity matched to a MusicBrainz artist, release, or recording, or
-  to a Discogs artist? ADR 0042's correspondence covers only Works; until a
-  contract covers the rest, an importer cannot recognise an Entity it made
-  before except by the operator's choice.
+- Pitch classes name steps of a twelve-tone grid, which a tuning claim places
+  on a recording ([ADR 0080](decisions/0080-key-and-tuning.md)). How is a microtonal passage, whose notes fall
+  between the grid's steps, kept? Notes hold offsets of up to half a step in
+  cents ([ADR 0086](decisions/0086-notes-and-melody.md)), which is exact but not how such music is written. Should
+  JAMS or MusicXML exports carry the tuning?
+- Are a label, a release event, a barcode, or a catalogue number catalogue
+  entries or claims of their own? [ADR 0087](decisions/0087-tracklists-and-correspondence.md) leaves them out. And how does Review
+  surface two Entities that both map `exactMatch` to one outside entry?
 - What Entity kind credits a place, such as a studio? MusicBrainz credits
   places, but local place identity is open
   ([ADR 0043](decisions/0043-geographic-evidence-and-route-handoff.md)), so a
   place credit keeps the place as text and pins no contributor.
 - Which edition does a MusicBrainz release-group credit mean, and is a
-  release group an Entity kind? Release-group credits are not imported.
+  release group an Entity kind? Release-group credits are not imported; a
+  release only maps to a release group or a Discogs master as broader
+  ([ADR 0087](decisions/0087-tracklists-and-correspondence.md)).
 - Should the resolved view of credits relate a span on a mix to a channel of
   the same take? A channel and the mix are different Artifacts; only a
   capture alignment relates their samples, and the view does not use one.
@@ -279,10 +283,37 @@ unsupported rather than guess.
 - How does a person's sensitivity claim select the content it covers ("the
   rehearsals I play in") rather than naming objects one by one
   ([ADR 0018](decisions/0018-people-in-the-archive.md))?
+- May a bandmate with a relay login assert their own sensitivity limit, at
+  least one that only narrows what is shown? [ADR 0088](decisions/0088-bandmates.md) keeps sensitivity claims
+  the operator's to send, so the operator records a bandmate's limit with
+  them as its author.
+- Is [ADR 0085](decisions/0085-documents-lyrics-rights.md)'s rights permit table right: `InC` held by the operator permits
+  distribution, `NoC-US` distribution, `NoC-NC` open, everything else (and no
+  rights claim) service, and the strictest claim wins whoever asserted it?
 - Can a person opt in to signing their limits with their own key, so the
   operator can record a limit but not forge its withdrawal? Spool grants
   already hold the SSH public key of each friend who shares compute, and
   OpenSSH can sign with it (`ssh-keygen -Y sign`).
+
+- What records where an admitted stem or practice render came from: its
+  mix, separator, and settings? [ADR 0079](decisions/0079-machine-harmony-claims.md) admits a chosen stem as an Artifact
+  whose digest its bank citations name, and [ADR 0089](decisions/0089-practice-audio-and-exports.md) a chosen render the same
+  way, but no claim states the link.
+- How are parts of untimed claims judged or marked: a Work's untimed meter or
+  form, a Work-level melody, a key over sections ([ADR 0081](decisions/0081-judgments-and-annotations.md))? They can be judged
+  only whole, and a mark on a Work needs a chord sequence to range over.
+- Should sections nest (a verse of two phrases), and should a section's
+  `kind` map to an inherited vocabulary such as SALAMI's function labels
+  ([ADR 0083](decisions/0083-form-and-work-meter.md))? How is a recording's departure from the written form (an extra
+  chorus, a cut bridge) matched rather than only shown?
+- How is a Work's melody placed on a recording note by note, how do lyric
+  syllables sit under melody notes, how are a tune's verse variants under
+  repeats and its grace notes written, and how does World join one asserter's
+  split notes claims of a part and check that their ranges do not overlap
+  ([ADR 0086](decisions/0086-notes-and-melody.md))?
+- Can a lead sheet part say a partial or per-string capo? Is a band's
+  adoption of a lead sheet checked against the members' membership dates,
+  and does adoption need a quorum ([ADR 0084](decisions/0084-lead-sheets.md))?
 
 ## Policy
 
@@ -370,9 +401,16 @@ unsupported rather than guess.
     that a reader relating a video's frames to its audio features need not
     probe the file again?
   - Destroying content (ADR 0004) must delete its directory in the bank and
-    in the derived-media root (ADR 0069), stems included. Is that a step of
-    the destroy transition, a pruning command run after it, or a check in
-    every reader against World's destroyed digests?
+    in the derived-media root (ADR 0069), stems and practice renders
+    included. Is that a step of the destroy transition, a pruning command run
+    after it, or a check in every reader against World's destroyed digests?
+    Exports ([ADR 0089](decisions/0089-practice-audio-and-exports.md)) are filed by export key, not under a content's
+    directory: how does destroying content find the exports that render
+    revisions citing it?
+  - Practice audio ([ADR 0089](decisions/0089-practice-audio-and-exports.md)): should the import chain separate every
+    recording, is a lossy practice copy needed for phones, should the relay
+    cut excerpts, and does the client's live mix or a server render serve
+    better (D11.5 leaves that to testing)?
   - Should decoded audio at another rate (44.1 kHz for a separator) be a
     shared feature, so that extractors off the `frames` grid stop decoding
     again, at about 1.3 GB per four mono hours at 22,050 Hz?
