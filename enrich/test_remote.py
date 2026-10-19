@@ -1,4 +1,4 @@
-"""Running an extractor through Spool and filing what comes back (ADR 0079).
+"""Running an extractor through Spool and filing what comes back (ADR 0090).
 
 The worker side is the real `remote.py work` program running the real runner
 and the real `stems.py`, with only Demucs replaced by the fixed gains of

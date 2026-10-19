@@ -288,7 +288,7 @@ file (perhaps the content itself). The runner replaces `result.json` with `entry
 ## Through Spool
 
 An extractor that needs no other feature can run on another machine as a
-Spool task ([ADR 0079](decisions/0079-extractor-runs-travel-through-spool.md),
+Spool task ([ADR 0090](decisions/0090-extractor-runs-travel-through-spool.md),
 proposed); [`enrich/remote.py`](../enrich/remote.py) is the reference
 requester, worker program, and collector. The task's ID is `bank-` and the
 key's 64 hexadecimal digits, its capability `archive-extractor.<id>@<version>`,

@@ -359,7 +359,7 @@ unsupported rather than guess.
     each read entry's `software`.)
   - How is the disclosure of content to a worker outside the operator's
     custody recorded before the put (the Spool adapter question above)?
-    [Proposed ADR 0079](decisions/0079-extractor-runs-travel-through-spool.md)
+    [Proposed ADR 0090](decisions/0090-extractor-runs-travel-through-spool.md)
     returns an extractor's files as Spool result attachments and runs only
     on the operator's own workers; it does not answer this.
   - A grid is a time base in integer samples, which covers video's

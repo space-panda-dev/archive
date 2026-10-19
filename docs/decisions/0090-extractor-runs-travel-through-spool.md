@@ -1,4 +1,4 @@
-# 0079. An extractor run travels through Spool, and its files come back as result attachments
+# 0090. An extractor run travels through Spool, and its files come back as result attachments
 
 Status: proposed
 

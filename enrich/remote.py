@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Run an extractor on another machine through Spool, and file what it makes
-in the feature bank (ADRs 0073 to 0075, and 0079).
+in the feature bank (ADRs 0073 to 0075, and 0090).
 
     remote.py put <extractor> --content <file> --bank <dir> --spool <command>
                   [--digest sha256:<hex>] [--media-type <type>] [--config <file>] [--extractors <dir>]...
