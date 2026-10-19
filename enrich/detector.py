@@ -67,7 +67,7 @@ _COMMON = {
     "rank_band_percent": 5,
     "assign_talk": 1,
     "talk_reference_percentile": 80,
-    "talk_margin_db": 13,
+    "talk_margin_db": 10,
 }
 PRESETS: dict[str, dict[str, int]] = {
     "jam": {**_COMMON,
