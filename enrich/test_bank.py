@@ -159,7 +159,9 @@ SHIPPED = {
                "code": "sha256:37bdd43515505b256e90c06f859c2e10797a569183717515c5eca0fb31e6fcc1",
                "outside": {"waveform.py": "sha256:353aceedf74c7a1c2bbaa330fe03847440f1e74213146bcf6bc0b863db39a424",
                            "derived.py": "sha256:d1da556693ea266247cbac481f17672578d5cc90043b3f28730e899cd3c28132"}},
-    "stems": {"version": "1", "code": "sha256:235a4c30a38d1f897958ef1354441011e435709c34732cfe4aad503ab1481c3e", "outside": {}},
+    # Version 1 also runs on Apple's GPU when `apply.device` is "mps": another
+    # parameter, so another key; the CPU's stems are the same bits as before.
+    "stems": {"version": "1", "code": "sha256:84f25fec7ec59808879fbd3ebbd18659d218a4d2fdff12d249a54ebf555bebb3", "outside": {}},
 }
 
 
