@@ -1,6 +1,6 @@
 # 0087. Releases list their tracks; artists, releases and recordings correspond to MusicBrainz and Discogs
 
-Status: proposed
+Status: accepted (operator, 2026-10-18)
 
 Specification 0.0.9 installed two Entity kinds after MusicBrainz:
 `release`, one edition of music as issued, and `recording`

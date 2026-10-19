@@ -1,6 +1,6 @@
 # 0082. Named views: the first current rule, correction overlay, differences, and chord names over the relay
 
-Status: proposed
+Status: accepted (operator, 2026-10-18)
 
 Specification 0.0.9 can hold every chord a machine, a document, or a person
 asserts about a recording ([ADR 0077](0077-chord-stacks-and-meter.md)), but

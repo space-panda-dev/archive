@@ -4,7 +4,7 @@ origin and sharing consent contracts, the sharing gate, and the client's
 commit rule.
 
 The two contracts, `archive.claim/work_origin` version 1 and
-`archive.claim/sharing_consent` version 1, are proposed by ADR 0088 for
+`archive.claim/sharing_consent` version 1, are decided by ADR 0088 for
 specification 0.0.10. This module holds their rules as World and the relay
 will apply them, so a client can check a proposal before the relay and Door
 do; Door remains the authority (INV-2). It uses only the standard library.
@@ -503,8 +503,9 @@ def sharing_gate(covered: Iterable[str], destination: str, exposure_class: str, 
 
 @dataclass(frozen=True)
 class Readable:
-    """What a circle may read: revision IDs, the ones withheld by sensitivity
-    or rights, and why each was added."""
+    """What a circle may read: revision IDs, the ones withheld (by
+    sensitivity, since rights never limit the private circle, or by a fact
+    that cannot be established), and why each was added."""
 
     revisions: frozenset[str]
     withheld: frozenset[str]
@@ -527,7 +528,8 @@ def readable_set(records: dict[str, dict[str, Any]], operator: str, circle: Circ
                  reach: Callable[[str], str]) -> Readable:
     """The circle's readable set (ADR 0088). `reach(object_id)` gives the
     furthest exposure class an object may reach under its sensitivity and
-    rights (ADR 0085); an object that may not reach `circle` is withheld."""
+    rights (ADR 0085), in which rights never fall short of the circle; an
+    object that may not reach `circle` is withheld."""
     all_records = list(records.values())
     floor = CLASSES.index("circle")
 

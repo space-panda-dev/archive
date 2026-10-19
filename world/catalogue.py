@@ -1,7 +1,7 @@
 """Tracklists, the audio of a recording, and catalogue correspondence
 (ADR 0087): payload and reference rules, and the per-track view of credits.
 
-Three contracts, proposed for specification 0.0.10:
+Three contracts, decided by ADR 0087 for specification 0.0.10:
 
 - `archive.claim/tracklist` version 1: a release Entity's media and tracks in
   order, each track pinning the `recording` Entity it carries;

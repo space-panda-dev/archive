@@ -1,6 +1,6 @@
 # 0083. Form is a claim, and a Work can have meter without a recording
 
-Status: proposed
+Status: accepted (operator, 2026-10-18)
 
 A lead sheet is chords in bars, in sections, with repeat signs, first and
 second endings, a segno and a coda. Specification 0.0.9 can hold the chords

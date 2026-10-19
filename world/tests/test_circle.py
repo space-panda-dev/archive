@@ -436,7 +436,7 @@ class ReadableSetTest(unittest.TestCase):
             with self.subTest(payload=other["payload"]):
                 self.assertEqual(self.readable(records).revisions, frozenset())
 
-    def test_sensitivity_and_rights_withhold(self):
+    def test_sensitivity_withholds(self):
         def no_lyrics(object_id):
             return "private" if object_id == LYRICS else "distribution"
         got = self.readable(self.records, reach=no_lyrics)

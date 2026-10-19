@@ -193,11 +193,11 @@ unsupported rather than guess.
 - How are annotations, assessments, and enrichment results represented and
   versioned in their contracts? ADR 0027 defines the common contract boundary;
   ADRs 0044 and 0045 settle audio selection and song occurrence contracts,
-  and [ADR 0081](decisions/0081-judgments-and-annotations.md) proposes scoped judgments and span annotations. Review outcomes
+  and [ADR 0081](decisions/0081-judgments-and-annotations.md) settles scoped judgments and span annotations. Review outcomes
   and other domain contracts remain open.
 - Does predicate-specific evidentiary authority need explicit modelling at all?
   (See [provenance.md](provenance.md).)
-- What are the per-kind rules for computing "current"? [ADR 0082](decisions/0082-views-and-current.md) proposes the
+- What are the per-kind rules for computing "current"? [ADR 0082](decisions/0082-views-and-current.md) settles the
   first, for chords on a recording; every other kind still has none.
 - Should the work matcher's corpus honour judgments? Today every head
   `performance_work` link counts, including one a person judged `rejected` or
@@ -239,7 +239,7 @@ unsupported rather than guess.
 
 - What are the current rules for meter layers, a Work's chord sequences, keys,
   form, and melody ([ADR 0077](decisions/0077-chord-stacks-and-meter.md))?
-  [ADR 0082](decisions/0082-views-and-current.md) proposes one for chords on a recording, as a named view that takes a
+  [ADR 0082](decisions/0082-views-and-current.md) settles one for chords on a recording, as a named view that takes a
   person; each other kind needs its own named rule, and asking for it stays
   unsupported until one is accepted.
 - Should another person's correction ever apply in someone's current view?
@@ -290,6 +290,8 @@ unsupported rather than guess.
 - Is [ADR 0085](decisions/0085-documents-lyrics-rights.md)'s rights permit table right: `InC` held by the operator permits
   distribution, `NoC-US` distribution, `NoC-NC` open, everything else (and no
   rights claim) service, and the strictest claim wins whoever asserted it?
+  It governs only sharing beyond the circle: the operator decided the
+  circle is private, so no rights statement limits it.
 - Can a person opt in to signing their limits with their own key, so the
   operator can record a limit but not forge its withdrawal? Spool grants
   already hold the SSH public key of each friend who shares compute, and

@@ -5,7 +5,7 @@ The three contracts, `archive.claim/chord_stacks`,
 `archive.claim/chord_sequence`, and `archive.claim/meter_layers`, each
 version 1, are decided by ADR 0077 (amended by ADR 0078) and installed by
 specification 0.0.9 (D-17). Version 2 of chord stacks, chord sequence, and
-meter layers (ADR 0079, proposed) adds `derived_from`, a stem cited by bank
+meter layers (ADR 0079) adds `derived_from`, a stem cited by bank
 key on timed claims, a bass-only reading, and meter corrections; version 1
 is unchanged. This module holds their rules as World re-checks
 them when it projects such a claim, the names a chord stack can be given,

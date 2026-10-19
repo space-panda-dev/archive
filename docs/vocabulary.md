@@ -178,7 +178,8 @@ are three of them: operator (RED), circle (AMBER), and published (CLEAR).
 sensitivity and rights of everything it pins; a view, never stored.
 **Personal-use licence**: a rights statement that a subject was licensed to
 one person for their own use, as a bought tablature is; it keeps the subject,
-and what pins it, to the operator and that licensee.
+and what pins it, within the circle. No rights statement limits the circle,
+which is private.
 ([ADR 0085](decisions/0085-documents-lyrics-rights.md))
 
 **Circle (of a relay)**: the relay's destination of class circle, reached by

@@ -1,6 +1,6 @@
 # 0084. A lead sheet is a claim that pins the parts it chose
 
-Status: proposed
+Status: accepted (operator, 2026-10-18)
 
 A lead sheet is what a musician learns a song from: the chords in bars, the
 form with its repeats and endings, the tune, and the words under it. After

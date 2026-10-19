@@ -3,7 +3,7 @@ spelling a key gives pitch classes, the tuning grid in force at a sample, and
 the lossy JAMS `key_mode` view.
 
 The three contracts, `archive.claim/key_regions`, `archive.claim/key_sequence`,
-and `archive.claim/tuning`, each version 1, are proposed by ADR 0080 for
+and `archive.claim/tuning`, each version 1, are decided by ADR 0080 for
 specification 0.0.10. No release installs them yet, so Door cannot admit
 them; this module holds their rules as World would re-check them, so an
 importer or extractor can check a proposal first. It uses only the standard

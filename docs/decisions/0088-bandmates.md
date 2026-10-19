@@ -1,6 +1,6 @@
 # 0088. Bandmates read their circle and assert their own claims
 
-Status: proposed
+Status: accepted (operator, 2026-10-18)
 
 Only the operator can reach the relay. ADR 0056 maps each allowed tailnet
 login to the person it acts as, refuses every draft that names anyone else,
@@ -112,7 +112,8 @@ stored, and recomputed with each snapshot:
    another bandmate's chord is readable when the chord is.
 
 Every revision in the set must also be allowed to reach the circle by its
-sensitivity and rights (ADR 0085): an
+sensitivity (ADR 0085); rights never limit the circle, which is private, so
+a copyrighted recording or a bought tablature is readable when disclosed. An
 object whose furthest class is `private` is never readable, even when an
 approval covers or pins it, and a record pinning it is shown with that
 reference **withheld**, never dropped silently. A member always reads their
@@ -369,8 +370,9 @@ claims Door admits.
   current rule's chosen person may be a member.
 - [ADR 0084](0084-lead-sheets.md): showing a lead sheet discloses its inputs;
   a band's lead sheet is asserted by its members.
-- [ADR 0085](0085-documents-lyrics-rights.md): sensitivity and rights cap the
-  readable set and the gate; the document upload route stays the operator's.
+- [ADR 0085](0085-documents-lyrics-rights.md): sensitivity caps the readable
+  set, rights cap only sharing beyond the circle, and the document upload
+  route stays the operator's.
 - [ADR 0089](0089-practice-audio-and-exports.md): practice audio is served to
   members only for readable recordings; a shared export passes the gate.
 

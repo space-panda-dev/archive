@@ -1,6 +1,6 @@
 # 0081. Judgments can scope to a span or reading; people can annotate spans
 
-Status: proposed
+Status: accepted (operator, 2026-10-18)
 
 A person can judge a claim only as a whole. `archive.assessment/judgment`
 version 1 ([ADR 0048](0048-review-app-write-contracts.md)) pins one exact
@@ -274,9 +274,9 @@ annotation a claim's, and standing a view of assessments. They own no verb
 beyond Review's *assess* and Annotation's *assert*, enforce no new
 invariant, and hold no state outside the records Door admits.
 
-**For the operator to confirm.** The decisions above go beyond D3.1 and D3.2
-in these places, each chosen here and open until the operator accepts this
-record: a `withdrawn` judgment must be the asserter's own (version 2 only); a
+**Confirmed by the operator.** The decisions above go beyond D3.1 and D3.2
+in these places, each chosen here and confirmed when the operator accepted
+this record: a `withdrawn` judgment must be the asserter's own (version 2 only); a
 range of a sequence's `entries` is a scope beside a span of samples, so a
 Work's chords can be judged and marked in part; the narrowest judgment
 stands in one judge's standing; a mark may cite the claims it is `about`;

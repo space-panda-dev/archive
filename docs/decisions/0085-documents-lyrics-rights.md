@@ -1,6 +1,6 @@
 # 0085. Documents arrive through the relay; lyrics are timed by reference; sensitivity and rights are claims
 
-Status: proposed
+Status: accepted (operator, 2026-10-18)
 
 A lead sheet joins chords, meter, form, melody, and lyrics. Specification
 0.0.9 holds chords and meter ([ADR 0077](0077-chord-stacks-and-meter.md)),
@@ -22,9 +22,9 @@ sensitivity a claim in Traffic Light Protocol labels, [ADR 0018](0018-people-in-
 lets the people a recording records set their own limit, and
 [ADR 0010](0010-publication.md) makes rights claims with terms; but no
 contract holds either claim, and the relay serves everything to the one login
-it allows. Bandmates are about to read the archive (ADR 0088), and a paid
-tablature or a private conversation between takes must not reach them by
-accident.
+it allows. Bandmates are about to read the archive (ADR 0088): a private
+conversation between takes must not reach them by accident, and a paid
+tablature or a commercial recording must not go beyond them.
 
 The operator decided the following on 2026-10-18; this record states it as
 given.
@@ -40,6 +40,12 @@ given.
   (RightsStatements.org, and "licensed for personal use", such as a paid
   tablature) contracts land in 0.0.10. The relay and the applications enforce
   them before showing or sharing anything.
+
+On accepting this record the operator added one rule: the circle is private,
+for every purpose, legal ones included. It is the operator's own archive
+shared with people they chose, so anything in it may be shared with the
+circle whatever its rights statement; rights govern only sharing beyond the
+circle.
 
 ## Decision
 
@@ -351,18 +357,23 @@ the limit of the recording it transcribed.
   `holder`s include the active operator permits distribution; `NoC-US`
   permits distribution; `NoC-NC` permits open; every other statement
   permits service, as does a permitting statement outside its `from` and
-  `until` on the day it is read. The strictest claim about each object wins,
-  whoever asserted it. Rights never limit the circle, except that
-  `personal-use-licence` keeps its subject, and everything that pins it, to
-  the operator and the licensee.
+  `until` on the day it is read; `personal-use-licence` permits the circle
+  and nothing beyond it. The strictest claim about each object wins,
+  whoever asserted it.
+- **The circle is private.** The circle is the operator's own archive shared
+  with people they chose, as they already stream recordings to them, so
+  rights never limit it: whatever its rights statement, anything (a
+  copyrighted recording, its stems and renders, the machine claims read from
+  it, a bought tablature) may be disclosed to the circle. The permit table
+  governs only sharing beyond the circle. Sensitivity still limits the
+  circle: a `RED` label, inherited through pins, keeps an object from it.
 
 **`may_show(object, viewer, audience)`** answers whether the relay or an
 application may show an object to a person reaching them as an exposure
 class. The operator is always shown everything: no limit takes the
 operator's own memory from them (ADR 0018). Anyone else is shown an object
-only when the audience is within both limits, and, under a personal-use
-licence, only when they are its licensee and the audience is no further than
-the circle. A true answer is necessary, never sufficient: the person must
+only when the audience is within both limits; since rights never limit the
+circle, only sensitivity can keep an object from a member. A true answer is necessary, never sufficient: the person must
 also be granted the disclosure (INV-25), which ADR 0088's circle rules
 decide. The relay checks it on every route that returns content or derived
 media (ADR 0088, ADR 0089), and
@@ -392,9 +403,12 @@ to what the relay shows), and hold no state outside the claims Door admits.
 - LRC files and ASR transcripts land in the same contract as a person's
   tapping, each attributed; a person's timing and a machine's coexist, and a
   correction cites what it corrects.
-- A paid tablature can be admitted and used by the operator, and is never
-  shown to the circle. A private moment in a rehearsal can be labelled RED,
-  and every claim that pins that recording stays private with it.
+- A paid tablature can be admitted, used by the operator, and shared with
+  the circle, and never goes beyond it. A copyrighted recording, its stems,
+  and the claims read from it reach the circle as they reach the operator's
+  streaming server's listeners; only publishing them waits on rights.
+- A private moment in a rehearsal can be labelled RED, and every claim that
+  pins that recording stays private with it.
 - Inheritance through pins is strict: a lead sheet pinning a chord claim
   read from a RED recording is RED. To share the lead sheet, the operator
   pins claims from another recording, or the person who set the limit lifts

@@ -40,11 +40,11 @@ design). Its tests run alone:
 python3 -m unittest world.tests.test_contributions
 ```
 
-## Proposed for specification 0.0.10
+## Decided for specification 0.0.10
 
-These modules hold the rules of proposed records, as World would re-check
-them; no specification release installs their contracts yet, so Door
-admits none, and World projects none. Each needs only the standard library.
+These modules hold the rules of the accepted 0.0.10 records, as World would
+re-check them; no specification release installs their contracts yet, so
+Door admits none, and World projects none. Each needs only the standard library.
 
 | Module | Record | Holds |
 |---|---|---|

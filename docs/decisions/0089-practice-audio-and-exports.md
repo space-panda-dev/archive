@@ -1,6 +1,6 @@
 # 0089. Practice audio from the stems, transposition, and exports that are views until shared
 
-Status: proposed
+Status: accepted (operator, 2026-10-18)
 
 A person learning a song from a lead sheet wants to hear it without their
 own part: the recording minus the bass, for the bassist; the vocal alone, to
@@ -345,10 +345,10 @@ chosen from a stack.
 missing; `GET /exports/{key}` answers the file's bytes. An export is
 answered only to a caller who may read every rendered revision and every
 joined Artifact: the operator, or a bandmate under ADR 0088's circle rules
-and the joined documents' own sensitivity and rights (ADR 0085). A document
-licensed for personal use only (bought tablature, for example) may be joined
-in an export for the operator or its licensee, and never in one for anyone
-else. A request
+and the joined documents' own sensitivity (ADR 0085). Rights never limit the
+circle, so a document licensed for personal use only (bought tablature, for
+example) may be joined in an export for the circle, and in none sent beyond
+it. A request
 naming an exporter that is not installed is refused with
 `exporter_unknown`. No exporter is built by this record; until one is, the
 routes refuse every request with that code.

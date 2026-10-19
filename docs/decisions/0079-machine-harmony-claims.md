@@ -1,6 +1,6 @@
 # 0079. Machine harmony becomes claims; stems are cited by bank key
 
-Status: proposed
+Status: accepted (operator, 2026-10-18)
 
 The feature bank measures a recording's chords, beats, key and tuning, and
 separates its stems ([ADR 0073](0073-feature-bank.md),
@@ -80,7 +80,7 @@ the additions of both, an untimed one takes `corrects` and `derived_from`
 from this record, and the release installs one bundle. World checks it in
 one place, `world/form.py`'s `check_meter_layers_v2`.
 
-**Chord sequence version 2 is chosen here, for the operator to confirm.**
+**Chord sequence version 2 is chosen here, and the operator confirmed it.**
 D1.2 puts `derived_from` on chord claims, and a chord sequence is the chord
 claim a lead sheet of a Work pins (ADR 0084). A chart's "/E" over a bar,
 with nothing above it written, is a bass-only reading as much as a bass

@@ -1,6 +1,6 @@
 # 0086. Note events per part, and melody at two levels
 
-Status: proposed
+Status: accepted (operator, 2026-10-18)
 
 ## Context
 

@@ -758,15 +758,33 @@ class Reach(unittest.TestCase):
         self.assertTrue(shown(records, TIMING))
         self.assertFalse(shown(records, TIMING, audience="open"))
 
-    def test_a_personal_use_licence_keeps_a_document_to_its_licensee(self):
+    def test_a_personal_use_licence_reaches_the_circle_and_no_further(self):
         records = world() + [as_record(paid_tab(), 0x66, RIGHTS)]
-        self.assertFalse(shown(records, TAB["id"]))
+        found = reach(TAB["id"], records, OPERATOR["id"], TODAY)
+        self.assertEqual((found.rights, found.furthest), ("circle", "circle"))
+        self.assertTrue(shown(records, TAB["id"]))                      # a bandmate, though the operator holds it
+        self.assertTrue(shown(records, TAB["id"], viewer=SINGER))
+        self.assertFalse(shown(records, TAB["id"], audience="service"))
+        self.assertFalse(shown(records, TAB["id"], viewer=BANDMATE, audience="open"))
         self.assertTrue(shown(records, TAB["id"], viewer=OPERATOR, audience="private"))
-        records = world() + [as_record(paid_tab(BANDMATE), 0x66, RIGHTS)]
-        self.assertTrue(shown(records, TAB["id"]))
-        self.assertFalse(shown(records, TAB["id"], viewer=SINGER))
-        self.assertFalse(shown(records, TAB["id"], audience="open"))
-        self.assertEqual(reach(TAB["id"], records, OPERATOR["id"], TODAY).furthest, "private")
+
+    def test_rights_never_keep_anything_from_the_circle(self):
+        # The circle is private: every statement, in or out of its terms,
+        # still reaches it. Anchor: each one does limit something beyond it.
+        later = (TODAY + timedelta(days=400)).strftime("%Y")
+        base = [r for r in world() if r.get("contract") != RIGHTS]
+        statements = [in_copyright(WORK, MIX, LYRICS, holder=LABEL_CO),
+                      claim({"statement": "UND"}, *(("subject", x) for x in (WORK, MIX, LYRICS))),
+                      claim({"statement": "NoC-US", "from": later}, *(("subject", x) for x in (WORK, MIX, LYRICS)))]
+        for statement in statements:
+            records = base + [as_record(statement, 0x68, RIGHTS)]
+            with self.subTest(statement=statement["payload"]["statement"]):
+                self.assertFalse(shown(records, TIMING, audience="open"))
+                self.assertTrue(shown(records, TIMING))
+                self.assertTrue(shown(records, MIX["id"]))
+        # Sensitivity still keeps it from the circle.
+        records = base + [as_record(statements[0], 0x68, RIGHTS), as_record(label("RED", MIX), 0x63, SENSITIVITY)]
+        self.assertFalse(shown(records, TIMING))
 
     def test_terms_are_read_on_today(self):
         later = (TODAY + timedelta(days=400)).strftime("%Y")

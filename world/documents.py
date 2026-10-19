@@ -5,7 +5,7 @@ object may reach under its sensitivity and rights claims.
 
 The four contracts, `archive.claim/document_source`,
 `archive.claim/timed_lyrics`, `archive.claim/sensitivity`, and
-`archive.claim/rights`, each version 1, are proposed by ADR 0085 for
+`archive.claim/rights`, each version 1, are decided by ADR 0085 for
 specification 0.0.10. This module holds their rules as World would re-check
 them, so an importer, the relay, or a client can check a proposal before Door
 does; Door remains the authority (INV-2). It uses only the standard library.
@@ -15,7 +15,9 @@ and words by number; `lyric_view` joins the words from the document's bytes
 when something is shown, and the joined text is a view, never a claim.
 
 `reach` is a computed view: how far an object may be shown or shared under
-the sensitivity and rights claims on it and on everything it pins. It is
+the sensitivity and rights claims on it and on everything it pins. The
+circle is private, so rights never keep anything from it; only sensitivity
+does. Rights govern sharing beyond the circle. A reach is
 necessary, never sufficient: showing anything to anyone but the operator also
 needs a disclosure granted by policy (INV-25), which this module does not
 decide.
@@ -794,23 +796,18 @@ def check_rights(claim: dict[str, Any], targets: dict[str, dict[str, Any]]) -> d
 @dataclass(frozen=True)
 class Reach:
     """How far one object may reach. `labelled` is the furthest class its
-    sensitivity claims allow, `rights` the furthest its rights claims allow
-    apart from personal-use licences, and `licensees` the people every
-    personal-use licence in play names (None when none is in play: then the
-    rights limit alone applies). `why` names each claim that set a limit."""
+    sensitivity claims allow, and `rights` the furthest its rights claims
+    allow, never nearer than the circle. `why` names each claim that set a
+    limit."""
 
     labelled: str
     rights: str
-    licensees: frozenset[str] | None
     why: tuple[str, ...]
 
     @property
     def furthest(self) -> str:
-        """The furthest class anyone but a licensee may be shown it in."""
-        limit = min(CLASSES.index(self.labelled), CLASSES.index(self.rights))
-        if self.licensees is not None:
-            limit = 0
-        return CLASSES[limit]
+        """The furthest class anyone but the operator may be shown it in."""
+        return CLASSES[min(CLASSES.index(self.labelled), CLASSES.index(self.rights))]
 
 
 def _contract(record: dict[str, Any]) -> tuple[str, str] | None:
@@ -853,10 +850,14 @@ def closure(object_id: str, records: list[dict[str, Any]]) -> list[str]:
 
 
 def _rights_limit(payload: dict[str, Any], holders: set[str], operator: str, today: date) -> str:
-    """The furthest class one rights statement lets its subject reach,
-    personal-use licences aside. Service is as far as unknown rights go
-    (INV-21): only a statement that permits more, within its dates, goes on."""
+    """The furthest class one rights statement lets its subject reach. The
+    circle is private, so no statement keeps a subject from it: a personal-use
+    licence goes as far as the circle and no further. Service is as far as
+    unknown rights go (INV-21): only a statement that permits more, within its
+    dates, goes on."""
     statement = payload["statement"]
+    if statement == PERSONAL_USE:
+        return "circle"
     if statement.startswith("InC") and operator in holders:
         permitted = "distribution"
     elif statement == "NoC-US":
@@ -887,7 +888,7 @@ def reach(object_id: str, records: list[dict[str, Any]], operator: str, today: d
     every Artifact, Work, recording, and release in the closure needs a rights
     claim that permits a class beyond service, or it goes no further than
     service; the strictest claim wins, and a personal-use licence keeps it to
-    the operator and the licensee."""
+    the circle. Rights never limit the circle, which is private."""
     live = heads(records)
     found = closure(object_id, records)
     within = set(found)
@@ -917,7 +918,6 @@ def reach(object_id: str, records: list[dict[str, Any]], operator: str, today: d
     kinds = {r["object_id"]: (r["shape"], r.get("kind")) for r in records}
     rights_claims = [r for r in live if _contract(r) == RIGHTS]
     rights = "distribution"
-    licensees: frozenset[str] | None = None
     for subject in found:
         shape, kind = kinds.get(subject, (None, None))
         if not (shape == "artifact" or (shape == "entity" and kind in RIGHTS_SUBJECT_KINDS)):
@@ -930,12 +930,6 @@ def reach(object_id: str, records: list[dict[str, Any]], operator: str, today: d
             why.append(f"{subject} has no rights claim: no further than service")
             continue
         for record in about:
-            if record["payload"]["statement"] == PERSONAL_USE:
-                named = frozenset(ref["id"] for ref in record["refs"] if ref["role"] == "licensee")
-                licensees = named if licensees is None else licensees & named
-                why.append(f"{subject} is licensed for personal use ({record['revision_id']}): "
-                           f"the operator and {sorted(named)} only")
-                continue
             holders = {ref["id"] for ref in record["refs"] if ref["role"] == "holder"}
             limit = _rights_limit(record["payload"], holders, operator, today)
             if CLASSES.index(limit) < CLASSES.index("distribution"):
@@ -943,7 +937,7 @@ def reach(object_id: str, records: list[dict[str, Any]], operator: str, today: d
                            f"no further than {limit}")
             if CLASSES.index(limit) < CLASSES.index(rights):
                 rights = limit
-    return Reach(labelled, rights, licensees, tuple(why))
+    return Reach(labelled, rights, tuple(why))
 
 
 def may_show(object_id: str, viewer: str, audience: str, records: list[dict[str, Any]],
@@ -951,7 +945,8 @@ def may_show(object_id: str, viewer: str, audience: str, records: list[dict[str,
     """Whether the relay or an application may show `object_id` to `viewer`
     (a person Entity) reaching them as `audience`, one of CLASSES: the
     operator always (no limit takes the operator's own memory, ADR 0018);
-    anyone else only within the object's reach. A true answer is necessary,
+    anyone else only within the object's reach, where rights never limit the
+    circle. A true answer is necessary,
     never sufficient: the viewer must also be granted the disclosure
     (INV-25), which the circle rules of ADR 0088 decide."""
     if audience not in CLASSES:
@@ -963,7 +958,5 @@ def may_show(object_id: str, viewer: str, audience: str, records: list[dict[str,
     if level > CLASSES.index(found.labelled):
         return False, found.why
     if level > CLASSES.index(found.rights):
-        return False, found.why
-    if found.licensees is not None and (viewer not in found.licensees or level > CLASSES.index("circle")):
         return False, found.why
     return True, found.why

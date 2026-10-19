@@ -5,7 +5,7 @@ transposition as a view, the export request and the key that names its
 regenerable file, the `archive.claim/export` version 1 claim that admits a
 sent file, and the MusicXML `<harmony>` mapping ADR 0077 left unbuilt.
 
-ADR 0089 is proposed. No specification release installs
+ADR 0089 is accepted. No specification release installs
 `archive.claim/export` yet, so Door cannot admit one; this module holds its
 rules as World would re-check them, so an importer can check a proposal
 before Door does (INV-2). It uses only the standard library.

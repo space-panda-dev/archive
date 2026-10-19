@@ -1,6 +1,6 @@
 # 0080. Key regions and tuning are claims
 
-Status: proposed
+Status: accepted (operator, 2026-10-18)
 
 Nothing in an archive can say what key a passage is in, or where a
 recording's pitch sits against the twelve-tone grid. Chord stacks and chord
