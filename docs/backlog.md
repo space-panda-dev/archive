@@ -86,6 +86,27 @@ scratch copy.
   none. Expected: melody, bass and drum grooves soon; horn solos good enough to
   study with work; full comping voicings need people's corrections.
 
+- An experiment floor for every analysis task, the way to improve the
+  pipeline continuously, whether a change is a tuned parameter, a new
+  post-processing step or a fine-tuned model (most likely the melodic note
+  extractors; making new models is not the aim). Pieces:
+  - fixed evaluation sets per task (melody and bass notes, written rhythm,
+    chords, beats and downbeats, key, talk spans, matching), drawn from
+    people's corrections as they accumulate plus open references (a jazz-solo
+    database, an aligned saxophone omnibook, guitar and bass sets), each split
+    by song or session so nothing leaks between tuning and testing;
+  - a harness that runs any pipeline variant against them from feature-bank
+    outputs, so a variant reruns only the steps it changes, and records each
+    result with the variant's versions and parameters;
+  - cost as a first-class axis next to accuracy: runtime per minute of audio,
+    memory, model size, and whether it could run on a phone;
+  - a gate: a variant replaces the current one only when it is better on the
+    held-out set and no worse on cost beyond a stated bound;
+  - the training data's licences recorded with any tuned weights, since
+    non-commercial data keeps its weights to the operator's machines.
+  The calibrations already done (the detector's held-out sessions, the window
+  matcher's report, the melody metrics) are early instances to fold in.
+
 ## Operations
 
 - Deploy Spool 0.0.4 to both machines, add the GPU-stems grant, and give
