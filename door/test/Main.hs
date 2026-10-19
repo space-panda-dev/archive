@@ -42,6 +42,7 @@ import Archive.Door.TransitionDryRun
 import Archive.Door.Identity (parseIdentityName, parseIdentityNamespace, uuidV5)
 import Archive.Door.Contracts (validateCoreContextForSpecification, validateContractInstance)
 import Archive.Door.Json (decodeUnique)
+import BeyondCircle010 (beyondCircle010Checks)
 import Rules010 (rules010Checks)
 import Specification010 (specification010Checks)
 import qualified Data.Map.Strict as CheckpointMap
@@ -410,6 +411,7 @@ main = do
   musicAndCreditProfileChecks
   specification010Checks >>= mapM_ (\(label, passed, detail) -> assert label passed ExitSuccess detail "")
   rules010Checks >>= mapM_ (\(label, passed, detail) -> assert label passed ExitSuccess detail "")
+  beyondCircle010Checks >>= mapM_ (\(label, passed, detail) -> assert label passed ExitSuccess detail "")
   withProposalTemporaryRoot previousReleaseUpgradeChecks
   withProposalTemporaryRoot specificationUpgradeRefusalChecks
   withProposalTemporaryRoot earlierSpecificationChecks
@@ -5279,7 +5281,7 @@ initLayoutCheck root =
   "test -f " <> quote (root <> "/archive.json")
   <> " && grep -Eq '^\\{\"archive_id\":\"urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\",\"layout\":\"archive/2\",\"spec\":\"archive/0.0.10\"\\}$' " <> quote (root <> "/archive.json")
   <> " && test -f " <> quote (root <> "/spec/0.0.10/VERSION") <> " && test -f " <> quote (root <> "/spec/0.0.10/archive-spec.md") <> " && test -f " <> quote (root <> "/spec/0.0.10/context.jsonld")
-  <> " && test \"$(find " <> quote (root <> "/contracts") <> " -type f | wc -l | tr -d ' ')\" = 60"
+  <> " && test \"$(find " <> quote (root <> "/contracts") <> " -type f | wc -l | tr -d ' ')\" = 62"
   <> " && test \"$(find " <> quote (root <> "/records") <> " -type f | wc -l | tr -d ' ')\" = 2"
   <> " && for f in " <> quote (root <> "/contracts") <> "/*.json; do test \"$(basename \"$f\" .json | cut -c8-)\" = \"$(shasum -a 256 \"$f\" | cut -d' ' -f1)\"; done"
   <> " && for f in " <> quote (root <> "/records") <> "/*/*/*.json; do grep -Eq '\"revision_id\":\"sha256:[0-9a-f]{64}\"' \"$f\"; done"
@@ -6103,6 +6105,46 @@ publicationTransitionChecks parent = do
     (wrongCode /= ExitSuccess
       && contains "withdraws reference must target a Claim citing archive.transition/publication_approval version 1" (wrongErr <> wrongOut))
     wrongCode wrongOut wrongErr
+
+  -- Version 2 (specification 0.0.10): an approval states its class, and
+  -- Door refuses one beyond the circle that the archive's own rights forbid
+  -- today. The Work the covered claim pins has no rights claim, so it
+  -- reaches service and no further.
+  approvalV2 <- contractCitationVersion root approvalNamespace "2"
+  withdrawalV2 <- contractCitationVersion root withdrawalNamespace "2"
+  let current = (fst covered, revisedRevision)
+      classApproval exposure objectId = publicationDraft approvalV2
+        ("{\"class\":" <> jsonString exposure <> ",\"decision\":\"approve\",\"destination\":\"A streaming service\"}")
+        [pinned "authorizer" operator, pinned "covers" current] objectId
+  openId <- allocatedObjectId archiveId approvalNamespace "open-v2"
+  (openCode, openOut, openErr) <- transitionAt root "open-v2"
+    [(openId, approvalNamespace, "open-v2")] (approvalHeads openId revisedRevision) (classApproval "open" openId)
+  assert "a version 2 approval to open is refused, naming the Work without a rights claim"
+    (openCode /= ExitSuccess && contains "publication approval beyond the circle is refused" (openErr <> openOut)
+      && contains (fst work <> " has no rights claim") (openErr <> openOut))
+    openCode openOut openErr
+  serviceId <- allocatedObjectId archiveId approvalNamespace "service-v2"
+  let serviceApproval = classApproval "service" serviceId
+  serviceRevision <- canonicalRevisionOf serviceApproval
+  (serviceCode, serviceOut, serviceErr) <- transitionAt root "service-v2"
+    [(serviceId, approvalNamespace, "service-v2")] (approvalHeads serviceId revisedRevision) serviceApproval
+  assert "a version 2 approval to a service is committed: unknown rights reach service"
+    (serviceCode == ExitSuccess && contains serviceRevision serviceOut) serviceCode serviceOut serviceErr
+  let withdrawalV2Of target = publicationDraft withdrawalV2 "{\"reason\":\"Pulled by request\"}"
+        [pinned "authorizer" operator, pinned "withdraws" target]
+  withdrawV2Id <- allocatedObjectId archiveId withdrawalNamespace "withdraw-v2"
+  (withdrawV2Code, withdrawV2Out, withdrawV2Err) <- transitionAt root "withdraw-v2"
+    [(withdrawV2Id, withdrawalNamespace, "withdraw-v2")]
+    (withdrawalHeads withdrawV2Id (serviceId, serviceRevision)) (withdrawalV2Of (serviceId, serviceRevision) withdrawV2Id)
+  assert "a version 2 withdrawal withdraws a version 2 approval"
+    (withdrawV2Code == ExitSuccess) withdrawV2Code withdrawV2Out withdrawV2Err
+  againV2Id <- allocatedObjectId archiveId withdrawalNamespace "withdraw-v1-again"
+  (againV2Code, againV2Out, againV2Err) <- transitionAt root "withdraw-v1-again"
+    [(againV2Id, withdrawalNamespace, "withdraw-v1-again")]
+    (withdrawalHeads againV2Id (approvalId, approvalRevision)) (withdrawalV2Of (approvalId, approvalRevision) againV2Id)
+  assert "a version 2 withdrawal of an approval a version 1 withdrawal withdrew is refused"
+    (againV2Code /= ExitSuccess && contains "publication approval is already withdrawn" (againV2Err <> againV2Out))
+    againV2Code againV2Out againV2Err
 
   _ <- refuseNew root archiveId "door admit still refuses a publication approval"
     approvalNamespace "admit-approval" (approvalFor "approve" operator (fst covered, revisedRevision))
@@ -7439,8 +7481,8 @@ musicAndCreditProfileChecks = do
     (withRule sequenceSchema "x-archive-document-order" (withKey "within" (decoded "[]")))
   refusedOnLoad "a nested ranges rule naming one bound twice is refused" sequenceSchema
     (withRule sequenceSchema "x-archive-nested-ranges" (withKey "last" (Aeson.String "first")))
-  refusedOnLoad "a sequential spans rule whose within is not a name is refused" meter
-    (withRule meter "x-archive-sequential-spans" (withKey "within" (decoded "[\"layers\"]")))
+  refusedOnLoad "a sequential spans rule whose within is neither a name nor a path is refused" meter
+    (withRule meter "x-archive-sequential-spans" (withKey "within" (decoded "[]")))
   refusedOnLoad "a same subject rule whose optional is false is refused" contribution
     (withRule contribution "x-archive-same-subject" (withKey "optional" (Aeson.Bool False)))
   refusedOnLoad "a target bound rule whose role pins an Artifact is refused" contribution
@@ -7478,7 +7520,7 @@ musicAndCreditProfileChecks = do
 
 -- | A 0.0.9 archive adopts 0.0.10 by one `door transition` (ADR 0068): the
 -- release is additive (its core context is 0.0.9's), the commit installs the
--- twenty-four bundles it adds and the new version, and they are installed
+-- twenty-six bundles it adds and the new version, and they are installed
 -- only after it. After the upgrade a record citing one is admitted under its
 -- profile rules, no longer refused as an uninstalled contract.
 previousReleaseUpgradeChecks :: FilePath -> IO ()
@@ -7509,7 +7551,8 @@ previousReleaseUpgradeChecks parent = do
          , ("archive.claim/meter_layers", "2"), ("archive.claim/notes", "1"), ("archive.claim/recording_audio", "1")
          , ("archive.claim/rights", "1"), ("archive.claim/sensitivity", "1"), ("archive.claim/sharing_consent", "1")
          , ("archive.claim/span_annotation", "1"), ("archive.claim/timed_lyrics", "1"), ("archive.claim/tracklist", "1")
-         , ("archive.claim/tuning", "1"), ("archive.claim/work_origin", "1") ])
+         , ("archive.claim/tuning", "1"), ("archive.claim/work_origin", "1")
+         , ("archive.transition/publication_approval", "2"), ("archive.transition/publication_withdrawal", "2") ])
     ExitSuccess (show added) ""
   assert "0.0.10's core context is 0.0.9's"
     (targetContext == previousContext) ExitSuccess "" ""
@@ -7550,8 +7593,8 @@ previousReleaseUpgradeChecks parent = do
         ([ "M\tarchive.json", "A\tspec/0.0.10/VERSION", "A\tspec/0.0.10/archive-spec.md"
          , "A\tspec/0.0.10/context.jsonld", "A\t" <> recordRelative upgradeRevision ]
          <> [ "A\t" <> bundlePath entry | entry <- added ])
-  assert "the upgrade commit installs the twenty-four bundles, the release's documents, the record, and the manifest"
-    (sort (lines changes) == expectedChanges && length added == 24) ExitSuccess changes (unlines expectedChanges)
+  assert "the upgrade commit installs the twenty-six bundles, the release's documents, the record, and the manifest"
+    (sort (lines changes) == expectedChanges && length added == 26) ExitSuccess changes (unlines expectedChanges)
   installedMatch <- mapM (\entry -> (==) <$> ByteString.readFile (root </> bundlePath entry)
     <*> ByteString.readFile ("spec" </> bundlePath entry)) added
   (statusCode, statusOut, statusErr) <- readCreateProcessWithExitCode

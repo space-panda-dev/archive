@@ -86,8 +86,8 @@ specification010Checks = do
         Object bundle -> Object (KeyMap.insert "schema" (replaceOptions (KeyMap.lookup "schema" bundle)) bundle)
         _ -> Null
   pure $
-    [ ("the 0.0.10 catalog adds twenty-four bundles to 0.0.9's and keeps every 0.0.9 entry",
-        length added == 24 && all (`elem` current) previous, show added)
+    [ ("the 0.0.10 catalog adds twenty-six bundles (two of them the version 2 publication transitions) to 0.0.9's and keeps every 0.0.9 entry",
+        length added == 26 && all (`elem` current) previous, show added)
     , ("every 0.0.10 bundle loads by its digest",
         not (null loads) && all (isRight . snd) loads, show [entry | (entry, Left _) <- loads])
     , ("every rule the release adds is declared by an added bundle, and no 0.0.9 bundle declares one",

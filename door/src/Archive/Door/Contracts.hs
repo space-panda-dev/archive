@@ -34,6 +34,7 @@ module Archive.Door.Contracts
 import Archive.Door.Json (decodeUnique)
 import Archive.Door.RecordRules (validateRecordRules)
 import Archive.Door.RuleSyntax (releaseRuleNames, validateReleaseRules)
+import Archive.Door.SpanRules (sequentialSpansRule, validateSequentialSpans, withinGroups)
 import Archive.Door.WhenPinned (effectiveSchema)
 import Archive.Door.SchemaObjectKeywords
   ( evaluateObjectKeywords
@@ -308,7 +309,7 @@ validateSchema schema@(Object fields) = do
     _ -> Right ()
   maybe (Right ()) validateOrderedInstantsRule
     (KeyMap.lookup "x-archive-ordered-instants" fields)
-  maybe (Right ()) (validateWithinFieldsRule "sequential spans rule" ["payload", "start", "end"])
+  maybe (Right ()) (fmap (const ()) . sequentialSpansRule)
     (KeyMap.lookup "x-archive-sequential-spans" fields)
   _ <- targetMeasureRule schema
   _ <- sameSubjectRule schema
@@ -1511,8 +1512,10 @@ validateContractProfile (Object schema) (Object instanceValue) = do
     Just _ -> Left "ordered instants rule must be an object"
   case KeyMap.lookup "x-archive-sequential-spans" schema of
     Nothing -> pure ()
-    Just (Object rule) -> validateSequentialSpansInstance rule instanceValue
-    Just _ -> Left "sequential spans rule must be an object"
+    Just rule -> do
+      rules <- sequentialSpansRule rule
+      payload <- requiredObject "payload" instanceValue
+      validateSequentialSpans rules payload
   case KeyMap.lookup "x-archive-ascending-items" schema of
     Nothing -> pure ()
     Just (Object rule) -> validateAscendingItemsInstance rule instanceValue
@@ -1657,54 +1660,6 @@ parseUtcInstant value
   | Text.isSuffixOf "Z" value && Text.isInfixOf "T" value =
       parseTimeM False defaultTimeLocale "%Y-%m-%dT%H:%M:%S%QZ" (Text.unpack value)
   | otherwise = Nothing
-
--- | A nonempty payload array of spans with integer bounds where
--- @0 <= start < end@, each starting at or after the previous one's end.
-validateSequentialSpansInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
-validateSequentialSpansInstance rule instanceValue = do
-  payloadName <- requiredString "payload" rule
-  within <- optionalWithin rule
-  optional <- optionalFlag rule
-  payload <- requiredObject "payload" instanceValue
-  groups <- withinGroups within payload
-  if optional && not (KeyMap.member (Key.fromText (maybe payloadName id within)) payload)
-    then Right ()
-    else mapM_ (sequentialSpans rule payloadName) groups
-
--- | The objects a rule's array lives in: the payload itself, or, with
--- @within@, each element of the payload array @within@ (one layer of bars,
--- say), so that order is checked inside each group and never across them.
-withinGroups :: Maybe Text -> KeyMap.KeyMap Value -> Either Text [KeyMap.KeyMap Value]
-withinGroups Nothing payload = Right [payload]
-withinGroups (Just name) payload = case KeyMap.lookup (Key.fromText name) payload of
-  Just (Array values) -> mapM asObject (toList values)
-  _ -> Left (name <> " must be an array")
-  where
-    asObject (Object group) = Right group
-    asObject _ = Left (name <> " must contain objects")
-
-sequentialSpans :: KeyMap.KeyMap Value -> Text -> KeyMap.KeyMap Value -> Either Text ()
-sequentialSpans rule payloadName payload = do
-  startName <- requiredString "start" rule
-  endName <- requiredString "end" rule
-  within <- optionalWithin rule
-  spans <- case KeyMap.lookup (Key.fromText payloadName) payload of
-    Just (Array values) | not (null values) -> Right (toList values)
-    -- With within, an element without the array (a beat-only layer beside
-    -- layers of bars) has no spans to order.
-    Nothing | within /= Nothing -> Right []
-    _ -> Left "sequential spans payload must be a nonempty array"
-  bounds <- mapM (spanBounds startName endName) spans
-  if all (\(start, end) -> start >= 0 && end > start) bounds
-    then Right ()
-    else Left "each span requires 0 <= start < end"
-  if and (zipWith (\(_, previousEnd) (start, _) -> start >= previousEnd) bounds (drop 1 bounds))
-    then Right ()
-    else Left "spans must be in order and must not overlap"
-  where
-    spanBounds startName endName (Object piece) =
-      (,) <$> requiredInteger startName piece <*> requiredInteger endName piece
-    spanBounds _ _ _ = Left "span must be an object"
 
 validateDistinctRefsInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
 validateDistinctRefsInstance rule instanceValue = do

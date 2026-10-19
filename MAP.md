@@ -80,7 +80,12 @@ transitions ADR 0028, 0030; power-loss durability is accepted but not yet met
 `service.schema.json` (a `door-test` check).
 Find: per-contract payload rules are `x-archive-*` keys in the bundle JSON,
 implemented in `Contracts.hs` (`rg -n 'x-archive-' door/src`); transition
-kinds in `transitionDispatchTable`.
+kinds in `transitionDispatchTable`. The span rules' list and path forms are
+`SpanRules.hs`; the check beyond the circle (S-30) is `BeyondCircle.hs` over
+`Reach.hs` (sensitivity, rights) and `SharingGate.hs` (co-writers' consent),
+run by `planTransition` on today's UTC date, never on replay; pure checks in
+`door/test/BeyondCircle010.hs`, agreement with World in
+`world/tests/test_door_agreement_beyond_circle.py`.
 
 ## Spec: what every archive must satisfy, copied into each
 

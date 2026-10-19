@@ -50,6 +50,8 @@ module Archive.Door.RuleSyntax
   ) where
 
 import Archive.Door.RuleJson
+import Archive.Door.SpanRules (containedSpansRule)
+import Archive.Door.BeyondCircle (beyondCircleRule)
 import Data.Aeson (Value (..))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -92,6 +94,7 @@ parsers =
   , ("x-archive-operator-writers", () <$$ operatorWritersRule)
   , ("x-archive-consenting-writer", () <$$ consentingWriterRule)
   , ("x-archive-export-key", () <$$ exportKeyRule)
+  , ("x-archive-beyond-circle", () <$$ beyondCircleRule)
   ]
   where
     (<$$) unit parse value = unit <$ parse value
@@ -157,9 +160,6 @@ ascendingTuplesRule = ruleList label $ \fields -> do
   AscendingTuples <$> pathField label "payload" fields <*> textsField label "fields" fields
     <*> boolField label "strict" fields
   where label = "ascending tuples rule"
-
-containedSpansRule :: Value -> Either Text NamedFields
-containedSpansRule = namedFields "contained spans rule" ["outer", "inner", "start", "end"]
 
 distinctValuesRule :: Value -> Either Text [[Text]]
 distinctValuesRule value = do

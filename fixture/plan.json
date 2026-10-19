@@ -446,6 +446,28 @@
       ]
     },
     {
+      "name": "articulation, syllables, and the bass line",
+      "command": "admit",
+      "records": [
+        {"key": "notes-sung", "namespace": "archive.claim/notes", "name": "fixture-notes-sung", "shape": "claim",
+         "contracts": [{"id": "archive.claim/notes", "version": "1"}],
+         "payload": {"sample_rate": 8000, "part": "voice", "notes": [{"onset_sample": 0, "offset_sample": 400, "pitch": 64, "articulation": ["staccato"]}, {"onset_sample": 400, "offset_sample": 1000, "pitch": 62, "articulation": ["tenuto", "accent"]}]},
+         "refs": [{"role": "source", "pin": "recording"}, {"role": "stream", "pin": "stream"}]},
+        {"key": "notes-bass-line", "namespace": "archive.claim/notes", "name": "fixture-notes-bass-line", "shape": "claim",
+         "contracts": [{"id": "archive.claim/notes", "version": "1"}],
+         "payload": {"sample_rate": 8000, "part": "bass", "bass": true, "notes": [{"onset_sample": 2000, "offset_sample": 3000, "pitch": 36}]},
+         "refs": [{"role": "source", "pin": "recording"}, {"role": "stream", "pin": "stream"}]},
+        {"key": "melody-articulated", "namespace": "archive.claim/melody", "name": "fixture-melody-articulated", "shape": "claim",
+         "contracts": [{"id": "archive.claim/melody", "version": "1"}],
+         "payload": {"part": "voice", "start": {"layer": 0, "bar": 0}, "notes": [{"pitch": 64, "duration": {"count": 1, "unit": 4}, "articulation": ["staccato"]}, {"rest": true, "duration": {"count": 1, "unit": 4}}, {"pitch": 67, "duration": {"count": 2, "unit": 4}, "articulation": ["fermata"]}]},
+         "refs": [{"role": "work", "pin": "work-a"}, {"role": "meter", "pin": "meter-written"}]},
+        {"key": "timed-syllables", "namespace": "archive.claim/timed_lyrics", "name": "fixture-timed-syllables", "shape": "claim",
+         "contracts": [{"id": "archive.claim/timed_lyrics", "version": "1"}],
+         "payload": {"sample_rate": 8000, "scheme": "text", "alignment": {"method": "manual"}, "lines": [{"line": 1, "start_sample": 0, "end_sample": 2000, "words": [{"word": 1, "start_sample": 0, "end_sample": 1000, "syllables": [{"syllable": 1, "start_char": 0, "end_char": 3, "start_sample": 0, "end_sample": 400, "carried_by": {"notes": "$revision:notes-sung", "onsets": [0]}}, {"syllable": 2, "start_char": 3, "end_char": 7, "start_sample": 400, "end_sample": 1000, "carried_by": {"notes": "$revision:notes-sung", "onsets": [400]}}]}, {"word": 2, "start_sample": 1000, "end_sample": 2000}]}]},
+         "refs": [{"role": "document", "pin": "lyrics"}, {"role": "source", "pin": "recording"}, {"role": "stream", "pin": "stream"}, {"role": "work", "pin": "work-a"}, {"role": "notes", "pin": "notes-sung"}]}
+      ]
+    },
+    {
       "name": "a release's tracks",
       "command": "admit",
       "records": [
@@ -551,6 +573,26 @@
          "contracts": [{"id": "archive.transition/publication_withdrawal", "version": "1"}],
          "payload": {"reason": "Fixture withdrawal"},
          "refs": [{"role": "authorizer", "pin": "operator"}, {"role": "withdraws", "pin": "publication"}]}
+      ]
+    },
+    {
+      "name": "publication to the circle, version 2",
+      "command": "transition",
+      "records": [
+        {"key": "publication-v2", "namespace": "archive.transition/publication_approval", "name": "fixture-publication-v2", "shape": "claim",
+         "contracts": [{"id": "archive.transition/publication_approval", "version": "2"}],
+         "payload": {"destination": "fixture-circle", "decision": "approve", "class": "circle"},
+         "refs": [{"role": "authorizer", "pin": "operator"}, {"role": "covers", "pin": "title"}]}
+      ]
+    },
+    {
+      "name": "withdrawal, version 2",
+      "command": "transition",
+      "records": [
+        {"key": "withdrawal-v2", "namespace": "archive.transition/publication_withdrawal", "name": "fixture-withdrawal-v2", "shape": "claim",
+         "contracts": [{"id": "archive.transition/publication_withdrawal", "version": "2"}],
+         "payload": {"reason": "Fixture withdrawal, version 2"},
+         "refs": [{"role": "authorizer", "pin": "operator"}, {"role": "withdraws", "pin": "publication-v2"}]}
       ]
     },
     {

@@ -45,6 +45,10 @@ library
     , Archive.Door.Layout
     , Archive.Door.MutationError
     , Archive.Door.AgentRules
+    , Archive.Door.BeyondCircle
+    , Archive.Door.Reach
+    , Archive.Door.SharingGate
+    , Archive.Door.SpanRules
     , Archive.Door.FormStructure
     , Archive.Door.JudgedScope
     , Archive.Door.PinnedRules
@@ -122,7 +126,7 @@ executable archive
 test-suite door-test
   type: exitcode-stdio-1.0
   main-is: Main.hs
-  other-modules: Rules010, Specification010
+  other-modules: BeyondCircle010, Rules010, Specification010
   hs-source-dirs: door/test
   build-tool-depends:
       archive:archive
@@ -138,6 +142,7 @@ test-suite door-test
     , network
     , process
     , text
+    , time
     , unix
     , vector
   default-language: GHC2021

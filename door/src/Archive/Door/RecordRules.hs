@@ -15,6 +15,7 @@ module Archive.Door.RecordRules
 import Archive.Door.FormStructure (validateFormStructure)
 import Archive.Door.RuleJson
 import Archive.Door.RuleSyntax
+import Archive.Door.SpanRules (validateContainedSpans)
 import Archive.Door.WrittenBars (validateWrittenBars)
 import Crypto.Hash.SHA256 qualified as SHA256
 import Data.Aeson (Value (..), object, (.=))
@@ -38,7 +39,7 @@ validateRecordRules schema instanceValue = do
   with "x-archive-ordered-fields" orderedFieldsRule (mapM_ (orderedFields payload))
   with "x-archive-ordered-ranges" orderedRangesRule (orderedRanges payload)
   with "x-archive-ascending-tuples" ascendingTuplesRule (mapM_ (ascendingTuples payload))
-  with "x-archive-contained-spans" containedSpansRule (containedSpans payload)
+  with "x-archive-contained-spans" containedSpansRule (`validateContainedSpans` payload)
   with "x-archive-distinct-values" distinctValuesRule (mapM_ (distinctValues payload))
   with "x-archive-file-names" fileNamesRule (mapM_ (fileName payload))
   with "x-archive-spellings" spellingsRule (spellings payload)
@@ -96,17 +97,6 @@ ascendingTuples payload rule = mapM_ check [items | Array items <- reached (tupl
     key (Object fields) = maybe (Left (label <> " elements must hold integer " <> Text.intercalate ", " (tuplesFields rule)))
       Right (mapM (`integerAt` fields) (tuplesFields rule))
     key _ = Left (label <> " must hold objects")
-
-containedSpans :: KeyMap.KeyMap Value -> NamedFields -> Either Text ()
-containedSpans payload named = mapM_ outer [fields | Object fields <- arrayAt (named "outer") payload]
-  where
-    outer fields = case bounds fields of
-      Nothing -> Right ()
-      Just (low, high) -> mapM_ (\inner -> case bounds inner of
-        Just (start, end) | start < low || end > high ->
-          Left (named "inner" <> " must lie within their " <> named "outer" <> " element")
-        _ -> Right ()) [inner | Object inner <- arrayAt (named "inner") fields]
-    bounds fields = (,) <$> integerAt (named "start") fields <*> integerAt (named "end") fields
 
 distinctValues :: KeyMap.KeyMap Value -> [Text] -> Either Text ()
 distinctValues payload path =
