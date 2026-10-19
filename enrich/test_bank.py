@@ -165,12 +165,14 @@ SHIPPED = {
                "outside": {"waveform.py": "sha256:353aceedf74c7a1c2bbaa330fe03847440f1e74213146bcf6bc0b863db39a424",
                            "derived.py": "sha256:d1da556693ea266247cbac481f17672578d5cc90043b3f28730e899cd3c28132"}},
     # The code was made to serve stems-6s too (a Separation names the model and stems); no output changed.
-    "stems": {"version": "1", "code": "sha256:8640df54ce9df76a222134b389ce55f1e6745d4cdbfd7699f352effdc5be4292", "outside": {}},
+    # Version 1 also runs on Apple's GPU when `apply.device` is "mps": another
+    # parameter, so another key; the CPU's stems are the same bits as before.
+    "stems": {"version": "1", "code": "sha256:df389c5a797d6d7d79ee57d34d17f2a99ae9fb1a68e62c93dd82e5f7c51042b4", "outside": {}},
     # stems-6s is the stems program with another model and six stems.
     "stems-6s": {"version": "1",
                  "code": "sha256:23494ee6838986398b491f243a017b1687921f655db1c51693275931ebf892a2",
                  "outside": {"extractors/stems/stems.py":
-                                 "sha256:2f387b14db4a6d289edd6ba10ff83568ddeec01855d4f8941dfba906ec9235eb"}},
+                                 "sha256:649708bb68316a9c33b94a9fa273ca3bfb45c2e1dcc6b310a960371fe0191586"}},
     "notes-basic-pitch": {"version": "1",
                           "code": "sha256:b5448bba015abacd05b07e03eb60e280ae45e3aa01bb5562dd30ef6a0eefe3b2",
                           "outside": {}},

@@ -27,9 +27,11 @@ run. With `shifts` 0 Demucs applies no random offset, so a run on one build
 gives the same samples each time.
 
 Invoked by the runner as `<demucs-python> stems.py <request.json>`; the
-settings are fixed, and a request naming others is refused. Another
-separator that differs only in its model and its stems (`stems-6s`) runs
-this program's `main` with its own `Separation`.
+settings are fixed but for the device the model runs on (`apply.device`,
+one of DEVICES: a GPU's stems are other bits, so another key), and a request
+naming others is refused. Another separator that differs only in its model
+and its stems (`stems-6s`) runs this program's `main` with its own
+`Separation`.
 """
 
 from __future__ import annotations
@@ -64,6 +66,11 @@ MODEL = {"name": "htdemucs", "demucs": "4.1.0", "repository": "adefossez/HTDemuc
                        "sha256:d9fa14133cfcc034a6758923bb3a8ca9f8dfd0b582134643bbf83f72c17576dd"}}
 APPLY = {"shifts": 0, "split": True, "overlap": "0.25", "segment": None, "device": "cpu",
          "normalise": "chunk mean and standard deviation, as demucs.api.Separator.separate_tensor"}
+# The devices the model may run on. The device is a parameter, so stems made
+# on a GPU are another key beside the CPU's: the same weights give other bits
+# on other hardware. "cpu" is the manifest's; an operator who has Apple's
+# Metal configures {"stems": {"apply": {..., "device": "mps"}}}.
+DEVICES = ("cpu", "mps")
 
 
 class Separation(NamedTuple):
@@ -97,10 +104,16 @@ def encode_arguments(path: str) -> list[str]:
             "+bitexact", "-c:a", "flac", "-compression_level", "5", "-f", "flac", path]
 
 
-def parameters(separation: Separation = HTDEMUCS) -> dict[str, Any]:
-    """The settings, which the manifest must declare exactly."""
+def apply_on(device: str) -> dict[str, Any]:
+    """Demucs's application settings, on one of DEVICES."""
+    return {**APPLY, "device": device}
+
+
+def parameters(separation: Separation = HTDEMUCS, device: str = "cpu") -> dict[str, Any]:
+    """The settings, which the manifest must declare exactly, on the CPU;
+    on another of DEVICES they differ only in `apply.device`."""
     return {"decoder": "ffmpeg", "decode_arguments": decode_arguments("{input}"), "model": separation.model,
-            "apply": APPLY, "chunk_seconds": CHUNK_SECONDS, "crossfade_seconds": CROSSFADE_SECONDS,
+            "apply": apply_on(device), "chunk_seconds": CHUNK_SECONDS, "crossfade_seconds": CROSSFADE_SECONDS,
             "stems": list(separation.stems),
             "encoding": {"encoder": "ffmpeg", "encode_arguments": encode_arguments("{output}"), "bits": 16,
                          "scale": SCALE, "rounding": "nearest, ties to even", "overflow": "clamp"},
@@ -184,7 +197,7 @@ class Demucs:
                                    split=self.apply["split"], overlap=float(self.apply["overlap"]),
                                    segment=self.apply["segment"], device=self.apply["device"], progress=False)
             out = out * std + mean
-        return out[0].numpy()
+        return out[0].cpu().numpy()
 
 
 def load_model(settings: dict[str, Any], apply: dict[str, Any]) -> Model:
@@ -476,10 +489,12 @@ def main(argv: list[str], separation: Separation = HTDEMUCS) -> int:
         return 2
     try:
         request = json.loads(Path(argv[0]).read_text(encoding="utf-8"))
-        if request.get("parameters") != parameters(separation):
-            raise StemsError(f"{separation.extractor} has fixed settings; the request names others")
+        device = next((d for d in DEVICES if request.get("parameters") == parameters(separation, d)), None)
+        if device is None:
+            raise StemsError(f"{separation.extractor} has fixed settings but for the device "
+                             f"({', '.join(DEVICES)}); the request names others")
         output = Path(request["output_dir"])
-        model = load_model(separation.model, APPLY)
+        model = load_model(separation.model, apply_on(device))
         outputs = separate(request["input"]["path"], output, model, stems=separation.stems)
         software = [*model.software, {"name": "ffmpeg", "version": ffmpeg_version()},
                     {"name": "numpy", "version": numpy.__version__},

@@ -66,6 +66,8 @@ enrich/media.py --root <dir> --digest <d> <file>
                                  waveform peaks and a listening copy: regenerable derived media
 enrich/extract.py list | run <extractor|all> --content <file> --bank <dir>
                                  extract features into the regenerable feature bank (proposed)
+enrich/remote.py put | work | collect
+                                 the same, run by a Spool worker on another machine (proposed)
 door verify                      full verification of HEAD and a fresh checkpoint
 archive init | status | doctor   setup, state, whole-archive check
 archive maintenance repack       coordinated packing of loose Git objects
@@ -137,7 +139,9 @@ what they read and write in a manifest
 files their features in the feature bank, regenerable state laid out beside
 derived media by content digest
 ([ADR 0073](decisions/0073-feature-bank.md),
-[format](feature-bank.md), [adding an extractor](adding-an-extractor.md)).
+[format](feature-bank.md), [adding an extractor](adding-an-extractor.md)). `enrich/remote.py` hands one
+extractor run to a Spool worker and files what comes back the same way
+([proposed ADR 0079](decisions/0079-extractor-runs-travel-through-spool.md)).
 It needs only the standard library; each extractor brings its own
 environment, named by configuration. Its graph is the few extractors one
 content needs, run in order on one machine; handing a run to another machine

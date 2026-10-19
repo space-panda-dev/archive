@@ -134,6 +134,21 @@ def resolve_command(extractor: bank.Extractor, programs: dict[str, str]) -> list
     return words
 
 
+# The process groups of the extractors running now, so that a runner that is
+# itself stopped (a Spool worker's run past its time) can stop them: each
+# runs in a group of its own, which a signal to the runner's group misses.
+_GROUPS: set[int] = set()
+_GROUPS_LOCK = threading.Lock()
+
+
+def signal_running(signal_number: int) -> None:
+    """Send a signal to every extractor's process group running now."""
+    with _GROUPS_LOCK:
+        groups = list(_GROUPS)
+    for group in groups:
+        _signal_group(group, signal_number)
+
+
 def _signal_group(group: int, signal_number: int) -> None:
     try:
         os.killpg(group, signal_number)
@@ -155,6 +170,8 @@ def run_program(command: list[str], cwd: Path, environment: dict[str, str],
     runner has finished with it."""
     process = subprocess.Popen(command, cwd=cwd, env=environment, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+    with _GROUPS_LOCK:
+        _GROUPS.add(process.pid)
     tail = bytearray()
 
     def read() -> None:
@@ -180,6 +197,8 @@ def run_program(command: list[str], cwd: Path, environment: dict[str, str],
         # The group outlives its leader while any member lives, and its id is
         # not reused until then, so this reaches exactly what the extractor left.
         _signal_group(process.pid, signal.SIGKILL)
+        with _GROUPS_LOCK:
+            _GROUPS.discard(process.pid)
         reader.join()
         assert process.stdout is not None
         process.stdout.close()
@@ -195,6 +214,29 @@ def _fsync_tree(directory: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def place_entry(output_dir: Path, manifest: dict[str, Any], final: Path) -> bool:
+    """File a checked result as an entry: `entry.json` replaces `result.json`,
+    every file becomes owner-only, everything is flushed, and the directory
+    is renamed into place, so the entry is complete or absent. False when
+    another runner filed the same entry first; its entry stands."""
+    (output_dir / bank.RESULT).unlink()
+    (output_dir / bank.ENTRY).write_bytes(json.dumps(manifest, indent=1, sort_keys=True).encode())
+    # A feature can carry the recording (a stem): owner only, as derived media are.
+    # check_result refused any file with another link, so this changes no one else's file.
+    for path in output_dir.iterdir():
+        path.chmod(0o600)
+    output_dir.chmod(0o700)
+    _fsync_tree(output_dir)
+    final.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.rename(output_dir, final)
+    except OSError:
+        if bank.read_entry(final) is None:
+            raise
+        return False
+    return True
 
 
 class Run:
@@ -335,21 +377,7 @@ class Run:
                         "needs": {need: keys[need.split("/", 1)[0]] for need in extractor.needs},
                         **checked, "started_at": started, "ended_at": now(), "runner": RUNNER}
             bank.check_entry(manifest, f"{extractor_id} entry")
-            (output_dir / bank.RESULT).unlink()
-            (output_dir / bank.ENTRY).write_bytes(json.dumps(manifest, indent=1, sort_keys=True).encode())
-            # A feature can carry the recording (a stem): owner only, as derived media are.
-            # check_result refused any file with another link, so this changes no one else's file.
-            for path in output_dir.iterdir():
-                path.chmod(0o600)
-            output_dir.chmod(0o700)
-            _fsync_tree(output_dir)
-            final.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                os.rename(output_dir, final)
-            except OSError:
-                # Another runner filed the same entry first; its entry stands.
-                if bank.read_entry(final) is None:
-                    raise
+            if not place_entry(output_dir, manifest, final):
                 return {"status": "hit", "key": key, "entry": str(final), "raced": True}
             bank.failure_path(self.root, self.directory_digest(), extractor_id, key).unlink(missing_ok=True)
             return {"status": "ran", "key": key, "entry": str(final),
