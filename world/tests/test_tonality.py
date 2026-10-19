@@ -176,7 +176,8 @@ class KeyRegions(unittest.TestCase):
             check_key_regions(out_of_range, fixture_stream(), sequence_claim=sequence)
 
     def test_corrections_and_parts(self):
-        claim = regions_claim([region(10, 20, key(E, "minor"))], ref("corrects", OTHER), ref("derived_from", OTHER),
+        # Derived from the chords it was read off; corrects another key claim (ADR 0079: never the same one).
+        claim = regions_claim([region(10, 20, key(E, "minor"))], ref("corrects", OTHER), ref("derived_from", CHORDS),
                               part="guitar")
         check_key_regions(claim, fixture_stream())
 
@@ -317,6 +318,39 @@ class Tuning(unittest.TestCase):
         for name, claim in cases.items():
             with self.subTest(name), self.assertRaises(TonalityError):
                 check_tuning(claim, fixture_stream())
+
+
+class SharedLineage(unittest.TestCase):
+    """Key regions and tuning cite a stem and derive as ADR 0079 decides,
+    through its one check (`harmony.check_lineage`)."""
+
+    STEM = {"extractor": "tonal", "key": "sha256:" + "ab" * 32, "output": "bass", "sha256": "sha256:" + "cd" * 32}
+
+    def test_a_key_measured_from_a_stem(self):
+        claim = regions_claim([region(0, 10, key(0, "major"))], ref("run", RUN), ref("derived_from", OTHER),
+                              stem=self.STEM)
+        check_key_regions(claim, fixture_stream())
+
+    def test_a_tuning_measured_from_a_stem_and_derived(self):
+        claim = tuning_claim(stem=self.STEM)
+        claim["refs"].append(ref("derived_from", OTHER))
+        check_tuning(claim, fixture_stream())
+
+    def test_refused(self):
+        bare = {**self.STEM, "key": "ab" * 32}
+        cases = {
+            "bare hex key": regions_claim([region(0, 10, key(0, "major"))], stem=bare),
+            "derived twice": regions_claim([region(0, 10, key(0, "major"))], ref("derived_from", OTHER),
+                                           ref("derived_from", OTHER)),
+            "corrected and derived": regions_claim([region(0, 10, key(0, "major"))], ref("corrects", OTHER),
+                                                   ref("derived_from", OTHER)),
+        }
+        for name, claim in cases.items():
+            with self.subTest(name=name), self.assertRaises(TonalityError):
+                check_key_regions(claim, fixture_stream())
+        with self.assertRaises(TonalityError):
+            check_key_sequence(sequence_claim([{"readings": [key(0, "major")]}], ref("derived_from", OTHER),
+                                              ref("corrects", OTHER)))
 
 
 class Spelling(unittest.TestCase):

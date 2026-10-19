@@ -93,7 +93,7 @@ was read from), at most one `run` when a tool read it, zero to eight
 `corrects` (key sequence version 1 Claim revisions), zero to eight
 `derived_from` (below), and at most one **anchor**:
 
-- `chord_sequence`, an `archive.claim/chord_sequence` version 1 Claim
+- `chord_sequence`, an `archive.claim/chord_sequence` version 1 or 2 Claim
   revision, whose entries the regions range over; or
 - `form`, the form claim of ADR 0083, whose
   sections the regions range over.
@@ -181,9 +181,10 @@ where one key changes to the next, one region ends and the next begins.
 ```
 
 A key regions claim has no `analysed` reference. A key measured from a stem
-cites the stem as ADR 0079 has chord and meter claims cite one, by its bank
-key, whatever form that record gives the citation; it never needs the stem
-admitted as an Artifact.
+cites the stem in its payload's optional `stem`, by bank key, exactly as
+[ADR 0079](0079-machine-harmony-claims.md) defines it (`extractor`, `key`,
+`output`, `sha256`, the digests written `sha256:<hex>`); it never needs the
+stem admitted as an Artifact.
 
 **From a Work to a recording**, as with chords: an alignment that places a
 key sequence on a recording makes a separate key regions claim pinning the
@@ -203,8 +204,9 @@ ADR 0082's.
 A tuning claim says where twelve-tone equal temperament sits on one audio
 stream. It pins exactly one `source` and one `stream` as above, at most one
 `run` (a machine measured it), at most one `document` (a source stated it:
-"tuned to A = 432 Hz"), and zero to eight `corrects` (tuning version 1 Claim
-revisions). Its payload has:
+"tuned to A = 432 Hz"), zero to eight `corrects` (tuning version 1 Claim
+revisions), and zero to eight `derived_from` (ADR 0079's role). Its payload
+has:
 
 - `sample_rate`, equal to the stream's;
 - `reference_cents`, exact decimal text, at least -50 and less than 50: the
@@ -218,7 +220,9 @@ revisions). Its payload has:
 - optional `confidence_scale` (1 to 200 characters), and then `confidence`,
   exact decimal text, on the payload and on every drift span, compared only
   within that scale (INV-8);
-- optional `document_url`, only with a pinned `document`.
+- optional `document_url`, only with a pinned `document`;
+- optional `stem`, the stem it was measured from, cited by bank key as on
+  key regions.
 
 ```json
 {

@@ -46,7 +46,9 @@ from world.harmony import (
     _list,
     _refs_by_role,
     _text,
-    check_chord_sequence,
+    check_chord_sequence_v2,
+    check_derived_from,
+    check_lineage,
 )
 
 KEY_REGIONS = ("archive.claim/key_regions", "1")
@@ -95,7 +97,7 @@ KEY_SEQUENCE_ROLES = {
     "work": (0, 1),            # the Work (an Entity of kind musical_work) the keys describe
     "document": (0, 1),        # the document the keys were read from
     "run": (0, 1),             # derivation_run v1, when a tool read the document
-    "chord_sequence": (0, 1),  # chord_sequence v1 whose entries the regions range over
+    "chord_sequence": (0, 1),  # chord_sequence v1 or v2 whose entries the regions range over
     "form": (0, 1),            # the form claim (ADR 0083) whose sections the regions range over
     "corrects": (0, 8),        # key_sequence v1 claims this one corrects
     "derived_from": (0, 8),    # claims the keys were read from (ADR 0079's role)
@@ -107,6 +109,7 @@ TUNING_ROLES = {
     "run": (0, 1),        # derivation_run v1, when a machine measured it
     "document": (0, 1),   # an outside source stating it ("tuned to A = 432 Hz")
     "corrects": (0, 8),   # tuning v1 claims this one corrects
+    "derived_from": (0, 8),  # claims the tuning was read from (ADR 0079's role)
 }
 
 
@@ -227,10 +230,11 @@ def check_key_sequence(claim: dict[str, Any], chord_sequence_claim: dict[str, An
         if chord_sequence_claim.get("revision_id", by_role["chord_sequence"][0]["revision_id"]) \
                 != by_role["chord_sequence"][0]["revision_id"]:
             raise TonalityError(f"{where} was given a chord sequence other than the one it pins")
-        bound = len(check_chord_sequence(chord_sequence_claim)) - 1
+        bound = len(check_chord_sequence_v2(chord_sequence_claim)) - 1
     if by_role["form"] and section_count is not None:
         bound = _int(section_count, f"{where} form section count", 1) - 1
     payload = _closed(record["payload"], {"regions"}, {"part", "weight_scale", "document_url"}, f"{where} payload")
+    check_derived_from(by_role, where)
     if "part" in payload:
         _text(payload["part"], f"{where} part", MAX_LABEL)
     weighted = _check_scale(payload, where)
@@ -286,9 +290,10 @@ def check_key_regions(claim: dict[str, Any], stream_claim: dict[str, Any],
                 != (source["id"], source["revision_id"]):
             raise TonalityError(f"{where} pins a tuning of another Artifact revision")
     payload = _closed(record["payload"], {"sample_rate", "regions"},
-                      {"part", "weight_scale", "document_url", "alignment", "hold_rule"}, f"{where} payload")
+                      {"part", "weight_scale", "document_url", "alignment", "hold_rule", "stem"}, f"{where} payload")
     if _int(payload["sample_rate"], f"{where} sample_rate", 1) != rate:
         raise TonalityError(f"{where} sample_rate differs from the stream's")
+    check_lineage(payload, by_role, where)
     if "part" in payload:
         _text(payload["part"], f"{where} part", MAX_LABEL)
     weighted = _check_scale(payload, where)
@@ -357,9 +362,10 @@ def check_tuning(claim: dict[str, Any], stream_claim: dict[str, Any]) -> dict[st
     by_role = _refs_by_role(record["refs"], TUNING_ROLES, where)
     rate, count = _check_stream(by_role, stream_claim, where)
     payload = _closed(record["payload"], {"sample_rate", "reference_cents"},
-                      {"confidence_scale", "confidence", "drift", "document_url"}, f"{where} payload")
+                      {"confidence_scale", "confidence", "drift", "document_url", "stem"}, f"{where} payload")
     if _int(payload["sample_rate"], f"{where} sample_rate", 1) != rate:
         raise TonalityError(f"{where} sample_rate differs from the stream's")
+    check_lineage(payload, by_role, where)
     _cents(payload["reference_cents"], f"{where} reference_cents")
     _check_source_fields(payload, by_role, where, timed=False)
     scaled = "confidence_scale" in payload

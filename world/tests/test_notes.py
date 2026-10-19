@@ -40,7 +40,7 @@ SOURCE, STREAM, RUN, DOCUMENT, WORK, TUNING, METER = (pin(n) for n in (0xc1, 0xc
 OTHER_SOURCE, VOICE, GUITAR, GUITAR_LATER = (pin(n) for n in (0xd1, 0xd2, 0xd3, 0xd4))
 RATE = 8000
 SECOND = RATE
-STEM = {"extractor": "stems", "key": "ab" * 32, "output": "vocals", "sha256": "cd" * 32}
+STEM = {"extractor": "stems", "key": "sha256:" + "ab" * 32, "output": "vocals", "sha256": "sha256:" + "cd" * 32}
 
 
 def fixture_stream() -> dict:
@@ -209,7 +209,9 @@ class NotesRefused(unittest.TestCase):
 
     def test_stem_citation(self):
         self.refused(notes_claim([note(0, 1, 60)], ref("analysed", DOCUMENT), stem=STEM))
-        for field, bad in (("key", "AB" * 32), ("sha256", "cd" * 31), ("extractor", "Stems"), ("output", "")):
+        # Bare hex is refused: the bank, ADR 0079, and ADR 0089 write `sha256:<hex>`.
+        for field, bad in (("key", "AB" * 32), ("key", "ab" * 32), ("sha256", "cd" * 31), ("extractor", "Stems"),
+                           ("output", "")):
             with self.subTest(field=field):
                 self.refused(notes_claim([note(0, 1, 60)], stem={**STEM, field: bad}))
         with self.assertRaises(NotesError):
@@ -219,6 +221,7 @@ class NotesRefused(unittest.TestCase):
         self.refused(notes_claim([note(0, 1, 60)], ref("sequence", RUN)))
         self.refused(notes_claim([note(0, 1, 60)], ref("run", RUN), ref("run", DOCUMENT)))
         self.refused(notes_claim([note(0, 1, 60)], ref("corrects", VOICE), ref("corrects", VOICE)))
+        self.refused(notes_claim([note(0, 1, 60)], ref("corrects", VOICE), ref("derived_from", VOICE)))
         wrong_rate = notes_claim([note(0, 1, 60)])
         wrong_rate["payload"]["sample_rate"] = RATE * 2
         self.refused(wrong_rate)

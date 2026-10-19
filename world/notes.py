@@ -17,10 +17,10 @@ melody laid on its bars). It uses only the standard library, so an importer
 or extractor can check a proposal with it before Door does; Door remains the
 authority (INV-2). Every view is computed and never stored (INV-7).
 
-Two citations belong to records drafted beside this one and are checked here
-only in the form this record assumes: a stem cited by bank key (ADR 0079;
-`check_stem_citation`), and the tuning claim a note's cents are relative to
-(ADR 0080; `TUNING`). When those records land, their own checks replace these.
+A stem cited by bank key and the `derived_from` role are ADR 0079's, checked
+by its one check in `world/harmony.py` (`check_stem_citation`,
+`check_derived_from`); the tuning a note's cents are relative to is ADR
+0080's `archive.claim/tuning` version 1.
 """
 
 from __future__ import annotations
@@ -28,6 +28,8 @@ from __future__ import annotations
 import re
 from fractions import Fraction
 from typing import Any
+
+from world import harmony
 
 NOTES = ("archive.claim/notes", "1")
 MELODY = ("archive.claim/melody", "1")
@@ -37,8 +39,6 @@ UNTIMED_METER = ("archive.claim/meter_layers", "2")   # ADR 0083, untimed form
 
 OBJECT_ID = re.compile(r"urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 REVISION_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
-HEX64 = re.compile(r"[0-9a-f]{64}\Z")
-NAME = re.compile(r"[a-z0-9][a-z0-9_\-]*\Z")
 DECIMAL = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?\Z")
 URL = re.compile(r"https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+\Z")
 DENOMINATORS = (1, 2, 4, 8, 16, 32, 64)
@@ -176,18 +176,19 @@ def _check_document_url(payload: dict[str, Any], has_document: bool, where: str)
 
 
 def check_stem_citation(value: Any, where: str = "stem") -> dict[str, Any]:
-    """A stem cited by its bank key, in the form this record assumes ADR 0079
-    gives it: the extractor that made it, that entry's key, the output's name,
-    and the stem file's SHA-256, each as the bank names them (ADRs 0073 and
-    0075). The stem stays a regenerable bank file; nothing is admitted."""
-    stem = _closed(value, {"extractor", "key", "output", "sha256"}, set(), where)
-    for field in ("extractor", "output"):
-        if not NAME.fullmatch(_text(stem[field], f"{where} {field}", MAX_LABEL)):
-            raise NotesError(f"{where} {field} must be a bank name: lower-case letters, digits, '_' and '-'")
-    for field in ("key", "sha256"):
-        if not isinstance(stem[field], str) or not HEX64.fullmatch(stem[field]):
-            raise NotesError(f"{where} {field} must be 64 lower-case hexadecimal digits")
-    return stem
+    """A stem cited by bank key: ADR 0079's one check, raising NotesError."""
+    try:
+        return harmony.check_stem_citation(value, where)
+    except harmony.HarmonyError as error:
+        raise NotesError(str(error)) from error
+
+
+def _check_derived_from(by_role: dict[str, list[dict[str, Any]]], where: str) -> None:
+    """ADR 0079's `derived_from` rule: distinct revisions, none also corrected."""
+    try:
+        harmony.check_derived_from(by_role, where)
+    except harmony.HarmonyError as error:
+        raise NotesError(str(error)) from error
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +222,7 @@ def check_notes(claim: dict[str, Any], stream_claim: dict[str, Any],
     where = "notes"
     record = _closed(claim, {"payload", "refs"}, {"revision_id", "agent"}, where)
     by_role = _refs_by_role(record["refs"], NOTES_ROLES, where)
+    _check_derived_from(by_role, where)
     rate, count = _check_stream(by_role, stream_claim, where)
     if tuning_claim is not None and by_role["tuning"]:
         _about_source(_given(tuning_claim, by_role["tuning"][0], f"{where} tuning claim"),
@@ -333,6 +335,7 @@ def check_melody(claim: dict[str, Any], meter_claim: dict[str, Any] | None = Non
     where = "melody"
     record = _closed(claim, {"payload", "refs"}, {"revision_id", "agent"}, where)
     by_role = _refs_by_role(record["refs"], MELODY_ROLES, where)
+    _check_derived_from(by_role, where)
     if not by_role["work"] and not by_role["document"]:
         raise NotesError(f"{where} needs a work or a document as its subject")
     payload = _closed(record["payload"], {"notes"}, {"part", "start", "document_url"}, f"{where} payload")
@@ -456,6 +459,7 @@ def check_melody_spans(claim: dict[str, Any], stream_claim: dict[str, Any],
     where = "melody spans"
     record = _closed(claim, {"payload", "refs"}, {"revision_id", "agent"}, where)
     by_role = _refs_by_role(record["refs"], MELODY_SPANS_ROLES, where)
+    _check_derived_from(by_role, where)
     rate, count = _check_stream(by_role, stream_claim, where)
     payload = _closed(record["payload"], {"sample_rate", "spans"}, set(), f"{where} payload")
     if _int(payload["sample_rate"], f"{where} sample_rate", 1) != rate:

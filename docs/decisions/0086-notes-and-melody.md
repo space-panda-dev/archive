@@ -90,10 +90,11 @@ Its payload has `sample_rate`, `part`, `notes`, and optional `stem`, `range`,
   notes are of, such as `vocals` or `guitar 2`. A notes claim is always one
   part; a claim with no part (the whole sound) is what a chord stacks claim
   is for, not this one.
-- `stem`, the stem the notes were read from, cited by bank key as ADR 0079
-  decides (D1.1): the extractor that made it, that bank entry's key, the
-  output's name, and the stem file's SHA-256. The stem stays a regenerable
-  bank file; nothing is admitted.
+- `stem`, the stem the notes were read from, cited by bank key exactly as
+  ADR 0079 defines it (D1.1): the extractor that made it, that bank entry's
+  key, the output's name, and the stem file's SHA-256, each digest written
+  `sha256:<hex>`. The stem stays a regenerable bank file; nothing is
+  admitted. World checks it, and `derived_from`, with ADR 0079's one check.
 - `range`, `start_sample` and `end_sample`: the stretch of the stream this
   claim covers. Absent, it covers the whole stream. Every note's onset lies
   in the range (end exclusive); its offset may ring past the end, never past
@@ -145,7 +146,7 @@ two.
 {
   "payload": {
     "sample_rate": 44100, "part": "vocals",
-    "stem": {"extractor": "stems", "key": "3f…(64 hex)", "output": "vocals", "sha256": "9a…(64 hex)"},
+    "stem": {"extractor": "stems", "key": "sha256:3f…(64 hex)", "output": "vocals", "sha256": "sha256:9a…(64 hex)"},
     "range": {"start_sample": 0, "end_sample": 2646000},
     "confidence_scale": "voicing confidence of the melody extractor, version 2",
     "notes": [
