@@ -30,8 +30,6 @@ scratch copy.
   cannot express full stacks; adding note extensions from Basic Pitch gave a
   noisy second reading. The bass stem's lowest note names the bass better
   than Jiang (0.74 against 0.62 agreement with tabs).
-- **Melody sources.** `melody` prefers only `stems/vocals`; `stems-6s/vocals`
-  could be added.
 - **Unpinned packages.** `stems` and `stems-6s` still list `torch` and `numpy`
   without versions (only the demucs version is checked when they run).
 

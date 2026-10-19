@@ -154,9 +154,10 @@ SHIPPED = {
     # Version 2: 2-cent bins, a level gate on voicing, and level_db.
     # Version 3: only the rows within reach of the gate are measured; 5-cent bins,
     # and 2 on the vocal stem it prefers; measured_fraction. Still 3 when the
-    # preference gained at_least: no entry's bits change, only which is the default.
+    # preference gained at_least, and again when it gained stems-6s/vocals after
+    # stems/vocals: no entry's bits change, only which is the default.
     "melody": {"version": "3",
-               "code": "sha256:6945b72eaae40a85d24fd296a368d07eea89d6e4b41e8531ae070d7299255079",
+               "code": "sha256:cb25749d8c1d95c87a6e40e2789397f7527daaf28d8df481e4bdfd5481cecedf",
                "outside": {}},
     # colour reads the peaks' format and decode from waveform.py, not the
     # derived-media tool media.py, so an edit to that tool's routes or
