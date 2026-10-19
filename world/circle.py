@@ -230,7 +230,7 @@ def check_circle_config(callers: Any, circle: Any, operator: str) -> Circle | No
     return Circle(destination, frozenset(members), band)
 
 
-def standing(agent: str, operator: str, circle: Circle | None) -> str:
+def capacity(agent: str, operator: str, circle: Circle | None) -> str:
     """`operator` or `member`; anyone else is refused."""
     if agent == operator:
         return "operator"
@@ -242,9 +242,9 @@ def standing(agent: str, operator: str, circle: Circle | None) -> str:
 OPERATOR_ROUTES = frozenset({"/world/query", "/door/transition", "/door/transition-dry-run"})
 
 
-def check_route(route: str, standing_: str) -> None:
+def check_route(route: str, capacity_: str) -> None:
     """Raw queries and every transition are the operator's."""
-    if standing_ != "operator" and route in OPERATOR_ROUTES:
+    if capacity_ != "operator" and route in OPERATOR_ROUTES:
         raise CircleError(f"{route} answers the operator only", "operator_only")
 
 

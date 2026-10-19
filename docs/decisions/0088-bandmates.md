@@ -176,7 +176,7 @@ is still `agent_mismatch`.
 
 **The relay says who is calling and what it may do.** ADR 0060's `archive`
 block gains `writes` (`dry-run` or `commit`, from configuration) and
-`caller`, an object of `agent` and `standing` (`operator` or `member`). Two
+`caller`, an object of `agent` and `capacity` (`operator` or `member`). Two
 refusal codes are added under ADR 0058's rule: `operator_only` (403: this
 route, shape, or contract is the operator's) and `not_disclosed` (403: a
 read or a draft names something the caller's circle cannot read). Logs still
@@ -318,7 +318,7 @@ a disclosure touches, the sharing gate, and the client's commit rule, as
 World and the relay will apply them. It uses only the standard library, so
 a client can check a proposal before the relay does.
 
-**New nouns.** Circle (of a relay), member, standing, readable set, withheld,
+**New nouns.** Circle (of a relay), member, capacity, readable set, withheld,
 work origin, writer, sharing consent, and sharing gate enter the
 [vocabulary](../vocabulary.md). None is a subsystem: the circle is a
 destination, a member is a caller, and the rest name a claim or a computed

@@ -34,7 +34,7 @@ from world.circle import (
     readable_by,
     readable_set,
     sharing_gate,
-    standing,
+    capacity,
     works_touched,
     writers,
 )
@@ -178,8 +178,8 @@ class CircleConfigTest(unittest.TestCase):
         circle = check_circle_config({"op": OPERATOR, "mate": MATE},
                                      {"destination": DESTINATION, "members": [MATE], "band": BAND}, OPERATOR)
         self.assertEqual(circle, CIRCLE)
-        self.assertEqual(standing(OPERATOR, OPERATOR, circle), "operator")
-        self.assertEqual(standing(MATE, OPERATOR, circle), "member")
+        self.assertEqual(capacity(OPERATOR, OPERATOR, circle), "operator")
+        self.assertEqual(capacity(MATE, OPERATOR, circle), "member")
 
     def test_no_circle_serves_only_the_operator(self):
         self.assertIsNone(check_circle_config({"op": OPERATOR}, None, OPERATOR))
@@ -207,7 +207,7 @@ class CircleConfigTest(unittest.TestCase):
 
     def test_strangers_and_operator_routes(self):
         with self.assertRaises(CircleError) as caught:
-            standing(STRANGER, OPERATOR, CIRCLE)
+            capacity(STRANGER, OPERATOR, CIRCLE)
         self.assertEqual(caught.exception.code, "forbidden_identity")
         for route in ("/world/query", "/door/transition", "/door/transition-dry-run"):
             check_route(route, "operator")

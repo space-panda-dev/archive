@@ -92,3 +92,14 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0075](0075-stems-as-content.md) | Stems are separated outside the archive's environment, and a stem is content to every extractor |
 | [0077](0077-chord-stacks-and-meter.md) | Chords are stacks and meter is a timeline, each asserted by someone |
 | [0078](0078-contributions.md) | A contribution names who did what, in which role, to how much of the music |
+| [0079 proposed](0079-machine-harmony-claims.md) | Machine harmony becomes claims; stems are cited by bank key |
+| [0080 proposed](0080-key-and-tuning.md) | Key regions and tuning are claims |
+| [0081 proposed](0081-judgments-and-annotations.md) | Judgments can scope to a span or reading; people can annotate spans |
+| [0082 proposed](0082-views-and-current.md) | Named views: the first current rule, correction overlay, differences, and chord names over the relay |
+| [0083 proposed](0083-form-and-work-meter.md) | Form is a claim, and a Work can have meter without a recording |
+| [0084 proposed](0084-lead-sheets.md) | A lead sheet is a claim that pins the parts it chose |
+| [0085 proposed](0085-documents-lyrics-rights.md) | Documents arrive through the relay; lyrics are timed by reference; sensitivity and rights are claims |
+| [0086 proposed](0086-notes-and-melody.md) | Note events per part, and melody at two levels |
+| [0087 proposed](0087-tracklists-and-correspondence.md) | Releases list their tracks; artists, releases and recordings correspond to MusicBrainz and Discogs |
+| [0088 proposed](0088-bandmates.md) | Bandmates read their circle and assert their own claims |
+| [0089 proposed](0089-practice-audio-and-exports.md) | Practice audio from the stems, transposition, and exports that are views until shared |

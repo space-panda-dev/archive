@@ -1,4 +1,4 @@
-# 0089. The relay serves bank audio for practice; exports are views until shared
+# 0089. Practice audio from the stems, transposition, and exports that are views until shared
 
 Status: proposed
 

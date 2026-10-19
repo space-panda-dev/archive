@@ -172,7 +172,26 @@ compute on it and shows it to no one else, such as a hosted model.
 how exposed a destination is: private, circle, service, open, or
 distribution.
 **Sensitivity**: a claim a person makes about an object, in Traffic Light
-Protocol labels (RED, AMBER, GREEN, CLEAR).
+Protocol labels (RED, AMBER, GREEN, CLEAR). An application's three settings
+are three of them: operator (RED), circle (AMBER), and published (CLEAR).
+**Reach**: how far an object may be shown or shared, computed from the
+sensitivity and rights of everything it pins; a view, never stored.
+**Personal-use licence**: a rights statement that a subject was licensed to
+one person for their own use, as a bought tablature is; it keeps the subject,
+and what pins it, to the operator and that licensee.
+([ADR 0085](decisions/0085-documents-lyrics-rights.md))
+
+**Circle (of a relay)**: the relay's destination of class circle, reached by
+its **members**, each a bandmate's login bound to their own person. A
+caller's **capacity** is `operator` or `member`. The **readable set** is
+what a member may read: what an approval to the circle covers, what that
+pins, and members' own records over readable things; a record kept from a
+caller is **withheld**, and an answer counts what it withheld. **Work
+origin**: a claim whether a Work is the operator's own, co-written, or
+others', naming its **writers**. **Sharing consent**: a co-writer's own
+claim approving or refusing one destination for exact revisions. The
+**sharing gate** lets a co-written Work's content beyond the band only with
+every co-writer's consent. ([ADR 0088](decisions/0088-bandmates.md))
 
 **Origin**: where content came from (own capture, commercial release, ...).
 **Rights**: what may legally be done with it, recorded with terms and dates.
@@ -237,6 +256,85 @@ alignment, which relates two recordings' clocks. **Mix**: the recording as heard
 part together; machine claims are made from it first, and a claim made from a
 separated part is a further claim beside it.
 
+**Bank citation**: a stem, or any `file` output of the feature bank, cited in
+a claim's payload by extractor, entry key, output, and file digest instead of
+being admitted. **Bass-only reading**: a reading that says which pitch class
+is lowest, and optionally the root, and nothing above it; a stack with empty
+tones says instead that the bass alone sounds. **Derived from**: a claim's
+lineage, the claim revisions its asserter read it from, with or without a
+run; it replaces and ranks nothing. **Proposer**: an enrichment method that
+reads bank entries and proposes claims from them.
+([ADR 0079](decisions/0079-machine-harmony-claims.md))
+
+**Key reading**: a **pitch collection** (the notes a passage draws on), with
+an optional **tonic** and **mode**; or no key; or a source's text. A **key
+sequence** holds keys over a Work's entries or sections, **key regions**
+over a recording's samples. **Tuning**: where the twelve-tone **grid** lies
+on a recording, as a reference offset in cents and **drift spans** where it
+lies elsewhere; pitch classes name the nearest step of the grid in force.
+**Spelling**: the letter names a key gives the twelve pitch classes; a view.
+([ADR 0080](decisions/0080-key-and-tuning.md))
+
+**Form**: a Work's or document's **sections** in written order, each with
+its source's label and an optional **section kind**, with repeats, **endings**
+(voltas), and **jumps** (D.C. and D.S., to a **segno**, a fine, or a
+**coda**). Its **played order** is a view. **Form spans**: sections at a
+recording's samples. **Untimed meter**: a meter layers claim of a Work's
+bars, with no samples, tied to sections and sequence entries; a **placed
+bar** is a timed bar that names the written bar it was placed from.
+([ADR 0083](decisions/0083-form-and-work-meter.md))
+
+**Notes claim**: one **part**'s notes on one recording (a stem or a
+document's track), over its **range**, inside which silence is asserted;
+an **unpitched part** keys drums by General MIDI. A **written length** is a
+count of note values. A part's **instrument fields** are its open
+**strings** and **capo**, as a document gives them. **Work-level melody**:
+the composition's tune, untimed. **Melody spans**: which notes claim
+carries a recording's tune over each span, a **selection**; a **hand-off**
+is where the tune moves to another part.
+([ADR 0086](decisions/0086-notes-and-melody.md))
+
+## Review and views
+
+**Scoped judgment**: a judgment of one span of samples, one range of entries,
+or one reading of a claim. **Standing**: what one judge holds of one claim
+revision at one place, where the narrowest applicable judgment stands; a
+view. **Span annotation**: a person's mark on a span of a recording or a
+range of a sequence's entries, of kind unsure, interesting, or note (the
+operator's "flags"). ([ADR 0081](decisions/0081-judgments-and-annotations.md))
+
+**Named view**: a question World answers by a stated, versioned rule, never
+stored. A **current rule** is a named view that chooses, per question and
+for a named person; its **tiers** rank evidence for that question only. A
+**difference** is a computed place where a part and the mix, two parts, or
+two tools hear differently: never a conflict.
+([ADR 0082](decisions/0082-views-and-current.md))
+
+## Lead sheets and practice
+
+**Lead sheet**: a person's or a band's claim choosing the exact chord,
+meter, form, key, lyric, and melody claim revisions that make their lead
+sheet of a Work, optionally for one recording. An **adopted lead sheet** has
+the band as its agent and pins the memberships of those who adopted it. A
+lead sheet's **part** is one player's line, with optional instrument
+fields. **Changes since**: later revisions, corrections, and judgments of
+what a lead sheet pins; a view. ([ADR 0084](decisions/0084-lead-sheets.md))
+
+**Timed lyrics**: a claim placing a lyric document's lines and words at a
+recording's samples by line and word number, never copying a word, under a
+**locator scheme** (plain text or LRC). **Document source**: a claim of what
+kind of document an Artifact is and where, and when, it was retrieved.
+([ADR 0085](decisions/0085-documents-lyrics-rights.md))
+
+**Practice render**: a recording's stems mixed with chosen gains, optionally
+pitch-shifted and time-stretched, as derived media, named by the **practice
+key** of its **practice request**. **Transposition**: a view parameter that
+moves what is shown by semitones; never a claim. **Export**: a regenerable
+file (PDF, MusicXML, LilyPond, JAMS) rendered from exact revisions by a named
+exporter, named by its **export key**; a **render** of a lead sheet is one.
+A **loss** is what an export could not express. A sent export is admitted
+as an Artifact. ([ADR 0089](decisions/0089-practice-audio-and-exports.md))
+
 ## Credits
 
 ([ADR 0078](decisions/0078-contributions.md))
@@ -259,6 +357,15 @@ matches only **locates** it. A claim nothing refines is **finest**. Refining
 never contradicts: no credit asserts absence.
 **Band membership**: a claim that a person was a member of a band (an
 organisation), with instruments and partial from and to dates.
+
+**Tracklist**: a release's **media** and their **tracks**, in order, each
+track a recording. **Recording audio**: a claim tying a recording Entity to
+archived audio, whole or in part. **Catalogue correspondence**: a claim that
+an artist, release, or recording is the same as, close to, or (for a
+MusicBrainz release group or a Discogs master) narrower than an entry in an
+outside catalogue. **Credits per track**: the view of which credits apply to
+one recording, including those of its release.
+([ADR 0087](decisions/0087-tracklists-and-correspondence.md))
 
 ## Naming discipline
 
