@@ -163,6 +163,15 @@ class Requests(unittest.TestCase):
             "chord_differences": {"source": SOURCE},
             "chords_current": {"source": SOURCE},
             "lead_sheet_current": {"work": WORK},
+            # world/record_views.py's views of 0.0.10's other records.
+            "standing": {"claim": SOURCE},
+            "reach": {"object": WORK},
+            "readable_set": {"circle": {"destination": "a circle", "members": [BANDMATE]}},
+            "lead_sheet_changes": {"lead_sheet": SOURCE},
+            "played_sections": {"form": SOURCE},
+            "played_bars": {"meter": SOURCE},
+            "tune": {"melody_spans": SOURCE},
+            "track_credits": {"recording": RECORDING},
         }
         for key in views.VIEWS:
             reached = []
@@ -246,11 +255,11 @@ class Names(unittest.TestCase):
         answer = run_view({"view": "archive.view/chord_names", "version": "1",
                            "subject": {"readings": [{"bass": E, "tones": [C, G], "root": C}]},
                            "parameters": {"transpose": 2}}, [])
-        self.assertEqual(answer["parameters"], {"transpose": 2})
+        self.assertEqual(answer["parameters"], {"transpose": 2, "key": None})
         symbols = [n["symbol"] for n in answer["answer"]["names"][0]["resolutions"][0]["names"]]
         self.assertEqual(symbols[0], "D/F#")
         self.assertEqual(run_view({"view": "archive.view/chord_names", "version": "1",
-                                   "subject": {"readings": [triad(C)]}}, [])["parameters"], {"transpose": 0})
+                                   "subject": {"readings": [triad(C)]}}, [])["parameters"], {"transpose": 0, "key": None})
         with self.assertRaises(ViewError):
             check_request({"view": "archive.view/chord_names", "version": "1",
                            "subject": {"readings": [triad(C)]}, "parameters": {"transpose": 12}})

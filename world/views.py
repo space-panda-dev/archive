@@ -24,6 +24,11 @@ Five views, each version 1:
 - `archive.view/lead_sheet_current`: which lead sheet of a Work a viewer
   reads, a person's or a band's (decision D4.1).
 
+The two that name chords take `transpose` (ADR 0089) and `key`, the key
+reading, or for `chords_current` the key regions claim, whose spelling
+names them (ADR 0080). `world/record_views.py` adds the views of 0.0.10's
+other records to the same registry, at the end of this module.
+
 Records are given as World reads them: dictionaries of `revision_id`, `id`,
 `shape`, `contract` (`[id, version]`), `agent`, `payload`, `refs`, and
 `head` (false when a later revision supersedes it; absent means true). A
@@ -39,17 +44,18 @@ from bisect import bisect_right
 from typing import Any, Callable
 
 from world import judgments as judging
-from world.exports import transpose_reading
+from world.exports import transpose_key, transpose_reading
 from world.harmony import HarmonyError, check_reading_v2, is_bass_only, reading_names, stack_names
+from world.tonality import check_key_reading, region_at, spell_name
+from world.view_requests import OBJECT_ID, REVISION_ID, ViewError, _bad, _closed, _object_id, _pin  # noqa: F401
 
 VIEW = "archive.view/"
 CHORD_STACKS = {("archive.claim/chord_stacks", "1"), ("archive.claim/chord_stacks", "2")}
 JUDGMENT = {("archive.assessment/judgment", "1"), ("archive.assessment/judgment", "2")}
 LEAD_SHEET = {("archive.claim/lead_sheet", "1")}
+KEY_REGIONS = ("archive.claim/key_regions", "1")
 BAND_MEMBERSHIP = {("archive.claim/band_membership", "1")}
 DERIVATION_RUN = ("archive.claim/derivation_run", "1")
-OBJECT_ID = re.compile(r"urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
-REVISION_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
 METHOD_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}\Z")
 MAX_NAMED_READINGS = 1000
 MAX_MACHINES = 16
@@ -62,43 +68,8 @@ DIFFERENCE_KINDS = ("part_vs_mix", "part_vs_part", "tools")
 DEFAULT_MACHINE_ORDER = ("chords-jiang", "chords-chordino")
 
 
-class ViewError(ValueError):
-    """A view request or subject the relay refuses, with its refusal code."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _bad(message: str) -> ViewError:
-    return ViewError("view_request_invalid", message)
-
-
 # ---------------------------------------------------------------------------
 # Requests
-
-
-def _closed(value: Any, required: set[str], optional: set[str], where: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise _bad(f"{where} must be an object")
-    missing, extra = required - set(value), set(value) - required - optional
-    if missing or extra:
-        raise _bad(f"{where} has missing {sorted(missing)} or unknown {sorted(extra)} fields")
-    return value
-
-
-def _object_id(value: Any, where: str) -> str:
-    if not isinstance(value, str) or not OBJECT_ID.fullmatch(value):
-        raise _bad(f"{where} must be an object identifier")
-    return value
-
-
-def _pin(value: Any, where: str) -> dict[str, str]:
-    pin = _closed(value, {"id", "revision_id"}, set(), where)
-    _object_id(pin["id"], f"{where} id")
-    if not isinstance(pin["revision_id"], str) or not REVISION_ID.fullmatch(pin["revision_id"]):
-        raise _bad(f"{where} revision_id must be a canonical SHA-256 digest")
-    return pin
 
 
 def _sample(value: Any, where: str) -> int:
@@ -132,9 +103,34 @@ def _transpose(params: dict[str, Any]) -> int:
     return value
 
 
+def _key_reading(value: Any, where: str) -> dict[str, Any]:
+    """A key reading of ADR 0080, by its own check, whose spelling names the
+    chords (a view parameter: the reader's choice of key, never a claim)."""
+    try:
+        check_key_reading(value, isinstance(value, dict) and "weight" in value, where)
+    except HarmonyError as error:
+        raise _bad(str(error)) from None
+    return value
+
+
 def _names_parameters(params: dict[str, Any], caller: str | None) -> dict[str, Any]:
-    _closed(params, set(), {"transpose"}, "parameters")
-    return {"transpose": _transpose(params)}
+    _closed(params, set(), {"transpose", "key"}, "parameters")
+    key = params.get("key")
+    return {"transpose": _transpose(params),
+            "key": None if key is None else _key_reading(key, "parameters key")}
+
+
+def _current_key(value: Any) -> dict[str, Any] | None:
+    """Which key spells the chosen chords: a key reading, or the key regions
+    claim (pinned) whose region over each stretch spells it. ADR 0080 names
+    no current key, so the reader chooses; none is World's default spelling."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or len(value) != 1 or next(iter(value)) not in ("reading", "claim"):
+        raise _bad("parameters key must be exactly one of {reading} or {claim}")
+    if "reading" in value:
+        return {"reading": _key_reading(value["reading"], "parameters key reading")}
+    return {"claim": _pin(value["claim"], "parameters key claim")}
 
 
 def _window_parameters(params: dict[str, Any], caller: str | None) -> dict[str, Any]:
@@ -173,14 +169,14 @@ def _person(params: dict[str, Any], caller: str | None, where: str) -> str:
 
 
 def _current_parameters(params: dict[str, Any], caller: str | None) -> dict[str, Any]:
-    _closed(params, set(), {"person", "machine_order", "start_sample", "end_sample", "transpose"}, "parameters")
+    _closed(params, set(), {"person", "machine_order", "start_sample", "end_sample", "transpose", "key"}, "parameters")
     order = params.get("machine_order", list(DEFAULT_MACHINE_ORDER))
     if not isinstance(order, list) or len(order) > MAX_MACHINES or len(set(map(str, order))) != len(order) \
             or any(not isinstance(m, str) or not METHOD_ID.fullmatch(m) for m in order):
         raise _bad(f"parameters machine_order must be 0 to {MAX_MACHINES} distinct method identifiers")
     start, end = _window(params)
     return {"person": _person(params, caller, "parameters person"), "machine_order": list(order),
-            "transpose": _transpose(params),
+            "transpose": _transpose(params), "key": _current_key(params.get("key")),
             "start_sample": start, **({} if end is None else {"end_sample": end})}
 
 
@@ -379,11 +375,19 @@ def _stack_key(reading: dict[str, Any]) -> str:
                       sort_keys=True)
 
 
-def _names(reading: dict[str, Any]) -> list[dict[str, Any]]:
+def _names(reading: dict[str, Any], key: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Every computed name of a stack, spelled by `key` (ADR 0080's rule:
+    the root as the key names it, the bass by its degree above the root)
+    when a key reading is given, and by World's default spelling otherwise."""
     if is_bass_only(reading) or "bass" not in reading:
         return []
-    return [{"tones": sorted(tones), "names": [_name(n) for n in names]}
+    return [{"tones": sorted(tones),
+             "names": [_name(spell_name(n, reading["bass"], key) if key else n) for n in names]}
             for tones, names in reading_names(reading)]
+
+
+def _spelled_by(key: dict[str, Any] | None) -> bool:
+    return bool(key) and "collection" in key
 
 
 def _name(name: Any) -> dict[str, Any]:
@@ -437,6 +441,10 @@ def chord_names(world: list[dict[str, Any]], subject: dict[str, Any], params: di
     """Every computed name of each reading, in the order World ranks names
     (ADR 0077): one entry per way its uncertain tones can resolve."""
     result = []
+    key = params.get("key")
+    if key is not None and params["transpose"]:
+        key = transpose_key(key, params["transpose"])
+    key = key if _spelled_by(key) else None
     for reading in subject["readings"]:
         reading = transpose_reading(reading, params["transpose"]) if params["transpose"] else reading
         if is_bass_only(reading):
@@ -446,8 +454,8 @@ def chord_names(world: list[dict[str, Any]], subject: dict[str, Any], params: di
         elif "bass" not in reading:
             result.append({"form": "text", "resolutions": []})
         else:
-            result.append({"form": "stack", "resolutions": _names(reading)})
-    return {"names": result, "spelling": "default"}
+            result.append({"form": "stack", "resolutions": _names(reading, key)})
+    return {"names": result, "spelling": "key" if key else "default"}
 
 
 # ---------------------------------------------------------------------------
@@ -659,8 +667,52 @@ def chords_current(world: list[dict[str, Any]], subject: dict[str, Any], params:
         segment = _choose(a, b, cover, ranked, corrects, judgments, basses, person, params["transpose"])
         if segment:
             segments.append(segment)
+    segments = _merge(segments)
+    if params.get("key") is not None:
+        key_at, cuts = _key_at(world, subject["source"], params["key"])
+        segments = _spell_segments(segments, key_at, cuts, params["transpose"])
     return {"rule": "chosen person, then aligned documents, then machines in the stated order",
-            "segments": _merge(segments), "unresolved_runs": _unresolved_runs(chords, by_revision)}
+            "segments": segments, "unresolved_runs": _unresolved_runs(chords, by_revision)}
+
+
+def _key_at(world: list[dict[str, Any]], source: dict[str, str], key: dict[str, Any]):
+    """The key reading in force at a sample, and the samples where it may
+    change: one reading everywhere, or the first reading of the asserter's
+    region of a key regions claim about the same recording (a gap, or a
+    region with no key, is spelled by default)."""
+    if "reading" in key:
+        return lambda sample: key["reading"], []
+    claim = next((r for r in world if r.get("revision_id") == key["claim"]["revision_id"]
+                  and _contract(r) == KEY_REGIONS), None)
+    if claim is None or not any((r.get("id"), r.get("revision_id")) == (source["id"], source["revision_id"])
+                                for r in _refs(claim, "source")):
+        raise _bad("parameters key claim must be a key regions claim about the subject's source")
+    payload = claim["payload"]
+
+    def at(sample: int) -> dict[str, Any] | None:
+        region = region_at(payload, sample)
+        return region["readings"][0] if region else None
+    return at, sorted({p for region in payload["regions"] for p in (region["start_sample"], region["end_sample"])})
+
+
+def _spell_segments(segments: list[dict[str, Any]], key_at, cuts: list[int], transpose: int) -> list[dict[str, Any]]:
+    """Each stretch with a stack named by the key in force there, cut where
+    the key may change; `spelling` says which spelling named it."""
+    spelled = []
+    for segment in segments:
+        points = [segment["start_sample"]] + [p for p in cuts if segment["start_sample"] < p < segment["end_sample"]] \
+            + [segment["end_sample"]]
+        for a, b in zip(points, points[1:]):
+            piece = {**segment, "start_sample": a, "end_sample": b}
+            if "stack" in piece:
+                key = key_at(a)
+                if key is not None and transpose:
+                    key = transpose_key(key, transpose)
+                key = key if _spelled_by(key) else None
+                piece["names"] = _names(piece["stack"], key)
+                piece["spelling"] = "key" if key else "default"
+            spelled.append(piece)
+    return spelled
 
 
 def _unresolved_runs(claims: list[dict[str, Any]], by_revision: dict[str, dict[str, Any]]) -> list[str]:
@@ -828,6 +880,14 @@ HANDLERS: dict[tuple[str, str], Callable[[list, dict, dict], dict]] = {
     (VIEW + "chords_current", "1"): chords_current,
     (VIEW + "lead_sheet_current", "1"): lead_sheet_current,
 }
+
+
+# The views of 0.0.10's other records join the one registry, so the listing
+# route and the dispatch still read a single list.
+from world import record_views  # noqa: E402
+
+VIEWS.update(record_views.VIEWS)
+HANDLERS.update(record_views.HANDLERS)
 
 
 def run_view(request: Any, world: list[dict[str, Any]], *, caller: str | None = None,

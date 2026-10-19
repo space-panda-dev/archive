@@ -17,6 +17,7 @@ from pathlib import Path
 from pyoxigraph import Literal, NamedNode, Quad, Store
 
 from world import conformance
+from world.tests.plan0010 import drafted_export
 from world.world import PROJECTION_VERSION, PROJECTORS, build_projection
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -142,6 +143,14 @@ class FixtureArchiveConformanceTests(unittest.TestCase):
             missing |= {(kind, p) for p in predicates - report.predicates.get(kind, set())}
             missing |= {(kind, c) for c in classes - report.classes.get(kind, set())
                         if c.startswith(("http", "urn"))}
+        # Specification 0.0.10's shapes declare every field their schemas
+        # allow, more than the fixture's records state; World's drafts of
+        # them (test_contract_graphs) state the rest, so a declared term is
+        # anchored by the fixture or by the drafts, never by neither.
+        drafted = build_projection(drafted_export())
+        emitted = conformance.check_store(drafted.store, drafted.archive_id, PROJECTION_VERSION)
+        missing = {(kind, term) for kind, term in missing
+                   if term not in emitted.predicates.get(kind, set()) | emitted.classes.get(kind, set())}
         self.assertEqual(missing, UNREACHABLE)
 
     def test_every_installed_contract_is_in_the_context_graph(self):

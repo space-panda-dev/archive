@@ -191,3 +191,157 @@ arch:membership a rdf:Property ; rdfs:comment "band_membership 1: the claim's or
 arch:member_from a rdf:Property ; rdfs:comment "A membership's start as a MusicBrainz partial date." .
 arch:member_to a rdf:Property ; rdfs:comment "A membership's end as a MusicBrainz partial date." .
 arch:membership_ended a rdf:Property ; rdfs:comment "true: the membership ended at an unknown date." .
+
+# Specification 0.0.10 (D-18), added in revision 6. Each term is its
+# contract's context term unless it says it is minted by World; a field the
+# context leaves to the core context, or a term an earlier shape targets, is
+# minted, as world/contract_graphs.py lists.
+
+arch:adopted_by a rdf:Property ; rdfs:comment "lead_sheet 1: a band membership claim of the member who adopted the lead sheet for the band." .
+arch:adopting_band a rdf:Property ; rdfs:comment "lead_sheet 1: the band, an organisation revision, whose lead sheet this is." .
+arch:audio_extent a rdf:Property ; rdfs:comment "recording_audio 1: whole or part: how much of the recording the archived audio holds." .
+arch:bank_stem a rdf:Property ; rdfs:comment "A stem cited by bank key (ADR 0079): a node naming one bank file, which stays regenerable." .
+arch:bank_extractor a rdf:Property ; rdfs:comment "A cited stem's bank extractor." .
+arch:bank_key a rdf:Property ; rdfs:comment "A cited stem's bank entry key, sha256:<hex>." .
+arch:bank_output a rdf:Property ; rdfs:comment "A cited stem's output name, such as bass." .
+arch:bank_file_digest a rdf:Property ; rdfs:comment "A cited stem file's SHA-256, sha256:<hex>." .
+arch:bar_chords a rdf:Property ; rdfs:comment "meter_layers 2, a written bar: one chord node, the sequence entry it holds and where in the bar." .
+arch:bar_index a rdf:Property ; rdfs:comment "melody 1: a bar of the meter the tune is laid on, counted as its contract states." .
+arch:bar_offset a rdf:Property ; rdfs:comment "Where in a bar something starts, a written length node. Minted by World, since at is a core term." .
+arch:note_count a rdf:Property ; rdfs:comment "A written length's count of units." .
+arch:note_unit a rdf:Property ; rdfs:comment "A written length's unit, a fraction of a whole note: 4 is a quarter." .
+arch:capo_fret a rdf:Property ; rdfs:comment "The fret a capo stops every string at." .
+arch:chords_of_bars a rdf:Property ; rdfs:comment "meter_layers 2: the chord sequence whose entries written bars hold." .
+arch:chosen_chords a rdf:Property ; rdfs:comment "lead_sheet 1: chords the lead sheet's asserter chose to show." .
+arch:chosen_credits a rdf:Property ; rdfs:comment "lead_sheet 1: a credit the lead sheet shows." .
+arch:chosen_form a rdf:Property ; rdfs:comment "lead_sheet 1: the form the lead sheet shows." .
+arch:chosen_key a rdf:Property ; rdfs:comment "lead_sheet 1: the key claim the lead sheet is spelled by." .
+arch:chosen_lyric_timing a rdf:Property ; rdfs:comment "lead_sheet 1: the timed lyrics the lead sheet follows." .
+arch:chosen_lyrics a rdf:Property ; rdfs:comment "lead_sheet 1: the lyric document the lead sheet joins when shown." .
+arch:chosen_melody a rdf:Property ; rdfs:comment "lead_sheet 1: the melody the lead sheet shows." .
+arch:chosen_meter a rdf:Property ; rdfs:comment "lead_sheet 1: the meter the lead sheet shows." .
+arch:coda_from a rdf:Property ; rdfs:comment "form 1: the section after which a jump's return goes to the coda." .
+arch:coda_section a rdf:Property ; rdfs:comment "form 1: the coda section a jump's return ends in." .
+arch:consent_covers a rdf:Property ; rdfs:comment "sharing_consent 1: a revision the consent covers." .
+arch:consent_decision a rdf:Property ; rdfs:comment "sharing_consent 1: approve or refuse." .
+arch:consent_destination a rdf:Property ; rdfs:comment "sharing_consent 1: the destination the co-writer answers for." .
+arch:consent_origin a rdf:Property ; rdfs:comment "sharing_consent 1: the work origin claim naming the consenting co-writer." .
+arch:consent_reason a rdf:Property ; rdfs:comment "sharing_consent 1: why, in the co-writer's words. Minted by World, since reason names a judgment's." .
+arch:described_document a rdf:Property ; rdfs:comment "document_source 1: the document Artifact the claim describes." .
+arch:document_kinds a rdf:Property ; rdfs:comment "document_source 1: one kind of document the Artifact is, such as lyrics or chart." .
+arch:document_line a rdf:Property ; rdfs:comment "timed_lyrics 1: a line's number in the lyric document." .
+arch:drift_cents a rdf:Property ; rdfs:comment "tuning 1: a drift span's own offset from A = 440 Hz in cents, as xsd:decimal." .
+arch:ending_passes a rdf:Property ; rdfs:comment "form 1: a pass of the repeat that takes this ending." .
+arch:export_format a rdf:Property ; rdfs:comment "export 1: the exported file's format." .
+arch:export_key a rdf:Property ; rdfs:comment "export 1: the key of the export request, sha256:<hex>." .
+arch:export_losses a rdf:Property ; rdfs:comment "export 1: something the format could not hold." .
+arch:export_options a rdf:Property ; rdfs:comment "export 1: the options the exporter read, as rdf:JSON, since their names are the exporter's." .
+arch:export_software a rdf:Property ; rdfs:comment "export 1: one program the exporter reports, in order. Minted by World, since software is a core term." .
+arch:exporter a rdf:Property ; rdfs:comment "export 1: the exporter node, its identifier and version." .
+arch:external_entry a rdf:Property ; rdfs:comment "catalogue_correspondence 1: the MusicBrainz or Discogs entry." .
+arch:file_name a rdf:Property ; rdfs:comment "document_source 1: the file name the document was given, never a path." .
+arch:fine_section a rdf:Property ; rdfs:comment "form 1: the section a jump's return ends at (al fine)." .
+arch:first_position a rdf:Property ; rdfs:comment "key_sequence 1: a region's first chord sequence entry or form section." .
+arch:last_position a rdf:Property ; rdfs:comment "key_sequence 1: a region's last chord sequence entry or form section." .
+arch:first_section a rdf:Property ; rdfs:comment "form 1: a repeat's or ending's first section." .
+arch:last_section a rdf:Property ; rdfs:comment "form 1: a repeat's or ending's last section." .
+arch:form_jumps a rdf:Property ; rdfs:comment "form 1: one jump node (da capo or dal segno)." .
+arch:form_of_bars a rdf:Property ; rdfs:comment "meter_layers 2: the form whose sections written bars are in." .
+arch:form_repeats a rdf:Property ; rdfs:comment "form 1: one repeated range of sections. Minted by World, since arch:repeats is a chord sequence's." .
+arch:form_section a rdf:Property ; rdfs:comment "The section of a form a span or bar is in." .
+arch:form_sections a rdf:Property ; rdfs:comment "form 1: one section node, in written order." .
+arch:form_spans a rdf:Property ; rdfs:comment "form_spans 1: one span node of sections at samples." .
+arch:instrument a rdf:Property ; rdfs:comment "lead_sheet 1: a part's MusicBrainz instrument." .
+arch:joined a rdf:Property ; rdfs:comment "export 1: an Artifact the export joined, such as a lyric document." .
+arch:judged_entries a rdf:Property ; rdfs:comment "judgment 2: the range of the judged sequence's entries judged." .
+arch:judged_entry a rdf:Property ; rdfs:comment "judgment 2: the entry whose reading is judged." .
+arch:judged_reading a rdf:Property ; rdfs:comment "judgment 2: the reading judged, a node naming a span or entry and the reading's index." .
+arch:judged_span a rdf:Property ; rdfs:comment "judgment 2: the samples judged, or the span whose reading is judged." .
+arch:jump_after a rdf:Property ; rdfs:comment "form 1: the section a jump is taken after." .
+arch:jump_kind a rdf:Property ; rdfs:comment "form 1: da_capo or dal_segno. Minted by World, since kind is a core term." .
+arch:jump_then a rdf:Property ; rdfs:comment "form 1: what the return does: end, fine, or coda." .
+arch:jump_to a rdf:Property ; rdfs:comment "form 1: the section a dal segno jump returns to." .
+arch:jurisdiction a rdf:Property ; rdfs:comment "rights 1: where the statement holds." .
+arch:key_anchor_form a rdf:Property ; rdfs:comment "key_sequence 1: the form whose sections the regions range over." .
+arch:key_anchor_sequence a rdf:Property ; rdfs:comment "key_sequence 1: the chord sequence whose entries the regions range over." .
+arch:key_readings a rdf:Property ; rdfs:comment "One key reading of a region, ranked: rdf:value is its rank." .
+arch:key_regions a rdf:Property ; rdfs:comment "key_sequence 1, key_regions 1: one region node." .
+arch:laid_on_meter a rdf:Property ; rdfs:comment "melody 1: the untimed meter the tune is laid on." .
+arch:lead_sheet_parts a rdf:Property ; rdfs:comment "lead_sheet 1: one part node." .
+arch:length_ms a rdf:Property ; rdfs:comment "tracklist 1: a track's printed length in milliseconds." .
+arch:licensee a rdf:Property ; rdfs:comment "rights 1: who a licence is granted to." .
+arch:limit_reason a rdf:Property ; rdfs:comment "sensitivity 1: why, in the person's words. Minted by World, since reason names a judgment's." .
+arch:limited_subject a rdf:Property ; rdfs:comment "sensitivity 1: an object the label limits." .
+arch:line_word a rdf:Property ; rdfs:comment "timed_lyrics 1: a word's number in its line." .
+arch:listed_tracks a rdf:Property ; rdfs:comment "tracklist 1: one track node of a medium. Minted by World, since arch:tracks is a selection's." .
+arch:locator_scheme a rdf:Property ; rdfs:comment "timed_lyrics 1: how the document's lines and words are counted." .
+arch:lyric_document a rdf:Property ; rdfs:comment "timed_lyrics 1: the lyric document whose lines are placed; its words are never copied." .
+arch:mapped_artist a rdf:Property ; rdfs:comment "catalogue_correspondence 1: the artist Entity mapped." .
+arch:mapping_relation a rdf:Property ; rdfs:comment "catalogue_correspondence 1: the SKOS mapping property, an IRI." .
+arch:mark_about a rdf:Property ; rdfs:comment "span_annotation 1: a claim the mark is about." .
+arch:mark_kind a rdf:Property ; rdfs:comment "span_annotation 1: unsure, interesting, or note. Minted by World, since kind is a core term." .
+arch:mark_text a rdf:Property ; rdfs:comment "span_annotation 1: a note's text." .
+arch:marked_entries a rdf:Property ; rdfs:comment "span_annotation 1: the range of the marked sequence's entries." .
+arch:marked_sequence a rdf:Property ; rdfs:comment "span_annotation 1: the chord sequence marked." .
+arch:marked_span a rdf:Property ; rdfs:comment "span_annotation 1: the samples marked." .
+arch:measured_on_tuning a rdf:Property ; rdfs:comment "The tuning claim whose grid the pitch classes are steps of (D-17)." .
+arch:media a rdf:Property ; rdfs:comment "tracklist 1: one medium node." .
+arch:media_type a rdf:Property ; rdfs:comment "A document's or exported file's media type." .
+arch:medium_format a rdf:Property ; rdfs:comment "tracklist 1: a medium's format as printed." .
+arch:medium_position a rdf:Property ; rdfs:comment "recording_audio 1: the medium of the tracklist the audio is on." .
+arch:melody_items a rdf:Property ; rdfs:comment "melody 1: one note or rest node, in order." .
+arch:melody_spans a rdf:Property ; rdfs:comment "melody_spans 1: one span node selecting a notes claim." .
+arch:melody_start a rdf:Property ; rdfs:comment "melody 1: where the tune starts in its meter." .
+arch:meter_layer_index a rdf:Property ; rdfs:comment "melody 1: the layer of the meter the tune starts in." .
+arch:midi_pitch a rdf:Property ; rdfs:comment "A note's MIDI pitch." .
+arch:mode_name a rdf:Property ; rdfs:comment "A key reading's mode." .
+arch:no_key a rdf:Property ; rdfs:comment "true: the asserter states that no key holds." .
+arch:note_events a rdf:Property ; rdfs:comment "notes 1: one sounded note node." .
+arch:note_selection a rdf:Property ; rdfs:comment "melody_spans 1: highest, lowest, or all of the notes starting together." .
+arch:notes_range a rdf:Property ; rdfs:comment "notes 1: the samples the claim speaks for." .
+arch:offset_sample a rdf:Property ; rdfs:comment "notes 1: a note's last sounding sample, exclusive." .
+arch:onset_sample a rdf:Property ; rdfs:comment "notes 1: a note's first sounding sample." .
+arch:open_strings a rdf:Property ; rdfs:comment "A part's open strings as MIDI notes in tablature order, one text separated by spaces, since order and repetition are the meaning." .
+arch:part_name a rdf:Property ; rdfs:comment "lead_sheet 1: a part's name. Minted by World, since name is a core term." .
+arch:partial_tracklist a rdf:Property ; rdfs:comment "tracklist 1: true when the list leaves tracks out." .
+arch:pitch_cents a rdf:Property ; rdfs:comment "notes 1: a note's offset from its pitch in cents, as xsd:decimal." .
+arch:pitch_collection a rdf:Property ; rdfs:comment "A key reading's pitch class." .
+arch:placed_by_tracklist a rdf:Property ; rdfs:comment "recording_audio 1: the tracklist whose track the audio is." .
+arch:placed_form a rdf:Property ; rdfs:comment "form_spans 1: the form whose sections the spans place." .
+arch:placed_from a rdf:Property ; rdfs:comment "meter_layers 2: the written bar of the pinned untimed meter a placed bar came from." .
+arch:placed_key_sequence a rdf:Property ; rdfs:comment "key_regions 1: the key sequence whose regions were placed." .
+arch:placed_meter a rdf:Property ; rdfs:comment "meter_layers 2: the untimed meter a timed claim placed." .
+arch:position a rdf:Property ; rdfs:comment "tracklist 1: a medium's or track's position, from 1." .
+arch:printed_artist a rdf:Property ; rdfs:comment "tracklist 1: a track's artist as printed." .
+arch:printed_title a rdf:Property ; rdfs:comment "tracklist 1: a medium's or track's title as printed." .
+arch:recording_audio a rdf:Property ; rdfs:comment "recording_audio 1: the archived audio that is the recording." .
+arch:reference_cents a rdf:Property ; rdfs:comment "tuning 1: where the twelve-tone grid lies, in cents from A = 440 Hz, as xsd:decimal." .
+arch:rendered a rdf:Property ; rdfs:comment "export 1: a claim the export rendered, in order." .
+arch:repeat_endings a rdf:Property ; rdfs:comment "form 1: one ending node of a repeat." .
+arch:repeats_on_return a rdf:Property ; rdfs:comment "form 1: true when repeats are played again after a jump." .
+arch:rest a rdf:Property ; rdfs:comment "melody 1: true for a rest." .
+arch:retrieved_from a rdf:Property ; rdfs:comment "document_source 1: the URL the bytes came from." .
+arch:rights_from a rdf:Property ; rdfs:comment "rights 1: when the statement starts to hold, a partial date." .
+arch:rights_until a rdf:Property ; rdfs:comment "rights 1: when the statement stops holding, a partial date." .
+arch:rights_holder a rdf:Property ; rdfs:comment "rights 1: who holds the rights." .
+arch:rights_statement a rdf:Property ; rdfs:comment "rights 1: the statement's concept of D-18's rights scheme, arch:rights-{statement}." .
+arch:rights_subject a rdf:Property ; rdfs:comment "rights 1: an Artifact, Work, recording, or release the statement is about." .
+arch:rights_text a rdf:Property ; rdfs:comment "rights 1: the terms as written." .
+arch:section_kind a rdf:Property ; rdfs:comment "form 1, form_spans 1: a section's kind, such as verse. Minted by World, since kind is a core term." .
+arch:sequence_region a rdf:Property ; rdfs:comment "key_regions 1: the region of the placed key sequence a region was placed from." .
+arch:spelling a rdf:Property ; rdfs:comment "A key reading's own names of its classes, in the collection's order, one text separated by spaces." .
+arch:timed_lines a rdf:Property ; rdfs:comment "timed_lyrics 1: one line node." .
+arch:timed_words a rdf:Property ; rdfs:comment "timed_lyrics 1: one word node of a line." .
+arch:tlp_label a rdf:Property ; rdfs:comment "sensitivity 1: the TLP 2.0 label. Minted by World, since label is a core term." .
+arch:tonic a rdf:Property ; rdfs:comment "A key reading's tonic pitch class." .
+arch:track_number_text a rdf:Property ; rdfs:comment "tracklist 1: a track's number as printed." .
+arch:track_position a rdf:Property ; rdfs:comment "recording_audio 1: the track of the medium the audio is." .
+arch:track_recording a rdf:Property ; rdfs:comment "tracklist 1: a recording Entity the list places, one per track in order." .
+arch:tune_notes a rdf:Property ; rdfs:comment "melody_spans 1: a notes claim the tune is selected from." .
+arch:tuning_drift a rdf:Property ; rdfs:comment "tuning 1: one drift span node." .
+arch:unpitched a rdf:Property ; rdfs:comment "notes 1: true for an unpitched part." .
+arch:velocity a rdf:Property ; rdfs:comment "notes 1: a note's MIDI velocity." .
+arch:work_origin a rdf:Property ; rdfs:comment "work_origin 1: own, co_written, or others." .
+arch:writer a rdf:Property ; rdfs:comment "work_origin 1: a person who wrote the Work." .
+arch:written_duration a rdf:Property ; rdfs:comment "A written length node." .
+arch:written_in_band a rdf:Property ; rdfs:comment "work_origin 1: the band the Work was written in." .

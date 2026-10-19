@@ -2,7 +2,10 @@
 # SKOS concept schemes and concepts that claims point into: the local Work
 # catalogue, the MusicBrainz catalogue, the performance kinds (ADR 0059), and,
 # from revision 5, the role scheme of specification 0.0.9 (D-17): MusicBrainz
-# role types and vocal attributes, named by the specification's own IRIs.
+# role types and vocal attributes, named by the specification's own IRIs;
+# from revision 6, the rights scheme of specification 0.0.10 (D-18),
+# arch:rights, whose RightsStatements.org concepts skos:exactMatch the
+# statement's URI.
 
 @prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
@@ -13,13 +16,13 @@
 @prefix wsh: <urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#world-projection-6/shapes/> .
 
 wsh:Scheme a sh:NodeShape ;
-  rdfs:comment "<{archive}#catalogue>, <{archive}#catalogue:musicbrainz>, <{archive}#catalogue:performance-kinds>, or a scheme of D-17's role scheme: arch:roles-{pair} or arch:vocals." ;
+  rdfs:comment "<{archive}#catalogue>, <{archive}#catalogue:musicbrainz>, <{archive}#catalogue:performance-kinds>, or a scheme of D-17's role scheme (arch:roles-{pair}, arch:vocals) or D-18's rights scheme (arch:rights)." ;
   sh:targetClass skos:ConceptScheme ;
   sh:closed true ;
   sh:property [ sh:path rdf:type ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( skos:ConceptScheme ) ] .
 
 wsh:Concept a sh:NodeShape ;
-  rdfs:comment "A local Work (foaf:focus the Work object), a MusicBrainz Work (foaf:focus its MusicBrainz IRI), a performance kind (skos:notation its name), or a D-17 role type or vocal attribute (skos:notation its MusicBrainz name; a role type also skos:exactMatch its MusicBrainz relationship type, except the local label)." ;
+  rdfs:comment "A local Work (foaf:focus the Work object), a MusicBrainz Work (foaf:focus its MusicBrainz IRI), a performance kind (skos:notation its name), or a D-17 role type or vocal attribute (skos:notation its MusicBrainz name; a role type also skos:exactMatch its MusicBrainz relationship type, except the local label), or a D-18 rights statement (skos:notation its identifier; skos:exactMatch its RightsStatements.org URI, except the personal-use licence)." ;
   sh:targetClass skos:Concept ;
   sh:closed true ;
   sh:property [ sh:path rdf:type ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( skos:Concept ) ] ;
@@ -27,4 +30,4 @@ wsh:Concept a sh:NodeShape ;
   sh:property [ sh:path foaf:focus ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
   sh:property [ sh:path skos:notation ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
   sh:property [ sh:path skos:exactMatch ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
-                sh:pattern "^https://musicbrainz[.]org/relationship/" ] .
+                sh:pattern "^(https://musicbrainz[.]org/relationship/|http://rightsstatements[.]org/vocab/)" ] .
