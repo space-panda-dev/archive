@@ -307,7 +307,7 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
 - What records where an admitted stem or practice render came from: its
   mix, separator, and settings? [ADR 0079](decisions/0079-machine-harmony-claims.md) admits a chosen stem as an Artifact
   whose digest its bank citations name, and [ADR 0089](decisions/0089-practice-audio-and-exports.md) a chosen render the same
-  way, but no claim states the link.
+  way, but no claim states the link. (ADR 0098, proposed, would answer this)
 - How are parts of untimed claims judged or marked: a Work's untimed meter or
   form, a Work-level melody, a key over sections ([ADR 0081](decisions/0081-judgments-and-annotations.md))? They can be judged
   only whole, and a mark on a Work needs a chord sequence to range over.
