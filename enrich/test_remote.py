@@ -326,7 +326,7 @@ class PutWorkCollect(unittest.TestCase):
             "parameters": lambda p: p["parameters"].update(chunk_seconds=60),
             "field": lambda p: p["parameters"].pop("levels"),
             "contract": lambda p: p.update(contract="other/1"),
-            "needs": lambda p: p["extractor"].update(id="chords", version="2"),
+            "needs": lambda p: p["extractor"].update(id="structure", version="2"),
         }
         for name, change in cases.items():
             with self.subTest(case=name):
@@ -336,6 +336,9 @@ class PutWorkCollect(unittest.TestCase):
                 path.write_text(json.dumps({**task, "payload": payload}))
                 [run] = self.spool.work(config)
                 self.assertEqual(run.returncode, remote.EX_DATAERR, run.stderr)
+                if name == "needs":
+                    # Refused for its needs, not as an extractor the worker does not know.
+                    self.assertIn(b"only an extractor that needs", run.stderr)
         # A run that fails is a failure Spool retries, not a refusal.
         (self.spool.root / "tasks" / (task["task_id"] + ".json")).write_text(json.dumps(task))
         [run] = self.spool.work(config, env={"STEMS_FAKE": "exit"})
