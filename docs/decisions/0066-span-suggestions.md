@@ -1,6 +1,7 @@
 # 0066. Machine-suggested spans are admitted claims
 
-Status: accepted
+Status: accepted; presets amended by [ADR 0091](0091-talk-needs-level.md) (talk needs level; a
+`studio` preset)
 
 A fresh recording reaches World as a bare Artifact. The machine's suggested
 spans, its boundary candidates, exist only in the V2 system's preview cache, in

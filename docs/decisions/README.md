@@ -94,3 +94,4 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0077](0077-chord-stacks-and-meter.md) | Chords are stacks and meter is a timeline, each asserted by someone |
 | [0078](0078-contributions.md) | A contribution names who did what, in which role, to how much of the music |
 | [0090](0090-extractor-runs-travel-through-spool.md) | An extractor run travels through Spool, and its files come back as result attachments |
+| [0091](0091-talk-needs-level.md) | Talk needs level, and a studio preset never says talk (amends 0066's presets) |
