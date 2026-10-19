@@ -182,8 +182,9 @@ SHIPPED = {
     "notes-basic-pitch": {"version": "1",
                           "code": "sha256:b81ad3ab4528b6c557e4a3ad254c5262754689efcbd157ac5bff976f28d40133",
                           "outside": {}},
-    "f0-pesto": {"version": "1",
-                 "code": "sha256:a627f3b3f63d03e2f953707fa39653da0582168bfa714c0b40afeb82d7f928cc",
+    # f0-pesto version 2: the level of the same audio on the same rows.
+    "f0-pesto": {"version": "2",
+                 "code": "sha256:cb9e2915b3f5c4b59caac11830467fc7c0dafcf6d95bdacbbb6e6c9036c02feb",
                  "outside": {}},
     "f0-torchcrepe": {"version": "1",
                       "code": "sha256:3ea7b08895a262f9c175bcadb49fdf1ad59c6a8c69d6492aa5341e6abcafa4e7",

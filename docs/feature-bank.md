@@ -345,7 +345,7 @@ parameters are in the manifest's descriptions and in the
 | `chords-jiang` | 1 | none | scalars `chord_count`, `decoded_in_top3`; spans `chords`; files `readings` |
 | `frames` | 1 | none | series `hpcp`, `rms_db`, `centroid`, `rolloff`, `flatness`, `flux`, `onset_hfc`, `mfcc`, `melbands`; scalars `samples`, `seconds` |
 | `colour` | 3 | `frames`: centroid, hpcp, rms_db | series `colour`; files `palette`, `preview` |
-| `f0-pesto` | 1 | none | series `f0`; scalars `rows_from_tracker` |
+| `f0-pesto` | 2 | none | series `f0`, `level_db`; scalars `rows_from_tracker`, `loud_db` |
 | `f0-torchcrepe` | 1 | none | series `f0`; scalars `rows_from_tracker` |
 | `loudness-r128` | 1 | none | scalars `integrated` |
 | `melody` | 3 | none | series `pitch`, `confidence`, `voiced`, `midi`, `cents`, `level_db`; scalars `voiced_fraction`, `melodia_voiced_fraction`, `measured_fraction`, `loud_db`, `gate_db`, `reference_hz`, `samples`; spans `notes` |
@@ -403,6 +403,10 @@ what each changed:
 - `structure` 2 measures the playing threshold from a noise floor only
   when the recording has one (steady or unpitched quiet), so a master is
   all playing, and says which in `floor`.
+- `f0-pesto` 2 adds `level_db` (the RMS of the 20 ms centred on each row,
+  on the pitch track's own grid) and `loud_db`, so the note builder of the
+  `notes` and `bass-line` proposers finds re-articulations and gates
+  voicing without decoding the audio again.
 - `quality` 2 scaled the detectors' frames with the sample rate and
   dropped quantisation-level bursts; 3 reports
   clipping only at full scale or as long flat runs at the recording's own

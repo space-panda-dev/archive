@@ -32,6 +32,7 @@ import proposers
 import support
 from test_beats_chords import (CHORDINO_CHANGES, CHORDINO_SECONDS, JIANG_LABELS, stand_in_programs)
 from test_cover import needs_essentia
+from test_f0 import fake_python as f0_python
 from test_notes import fake_python as basic_pitch_python
 from test_stems import fake_python
 
@@ -109,6 +110,8 @@ def fill_bank(directory: Path, content: Path) -> Path:
     run_extract("tonal", *common, "--from", "stems/bass", *stems)
     run_extract("notes-basic-pitch", *common, "--from", "stems/bass", *stems,
                 "--program", f"basic-pitch-python={basic_pitch_python(directory)}")
+    for stem in ("stems/vocals", "stems/bass"):
+        run_extract("f0-pesto", *common, "--from", stem, *stems, "--program", f"f0-python={f0_python(directory)}")
     run_extract("melody", *common, *stems)
     return root
 
@@ -247,7 +250,7 @@ class Missing(unittest.TestCase):
             "key": {"missing": ["tonal/key_regions"]},
             "tuning": {"missing": ["tonal/tuning_cents", "tonal/tuning_confidence", "tonal/tuning_drift"]},
             "notes": {"missing": ["melody/notes"]},
-            "bass-line": {"missing": ["stems/bass", "notes-basic-pitch/notes from stems/bass",
+            "bass-line": {"missing": ["stems/bass", "f0-pesto/f0 or notes-basic-pitch/notes from stems/bass",
                                       "tonal/bass_chroma from stems/bass", "tonal/pitched from stems/bass"]},
             "sections": {"missing": ["structure/sections"]},
             "timed-lyrics": {"code": "not_yet", "missing": list(proposers.ALIGNMENT_NEEDS),
@@ -295,6 +298,15 @@ class BassLine(unittest.TestCase):
     def test_its_thresholds_are_the_bass_proposers(self) -> None:
         for name in ("min_pitched_share", "min_lead", "lead", "bin_0"):
             self.assertEqual(proposers.BASS_LINE_SETTINGS[name], proposers.BASS_SETTINGS[name])
+        self.assertIs(proposers.BASS_LINE_SETTINGS["builder"], proposers.note_builder.BASS)
+
+
+class Rows(unittest.TestCase):
+    def test_a_row_is_its_exact_time_as_a_sample(self) -> None:
+        context = proposers.Context(bank.Bank(Path(tempfile.gettempdir())), "sha256:" + "a" * 64, RATE, RATE)
+        grid = {"sample_rate": 16000, "hop": 160, "first_centre": 0}
+        self.assertEqual([proposers.row_sample(row, grid, context) for row in (0, 3, 7, 101)],
+                         [0, 1323, 3087, 44100])
 
 
 class Bleed(unittest.TestCase):
@@ -324,6 +336,17 @@ class Bleed(unittest.TestCase):
         self.assertNotIn(self.quiet_on_bass, kept)
         self.assertIn(self.loud_on_bass, kept)  # sung over the bass, loud: the singer's
         self.assertEqual(len(kept), len(self.notes) - 2)
+
+    def test_a_note_two_octaves_above_the_bass_note_is_the_singers(self) -> None:
+        g4, g3 = self.note(67, 1.0, 1.4), self.note(55, 1.0, 1.4)
+        self.assertEqual({g4["pitch"] % 12, g3["pitch"] % 12}, {self.bass[0]["pitch"] % 12})  # anchor: one class
+        notes = sorted([*self.sung, g4], key=lambda n: (n["onset_sample"], n["pitch"]))
+        kept, dropped = proposers.drop_bleed(notes, self.levels, self.GRID, -10, self.bass, RATE)
+        self.assertIn(g4, kept)  # G4 over a G2 bass: 24 semitones apart, not the bass
+        self.assertEqual(dropped, {"below_range": 0, "bass_match": 0})
+        kept, dropped = proposers.drop_bleed([*notes, g3], self.levels, self.GRID, -10, self.bass, RATE)
+        self.assertNotIn(g3, kept)  # G3: an octave above the bass note
+        self.assertEqual(dropped["bass_match"], 1)
 
     def test_without_a_bass_line_only_the_range_applies(self) -> None:
         kept, dropped = proposers.drop_bleed(self.notes, None, self.GRID, None, None, RATE)
@@ -451,9 +474,19 @@ class FromTheBank(unittest.TestCase):
         line = planned.payload["notes"]
         self.assertTrue(line)
         self.assertTrue(all(a["offset_sample"] <= b["onset_sample"] for a, b in zip(line, line[1:])))
-        self.assertEqual([f["feature"] for f in found.features],
-                         ["stems/bass", "notes-basic-pitch/notes", "tonal/bass_chroma", "tonal/pitched"])
+        features = [f["feature"] for f in found.features]
+        self.assertEqual(features[:3], ["stems/bass", "tonal/bass_chroma", "tonal/pitched"])
+        self.assertIn("f0-pesto/f0", features)  # built from PESTO's track of the bass stem
+        self.assertIn("f0-pesto/level_db", features)
+        self.assertNotIn("notes-basic-pitch/notes", features)  # the fallback, not read when PESTO's track is there
+        pesto = self.bank.entry_from(self.digest, "stems/bass", "f0-pesto")
+        self.assertIn(pesto.manifest["key"], [f["entry"] for f in found.features])
+        self.assertEqual(found.settings["run"]["source"], "f0-pesto")
         self.assertEqual(found.settings["min_lead"], proposers.BASS_SETTINGS["min_lead"])
+        # The stand-in tracker follows the loudest partial, the bass of each chord.
+        middle = [BASS_CLASSES[int((n["onset_sample"] + n["offset_sample"]) / 2 / RATE // CHORD_SECONDS)
+                               % len(CHORDS)] for n in line]
+        self.assertGreater(sum(n["pitch"] % 12 == c for n, c in zip(line, middle)) / len(line), 0.8, line)
 
     def test_no_proposer_makes_a_melody_and_any_bass_stem_notes_say_bass(self) -> None:
         melody = {("archive.claim/melody", "1"), ("archive.claim/melody_spans", "1")}
@@ -493,6 +526,26 @@ class FromTheBank(unittest.TestCase):
             check(planned, self.count)
             self.assertEqual(planned.payload["part"], "mix" if feature is None else feature.split("/")[1])
             self.assertEqual("stem" in planned.payload, feature is not None)
+            features = [f["feature"] for f in found.features]
+            if feature == "stems/vocals":  # the vocal stem's line is built from its PESTO track
+                self.assertEqual(found.settings["notes"], proposers.NOTES_FROM_PESTO)
+                self.assertIn("f0-pesto/f0", features)
+                self.assertNotIn("melody/notes", features)
+                self.assertEqual(found.settings["bleed"]["dropped"].keys(), {"below_range", "bass_match"})
+            else:
+                self.assertEqual(found.settings["notes"], proposers.NOTES_FROM_MELODY)
+
+    def test_the_vocal_stems_pesto_track_is_built_into_notes(self) -> None:
+        pesto = self.bank.entry_from(self.digest, "stems/vocals", "f0-pesto")
+        self.assertIsNotNone(pesto)  # anchor: the runner measured the vocal stem
+        found = proposers.Proposal([], {})
+        notes, how = proposers.build_line(found, self.context, pesto, proposers.note_builder.VOICE, tempo=True)
+        self.assertTrue(notes)
+        self.assertTrue(all(a["offset_sample"] <= b["onset_sample"] for a, b in zip(notes, notes[1:])))
+        self.assertEqual(how["tuning_from"], "tonal/tuning_cents")
+        self.assertIsNotNone(how["eighth_s"])
+        self.assertEqual(how["counts"]["notes"], len(notes))
+        self.assertEqual([f["feature"] for f in found.features][:2], ["f0-pesto/f0", "f0-pesto/level_db"])
 
 
 if __name__ == "__main__":

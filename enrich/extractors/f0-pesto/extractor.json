@@ -1,8 +1,8 @@
 {
  "contract": "archive-extractor/1",
  "id": "f0-pesto",
- "version": "1",
- "description": "A monophonic pitch track by PESTO (mir-1k_g7 checkpoint, pinned by digest) at a 10 ms step on 16 kHz mono: the pitch and PESTO's confidence. Meant for one voice, a vocal stem by --from stems/vocals. Runs under the operator's f0-python, so the archive's environment never imports PyTorch.",
+ "version": "2",
+ "description": "A monophonic pitch track by PESTO (mir-1k_g7 checkpoint, pinned by digest) at a 10 ms step on 16 kHz mono: the pitch and PESTO's confidence. Meant for one line, a vocal stem by --from stems/vocals or the bass stem by --from stems/bass. Version 2 adds the level of the same audio on the same rows, for a note builder. Runs under the operator's f0-python, so the archive's environment never imports PyTorch.",
  "command": [
   "${f0-python}",
   "f0_pesto.py"
@@ -49,7 +49,12 @@
    "-"
   ],
   "rate": 16000,
-  "hop": 160
+  "hop": 160,
+  "level": {
+   "frame": 320,
+   "floor_db": -120,
+   "loud_percentile": 99
+  }
  },
  "outputs": {
   "f0": {
@@ -64,6 +69,19 @@
    "kind": "scalar",
    "unit": "rows",
    "description": "rows the tracker returned before the track was cut, or padded with zeros, to the grid: n // 160 + 1 rows for n samples"
+  },
+  "level_db": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "f0",
+   "unit": "dBFS",
+   "description": "the RMS level of the level.frame samples (20 ms) of the decoded 16 kHz audio centred on each row of f0 (outside the audio is silence), floored at level.floor_db"
+  },
+  "loud_db": {
+   "kind": "scalar",
+   "unit": "dBFS",
+   "description": "the level.loud_percentile percentile of level_db: the audio's loud level"
   }
  }
 }
