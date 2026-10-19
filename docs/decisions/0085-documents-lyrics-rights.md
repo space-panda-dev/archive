@@ -549,7 +549,10 @@ and 1 to 64 strictly increasing `onsets`, each the `onset_sample` of a note
 in it; of several notes at one onset, the highest is meant. Several onsets
 are a melisma, and the extender is drawn to the last. Every pinned notes
 claim is named by at least one syllable. A syllable with no `carried_by` is
-placed on the samples only. That each onset is a note of the named claim is
+placed on the samples only. Where a syllable states its notes, a view that
+puts syllables on notes, such as written rhythm (ADR 0086), puts it on
+them, whatever a machine's alignment of the samples would choose
+(confirmed by the operator, 2026-10-19). That each onset is a note of the named claim is
 World's check, since it reads the pinned claim's notes.
 
 **Machine timing is forced alignment, recorded as a run.** A machine's

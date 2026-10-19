@@ -144,9 +144,15 @@ cost; each note fills to the next onset; a rest is written only at a
 `line_end` or `breath`; `staccato` only for a clearly detached short note
 and `tenuto` on a held phrase end; every syllable of the named lyrics lands
 on a note (a held note split, or a note added at the previous pitch, `from`
-says so); octave errors are folded (`folded`, `counts.octave_folded`); and a
-clef is suggested (`clef`, `clef_basis`; the bass line's is always
-`bass`). The answer adds `feel`, `offbeat_position`,
+says so), and a syllable whose `carried_by` names notes being written is
+put on them whatever the timing says; octave errors are folded (`folded`,
+`counts.octave_folded`); and a clef is suggested (`clef`, `clef_basis`; the
+bass line's is always `bass`). Folding and filling syllables are the rule's
+`switches`, `fold_octaves` and `fill_syllables`, which both views take as
+true or false: by default on for a vocal line and off for a bass line (a
+notes claim saying `bass`), repeated in `rule.switches`; they only ever
+change a machine's notes, never those of a claim a person asserted or one
+read from a document. The answer adds `feel`, `offbeat_position`,
 `onset_offset_samples`, and `counts`.
 
 ```sh

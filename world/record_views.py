@@ -363,20 +363,44 @@ def _rhythm_subject(subject: Any) -> dict[str, Any]:
     return {name: _pin(value, f"subject {name}")}
 
 
+SWITCHES = ("fold_octaves", "fill_syllables")
+
+
+def _switches(params: dict[str, Any]) -> dict[str, bool | None]:
+    """The written rhythm rule's switches a reader sets: true, false, or
+    absent (null) for the line's default (`notes.RHYTHM_RULES`)."""
+    for name in SWITCHES:
+        if params.get(name) is not None and not isinstance(params[name], bool):
+            raise _bad(f"parameters {name} must be true or false")
+    return {name: params.get(name) for name in SWITCHES}
+
+
 def _rhythm_parameters(params: dict[str, Any], caller: str | None) -> dict[str, Any]:
-    _closed(params, set(), {"meter", "layer", "lyrics"}, "parameters")
+    _closed(params, set(), {"meter", "layer", "lyrics", *SWITCHES}, "parameters")
     lyrics = params.get("lyrics", [])
     if not isinstance(lyrics, list) or len(lyrics) > 8:
         raise _bad("parameters lyrics must be a list of at most 8 timed lyrics claims")
     return {"meter": None if params.get("meter") is None else _pin(params["meter"], "parameters meter"),
             "layer": _index(params.get("layer", 0), "parameters layer"),
-            "lyrics": [_pin(pin, f"parameters lyrics {n}") for n, pin in enumerate(lyrics)]}
+            "lyrics": [_pin(pin, f"parameters lyrics {n}") for n, pin in enumerate(lyrics)],
+            **_switches(params)}
+
+
+def _machine(world: list[dict[str, Any]], claim: dict[str, Any]) -> bool:
+    """Whether a notes claim is a machine's: its agent is no person, and it
+    was not read from a document. Only a machine's notes are folded or
+    filled by the written rhythm view."""
+    return not _is_person(world, claim.get("agent")) and \
+        not any(ref.get("role") == "document" for ref in claim.get("refs", []))
 
 
 def _write(world: list[dict[str, Any]], sounded: list[dict[str, Any]], sample_rate: int,
-           params: dict[str, Any]) -> dict[str, Any]:
-    """Sounded notes written on the named meter's grid, or why nothing is."""
-    rule = notes.RHYTHM_RULES[RHYTHM].describe()
+           params: dict[str, Any], *, line: str, claims: list[str], machine_claims: set[str]) -> dict[str, Any]:
+    """Sounded notes written on the named meter's grid, or why nothing is.
+    `claims` is each note's notes claim revision; `machine_claims` those
+    that are a machine's."""
+    switches = {name: params.get(name) for name in SWITCHES}
+    rule = notes.RHYTHM_RULES[RHYTHM].describe(notes.RHYTHM_RULES[RHYTHM].switched(line, **switches))
     if params["meter"] is None:
         return {"rule": rule, "written": [], "left_out": len(sounded),
                 "why": "no meter claim was named, so there is no beat grid to write on"}
@@ -385,7 +409,8 @@ def _write(world: list[dict[str, Any]], sounded: list[dict[str, Any]], sample_ra
              for pin in params["lyrics"]]
     try:
         return notes.written_rhythm(sounded, meter["payload"], sample_rate=sample_rate, layer=params["layer"],
-                                    lyrics=lines, version=RHYTHM)
+                                    lyrics=lines, version=RHYTHM, line=line, claims=claims,
+                                    machine_claims=machine_claims, **switches)
     except (ValueError, KeyError, TypeError, IndexError) as error:
         raise _fail(ValueError(str(error))) from None
 
@@ -402,11 +427,19 @@ def written_rhythm(world: list[dict[str, Any]], subject: dict[str, Any], params:
         claim = _record(world, subject["notes"], {NOTES}, "a notes claim")
         sounded, rate = claim["payload"]["notes"], claim["payload"]["sample_rate"]
         left: list[dict[str, Any]] = []
+        claims = [claim["revision_id"]] * len(sounded)
+        machine_claims = {claim["revision_id"]} if _machine(world, claim) else set()
+        line = "bass" if claim["payload"].get("bass") is True else "vocal"
     else:
         spans = _record(world, subject["melody_spans"], {MELODY_SPANS}, "a melody spans claim")
         played = tune(world, {"melody_spans": subject["melody_spans"]}, {})
         sounded, left, rate = played["notes"], played["left_out"], spans["payload"]["sample_rate"]
-    answer = _write(world, sounded, rate, params)
+        claims = [note["from"] for note in sounded]
+        machine_claims = {ref["revision_id"] for ref in spans.get("refs", []) if ref.get("role") == "notes"
+                          and _machine(world, _record(world, {"id": ref["id"], "revision_id": ref["revision_id"]},
+                                                      {NOTES}, "a notes claim"))}
+        line = "vocal"
+    answer = _write(world, sounded, rate, params, line=line, claims=claims, machine_claims=machine_claims)
     if left:
         answer["tune_left_out"] = left
     return answer
@@ -422,9 +455,10 @@ def _bass_subject(subject: Any) -> dict[str, Any]:
 
 
 def _bass_parameters(params: dict[str, Any], caller: str | None) -> dict[str, Any]:
-    _closed(params, set(), {"meter", "layer"}, "parameters")
+    _closed(params, set(), {"meter", "layer", "fold_octaves"}, "parameters")
     return {"meter": None if params.get("meter") is None else _pin(params["meter"], "parameters meter"),
-            "layer": _index(params.get("layer", 0), "parameters layer"), "lyrics": []}
+            "layer": _index(params.get("layer", 0), "parameters layer"), "lyrics": [],
+            **_switches(params)}
 
 
 def bass_line(world: list[dict[str, Any]], subject: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
@@ -442,7 +476,9 @@ def bass_line(world: list[dict[str, Any]], subject: dict[str, Any], params: dict
         sources = [ref["id"] for ref in claim.get("refs", []) if ref.get("role") == "source"]
         if payload.get("bass") is not True or sources != [subject["source"]]:
             continue
-        written = _write(world, payload["notes"], payload["sample_rate"], params)
+        written = _write(world, payload["notes"], payload["sample_rate"], params, line="bass",
+                         claims=[claim["revision_id"]] * len(payload["notes"]),
+                         machine_claims={claim["revision_id"]} if _machine(world, claim) else set())
         written.pop("clef_basis", None)          # the staff is the bass clef's, never suggested
         lines.append({"claim": claim["revision_id"], "agent": claim.get("agent"), "part": payload.get("part"),
                       **({"range": payload["range"]} if "range" in payload else {}),

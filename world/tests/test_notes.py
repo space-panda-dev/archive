@@ -590,6 +590,84 @@ class WrittenRhythm(unittest.TestCase):
         high = self.write([note(i * 0.5, i * 0.5 + 0.45, p + 12) for i, p in enumerate(pitches)])
         self.assertEqual(high["clef"], "treble")
 
+    OCTAVE_ERROR = [60, 62, 64, 62, 76, 64, 62, 60]
+
+    def octave_error(self):
+        return [note(i * 0.5, i * 0.5 + 0.45, p) for i, p in enumerate(self.OCTAVE_ERROR)]
+
+    def unsung_word(self):
+        """A note, then a word sung where no note sounds, then a note."""
+        sung = [note(0, 0.9, 60), note(2.0, 2.4, 64)]
+        lyrics = [[{"line": 1, "start_sample": 0, "end_sample": int(2.4 * SECOND), "words": [
+            {"word": 1, "start_sample": 0, "end_sample": int(0.9 * SECOND)},
+            {"word": 2, "start_sample": int(1.25 * SECOND), "end_sample": int(1.5 * SECOND)},
+            {"word": 3, "start_sample": 2 * SECOND, "end_sample": int(2.4 * SECOND)}]}]]
+        return sung, lyrics
+
+    def test_a_persons_notes_are_never_folded_or_filled(self):
+        line = self.octave_error()
+        machine = self.write(line, claims=["m"] * len(line), machine_claims={"m"})
+        self.assertEqual(machine["counts"]["octave_folded"], 1)
+        self.assertEqual(machine["rule"]["switches"], {"fill_syllables": True, "fold_octaves": True})
+        person = self.write(line, claims=["p"] * len(line), machine_claims=set())
+        self.assertEqual(person["counts"]["octave_folded"], 0)
+        self.assertEqual(person["written"][4]["pitches"], [76])
+        self.assertNotIn("folded", person["written"][4])
+        sung, lyrics = self.unsung_word()
+        filled = self.write(sung, lyrics=lyrics, claims=["m", "m"], machine_claims={"m"})
+        self.assertEqual(filled["counts"]["syllables_inferred"], 1)
+        kept = self.write(sung, lyrics=lyrics, claims=["p", "p"], machine_claims=set())
+        self.assertEqual((kept["counts"]["syllables_inferred"], kept["counts"]["syllables_split"],
+                          kept["counts"]["syllables_unplaced"]), (0, 0, 1))
+        self.assertEqual([w["notes"] for w in kept["written"] if w["kind"] == "chord"], [[0], [1]])
+
+    def test_folding_and_filling_are_switched_by_the_reader(self):
+        off = self.write(self.octave_error(), fold_octaves=False)
+        self.assertEqual((off["counts"]["octave_folded"], off["written"][4]["pitches"]), (0, [76]))
+        self.assertFalse(off["rule"]["switches"]["fold_octaves"])
+        sung, lyrics = self.unsung_word()
+        unfilled = self.write(sung, lyrics=lyrics, fill_syllables=False)
+        self.assertEqual((unfilled["counts"]["syllables_inferred"], unfilled["counts"]["syllables_unplaced"]), (0, 1))
+        self.assertTrue(all(w.get("from") is None for w in unfilled["written"]))
+
+    def test_a_bass_line_is_neither_folded_nor_filled_by_default(self):
+        bass = self.write(self.octave_error(), line="bass")
+        self.assertEqual(bass["rule"]["switches"], {"fill_syllables": False, "fold_octaves": False})
+        self.assertEqual(bass["counts"]["octave_folded"], 0)
+        sung, lyrics = self.unsung_word()
+        self.assertEqual(self.write(sung, lyrics=lyrics, line="bass")["counts"]["syllables_inferred"], 0)
+        self.assertEqual(self.write(self.octave_error(), line="bass", fold_octaves=True)["counts"]["octave_folded"], 1)
+        with self.assertRaises(NotesError):
+            self.write(self.octave_error(), line="drums")
+
+    def test_a_syllable_stating_its_notes_wins_over_the_alignment(self):
+        sung = [note(0, 0.45, 60), note(0.5, 0.95, 62), note(1.0, 1.45, 64), note(1.5, 1.95, 65)]
+        syllables = [{"syllable": 1, "start_sample": 0, "end_sample": int(0.45 * SECOND)},
+                     {"syllable": 2, "start_sample": int(0.5 * SECOND), "end_sample": int(1.95 * SECOND)}]
+        lyrics = [[{"line": 1, "start_sample": 0, "end_sample": 2 * SECOND, "words": [
+            {"word": 1, "start_sample": 0, "end_sample": int(1.95 * SECOND), "syllables": syllables}]}]]
+        claims = ["v"] * len(sung)
+
+        def lyric_pitches(answer):
+            return [(w.get("lyric", {}).get("syllable"), w.get("melisma", False), w["pitches"])
+                    for w in answer["written"] if w["kind"] == "chord"]
+
+        # Anchor: by timing alone the second syllable lands on the second note.
+        aligned = self.write(sung, lyrics=lyrics, claims=claims)
+        self.assertEqual(lyric_pitches(aligned)[1], (2, False, [62]))
+        # Stated: the first syllable is carried by the first two notes, the
+        # second by the last two.
+        syllables[0]["carried_by"] = {"notes": "v", "onsets": [0, int(0.5 * SECOND)]}
+        syllables[1]["carried_by"] = {"notes": "v", "onsets": [SECOND, int(1.5 * SECOND)]}
+        stated = self.write(sung, lyrics=lyrics, claims=claims)
+        self.assertEqual(lyric_pitches(stated), [(1, False, [60]), (None, True, [62]), (2, False, [64]),
+                                                 (None, True, [65])])
+        self.assertTrue(stated["written"][0]["lyric"]["extend"])
+        # A statement about another notes claim leaves the alignment to place it.
+        for syllable in syllables:
+            syllable["carried_by"]["notes"] = "another"
+        self.assertEqual(lyric_pitches(self.write(sung, lyrics=lyrics, claims=claims))[1], (2, False, [62]))
+
     def test_notes_starting_together_are_a_chord_and_written_marks_stay(self):
         sung = [note(0, 0.5, 48), note(0.01, 0.5, 55, articulation=["accent"]), note(0.5, 1, 52)]
         answer = self.write(sung)

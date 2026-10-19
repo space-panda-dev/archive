@@ -169,6 +169,28 @@ class RecordViews(unittest.TestCase):
         self.assertEqual(claims[bass["revision_id"]]["rule"]["version"], record_views.RHYTHM)
         self.assertEqual(len(claims[bass["revision_id"]]["written"]), 4)
 
+    def test_written_rhythm_switches_by_line_and_reader_and_spare_a_persons_notes(self):
+        bass = self.record("archive.claim/notes", "world-w-notes-bass")
+        pin = {"id": bass["object_id"], "revision_id": bass["revision_id"]}
+        meter = self.pin("archive.claim/meter_layers", "world-fixture-meter-placed")
+        written = self.answer(request("written_rhythm", {"notes": pin}, meter=meter))["answer"]
+        self.assertEqual(written["rule"]["switches"], {"fill_syllables": False, "fold_octaves": False})
+        folding = self.answer(request("written_rhythm", {"notes": pin}, meter=meter, fold_octaves=True))
+        self.assertTrue(folding["answer"]["rule"]["switches"]["fold_octaves"])
+        self.assertEqual(folding["parameters"]["fold_octaves"], True)
+        with self.assertRaises(views.ViewError):
+            self.answer(request("written_rhythm", {"notes": pin}, meter=meter, fold_octaves="yes"))
+        # The operator asserted it: a person's notes, which nothing folds or fills.
+        self.assertEqual(bass["agent"], self.operator)
+        world = view_records.records(self.projection)
+        projected = next(r for r in world if r.get("revision_id") == bass["revision_id"])
+        self.assertFalse(record_views._machine(world, projected))
+        self.assertTrue(record_views._machine(world, {**projected, "agent": "pkg:pypi/a-tool@1"}))
+        lines = self.answer(request("bass_line", {"source": object_id(self.archive, "archive.core/artifact",
+                                                                      "fixture-recording")}, meter=meter))
+        line = next(l for l in lines["answer"]["lines"] if l["claim"] == bass["revision_id"])
+        self.assertEqual(line["rule"]["switches"], {"fill_syllables": False, "fold_octaves": False})
+
     def test_may_publish_answers_on_the_day_asked(self):
         v1 = self.pin("archive.transition/publication_approval", "world-publication")
         answer = self.answer(request("may_publish", {"approval": v1}, on="2026-10-19"))["answer"]

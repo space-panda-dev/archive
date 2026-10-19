@@ -27,9 +27,9 @@ from __future__ import annotations
 
 import re
 from bisect import bisect_right
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
-from typing import Any
+from typing import Any, Collection
 
 from world import harmony
 
@@ -604,10 +604,14 @@ LOW_TREBLE, HIGH_TREBLE_8VB = 64, 67   # E4, the treble staff's lowest line; G4,
 class RhythmRule:
     """The parameters of one version of the written rhythm view, by name,
     as exact decimals: seconds end `_s`, beats end `_beats`, semitones end
-    `_st`, and costs are in units of one squared timing error."""
+    `_st`, and costs are in units of one squared timing error. `switches`
+    are its on-off behaviours by line (`vocal`, `bass`): their defaults,
+    which a reader may override, and only ever applied to a machine's
+    notes."""
 
     version: str
     parameters: dict[str, Fraction]
+    switches: dict[str, dict[str, bool]] = field(default_factory=dict)
 
     def __getattr__(self, name: str) -> float:
         try:
@@ -615,9 +619,20 @@ class RhythmRule:
         except KeyError:
             raise AttributeError(name) from None
 
-    def describe(self) -> dict[str, Any]:
-        return {"version": self.version,
-                "parameters": {name: _decimal_text(value) for name, value in sorted(self.parameters.items())}}
+    def describe(self, switches: dict[str, bool] | None = None) -> dict[str, Any]:
+        described: dict[str, Any] = {
+            "version": self.version,
+            "parameters": {name: _decimal_text(value) for name, value in sorted(self.parameters.items())}}
+        if switches is not None:
+            described["switches"] = dict(sorted(switches.items()))
+        return described
+
+    def switched(self, line: str, **given: bool | None) -> dict[str, bool]:
+        """The switches of a line, each the reader's where given."""
+        if line not in self.switches:
+            raise NotesError(f"no written rhythm line is named {line}")
+        return {name: default if given.get(name) is None else bool(given[name])
+                for name, default in self.switches[line].items()}
 
 
 RHYTHM_RULES = {"2": RhythmRule("2", {name: Fraction(value) for name, value in {
@@ -682,7 +697,14 @@ RHYTHM_RULES = {"2": RhythmRule("2", {name: Fraction(value) for name, value in {
     # The clef: treble-8vb when at least `clef_below_share` of the sounded
     # time is under E4 and at most `clef_above_share` at G4 or above.
     "clef_below_share": "0.6", "clef_above_share": "0.1",
-}.items()})}
+}.items()}, {
+    # Whether octave errors are folded (`fold_octaves`) and a syllable no
+    # note carries is given one, by a split or an added note
+    # (`fill_syllables`); only ever to a machine's notes, never a person's
+    # or a document's. A bass line leaps octaves, so by default neither.
+    "vocal": {"fold_octaves": True, "fill_syllables": True},
+    "bass": {"fold_octaves": False, "fill_syllables": False},
+})}
 
 
 def _decimal_text(value: Fraction) -> str:
@@ -915,7 +937,7 @@ def _place_phrase(sounded: list[float], grid: _Grid, rule: RhythmRule, swing: fl
 def _units(lines: list[dict[str, Any]], low: int, high: int) -> list[dict[str, Any]]:
     """The sung units of timed lyrics lines inside [low, high): each word's
     syllables, or the word where it gives none; `first` marks a line's
-    first unit."""
+    first unit, and `carried` a syllable's `carried_by`."""
     units = []
     for line in sorted(lines, key=lambda l: (l["start_sample"], l["line"])):
         first = True
@@ -925,6 +947,8 @@ def _units(lines: list[dict[str, Any]], low: int, high: int) -> list[dict[str, A
                 if low <= span["start_sample"] < high:
                     units.append({"line": line["line"], "word": word["word"],
                                   **({"syllable": syllable["syllable"]} if syllable else {}),
+                                  **({"carried": syllable["carried_by"]}
+                                     if syllable and "carried_by" in syllable else {}),
                                   "start": span["start_sample"], "end": span["end_sample"], "first": first})
                 first = False
     units.sort(key=lambda u: u["start"])
@@ -933,8 +957,13 @@ def _units(lines: list[dict[str, Any]], low: int, high: int) -> list[dict[str, A
 
 def _align(units: list[dict[str, Any]], onsets: list[int], rule: RhythmRule, rate: int) -> list[int | None]:
     """Each unit's chord (strictly increasing), or None where skipping it is
-    cheaper: a dynamic programme over units, keeping the cheapest states."""
+    cheaper: a dynamic programme over units, keeping the cheapest states. A
+    unit with a `fixed` chord (its syllable states the note carrying it,
+    ADR 0085) takes that chord, whatever the timing says, unless the order
+    of the units leaves no room for it; no other unit takes a chord a
+    syllable states (`blocked`)."""
     sigma, window = rule.syllable_sigma_s * rate, rule.syllable_window_s * rate
+    blocked = {chord for unit in units for chord in unit.get("blocked", ())}
     states: dict[int, float] = {-1: 0.0}
     back: list[dict[int, tuple[float, int, bool]]] = []
     for unit in units:
@@ -946,20 +975,28 @@ def _align(units: list[dict[str, Any]], onsets: list[int], rule: RhythmRule, rat
                 low_cost, low_key = cost, key
             prefix.append((key, low_cost, low_key))
         keys = [key for key, _, _ in prefix]
-        for chord in range(bisect_right(onsets, unit["start"] - window - 1), len(onsets)):
-            if onsets[chord] > unit["start"] + window:
-                break
-            at = bisect_right(keys, chord - 1) - 1
-            if at < 0:
-                continue
-            _, cost, key = prefix[at]
-            error = (onsets[chord] - unit["start"]) / sigma
-            total = cost + min(error * error, rule.syllable_cap)
-            if total < here.get(chord, (float("inf"),))[0]:
-                here[chord] = (total, key, False)
-        for key, cost in states.items():
-            if cost + rule.syllable_skip < here.get(key, (float("inf"),))[0]:
-                here[key] = (cost + rule.syllable_skip, key, True)
+        if unit.get("fixed") is not None:
+            at = bisect_right(keys, unit["fixed"] - 1) - 1
+            if at >= 0:
+                _, cost, key = prefix[at]
+                here[unit["fixed"]] = (cost, key, False)
+        if not here:
+            for chord in range(bisect_right(onsets, unit["start"] - window - 1), len(onsets)):
+                if onsets[chord] > unit["start"] + window:
+                    break
+                if chord in blocked:
+                    continue
+                at = bisect_right(keys, chord - 1) - 1
+                if at < 0:
+                    continue
+                _, cost, key = prefix[at]
+                error = (onsets[chord] - unit["start"]) / sigma
+                total = cost + min(error * error, rule.syllable_cap)
+                if total < here.get(chord, (float("inf"),))[0]:
+                    here[chord] = (total, key, False)
+            for key, cost in states.items():
+                if cost + rule.syllable_skip < here.get(key, (float("inf"),))[0]:
+                    here[key] = (cost + rule.syllable_skip, key, True)
         kept = sorted(here.items(), key=lambda item: (item[1][0], item[0]))[:int(rule.syllable_states)]
         here = dict(kept)
         back.append(here)
@@ -973,10 +1010,40 @@ def _align(units: list[dict[str, Any]], onsets: list[int], rule: RhythmRule, rat
     return chosen
 
 
+def _carried(units: list[dict[str, Any]], chords: list[dict[str, Any]], notes: list[dict[str, Any]],
+             claims: list[str | None] | None) -> None:
+    """Where a unit's syllable states the notes that carry it (`carried_by`,
+    ADR 0085) and they are notes being written, mark its first note's chord
+    `fixed`, each later one's `melisma_of` it, and every one `blocked` to
+    other units. Of several notes at one onset the highest is meant; the
+    chord holding any of them is the same one."""
+    if claims is None:
+        return
+    chord_of: dict[tuple[str | None, int], int] = {}
+    for c, chord in enumerate(chords):
+        for index in chord["notes"]:
+            chord_of.setdefault((claims[index], notes[index]["onset_sample"]), c)
+    for unit in units:
+        carried = unit.get("carried")
+        if not carried:
+            continue
+        found = [chord_of.get((carried["notes"], onset)) for onset in carried["onsets"]]
+        if found[0] is None:
+            continue
+        unit["fixed"] = found[0]
+        unit["blocked"] = [c for c in found if c is not None]
+        for c in found[1:]:
+            if c is not None and c != found[0]:
+                chords[c]["melisma_of"] = unit
+
+
 def _fill(units: list[dict[str, Any]], chosen: list[int | None], chords: list[dict[str, Any]],
           rule: RhythmRule, rate: int, counts: dict[str, int]) -> None:
     """Give every skipped unit a note: split the chord sounding at its start,
-    or add one at its neighbours' pitch, marked `from`."""
+    or add one at its neighbours' pitch, marked `from`. Only a machine's
+    chords are split, and a note is added only between a machine's; a
+    unit that would change a person's or a document's notes is counted
+    unplaced."""
     for n, unit in enumerate(units):
         if chosen[n] is not None:
             continue
@@ -987,6 +1054,9 @@ def _fill(units: list[dict[str, Any]], chosen: list[int | None], chords: list[di
         hit = next((j for j in range(max(0, low), high)
                     if chords[j]["onset"] + margin <= t <= chords[j]["offset"] - margin), None)
         if hit is not None and (hit != low or t - chords[hit]["onset"] > rule.split_min_s * rate):
+            if not chords[hit]["machine"]:
+                counts["syllables_unplaced"] += 1
+                continue
             old = chords[hit]
             new = {**old, "onset": t, "notes": list(old["notes"]), "pitches": list(old["pitches"]),
                    "from": "syllable split"}
@@ -996,7 +1066,7 @@ def _fill(units: list[dict[str, Any]], chosen: list[int | None], chords: list[di
             counts["syllables_split"] += 1
         else:
             near = [chords[j]["pitches"][-1] for j in (low, high) if 0 <= j < len(chords)]
-            if not near:
+            if not near or not all(chords[j]["machine"] for j in (low, high) if 0 <= j < len(chords)):
                 counts["syllables_unplaced"] += 1
                 continue
             pitch = near[0]         # the note before it carries on; else the note after
@@ -1007,7 +1077,7 @@ def _fill(units: list[dict[str, Any]], chosen: list[int | None], chords: list[di
             if at > 0 and chords[at - 1]["offset"] > t:
                 chords[at - 1]["offset"] = max(chords[at - 1]["onset"] + 1, t)
             chords.insert(at, {"onset": t, "offset": offset, "pitches": [pitch], "notes": [], "marks": [],
-                               "folded": 0, "from": "syllable inferred"})
+                               "folded": 0, "machine": True, "from": "syllable inferred"})
             counts["syllables_inferred"] += 1
         for m in range(len(chosen)):
             if chosen[m] is not None and chosen[m] >= at:
@@ -1016,14 +1086,15 @@ def _fill(units: list[dict[str, Any]], chosen: list[int | None], chords: list[di
 
 
 def _fold_octaves(chords: list[dict[str, Any]], rule: RhythmRule, rate: int) -> int:
-    """Move a single note an octave when it lies far from the median of its
-    neighbours and the octave brings it near; returns how many moved."""
+    """Move a machine's single note an octave when it lies far from the
+    median of its neighbours and the octave brings it near; returns how
+    many moved. A person's or a document's note is never moved."""
     folded = 0
     onsets = [c["onset"] for c in chords]
     reach = rule.octave_context_s * rate
     for _ in range(int(rule.octave_passes)):
         for i, chord in enumerate(chords):
-            if len(chord["pitches"]) != 1:
+            if len(chord["pitches"]) != 1 or not chord["machine"]:
                 continue
             low = bisect_right(onsets, chord["onset"] - reach - 1)
             high = bisect_right(onsets, chord["onset"] + reach)
@@ -1091,7 +1162,9 @@ def _eighth_at_or_after(tick: float, after: int) -> int:
 
 def written_rhythm(notes: list[dict[str, Any]], meter_payload: dict[str, Any], *, sample_rate: int,
                    layer: int = 0, lyrics: list[list[dict[str, Any]]] | None = None,
-                   version: str = "2") -> dict[str, Any]:
+                   version: str = "2", line: str = "vocal", fold_octaves: bool | None = None,
+                   fill_syllables: bool | None = None, claims: list[str | None] | None = None,
+                   machine_claims: Collection[str] | None = None) -> dict[str, Any]:
     """Sounded notes written on a meter's beat grid, as a musician would
     write them. `notes` are notes as a notes claim holds them (or a tune's),
     at `sample_rate`; `meter_payload` a checked timed meter claim's payload;
@@ -1109,10 +1182,23 @@ def written_rhythm(notes: list[dict[str, Any]], meter_payload: dict[str, Any], *
     `pitches` (with `folded`, the semitones an octave fold added), onset,
     sounded share, articulation, and where they apply `from`, `lyric`
     ({line, word, syllable, extend}) and `melisma`; for a rest its
-    boundary."""
+    boundary.
+
+    `line` (`vocal` or `bass`) picks the rule's default `switches`, and
+    `fold_octaves` and `fill_syllables` override them; the answer's `rule`
+    repeats the switches applied. They only ever change a machine's notes:
+    `claims` gives each note's notes claim revision, and a note is a
+    machine's when its claim is in `machine_claims` (without `claims` or
+    `machine_claims`, every note is). A syllable whose `carried_by` names
+    a note's claim and onset is put on that note whatever the timing says
+    (ADR 0085, amended), its later onsets a melisma ending its extender."""
     if version not in RHYTHM_RULES:
         raise NotesError(f"no written rhythm rule has version {version}")
     rule = RHYTHM_RULES[version]
+    switches = rule.switched(line, fold_octaves=fold_octaves, fill_syllables=fill_syllables)
+
+    def machine(index: int) -> bool:
+        return claims is None or machine_claims is None or claims[index] in machine_claims
     rate = sample_rate
     beats, bar_starts, end = beat_grid(meter_payload, layer)
     grid = _Grid(beats, end, rate)
@@ -1131,26 +1217,34 @@ def written_rhythm(notes: list[dict[str, Any]], meter_payload: dict[str, Any], *
             chord["pitches"].append(note["pitch"])
             chord["offset"] = max(chord["offset"], note["offset_sample"])
             chord["marks"] = sorted(set(chord["marks"]) | set(note.get("articulation", [])))
+            chord["machine"] = chord["machine"] and machine(index)
         else:
             chords.append({"onset": note["onset_sample"], "offset": note["offset_sample"], "notes": [index],
-                           "pitches": [note["pitch"]], "marks": sorted(note.get("articulation", [])), "folded": 0})
+                           "pitches": [note["pitch"]], "marks": sorted(note.get("articulation", [])), "folded": 0,
+                           "machine": machine(index)})
     for chord in chords:
         chord["pitches"].sort()
-    counts["octave_folded"] = _fold_octaves(chords, rule, rate)
+    if switches["fold_octaves"]:
+        counts["octave_folded"] = _fold_octaves(chords, rule, rate)
 
     units = _units(lines, beats[0].sample, end)
     counts["syllables"] = len(units)
     chosen: list[int | None] = []
     if units and chords:
+        _carried(units, chords, notes, claims)
         chosen = _align(units, [c["onset"] for c in chords], rule, rate)
-        _fill(units, chosen, chords, rule, rate, counts)
+        if switches["fill_syllables"]:
+            _fill(units, chosen, chords, rule, rate, counts)
+        else:
+            counts["syllables_unplaced"] += sum(1 for c in chosen if c is None)
     elif units:
         counts["syllables_unplaced"] = len(units)
     unit_of = {chord: n for n, chord in enumerate(chosen) if chord is not None}
 
     clef, basis = "treble", {"below_treble_staff": "0", "above_treble_8vb_staff": "0"}
     if not chords:
-        return {"rule": rule.describe(), "feel": "straight", "offbeat_position": None, "onset_offset_samples": 0,
+        return {"rule": rule.describe(switches), "feel": "straight", "offbeat_position": None,
+                "onset_offset_samples": 0,
                 "clef": clef, "clef_basis": basis, "written": [], "left_out": left_out, "counts": counts}
 
     shift = _onset_offset([c["onset"] for c in chords], grid, rule)
@@ -1194,6 +1288,7 @@ def written_rhythm(notes: list[dict[str, Any]], meter_payload: dict[str, Any], *
 
     written: list[dict[str, Any]] = []
     last_syllable: dict[str, Any] | None = None
+    last_unit: dict[str, Any] | None = None
     for n, i in enumerate(keep):
         chord, k = chords[i], ticks[i]
         onset, offset = chord["onset"], chord["offset"]
@@ -1239,6 +1334,13 @@ def written_rhythm(notes: list[dict[str, Any]], meter_payload: dict[str, Any], *
         if i in unit_of:
             unit = units[unit_of[i]]
             last_syllable = item["lyric"] = {key: unit[key] for key in ("line", "word", "syllable") if key in unit}
+            last_unit = unit
+        elif last_syllable is not None and last_unit is not None and "fixed" in last_unit:
+            if chord.get("melisma_of") is last_unit:        # the syllable states its melisma
+                last_syllable["extend"] = True
+                item["melisma"] = True
+            else:
+                last_syllable = None
         elif last_syllable is not None and n > 0 and not phrase[i] and \
                 onset - chords[keep[n - 1]]["offset"] < rule.melisma_gap_s * rate:
             last_syllable["extend"] = True
@@ -1257,7 +1359,7 @@ def written_rhythm(notes: list[dict[str, Any]], meter_payload: dict[str, Any], *
     if below >= rule.parameters["clef_below_share"] and above <= rule.parameters["clef_above_share"]:
         clef = "treble-8vb"
     basis = {"below_treble_staff": _decimal_text(below), "above_treble_8vb_staff": _decimal_text(above)}
-    return {"rule": rule.describe(), "feel": "swing" if swing > 0.5 else "straight",
+    return {"rule": rule.describe(switches), "feel": "swing" if swing > 0.5 else "straight",
             "offbeat_position": None if offbeat is None else _decimal_text(Fraction(offbeat).limit_denominator(10000)),
             "onset_offset_samples": shift, "clef": clef, "clef_basis": basis, "written": written,
             "left_out": left_out, "counts": counts}

@@ -111,8 +111,8 @@ upgrades: ADR 0068.
 | `world/world.py` | 2138 | `_main` (line ~2013): `build`, `rebuild`, `refresh`, `query`, `musicbrainz-work`; `_project` (271), `_project_review_claim` (592), `_project_derivation_claim` (838), `_project_music_claim` (1083), `refresh_store`, `query` |
 | `world/harmony.py` | 889 | chord stacks, sequences, meter (ADR 0077) |
 | `world/contributions.py` | 810 | contributions, membership (ADR 0078) |
-| `world/documents.py`, `notes.py`, `circle.py` | 1081, 1263, 765 | documents, timed lyrics and syllables, sensitivity and rights, `Reacher` (0085); notes, melody, `tune_notes`, `written_rhythm` (0086); sharing gate, readable set, `beyond_circle`, `may_publish` (0088, 0085) |
-| `world/record_views.py`, `contract_graphs.py` | 552, 565 | the record views (`VIEWS` at the end); `RECHECKS`, contract to checker |
+| `world/documents.py`, `notes.py`, `circle.py` | 1081, 1365, 765 | documents, timed lyrics and syllables, sensitivity and rights, `Reacher` (0085); notes, melody, `tune_notes`, `written_rhythm` (0086); sharing gate, readable set, `beyond_circle`, `may_publish` (0088, 0085) |
+| `world/record_views.py`, `contract_graphs.py` | 588, 565 | the record views (`VIEWS` at the end); `RECHECKS`, contract to checker |
 | `world/conformance.py` | 176 | checks a store against `world/projection/6/` |
 | `world/projection/6/*.ttl`, `projection.json` | 18-440 | named graphs, SHACL shapes, vocabulary |
 | `world/examples/*.sparql` | | example queries, checked by tests |
