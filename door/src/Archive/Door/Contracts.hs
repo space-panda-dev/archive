@@ -1472,7 +1472,9 @@ validateContractInstance schema instanceValue = do
   validateSchema schema
   matches <- evaluateSchema schema [] schema instanceValue
   if not matches
-    then Left "contract instance does not satisfy its schema"
+    then do
+      reason <- explainMismatch schema [] [] schema instanceValue
+      Left ("contract instance does not satisfy its schema: " <> reason)
     else do
       effective <- effectiveSchema schema instanceValue
       validateContractProfile effective instanceValue
@@ -1787,6 +1789,134 @@ validateSchemaNodeForEvaluation root path fields = do
   rejectUnknownSchemaKeywords path fields
   validateRef root fields
   validateSchemaKeywordTypes fields
+
+-- | Name the first rule an instance breaks, for a refusal a person can act
+-- on: where in the instance (a JSON Pointer from @{"payload", "refs"}@) and
+-- which keyword of which part of the schema. Called only after
+-- 'evaluateSchema' answered no; it descends into the first failing
+-- property, item, @allOf@ branch, @$ref@, or applicable @then@/@else@, and
+-- otherwise names the keyword at the node where the instance fails.
+explainMismatch :: Value -> [Text] -> [Text] -> Value -> Value -> Either Text Text
+explainMismatch root path location (Object fields) value = do
+  let fails schemaPath' schema item = not <$> evaluateSchema root schemaPath' schema item
+      at = instancePointer location
+      leaf keyword = Right (at <> " breaks " <> keyword <> " of the " <> schemaPath path)
+      firstJust [] = Right Nothing
+      firstJust (step : rest) = step >>= maybe (firstJust rest) (pure . Just)
+      reasons = firstJust
+        [ case KeyMap.lookup "$ref" fields of
+            Just (String reference) | Just target <- resolvePointer root reference -> do
+              broken <- fails path target value
+              if broken then Just <$> explainMismatch root path location target value else pure Nothing
+            _ -> pure Nothing
+        , firstJust
+            [ do
+                broken <- not <$> evaluateLeaf keyword
+                if broken then Just <$> leaf keyword else pure Nothing
+            | keyword <- leafKeywords, KeyMap.member (Key.fromText keyword) fields ]
+        , objectReason
+        , arrayReason
+        , case KeyMap.lookup "allOf" fields of
+            Just (Array schemas) -> firstJust
+              [ do
+                  let branchPath = ("allOf[" <> Text.pack (show index) <> "]") : path
+                  broken <- fails branchPath schema value
+                  if broken then Just <$> explainMismatch root branchPath location schema value else pure Nothing
+              | (index, schema) <- zip [0 :: Int ..] (toList schemas) ]
+            _ -> pure Nothing
+        , case KeyMap.lookup "anyOf" fields of
+            Just (Array schemas) -> do
+              matched <- or <$> mapM (\schema -> evaluateSchema root ("anyOf" : path) schema value) (toList schemas)
+              if matched then pure Nothing else Just <$> leaf "anyOf (it matches none of the choices)"
+            _ -> pure Nothing
+        , case KeyMap.lookup "not" fields of
+            Just schema -> do
+              matched <- evaluateSchema root ("not" : path) schema value
+              if matched then Just <$> leaf "not (it matches what is forbidden)" else pure Nothing
+            Nothing -> pure Nothing
+        , case KeyMap.lookup "if" fields of
+            Just condition -> do
+              holds <- evaluateSchema root ("if" : path) condition value
+              let name = if holds then "then" else "else"
+              case KeyMap.lookup (Key.fromText name) fields of
+                Just schema -> do
+                  broken <- fails (name : path) schema value
+                  if broken then Just <$> explainMismatch root (name : path) location schema value else pure Nothing
+                Nothing -> pure Nothing
+            Nothing -> pure Nothing
+        , do
+            broken <- not <$> evaluateObjectKeywords
+              (\schema item -> evaluateSchema root ("propertyNames" : path) schema item) fields value
+            if broken
+              then Just <$> leaf (Text.intercalate ", " [k | k <- objectKeywordNames, KeyMap.member (Key.fromText k) fields])
+              else pure Nothing
+        ]
+      evaluateLeaf keyword =
+        let only = KeyMap.filterWithKey (\key _ -> Key.toText key == keyword) fields
+        in and <$> sequence [ evaluateType only value, evaluateConst only value, evaluateEnum only value
+                            , evaluateMinimum only value, evaluateMaximum only value, evaluateString only value ]
+      objectReason = case value of
+        Object object -> do
+          let missing = case KeyMap.lookup "required" fields of
+                Just (Array names) -> [name | String name <- toList names, not (KeyMap.member (Key.fromText name) object)]
+                _ -> []
+              properties = case KeyMap.lookup "properties" fields of
+                Just (Object definitions) -> definitions
+                _ -> KeyMap.empty
+              property (key, item) = case KeyMap.lookup key properties of
+                Just schema -> nested (Key.toText key : path) schema
+                Nothing -> case KeyMap.lookup "additionalProperties" fields of
+                  Just (Bool False) -> pure (Just (instancePointer (Key.toText key : location)
+                    <> " is a member the " <> schemaPath path <> " does not allow"))
+                  Just schema@(Object _) -> nested ("additionalProperties" : path) schema
+                  _ -> pure Nothing
+                where
+                  nested schemaPath' schema = do
+                    broken <- fails schemaPath' schema item
+                    if broken
+                      then Just <$> explainMismatch root schemaPath' (Key.toText key : location) schema item
+                      else pure Nothing
+          if not (null missing)
+            then Just <$> leaf ("required (" <> Text.intercalate ", " missing <> " missing)")
+            else firstJust (map property (KeyMap.toList object))
+        _ -> pure Nothing
+      arrayReason = case value of
+        Array values -> do
+          let items = toList values
+          fromItems <- case KeyMap.lookup "items" fields of
+            Just schema@(Object _) -> firstJust
+              [ do
+                  broken <- fails ("items" : path) schema item
+                  if broken
+                    then Just <$> explainMismatch root ("items" : path) (Text.pack (show index) : location) schema item
+                    else pure Nothing
+              | (index, item) <- zip [0 :: Int ..] items ]
+            _ -> pure Nothing
+          case fromItems of
+            Just reason -> pure (Just reason)
+            Nothing -> firstJust
+              [ do
+                  let only = KeyMap.filterWithKey (\key _ -> Key.toText key `elem` (name : companions)) fields
+                  broken <- not <$> evaluateArray root path only value
+                  if broken then Just <$> leaf name else pure Nothing
+              | (name, companions) <- [("minItems", []), ("maxItems", []), ("uniqueItems", []),
+                                       ("contains", ["minContains", "maxContains"])]
+              , KeyMap.member (Key.fromText name) fields ]
+        _ -> pure Nothing
+  found <- reasons
+  pure (maybe (instancePointer location <> " does not satisfy the " <> schemaPath path) id found)
+explainMismatch _ path location _ _ = Right (instancePointer location <> " does not satisfy the " <> schemaPath path)
+
+leafKeywords :: [Text]
+leafKeywords = ["type", "const", "enum", "minimum", "maximum", "pattern", "minLength", "maxLength", "format"]
+
+-- | A JSON Pointer to a place in the instance, from its reversed path.
+instancePointer :: [Text] -> Text
+instancePointer [] = "the instance"
+instancePointer location =
+  "/" <> Text.intercalate "/" (map escape (reverse location))
+  where
+    escape = Text.replace "/" "~1" . Text.replace "~" "~0"
 
 evaluateType :: KeyMap.KeyMap Value -> Value -> Either Text Bool
 evaluateType fields value = case KeyMap.lookup "type" fields of

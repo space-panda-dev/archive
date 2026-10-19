@@ -830,7 +830,9 @@ def _others(cover: list, excluded: list[dict[str, Any]], judgments: Judgments) -
 
 def lead_sheet_current(world: list[dict[str, Any]], subject: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
     """Which lead sheet of a Work, and of one recording when the subject
-    names one, the viewer reads (decision D4.1). By default the viewer's
+    names one, the viewer reads (decision D4.1). A lead sheet is for the
+    recording its `recording` reference names or, without one, for its
+    `source` Artifact; one with no `recording` is also read for the Work. By default the viewer's
     chosen person's; or the band's, a lead sheet whose agent is the band
     (ADR 0078 membership names its members). Every other head lead sheet of
     the same Work is listed beside it. Two of the chosen agent's own lead
@@ -842,7 +844,12 @@ def lead_sheet_current(world: list[dict[str, Any]], subject: dict[str, Any], par
         works, recordings = _refs(claim, "work"), _refs(claim, "recording")
         if not works or works[0]["id"] != subject["work"] or judgments.withdrawn(claim):
             continue
-        if [r["id"] for r in recordings] != ([subject["recording"]] if "recording" in subject else []):
+        if "recording" in subject:
+            # A lead sheet is for the recording it names, or, naming none,
+            # for its `source`: the audio its timed inputs count.
+            if [r["id"] for r in recordings or _refs(claim, "source")] != [subject["recording"]]:
+                continue
+        elif recordings:
             continue
         sheets.append(claim)
     sheets.sort(key=lambda c: c["revision_id"])

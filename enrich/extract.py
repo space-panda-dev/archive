@@ -98,13 +98,52 @@ def now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+def sniff_media_type(path: Path) -> str | None:
+    """The media type the file's first bytes declare, for content with no
+    telling suffix (an archive's content files have none): the containers
+    the extractors accept and the images a card holds, or None."""
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(16)
+    except OSError:
+        return None
+    if head[:4] == b"RIFF" and head[8:12] == b"WAVE":
+        return "audio/wav"
+    if head[:4] == b"fLaC":
+        return "audio/flac"
+    if head[:4] == b"OggS":
+        return "audio/ogg"
+    if head[:4] == b"FORM" and head[8:12] in (b"AIFF", b"AIFC"):
+        return "audio/aiff"
+    if head[:3] == b"ID3" or (len(head) >= 2 and head[0] == 0xFF and head[1] & 0xE0 == 0xE0 and head[1] & 0x06):
+        return "audio/mpeg"
+    if head[:4] == b"\x1aE\xdf\xa3":
+        return "video/x-matroska"
+    if head[4:8] == b"ftyp":
+        brand = head[8:12]
+        if brand == b"qt  ":
+            return "video/quicktime"
+        if brand in (b"heic", b"heix", b"mif1", b"msf1"):
+            return "image/heic"
+        return "audio/mp4" if brand in (b"M4A ", b"M4B ") else "video/mp4"
+    if head[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if head[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    return None
+
+
 def media_type_of(path: Path) -> str:
+    """The media type of a content file: by its suffix, or, when the suffix
+    tells nothing (an archive's `.blob` content), by its first bytes."""
     suffix = path.suffix.lower()
     if suffix in _MEDIA_TYPES:
         return _MEDIA_TYPES[suffix]
     guessed, _ = mimetypes.guess_type(path.name)
     if guessed is None:
-        raise RunError(f"cannot tell the media type of {path}; pass --media-type")
+        guessed = sniff_media_type(path)
+    if guessed is None:
+        raise RunError(f"cannot tell the media type of {path} from its name or its first bytes; pass --media-type")
     return guessed
 
 

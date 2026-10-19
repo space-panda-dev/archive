@@ -5388,6 +5388,14 @@ refuseNew root archiveId label namespace name draftFor expected = do
   assert label (code /= ExitSuccess && contains expected (err <> out)) code out err
   pure draft
 
+-- | The refusal code of a Door reply line, @{"ok": false, "error": {...}}@.
+replyCode :: String -> Maybe Aeson.Value
+replyCode text = case Aeson.decode (LazyByteString.pack text) of
+  Just (Aeson.Object reply)
+    | Just (Aeson.Bool False) <- KeyMap.lookup "ok" reply
+    , Just (Aeson.Object problem) <- KeyMap.lookup "error" reply -> KeyMap.lookup "code" problem
+  _ -> Nothing
+
 admitDraft :: FilePath -> String -> String -> String -> String
            -> IO (ExitCode, String, String)
 admitDraft root objectId namespace name draft = do
@@ -5578,6 +5586,27 @@ reviewContractAdmissionChecks parent = do
     "archive.claim/selection_kind" "review-kind-bad"
     (contractRecord "claim" kindContract (stringField "kind" "jazz") [pinned "selection" selection])
     "contract instance does not satisfy its schema"
+  _ <- refuseNew root archiveId "a schema refusal names where the instance fails and the rule it breaks"
+    "archive.claim/selection_kind" "review-kind-bad-named"
+    (contractRecord "claim" kindContract (stringField "kind" "jazz") [pinned "selection" selection])
+    "contract instance does not satisfy its schema: /payload/kind breaks enum of the contract schema at payload.kind"
+  _ <- refuseNew root archiveId "a schema refusal names a member the schema does not allow"
+    "archive.claim/selection_kind" "review-kind-extra"
+    (contractRecord "claim" kindContract
+      "{\"kind\":\"talking\",\"mood\":\"calm\"}" [pinned "selection" selection])
+    "/payload/mood is a member the contract schema at payload does not allow"
+  jsonRefusalObject <- allocatedObjectId archiveId "archive.claim/selection_kind" "review-kind-json"
+  (jsonRefusalCode, jsonRefusalOut, jsonRefusalErr) <- admitDraft root jsonRefusalObject
+    "archive.claim/selection_kind" "review-kind-json"
+    (contractRecord "claim" kindContract (stringField "kind" "jazz") [pinned "selection" selection]
+      jsonRefusalObject)
+  assert "a command-line refusal says it on stderr for a person, then as the service's JSON reply"
+    (jsonRefusalCode /= ExitSuccess && null jsonRefusalOut
+      && case lines jsonRefusalErr of
+           [human, reply] -> "door: contract instance does not satisfy its schema" `isPrefixOf` human
+             && replyCode reply == Just (Aeson.String "proposal_refused")
+           _ -> False)
+    jsonRefusalCode jsonRefusalOut jsonRefusalErr
   assert "the kind fixture changes only the kind value"
     (contains "\"kind\":\"jazz\"" badKind) ExitSuccess "" ""
   v1Contract <- contractCitationVersion root "archive.claim/audio_selection" "1"

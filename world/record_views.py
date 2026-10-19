@@ -25,7 +25,7 @@ Records are given as `world/views.py` takes them, with `object_id`, `at`,
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any, Callable
 
 from world import catalogue, circle, documents, form, judgments, lead_sheets, notes
@@ -87,7 +87,7 @@ def _operator(world: list[dict[str, Any]]) -> str:
 
 
 def _on(params: dict[str, Any]) -> str:
-    value = params.get("on", date.today().isoformat())
+    value = params.get("on", datetime.now(timezone.utc).date().isoformat())  # Door's day: UTC
     if not isinstance(value, str) or not DATE.fullmatch(value):
         raise _bad("parameters on must be a date, YYYY-MM-DD")
     try:

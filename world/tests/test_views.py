@@ -111,9 +111,11 @@ class World:
         if version == "1":
             assert set(payload) == {"verdict"}, "a version 1 judgment assesses a whole claim"
 
-    def lead_sheet(self, agent: str, recording: str | None = None) -> dict:
+    def lead_sheet(self, agent: str, recording: str | None = None, source: str | None = None) -> dict:
         oid, rid = self._next()
         record_refs = [{"role": "work", "id": WORK, "revision_id": rev(0x99)}]
+        if source:
+            record_refs.append({"role": "source", "id": source, "revision_id": rev(0x95)})
         if recording:
             record_refs.append({"role": "recording", "id": recording, "revision_id": rev(0x98)})
         record = {"revision_id": rid, "id": oid, "shape": "claim", "contract": ["archive.claim/lead_sheet", "1"],
@@ -605,6 +607,23 @@ class LeadSheets(unittest.TestCase):
         self.assertEqual(len(self.ask(world)["conflict"]), 2)
         self.assertNotIn("chosen", self.ask(world))
         self.assertEqual(self.ask(world, recording=RECORDING)["chosen"]["claim"], for_take["revision_id"])
+
+    def test_a_lead_sheet_without_a_recording_is_for_its_source(self):
+        world = World()
+        take, other = uid(0x506), uid(0x507)
+        # Anchor: the two takes differ, and neither is the recording Entity.
+        self.assertEqual(len({take, other, RECORDING}), 3)
+        of_take = world.lead_sheet(PERSON, source=take)
+        world.lead_sheet(PERSON, source=other)
+        named = world.lead_sheet(PERSON, recording=RECORDING, source=take)
+        self.assertEqual(self.ask(world, recording=take)["chosen"]["claim"], of_take["revision_id"])
+        self.assertEqual(self.ask(world, recording=RECORDING)["chosen"]["claim"], named["revision_id"])
+        # A sheet naming a recording is not also for its source.
+        self.assertNotIn(named["revision_id"],
+                         [c["claim"] for c in self.ask(world, recording=take).get("conflict", [])])
+        self.assertIn("asserted no lead sheet", self.ask(world, recording=uid(0x508))["why"])
+        # For the Work alone, the two source-only sheets are both read: a conflict.
+        self.assertEqual(len(self.ask(world)["conflict"]), 2)
 
     def test_withdrawn_and_superseded_lead_sheets_are_not_read(self):
         world = World()

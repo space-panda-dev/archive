@@ -26,7 +26,7 @@ import qualified Network.Socket as Socket
 import qualified Network.Socket.ByteString as SocketBytes
 import System.Directory (doesPathExist, removeFile)
 import System.Environment (getArgs)
-import System.Exit (die)
+import System.Exit (ExitCode (..), die, exitWith)
 import System.FilePath (takeDirectory)
 import System.IO (hPutStrLn, stderr)
 import System.Posix.Files
@@ -73,9 +73,19 @@ verifyArchive = do
 -- message it reports before exiting non-zero (ADR 0058).
 type Answer = Either Refusal Aeson.Value
 
+-- | A refusal writes no stdout: stderr says it for a person on one line and,
+-- on the next, for a program, as the same @{"ok": false, "error": ...}@ the
+-- service answers, so a caller of the command line reads the code too.
 cli :: IO Answer -> IO ()
-cli action = action >>= either (die . ("door: " <>) . Text.unpack . refusalMessage)
-  (LazyByteString.putStrLn . encodeCanonical)
+cli action = action >>= either refuse (LazyByteString.putStrLn . encodeCanonical)
+  where
+    refuse problem = do
+      hPutStrLn stderr ("door: " <> Text.unpack (refusalMessage problem))
+      LazyByteString.hPutStrLn stderr (encodeCanonical (refusalReply problem))
+      exitWith (ExitFailure 1)
+
+refusalReply :: Refusal -> Aeson.Value
+refusalReply problem = Aeson.object ["ok" .= False, "error" .= refusalValue problem]
 
 refusal :: RefusalCode -> Text -> Refusal
 refusal code message = Refusal code message []
@@ -220,7 +230,7 @@ serve path = do
       | otherwise = do
           chunk <- SocketBytes.recv connection 65536
           unless (ByteString.null chunk) (drain connection (seen + ByteString.length chunk))
-    failure problem = Aeson.object ["ok" .= False, "error" .= refusalValue problem]
+    failure = refusalReply
     respond request = case Aeson.eitherDecodeStrict request of
       Left problem -> pure (Left (refusal RequestMalformed ("request is not JSON: " <> Text.pack problem)))
       Right (Aeson.Object fields) -> case (KeyMap.lookup "command" fields, KeyMap.lookup "proposal" fields) of

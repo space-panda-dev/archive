@@ -1097,6 +1097,40 @@ class Preferences(unittest.TestCase):
         self.assertEqual(catalog.overrides_for("other/f", {"sep": {"mode": "x"}}), {"sep": {"mode": "x"}})
 
 
+class MediaType(unittest.TestCase):
+    """Archive content files have no telling suffix (`.blob`), so the runner
+    reads the media type from the first bytes."""
+
+    def test_suffix_less_content_is_read_by_its_first_bytes(self) -> None:
+        directory = Path(tempfile.mkdtemp(prefix="bank-type-"))
+        self.addCleanup(shutil.rmtree, directory, True)
+        wav = support.write_wav(directory / "tone.wav", [0.0] * 800, 8000)
+        blob = directory / "content.blob"
+        shutil.copyfile(wav, blob)
+        # Anchor: the name alone tells nothing.
+        self.assertIsNone(extract.mimetypes.guess_type(blob.name)[0])
+        self.assertEqual(extract.media_type_of(blob), "audio/wav")
+        flac = directory / "other.blob"
+        flac.write_bytes(b"fLaC" + bytes(40))
+        self.assertEqual(extract.media_type_of(flac), "audio/flac")
+        completed = subprocess.run([sys.executable, str(Path(extract.__file__)), "run", "loudness-r128",
+                                    "--content", str(blob), "--bank", str(directory / "b"), "--dry-run"],
+                                   capture_output=True, text=True)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout)["extractors"]["loudness-r128"]["status"], "would_run")
+
+    def test_unknown_or_unreadable_content_still_needs_media_type(self) -> None:
+        directory = Path(tempfile.mkdtemp(prefix="bank-type-"))
+        self.addCleanup(shutil.rmtree, directory, True)
+        unknown = directory / "content.blob"
+        unknown.write_bytes(b"not a known container")
+        for path in (unknown, directory / "missing.blob"):
+            with self.assertRaisesRegex(extract.RunError, "pass --media-type"):
+                extract.media_type_of(path)
+        # The suffix still wins, without reading the file.
+        self.assertEqual(extract.media_type_of(directory / "card.WAV"), "audio/wav")
+
+
 @needs_ffmpeg
 class ShellExtractor(unittest.TestCase):
     """An extractor in another language, run by the same runner."""

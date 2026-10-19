@@ -163,6 +163,23 @@ class ProposeCommand(unittest.TestCase):
                                        self.objects["quiet"]["object_id"]: "nothing_proposed"})
         code, answer = self.propose("--all", "--proposers", "chords-chordino,beats")
         self.assertEqual((code, answer["status"]), (0, "unchanged"), answer)
+        # The runs' parameters Artifacts are not recordings, so nothing is unprobed.
+        self.assertNotIn("unprobed", answer)
+
+    def test_all_names_the_recordings_never_probed(self) -> None:
+        root, manifest = support.build_archive(self, {"mix": self.wav, "quiet": self.quiet})
+        self.root, self.objects = root, manifest["objects"]
+        code, answer = self.enrich("probe", "--artifact", self.objects["mix"]["object_id"],
+                                   "--ffprobe", support.FFPROBE)
+        self.assertEqual(code, 0, answer)
+        code, answer = self.propose("--all", "--proposers", "beats")
+        self.assertEqual((code, answer["status"]), (0, "committed"), answer)
+        quiet = self.objects["quiet"]
+        self.assertEqual(answer["unprobed"], [{"artifact": {"id": quiet["object_id"],
+                                                            "revision_id": quiet["revision_id"]},
+                                               "media_type": "audio/wav"}])
+        self.assertIn("1 audio or video Artifact has no audio_stream claim", answer["detail"])
+        self.assertIn("enrich probe --artifact", answer["detail"])
 
     def test_a_failed_proposer_keeps_what_the_ones_before_it_made(self) -> None:
         damaged = self.tmp / "bank"

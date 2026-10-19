@@ -196,10 +196,17 @@ def run(args: argparse.Namespace, env: dict[str, str], reader: adapter.ArchiveRe
     answers: list[dict[str, Any]] = []
     artifacts = [record for record in reader.records
                  if record["shape"] == "artifact" and reader.heads.get(record["object_id"]) is record]
+    unprobed: list[dict[str, Any]] = []
+    unexamined = 0
     for artifact in artifacts:
         artifact = reader.head(artifact["object_id"])  # the reader may have been refreshed since
         claims = stream_claims(reader, artifact)
         if not claims:
+            media_type = local_media_type(reader.root, artifact)
+            if media_type is None:
+                unexamined += 1
+            elif media_type.startswith(("audio/", "video/")):
+                unprobed.append({"artifact": pin(artifact), "media_type": media_type})
             continue
         if len(claims) > 1:
             answers.append({"artifact": pin(artifact), "status": "nothing_proposed",
@@ -213,7 +220,37 @@ def run(args: argparse.Namespace, env: dict[str, str], reader: adapter.ArchiveRe
                 answers.append(exc.answer)
             raise ProposeError(str(exc), {"artifacts": answers}) from exc
     status = strongest([answer["status"] for answer in answers])
-    return (NOTHING_PROPOSED if status == "nothing_proposed" else 0), {"status": status, "artifacts": answers}
+    answer = {"status": status, "artifacts": answers}
+    answer.update(unprobed_report(unprobed, unexamined))
+    return (NOTHING_PROPOSED if status == "nothing_proposed" else 0), answer
+
+
+def local_media_type(root: Path, artifact: dict[str, Any]) -> str | None:
+    """The media type the first bytes of the Artifact's local content declare
+    ("" when they name none), or None when its content is not here to read."""
+    hexdigest = artifact["payload"]["content"]["digest"].removeprefix("sha256:")
+    path = Path(root) / "content" / "sha256" / hexdigest[0:2] / hexdigest[2:4] / hexdigest
+    if not path.is_file():
+        return None
+    return extract.sniff_media_type(path) or ""
+
+
+def unprobed_report(unprobed: list[dict[str, Any]], unexamined: int) -> dict[str, Any]:
+    """What `--all` passed over because no audio_stream claim is about it:
+    proposers measure against a probed stream, so a recording never probed
+    proposes nothing until `enrich probe` has run on it."""
+    if not unprobed and not unexamined:
+        return {}
+    parts = []
+    if unprobed:
+        parts.append(f"{len(unprobed)} audio or video Artifact{'s' if len(unprobed) != 1 else ''} "
+                     f"{'have' if len(unprobed) != 1 else 'has'} no audio_stream claim, so nothing was proposed "
+                     f"for {'them' if len(unprobed) != 1 else 'it'}: run `enrich probe --artifact <id>` on each "
+                     f"listed in `unprobed`, then propose again")
+    if unexamined:
+        parts.append(f"{unexamined} other Artifact{'s' if unexamined != 1 else ''} with no audio_stream claim "
+                     f"{'have' if unexamined != 1 else 'has'} no local content to examine")
+    return {"unprobed": unprobed, "detail": "; ".join(parts)}
 
 
 def add_arguments(command: argparse.ArgumentParser) -> None:

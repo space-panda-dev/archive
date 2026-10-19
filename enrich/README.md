@@ -596,7 +596,13 @@ proposes nothing and says which features it lacked.
   it has several, as `enrich detect` does, and must describe the first audio
   stream, the one every extractor decodes. `--all` proposes for every
   Artifact with exactly one audio stream claim, one at a time (an Artifact
-  with several is reported and left for `--artifact`): the backfill.
+  with several is reported and left for `--artifact`): the backfill. A
+  recording never probed has no audio stream claim, so `--all` cannot propose
+  for it: the answer lists each Artifact with no such claim whose local
+  content's first bytes are audio or video under `unprobed`, says in
+  `detail` to run `enrich probe` on them first, and counts the Artifacts
+  with no claim and no local content. It never probes for you: a probe is
+  its own proposal to Door.
 - `--bank` defaults to `ARCHIVE_FEATURE_BANK`; with neither, the command
   fails.
 - Each proposer is one derivation run and its claims, in one Door batch. The
@@ -794,7 +800,7 @@ to stderr and exits 1. It needs `ffmpeg` and `ffprobe` (`--ffmpeg` and
 ```sh
 enrich/extract.py list
 enrich/extract.py run <extractor|all> --content <file> --bank <dir> [--digest sha256:<hex>] [--jobs n]
-                  [--from <extractor>/<output>] [--config <file>] [--program name=path]...
+                  [--media-type <type>] [--from <extractor>/<output>] [--config <file>] [--program name=path]...
                   [--extractors <dir>]... [--dry-run]
 ```
 
@@ -808,7 +814,10 @@ program in any language; the runner orders an extractor after the features
 it needs, runs only what is missing, checks every output against the
 manifest, and renames a complete entry into place. It prints each extractor's
 `hit`, `ran`, `failed`, `blocked`, or `skipped` and exits 0 only when none
-failed or was blocked. `bank.py` reads entries back
+failed or was blocked. The content's media type is `--media-type`, or else
+its suffix, or else, for a file whose name tells nothing (an archive's
+`.blob` content), its first bytes (WAV, FLAC, Ogg, AIFF, MP3, Matroska,
+MP4/QuickTime, JPEG, PNG, HEIC); a file none of these name is refused. `bank.py` reads entries back
 (`bank.Bank(root).entry(digest, "frames").series("hpcp")`), and
 `cover.py --bank <dir>` reads whole files' pitch-class profiles from it.
 

@@ -21,7 +21,7 @@ import hashlib
 import json
 import threading
 from dataclasses import dataclass
-from datetime import date
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -96,7 +96,7 @@ class Served:
         (and once a day, since rights terms are read on a date)."""
         version = world.PROJECTION_VERSION
         generation = world.selected_generation(self.config.world_store, version)
-        today = date.today()
+        today = datetime.now(timezone.utc).date()  # Door reads rights on the UTC day
         known = self.known_access
         if known is not None and (known.generation, known.today) == (generation, today):
             return known

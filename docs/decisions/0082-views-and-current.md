@@ -291,7 +291,10 @@ current rule; asking stays unsupported, and each needs its own named rule.
 subject is a `work` (an object identifier) and, optionally, a `recording`;
 it reads head lead sheet claims ([ADR 0084](0084-lead-sheets.md))
 about that Work, and for that recording when one is named, or for none when
-none is. Its one parameter `by` is exactly one of `{"person": <object>}`
+none is. A lead sheet is for the recording its `recording` reference names,
+or, when it has none, for its `source` Artifact (amended before 0.0.10's
+release: a client that pinned only `source` found no lead sheet for the
+recording); one without a `recording` reference also answers for the Work. Its one parameter `by` is exactly one of `{"person": <object>}`
 (by default the caller's person) or `{"band": <object>}`, an organisation
 Entity:
 
