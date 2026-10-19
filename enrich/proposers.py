@@ -21,8 +21,9 @@ computed exactly from the decimal text the bank wrote, and clamped to 0 and
 `sample_count`. A span that becomes empty is dropped; events that land on
 one sample are one.
 
-Only `bass` needs numpy, to average the stem's chroma; everything else uses
-the standard library.
+Only `bass`, `bass-line`, and the notes proposer's bleed filter need numpy,
+to average the stem's chroma and levels; everything else uses the standard
+library.
 """
 
 from __future__ import annotations
@@ -104,12 +105,16 @@ class Proposal:
 @dataclass(frozen=True)
 class Lacking:
     """Nothing to propose: the features absent from the bank, or, when they
-    are present, why they hold nothing to claim."""
+    are present, why they hold nothing to claim. `code` names a refusal a
+    caller can act on, such as `not_yet` for a method declared but not built."""
     missing: tuple[str, ...] = ()
     detail: str | None = None
+    code: str | None = None
 
     def as_json(self) -> dict[str, Any]:
         answer: dict[str, Any] = {}
+        if self.code:
+            answer["code"] = self.code
         if self.missing:
             answer["missing"] = list(self.missing)
         if self.detail:
@@ -434,6 +439,168 @@ def propose_bass(context: Context) -> Proposal | Lacking:
     return proposal
 
 
+# -- the bass line (ADR 0086, amended 2026-10-19) ---------------------------
+
+BASS_LINE_SETTINGS = {
+    "notes": "notes-basic-pitch/notes measured from stems/bass, each its midi rounded half to even",
+    "min_pitched_share": BASS_SETTINGS["min_pitched_share"],
+    "min_lead": BASS_SETTINGS["min_lead"],
+    "keep": "a note is kept when the frames of tonal from stems/bass whose centres lie within it are on average "
+            "at least min_pitched_share pitched and, where the strongest class of their mean bass_chroma leads "
+            "the next by at least min_lead, that class is the note's; a note over no frame is dropped",
+    "lead": BASS_SETTINGS["lead"],
+    "bin_0": BASS_SETTINGS["bin_0"],
+    "line": "one note at a time: of kept notes on one onset the lowest; a lower note cuts the one sounding at "
+            "its onset; a higher note starting under a sounding one is dropped",
+    "bass": "true: the bass line is a part of its own, never a melody",
+}
+
+
+def bass_line(rows: list[list[Any]], chroma: Any, pitched: Any, grid: dict[str, int],
+              context: Context) -> list[dict[str, int]]:
+    """The bass stem's notes as one line (see BASS_LINE_SETTINGS). Rows are
+    notes-basic-pitch's: onset_s, offset_s, midi, ..."""
+    import numpy
+    chroma = numpy.asarray(chroma, dtype=numpy.float64)
+    pitched = numpy.asarray(pitched, dtype=numpy.float64).reshape(-1)
+    if chroma.ndim != 2 or chroma.shape[1] != 12 or len(pitched) != chroma.shape[0]:
+        raise ProposerError("tonal/bass_chroma and tonal/pitched of the bass stem are not one frame grid of 12 classes")
+    centres = (grid["first_centre"] + numpy.arange(chroma.shape[0]) * grid["hop"]) / grid["sample_rate"]
+    min_share, min_lead = Decimal(BASS_SETTINGS["min_pitched_share"]), Decimal(BASS_SETTINGS["min_lead"])
+    kept: list[dict[str, int]] = []
+    for row in rows:
+        if not isinstance(row, list) or len(row) < 3:
+            raise ProposerError(f"notes-basic-pitch/notes has a row that is not onset, offset, midi: {row!r}")
+        onset_s, offset_s, midi = row[0], row[1], row[2]
+        if isinstance(midi, bool) or not isinstance(midi, (int, float)):
+            continue
+        pitch = int(Decimal(repr(midi)).quantize(Decimal(1), ROUND_HALF_EVEN))
+        onset = sample_of(onset_s, context.sample_rate, context.sample_count)
+        offset = sample_of(offset_s, context.sample_rate, context.sample_count)
+        if not 0 <= pitch <= 127 or offset <= onset or onset >= context.sample_count:
+            continue
+        frames = numpy.nonzero((centres >= onset_s) & (centres < offset_s))[0]
+        if len(frames) == 0 or Decimal(repr(float(pitched[frames].mean()))) < min_share:
+            continue
+        mean = chroma[frames].mean(axis=0)
+        order = numpy.argsort(-mean, kind="stable")
+        top, second = float(mean[order[0]]), float(mean[order[1]])
+        if top > 0:
+            lead = Decimal(repr((top - second) / top)).quantize(Decimal("0.0001"), rounding=ROUND_HALF_EVEN)
+            if lead >= min_lead and (int(order[0]) + 9) % 12 != pitch % 12:
+                continue
+        kept.append({"onset_sample": onset, "offset_sample": offset, "pitch": pitch})
+    line: list[dict[str, int]] = []
+    for note in sorted(kept, key=lambda n: (n["onset_sample"], n["pitch"])):
+        last = line[-1] if line else None
+        if last is None or note["onset_sample"] >= last["offset_sample"]:
+            line.append(dict(note))
+        elif note["onset_sample"] == last["onset_sample"] or note["pitch"] >= last["pitch"]:
+            continue  # the lowest on an onset came first; a higher note under a sounding one is dropped
+        else:
+            last["offset_sample"] = note["onset_sample"]
+            line.append(dict(note))
+    return line
+
+
+def bass_line_entries(context: Context) -> tuple[bank.Entry | None, bank.Entry | None, bank.Entry | None, list[str]]:
+    """The stems entry, notes-basic-pitch and tonal from stems/bass, and what is missing."""
+    stems = context.bank.entry(context.content, "stems")
+    notes = None if stems is None else context.bank.entry_from(context.content, "stems/bass", "notes-basic-pitch")
+    measured = None if stems is None else context.bank.entry_from(context.content, "stems/bass", "tonal")
+    missing = []
+    if stems is None:
+        missing.append("stems/bass")
+    if notes is None:
+        missing.append("notes-basic-pitch/notes from stems/bass")
+    if measured is None:
+        missing += ["tonal/bass_chroma from stems/bass", "tonal/pitched from stems/bass"]
+    return stems, notes, measured, missing
+
+
+def read_bass_line(proposal: Proposal, context: Context, notes: bank.Entry,
+                   measured: bank.Entry) -> list[dict[str, int]]:
+    read(proposal, context, notes, "notes")
+    read(proposal, context, measured, "bass_chroma")
+    read(proposal, context, measured, "pitched")
+    grid = measured.grid("bass_chroma")
+    if grid is None or grid != measured.grid("pitched"):
+        raise ProposerError("tonal/bass_chroma and tonal/pitched of the bass stem do not share a frame grid")
+    document = json.loads(notes.file("notes").read_text(encoding="utf-8"))
+    return bass_line(document.get("notes", []), measured.series("bass_chroma"), measured.series("pitched"), grid,
+                     context)
+
+
+def propose_bass_line(context: Context) -> Proposal | Lacking:
+    stems, notes, measured, missing = bass_line_entries(context)
+    if missing:
+        return Lacking(tuple(missing))
+    assert stems is not None and notes is not None and measured is not None
+    proposal = Proposal([], {**BASS_LINE_SETTINGS, "times": TIMES})
+    read(proposal, context, stems, "bass")
+    line = read_bass_line(proposal, context, notes, measured)
+    if not line:
+        return Lacking(detail="no note of the bass stem is pitched and agrees with its bass chroma")
+    if len(line) > MAX_NOTES:
+        raise ProposerError(f"the bass line holds {len(line)} notes; a claim holds at most {MAX_NOTES}")
+    proposal.outputs = [Planned(NOTES, "bass-line", {"sample_rate": context.sample_rate, "part": "bass",
+                                                     "stem": stem_citation(stems, "bass"), "bass": True,
+                                                     "notes": line})]
+    return proposal
+
+
+# -- separation bleed in a vocal line (ADR 0086, amended 2026-10-19) --------
+
+BLEED_SETTINGS = {
+    "applies_to": "notes read from a vocal stem; notes of the mix are proposed as measured",
+    "range_floor": "the duration-weighted 10th percentile of the run's note pitches, before any is dropped",
+    "below_range_semitones": "7",
+    "below_range": "a note more than below_range_semitones below range_floor is dropped",
+    "quiet_db": "20",
+    "unvoiced": "the voice counts as unvoiced over a note when the median of melody/level_db over the rows whose "
+                "centres lie within it is more than quiet_db below melody/loud_db",
+    "bass_match": "a note whose class is that of the bass line's notes for at least half its length, while the "
+                  "voice is unvoiced, is dropped; the bass line is the bass-line proposer's",
+}
+
+
+def drop_bleed(notes: list[dict[str, int]], levels: Any, grid: dict[str, int] | None, loud_db: Any,
+               bass: list[dict[str, int]] | None, rate: int) -> tuple[list[dict[str, int]], dict[str, int]]:
+    """A vocal line without separation bleed (see BLEED_SETTINGS), and how
+    many notes each rule dropped. `bass` None: no bass line to compare."""
+    import numpy
+    dropped = {"below_range": 0, "bass_match": 0}
+    if not notes:
+        return notes, dropped
+    pitches = numpy.array([n["pitch"] for n in notes], dtype=numpy.float64)
+    weights = numpy.array([n["offset_sample"] - n["onset_sample"] for n in notes], dtype=numpy.float64)
+    order = numpy.argsort(pitches, kind="stable")
+    cumulative = numpy.cumsum(weights[order])
+    floor = pitches[order][int(numpy.searchsorted(cumulative, 0.1 * cumulative[-1]))]
+    lowest = floor - int(BLEED_SETTINGS["below_range_semitones"])
+    kept: list[dict[str, int]] = []
+    levels = None if levels is None else numpy.asarray(levels, dtype=numpy.float64).reshape(-1)
+    for note in notes:
+        if note["pitch"] < lowest:
+            dropped["below_range"] += 1
+            continue
+        if bass and levels is not None and grid is not None and loud_db is not None:
+            onset, offset = note["onset_sample"], note["offset_sample"]
+            shared = sum(max(0, min(offset, b["offset_sample"]) - max(onset, b["onset_sample"]))
+                         for b in bass if b["pitch"] % 12 == note["pitch"] % 12)
+            if 2 * shared >= offset - onset:
+                first = grid["first_centre"] / grid["sample_rate"]
+                step = grid["hop"] / grid["sample_rate"]
+                low = max(0, int(numpy.ceil((onset / rate - first) / step)))
+                high = min(len(levels), int(numpy.ceil((offset / rate - first) / step)))
+                if high > low and float(numpy.median(levels[low:high])) < float(loud_db) - float(
+                        BLEED_SETTINGS["quiet_db"]):
+                    dropped["bass_match"] += 1
+                    continue
+        kept.append(note)
+    return kept, dropped
+
+
 # -- key, tuning, notes, sections (named in --proposers only) ---------------
 
 KEY_LABEL = re.compile(r"(?P<tonic>[A-G][#b]?) (?P<mode>[a-z]+(?: minor)?)(?P<scale> scale)?\Z")
@@ -589,9 +756,29 @@ def propose_notes(context: Context) -> Proposal | Lacking:
         notes.setdefault((onset, pitch), {"onset_sample": onset, "offset_sample": offset, "pitch": pitch})
     if not notes:
         return Lacking(detail="melody/notes holds no note inside the stream")
-    if len(notes) > MAX_NOTES:
-        raise ProposerError(f"melody/notes holds {len(notes)} notes; a claim holds at most {MAX_NOTES}")
-    proposal.outputs = [Planned(NOTES, "notes", {**payload, "notes": [notes[k] for k in sorted(notes)]})]
+    found = [notes[k] for k in sorted(notes)]
+    if payload["part"] == "bass":
+        payload["bass"] = True
+    if payload["part"] == "vocals":
+        proposal.settings["bleed"] = BLEED_SETTINGS
+        _, bass_notes, measured, missing = bass_line_entries(context)
+        bass = None
+        if missing:
+            proposal.settings["bleed"] = {**BLEED_SETTINGS, "bass_line": "not in the bank, so bass_match was not "
+                                          "applied: " + ", ".join(missing)}
+        else:
+            assert bass_notes is not None and measured is not None
+            bass = read_bass_line(proposal, context, bass_notes, measured)
+            read(proposal, context, entry, "level_db")
+            read(proposal, context, entry, "loud_db")
+        found, _ = drop_bleed(found, None if bass is None else entry.series("level_db"),
+                              entry.grid("level_db"), None if bass is None else entry.scalar("loud_db"), bass,
+                              context.sample_rate)
+        if not found:
+            return Lacking(detail="every note of melody/notes is separation bleed")
+    if len(found) > MAX_NOTES:
+        raise ProposerError(f"melody/notes holds {len(found)} notes; a claim holds at most {MAX_NOTES}")
+    proposal.outputs = [Planned(NOTES, "notes", {**payload, "notes": found})]
     return proposal
 
 
@@ -612,6 +799,42 @@ def propose_sections(context: Context) -> Proposal | Lacking:
     return proposal
 
 
+# -- timed lyrics by forced alignment (ADR 0085, amended 2026-10-19) -------
+#
+# Declared, not built. A machine's timed lyrics claim comes from aligning the
+# known lyric document to the vocal stem, never from ASR text. Its run uses
+# the lyric document's revision and stems/vocals by bank key, and its
+# parameters name the aligner, its version, the language, and the
+# syllabification rule; its `alignment.method` is "forced alignment", it
+# states no max_error_samples, and each syllable may name the vocal notes
+# claim's onsets that carry it. enrich's environment holds numpy and scipy
+# only: an aligner needs an acoustic model (a CTC phoneme or character model
+# and its weights), so it belongs in an interpreter of its own, as f0-python
+# holds PyTorch, run as an extractor over --from stems/vocals that is also
+# given the document's text.
+
+ALIGNMENT_REQUEST = {
+    "document": "the lyric document's revision (a pinned Artifact), whose lines and words the claim locates",
+    "stem": "stems/vocals of the recording, cited by bank key",
+    "language": "a BCP 47 tag, stated by the person who asks",
+    "syllabification": "the rule that splits a word into code point ranges",
+    "notes": "optional: the vocal notes claim whose onsets may carry syllables",
+}
+ALIGNMENT_NEEDS = (
+    "an aligner extractor (ADR 0074 manifest) run under its own interpreter with a pinned acoustic model",
+    "a way to give an extractor the lyric document's text beside the stem",
+    "a pinned syllabification rule",
+    "enrich propose given the lyric document's revision to pin",
+)
+
+
+def propose_timed_lyrics(context: Context) -> Proposal | Lacking:
+    """Refuses: forced alignment is declared (ALIGNMENT_REQUEST) but no
+    aligner is installed (ALIGNMENT_NEEDS)."""
+    return Lacking(missing=ALIGNMENT_NEEDS, code="not_yet",
+                   detail="forced alignment of a lyric document to the vocal stem is not built yet")
+
+
 PROPOSERS: dict[str, Proposer] = {proposer.id: proposer for proposer in (
     Proposer("chords-jiang", "1", propose_jiang),
     Proposer("chords-chordino", "1", propose_chordino),
@@ -619,8 +842,10 @@ PROPOSERS: dict[str, Proposer] = {proposer.id: proposer for proposer in (
     Proposer("bass", "1", propose_bass),
     Proposer("key", "1", propose_key),
     Proposer("tuning", "1", propose_tuning),
-    Proposer("notes", "1", propose_notes),
+    Proposer("notes", "2", propose_notes),
+    Proposer("bass-line", "1", propose_bass_line),
     Proposer("sections", "1", propose_sections),
+    Proposer("timed-lyrics", "0", propose_timed_lyrics),
 )}
 # The import proposes these; the others run only when named.
 DEFAULT = ("chords-jiang", "chords-chordino", "beats", "bass")

@@ -32,6 +32,7 @@ import proposers
 import support
 from test_beats_chords import (CHORDINO_CHANGES, CHORDINO_SECONDS, JIANG_LABELS, stand_in_programs)
 from test_cover import needs_essentia
+from test_notes import fake_python as basic_pitch_python
 from test_stems import fake_python
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -106,6 +107,8 @@ def fill_bank(directory: Path, content: Path) -> Path:
         run_extract(target, *common)
     run_extract("stems", *common, *stems)
     run_extract("tonal", *common, "--from", "stems/bass", *stems)
+    run_extract("notes-basic-pitch", *common, "--from", "stems/bass", *stems,
+                "--program", f"basic-pitch-python={basic_pitch_python(directory)}")
     run_extract("melody", *common, *stems)
     return root
 
@@ -244,7 +247,11 @@ class Missing(unittest.TestCase):
             "key": {"missing": ["tonal/key_regions"]},
             "tuning": {"missing": ["tonal/tuning_cents", "tonal/tuning_confidence", "tonal/tuning_drift"]},
             "notes": {"missing": ["melody/notes"]},
+            "bass-line": {"missing": ["stems/bass", "notes-basic-pitch/notes from stems/bass",
+                                      "tonal/bass_chroma from stems/bass", "tonal/pitched from stems/bass"]},
             "sections": {"missing": ["structure/sections"]},
+            "timed-lyrics": {"code": "not_yet", "missing": list(proposers.ALIGNMENT_NEEDS),
+                             "detail": "forced alignment of a lyric document to the vocal stem is not built yet"},
         })
 
     def test_the_default_proposers_are_registered_and_reach_their_functions(self) -> None:
@@ -254,7 +261,83 @@ class Missing(unittest.TestCase):
             self.assertEqual(proposer.id, name)
             self.assertIs(proposer.propose, getattr(proposers, "propose_" + {"chords-jiang": "jiang",
                                                                                "chords-chordino": "chordino"}
-                                                    .get(name, name)))
+                                                    .get(name, name).replace("-", "_")))
+
+    def test_the_melody_extractor_never_prefers_the_bass(self) -> None:
+        manifest = json.loads((Path(proposers.__file__).parent / "extractors" / "melody" / "extractor.json")
+                              .read_text())
+        preferred = [item["input"] for item in manifest["prefers"]]
+        self.assertTrue(preferred)  # anchor: it does prefer stems
+        self.assertFalse([name for name in preferred if name.endswith("/bass")])
+
+
+class BassLine(unittest.TestCase):
+    """notes-basic-pitch rows of the bass stem, kept by the bass proposer's
+    thresholds and made one line."""
+    GRID = {"first_centre": 0, "hop": 441, "sample_rate": RATE}  # a frame every 10 ms
+
+    def test_kept_by_chroma_and_pitch_then_one_note_at_a_time(self) -> None:
+        chroma = numpy.full((100, 12), 0.1)
+        chroma[:50, 3] = 1.0  # class C (bin 0 is A) leads in the first half; nothing leads after
+        pitched = numpy.ones(100)
+        pitched[95:] = 0
+        rows = [[0.0, 0.4, 48, 0.5], [0.0, 0.4, 36, 0.5],  # one onset: the lower is kept
+                [0.1, 0.3, 45, 0.5],                     # A under a leading C: dropped
+                [0.6, 0.9, 43, 0.5], [0.7, 0.8, 40, 0.5],  # nothing leads: kept, the lower cuts
+                [0.75, 0.95, 50, 0.5],                   # higher, under a sounding note: dropped
+                [0.96, 0.99, 41, 0.5]]                   # unpitched frames: dropped
+        context = proposers.Context(bank.Bank(Path(tempfile.gettempdir())), "sha256:" + "a" * 64, RATE, RATE)
+        line = proposers.bass_line(rows, chroma, pitched, self.GRID, context)
+        self.assertEqual(line, [{"onset_sample": 0, "offset_sample": 17640, "pitch": 36},
+                                {"onset_sample": 26460, "offset_sample": 30870, "pitch": 43},
+                                {"onset_sample": 30870, "offset_sample": 35280, "pitch": 40}])
+
+    def test_its_thresholds_are_the_bass_proposers(self) -> None:
+        for name in ("min_pitched_share", "min_lead", "lead", "bin_0"):
+            self.assertEqual(proposers.BASS_LINE_SETTINGS[name], proposers.BASS_SETTINGS[name])
+
+
+class Bleed(unittest.TestCase):
+    GRID = {"first_centre": 0, "hop": 441, "sample_rate": RATE}
+
+    @staticmethod
+    def note(pitch: int, start: float, end: float) -> dict:
+        return {"onset_sample": round(start * RATE), "offset_sample": round(end * RATE), "pitch": pitch}
+
+    def setUp(self) -> None:
+        self.levels = numpy.full(300, -10.0)
+        self.levels[100:150] = -40.0  # the voice is quiet from 1.0 to 1.5 s
+        self.sung = [self.note(60, 0, 0.5), self.note(64, 0.5, 0.9), self.note(67, 1.5, 2.0),
+                     self.note(72, 2.0, 2.5)]
+        self.low = self.note(45, 2.5, 2.6)
+        self.quiet_on_bass = self.note(55, 1.0, 1.4)
+        self.loud_on_bass = self.note(55, 2.6, 2.9)
+        self.bass = [self.note(43, 0.9, 1.5), self.note(43, 2.6, 3.0)]
+        self.notes = sorted([*self.sung, self.low, self.quiet_on_bass, self.loud_on_bass],
+                            key=lambda n: n["onset_sample"])
+
+    def test_below_the_range_and_quiet_on_the_bass_are_dropped(self) -> None:
+        self.assertEqual(self.quiet_on_bass["pitch"] % 12, self.bass[0]["pitch"] % 12)  # anchor: they match
+        kept, dropped = proposers.drop_bleed(self.notes, self.levels, self.GRID, -10, self.bass, RATE)
+        self.assertEqual(dropped, {"below_range": 1, "bass_match": 1})
+        self.assertNotIn(self.low, kept)
+        self.assertNotIn(self.quiet_on_bass, kept)
+        self.assertIn(self.loud_on_bass, kept)  # sung over the bass, loud: the singer's
+        self.assertEqual(len(kept), len(self.notes) - 2)
+
+    def test_without_a_bass_line_only_the_range_applies(self) -> None:
+        kept, dropped = proposers.drop_bleed(self.notes, None, self.GRID, None, None, RATE)
+        self.assertEqual(dropped, {"below_range": 1, "bass_match": 0})
+        self.assertIn(self.quiet_on_bass, kept)
+
+
+class TimedLyrics(unittest.TestCase):
+    def test_forced_alignment_refuses_not_yet_and_says_what_it_needs(self) -> None:
+        context = proposers.Context(bank.Bank(Path(tempfile.gettempdir())), "sha256:" + "a" * 64, RATE, RATE)
+        found = proposers.PROPOSERS["timed-lyrics"].propose(context)
+        self.assertIsInstance(found, proposers.Lacking)
+        self.assertEqual(found.as_json()["code"], "not_yet")
+        self.assertTrue(found.missing)
 
 
 @needs_essentia
@@ -356,6 +439,36 @@ class FromTheBank(unittest.TestCase):
                           ("tonal/pitched", stems.output("bass")["sha256"]), ("rhythm/pulse", self.digest)])
         self.assertEqual(found.features[1]["entry"], measured.manifest["key"])
         self.assertTrue(all(f["filed_under"] == self.digest for f in found.features))
+
+    def test_the_bass_line_is_its_own_notes_claim_from_the_bass_stem(self) -> None:
+        found = self.propose("bass-line")
+        [planned] = found.outputs
+        stems = self.bank.entry(self.digest, "stems")
+        self.assertEqual(planned.contract, proposers.NOTES)
+        self.assertIs(planned.payload["bass"], True)
+        self.assertEqual(planned.payload["stem"]["output"], "bass")
+        self.assertEqual(planned.payload["stem"]["key"], stems.manifest["key"])
+        line = planned.payload["notes"]
+        self.assertTrue(line)
+        self.assertTrue(all(a["offset_sample"] <= b["onset_sample"] for a, b in zip(line, line[1:])))
+        self.assertEqual([f["feature"] for f in found.features],
+                         ["stems/bass", "notes-basic-pitch/notes", "tonal/bass_chroma", "tonal/pitched"])
+        self.assertEqual(found.settings["min_lead"], proposers.BASS_SETTINGS["min_lead"])
+
+    def test_no_proposer_makes_a_melody_and_any_bass_stem_notes_say_bass(self) -> None:
+        melody = {("archive.claim/melody", "1"), ("archive.claim/melody_spans", "1")}
+        made = 0
+        for name, proposer in proposers.PROPOSERS.items():
+            found = proposer.propose(self.context)
+            if isinstance(found, proposers.Lacking):
+                continue
+            for planned in found.outputs:
+                made += 1
+                self.assertNotIn(planned.contract[0], {c for c, _ in melody}, name)
+                if planned.payload.get("stem", {}).get("output") == "bass":
+                    self.assertIs(planned.payload.get("bass", False) or planned.contract != proposers.NOTES,
+                                  True, name)
+        self.assertGreater(made, 5)  # anchor: the bank made claims to look at
 
     def test_key_tuning_notes_and_sections_make_claims_world_accepts(self) -> None:
         [keys] = self.propose("key").outputs

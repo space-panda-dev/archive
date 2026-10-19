@@ -141,6 +141,14 @@ class ProposeCommand(unittest.TestCase):
         self.assertEqual(answer["proposers"][3], {"name": "bass", "status": "nothing_proposed", "missing": [
             "stems/bass", "tonal/bass_chroma from stems/bass", "tonal/pitched from stems/bass", "rhythm/pulse"]})
 
+    def test_forced_alignment_is_refused_as_not_yet(self) -> None:
+        head = support.head(self.root)
+        code, answer = self.propose("--proposers", "timed-lyrics")
+        self.assertEqual((code, answer["status"]), (3, "nothing_proposed"), answer)
+        [only] = answer["proposers"]
+        self.assertEqual((only["name"], only["code"]), ("timed-lyrics", "not_yet"))
+        self.assertEqual(support.head(self.root), head)
+
     def test_a_dry_run_predicts_and_writes_nothing(self) -> None:
         head = support.head(self.root)
         code, answer = self.propose("--dry-run", "--proposers", "chords-chordino")

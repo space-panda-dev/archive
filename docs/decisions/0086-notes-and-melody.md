@@ -521,7 +521,7 @@ skipped (INV-24). A person may assert a melody spans claim with a span on the
 bass (a bass solo), and the tune shows it as they assert it.
 
 **A machine vocal line drops separation bleed.** Before proposing a vocal
-notes claim, the extractor drops a note that lies below the singer's range
+notes claim, enrich drops a note that lies below the singer's range
 (estimated from the same run's notes), or that matches the concurrent bass
 note while the voice is unvoiced. The rule and its thresholds are the run's
 parameters (ADR 0064), so what was dropped can be recomputed from the run,
@@ -548,9 +548,11 @@ dropped.
 4. World (`world/notes.py`): the written rhythm and bass line views; the
    tune of a recording skips, and counts, a machine's span on a bass notes
    claim.
-5. The `melody` extractor's parameters: the bleed filter; the notes
-   proposer sets `bass` from the stem; the melody spans proposer never
-   names a bass notes claim.
+5. enrich: the bleed filter is the notes proposer's (version 2), since
+   only a proposer reads the vocal and the bass stems' features together,
+   and its rule and thresholds are that run's parameters; the notes
+   proposer sets `bass` from the stem; a `bass-line` proposer reads the bass
+   stem's notes as their own claim; no proposer makes a melody spans claim.
 6. ADR 0089's MusicXML and LilyPond exporters: the bass staff and
    articulation; the export's losses gain a rest's boundary.
 

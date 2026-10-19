@@ -146,6 +146,7 @@ command, `rg -n '^##' enrich/README.md`).
 |---|---|---|
 | `enrich/enrich.py` | 685 | `main` (619): `probe`, `detect`, `match`, `match-windows` (`run_probe`, `run_detect`, `run_match`, `run_match_windows`) |
 | `enrich/adapter.py` | 588 | `propose`: a tool result to a Door proposal (ADR 0064) |
+| `enrich/propose.py`, `proposers.py` | 229, 851 | `enrich propose`; `PROPOSERS` (registry at the end): bank features as claims, the bass line and vocal bleed filter (`bass_line`, `drop_bleed`), forced alignment declared and refused `not_yet` |
 | `enrich/probe.py`, `detector.py` | 234, 674 | stream facts (0065), span suggestions (0066; presets and the talk gate, 0091) |
 | `enrich/match.py`, `cover.py`, `windows.py` | 358, 1073, 517 | work matching (0067, 0071, 0072) |
 | `enrich/extract.py` | 717 | feature-bank runner: `main` (`list`, `run`), `run_default`, `run_from` |
