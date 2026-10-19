@@ -1,0 +1,72 @@
+{
+ "contract": "archive-extractor/1",
+ "id": "chords-jiang",
+ "version": "1",
+ "description": "Jiang, Li, Wang, and Xia (ISMIR 2019) large-vocabulary chord recognition: the published five-model ensemble over its hybrid constant-Q spectrogram, decoded by its HMM over the submission chord list (sevenths, extensions, suspensions, inversions), with each decoded span's three most probable templates and their weights. Decodes the content again with librosa. Runs under the operator's jiang-python, from the repository checkout the operator configures as jiang-repo, so the archive's environment never imports PyTorch. CPU only, a fixed thread count.",
+ "command": [
+  "${jiang-python}",
+  "jiang.py",
+  "${jiang-repo}"
+ ],
+ "accepts": [
+  "audio/*",
+  "video/*"
+ ],
+ "requires": [
+  "torch==2.14.1+cpu",
+  "librosa==0.11.0",
+  "numpy==1.26.4",
+  "scipy==1.17.1",
+  "soundfile==0.14.0",
+  "audioread==3.1.0",
+  "python==3.11.17",
+  "jiang repo https://github.com/music-x-lab/ISMIR2019-Large-Vocabulary-Chord-Recognition@481f4ce703f8822b99f4037e9104ba1760e21ea3 (its .py files pinned by digest, sha256:0d065fd0b95506a737e9abff161f36596c0d9bb6ad73857a73ba531a0300e14f)"
+ ],
+ "needs": [],
+ "parameters": {
+  "model": {
+   "name": "joint_chord_net_ismir_naive_v1.0_reweight(0.0,10.0), seeds s0-s4, mean of the five",
+   "repository_commit": "481f4ce703f8822b99f4037e9104ba1760e21ea3",
+   "files": {
+    "cache_data/joint_chord_net_ismir_naive_v1.0_reweight(0.0,10.0)_s0.best.sdict": "sha256:921b42d5d1cf9ce1c0c0e45a74d409b8066e0acec46058ef74e24ee0fb540761",
+    "cache_data/joint_chord_net_ismir_naive_v1.0_reweight(0.0,10.0)_s1.best.sdict": "sha256:bcb75859e0efa256696cf5da396b320093317b9b1d9560c304f46c25fe1f8b17",
+    "cache_data/joint_chord_net_ismir_naive_v1.0_reweight(0.0,10.0)_s2.best.sdict": "sha256:acddf85c3fff29954c4877021177d72e2cba9f729ce80c1010f054c477bf3f61",
+    "cache_data/joint_chord_net_ismir_naive_v1.0_reweight(0.0,10.0)_s3.best.sdict": "sha256:65d81a3ab73435aaaade586981b4cabdf57b8953d76052703e6968c32ef8421c",
+    "cache_data/joint_chord_net_ismir_naive_v1.0_reweight(0.0,10.0)_s4.best.sdict": "sha256:5ff6b0ec85640e17a09a9b3de68c93fdd45adc24488e8fa9be5715c28d561122",
+    "data/submission_chord_list.txt": "sha256:ac68a26e87242fc58c946d476028d4e8c8d12c9e707ced7020a4d7e31c794d7b"
+   }
+  },
+  "cqt": "librosa.hybrid_cqt bins_per_octave 36, fmin F#0, n_bins 288, tuning None, the repo's DEFAULT_SR and DEFAULT_HOP_LENGTH, magnitude float32",
+  "numpy_aliases": "np.int, np.float, np.bool, np.object restored for the repo's code",
+  "decoder": "XHMMDecoder submission chord list, decode_to_chordlab",
+  "readings": {
+   "top": 3,
+   "weight": "mean over the span's frames of the per-frame softmax over the decoder's chord templates of get_chord_tag_obs log-probabilities"
+  },
+  "device": "cpu",
+  "threads": 3
+ },
+ "outputs": {
+  "chords": {
+   "kind": "spans",
+   "unit": "s",
+   "description": "the HMM-decoded labels (Harte spelling, N for no chord); value is that label's weight in the span (0 when it is not a template)"
+  },
+  "readings": {
+   "kind": "file",
+   "media_type": "application/json",
+   "suffix": ".json",
+   "description": "per decoded span: start, end, the decoded label, and the top three templates with weights (each weight is a share of the whole template set, so three sum to at most 1)"
+  },
+  "chord_count": {
+   "kind": "scalar",
+   "unit": "spans",
+   "description": "how many spans"
+  },
+  "decoded_in_top3": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "share of spans whose decoded label is among its top three readings"
+  }
+ }
+}

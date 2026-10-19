@@ -3,7 +3,7 @@
 
     capture import --archive <dir> --staging <annex> --derived-media <root> <directory>
                    [--session-name <name>] [--expect <manifest>] [--jobs <n>]
-                   [--defer-listening-copies] [--dry-run]
+                   [--profile-cache <dir>] [--defer-listening-copies] [--dry-run]
 
 The importer hashes every file, skips content that is already an Artifact's,
 groups the rest into sessions and sources with a recorder grammar, and
@@ -386,6 +386,8 @@ def enrich(command: str, artifact: str, args: argparse.Namespace, env: dict[str,
         arguments += ["--ffprobe", args.ffprobe]
     if command == "match-windows":
         arguments += ["--jobs", str(args.jobs)]
+        if args.profile_cache is not None:
+            arguments += ["--profile-cache", str(args.profile_cache)]
     if export is not None:
         arguments += ["--export", str(export)]
     try:
@@ -633,6 +635,9 @@ def main(argv: list[str] | None = None, grammars: Sequence[Any] = grammars_modul
     command.add_argument("--jobs", type=int, default=default_jobs(),
                          help="derived media made at once, and processes matching windows (default: the "
                               "processors less two, at least one)")
+    command.add_argument("--profile-cache",
+                         help="the directory `enrich match-windows` keeps the corpus occurrences' profiles in "
+                              "between imports; regenerable, outside any archive")
     command.add_argument("--defer-listening-copies", action="store_true",
                          help="make peaks only; listening copies are left for a later enrich/media.py run")
     args = parser.parse_args(argv)

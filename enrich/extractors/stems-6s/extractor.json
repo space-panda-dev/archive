@@ -1,0 +1,267 @@
+{
+ "contract": "archive-extractor/1",
+ "id": "stems-6s",
+ "version": "1",
+ "description": "Demucs htdemucs_6s source separation into vocals, drums, bass, guitar, piano, and other, with each stem's levels: the stems program with another pinned model and six stems, a second separator beside stems. Runs under the operator's stems-6s-python (Demucs's interpreter, the same one as demucs-python will do), so the archive's environment never imports PyTorch and run all makes a second separation only where the operator asks for one.",
+ "command": [
+  "${stems-6s-python}",
+  "stems6s.py"
+ ],
+ "accepts": [
+  "audio/*",
+  "video/*"
+ ],
+ "requires": [
+  "ffmpeg",
+  "demucs@4.1.0",
+  "torch",
+  "numpy",
+  "huggingface_hub",
+  "pyyaml",
+  "htdemucs_6s weights adefossez/HTDemucs-6s@3c5ee475be622df764938de97e4281a7b07ffa58 (downloaded once, or cached)"
+ ],
+ "needs": [],
+ "parameters": {
+  "decoder": "ffmpeg",
+  "decode_arguments": [
+   "-nostdin",
+   "-hide_banner",
+   "-nostats",
+   "-loglevel",
+   "error",
+   "-i",
+   "{input}",
+   "-map",
+   "0:a:0",
+   "-ac",
+   "2",
+   "-ar",
+   "44100",
+   "-c:a",
+   "pcm_f32le",
+   "-f",
+   "f32le",
+   "-"
+  ],
+  "model": {
+   "name": "htdemucs_6s",
+   "demucs": "4.1.0",
+   "repository": "adefossez/HTDemucs-6s",
+   "revision": "3c5ee475be622df764938de97e4281a7b07ffa58",
+   "files": {
+    "htdemucs_6s.yaml": "sha256:207405151270af8fd81c2373c25d27950916682ac91dca7884a11ce13dad6f58",
+    "5c90dfd2.safetensors": "sha256:d2a1745f0744721f6b8ca5bf469b67c651ea5ed1b52998cab033b2158609d411"
+   }
+  },
+  "apply": {
+   "shifts": 0,
+   "split": true,
+   "overlap": "0.25",
+   "segment": null,
+   "device": "cpu",
+   "normalise": "chunk mean and standard deviation, as demucs.api.Separator.separate_tensor"
+  },
+  "chunk_seconds": 600,
+  "crossfade_seconds": 10,
+  "stems": [
+   "vocals",
+   "drums",
+   "bass",
+   "guitar",
+   "piano",
+   "other"
+  ],
+  "encoding": {
+   "encoder": "ffmpeg",
+   "encode_arguments": [
+    "-nostdin",
+    "-hide_banner",
+    "-nostats",
+    "-loglevel",
+    "error",
+    "-f",
+    "s16le",
+    "-ar",
+    "44100",
+    "-ac",
+    "2",
+    "-i",
+    "-",
+    "-map_metadata",
+    "-1",
+    "-fflags",
+    "+bitexact",
+    "-flags:a",
+    "+bitexact",
+    "-c:a",
+    "flac",
+    "-compression_level",
+    "5",
+    "-f",
+    "flac",
+    "{output}"
+   ],
+   "bits": 16,
+   "scale": 32768,
+   "rounding": "nearest, ties to even",
+   "overflow": "clamp"
+  },
+  "levels": {
+   "hop": 4096,
+   "frame": 8192,
+   "floor_db": -120,
+   "measure": "RMS over both channels of the float stem, zero outside it"
+  }
+ },
+ "outputs": {
+  "vocals": {
+   "kind": "file",
+   "media_type": "audio/flac",
+   "suffix": ".flac",
+   "description": "the vocals source, as htdemucs_6s separates it: 44,100 Hz stereo, 16-bit FLAC"
+  },
+  "drums": {
+   "kind": "file",
+   "media_type": "audio/flac",
+   "suffix": ".flac",
+   "description": "the drums source, as htdemucs_6s separates it: 44,100 Hz stereo, 16-bit FLAC"
+  },
+  "bass": {
+   "kind": "file",
+   "media_type": "audio/flac",
+   "suffix": ".flac",
+   "description": "the bass source, as htdemucs_6s separates it: 44,100 Hz stereo, 16-bit FLAC"
+  },
+  "guitar": {
+   "kind": "file",
+   "media_type": "audio/flac",
+   "suffix": ".flac",
+   "description": "the guitar source, as htdemucs_6s separates it: 44,100 Hz stereo, 16-bit FLAC"
+  },
+  "piano": {
+   "kind": "file",
+   "media_type": "audio/flac",
+   "suffix": ".flac",
+   "description": "the piano source, as htdemucs_6s separates it: 44,100 Hz stereo, 16-bit FLAC"
+  },
+  "other": {
+   "kind": "file",
+   "media_type": "audio/flac",
+   "suffix": ".flac",
+   "description": "the other source, as htdemucs_6s separates it: 44,100 Hz stereo, 16-bit FLAC"
+  },
+  "levels": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 6,
+   "grid": "stems",
+   "unit": "dBFS",
+   "description": "each stem's RMS level every 4,096 samples (8,192-sample frames), columns vocals, drums, bass, guitar, piano, other; floored at -120"
+  },
+  "vocals_rms_db": {
+   "kind": "scalar",
+   "unit": "dBFS",
+   "description": "the whole vocals stem's RMS over both channels, before quantisation; floored at -120"
+  },
+  "vocals_peak_db": {
+   "kind": "scalar",
+   "unit": "dBFS",
+   "description": "the vocals stem's sample peak before quantisation; above 0 means its FLAC clamped"
+  },
+  "vocals_clamped": {
+   "kind": "scalar",
+   "unit": "samples",
+   "description": "how many samples of the vocals FLAC were clamped to 16-bit full scale"
+  },
+  "drums_rms_db": {
+   "kind": "scalar",
+   "unit": "dBFS",
+   "description": "the whole drums stem's RMS over both channels, before quantisation; floored at -120"
+  },
+  "drums_peak_db": {
+   "kind": "scalar",
+   "unit": "dBFS",
+   "description": "the drums stem's sample peak before quantisation; above 0 means its FLAC clamped"
+  },
+  "drums_clamped": {
+   "kind": "scalar",
+   "unit": "samples",
+   "description": "how many samples of the drums FLAC were clamped to 16-bit full scale"
+  },
+  "bass_rms_db": {
+   "kind": "scalar",
+   "unit": "dBFS",
+   "description": "the whole bass stem's RMS over both channels, before quantisation; floored at -120"
+  },
+  "bass_peak_db": {
+   "kind": "scalar",
+   "unit": "dBFS",
+   "description": "the bass stem's sample peak before quantisation; above 0 means its FLAC clamped"
+  },
+  "bass_clamped": {
+   "kind": "scalar",
+   "unit": "samples",
+   "description": "how many samples of the bass FLAC were clamped to 16-bit full scale"
+  },
+  "guitar_rms_db": {
+   "kind": "scalar",
+   "unit": "dBFS",
+   "description": "the whole guitar stem's RMS over both channels, before quantisation; floored at -120"
+  },
+  "guitar_peak_db": {
+   "kind": "scalar",
+   "unit": "dBFS",
+   "description": "the guitar stem's sample peak before quantisation; above 0 means its FLAC clamped"
+  },
+  "guitar_clamped": {
+   "kind": "scalar",
+   "unit": "samples",
+   "description": "how many samples of the guitar FLAC were clamped to 16-bit full scale"
+  },
+  "piano_rms_db": {
+   "kind": "scalar",
+   "unit": "dBFS",
+   "description": "the whole piano stem's RMS over both channels, before quantisation; floored at -120"
+  },
+  "piano_peak_db": {
+   "kind": "scalar",
+   "unit": "dBFS",
+   "description": "the piano stem's sample peak before quantisation; above 0 means its FLAC clamped"
+  },
+  "piano_clamped": {
+   "kind": "scalar",
+   "unit": "samples",
+   "description": "how many samples of the piano FLAC were clamped to 16-bit full scale"
+  },
+  "other_rms_db": {
+   "kind": "scalar",
+   "unit": "dBFS",
+   "description": "the whole other stem's RMS over both channels, before quantisation; floored at -120"
+  },
+  "other_peak_db": {
+   "kind": "scalar",
+   "unit": "dBFS",
+   "description": "the other stem's sample peak before quantisation; above 0 means its FLAC clamped"
+  },
+  "other_clamped": {
+   "kind": "scalar",
+   "unit": "samples",
+   "description": "how many samples of the other FLAC were clamped to 16-bit full scale"
+  },
+  "mix_rms_db": {
+   "kind": "scalar",
+   "unit": "dBFS",
+   "description": "the decoded input's RMS over both channels, the reference for each stem's level"
+  },
+  "samples": {
+   "kind": "scalar",
+   "unit": "samples",
+   "description": "samples per channel at 44,100 Hz, in the input and in every stem"
+  },
+  "seconds": {
+   "kind": "scalar",
+   "unit": "s",
+   "description": "the same length in seconds"
+  }
+ }
+}

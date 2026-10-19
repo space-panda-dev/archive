@@ -1,8 +1,8 @@
 {
  "contract": "archive-extractor/1",
  "id": "melody",
- "version": "2",
- "description": "The predominant melody's pitch contour, voicing, and intonation by Essentia's MELODIA (PredominantPitchMelodia) in 2-cent bins, on whatever audio is the content: the mix, or a stem when a stem is the content (run it --from stems/vocals for the sung line). Voicing is MELODIA's, kept for each contour at least half of whose rows reach a level gate relative to the recording's loud level. Decodes again at 44,100 Hz, since the frames grid is too coarse for a contour; hop_size is the stride, and the audio is measured in chunks with margins so memory stays bounded.",
+ "version": "3",
+ "description": "The predominant melody's pitch contour, voicing, and intonation by Essentia's MELODIA (PredominantPitchMelodia) in bin_cents bins, on the audio it is given: by default the recording's vocal stem where the bank holds one (prefers stems/vocals, in 2-cent bins) and at least a fifth of its rows are voiced, else the mix (5-cent bins); never the bass. Voicing is MELODIA's, kept for each contour at least half of whose rows reach a level gate relative to the recording's loud level, and MELODIA runs only on the rows within reach_seconds of one that reaches it. Decodes again at 44,100 Hz, since the frames grid is too coarse for a contour: once for the levels, once for the contour, once for the notes; hop_size is the stride, and the audio is measured in chunks with margins so memory stays bounded.",
  "command": [
   "${python}",
   "melody.py"
@@ -17,6 +17,17 @@
   "numpy"
  ],
  "needs": [],
+ "prefers": [
+  {
+   "input": "stems/vocals",
+   "parameters": {
+    "bin_cents": 2
+   },
+   "at_least": {
+    "voiced_fraction": "0.2"
+   }
+  }
+ ],
  "parameters": {
   "decoder": "ffmpeg",
   "decode_arguments": [
@@ -45,8 +56,8 @@
   "frame_size": 2048,
   "hop_size": 128,
   "equal_loudness": true,
+  "bin_cents": 5,
   "predominant": {
-   "binResolution": 2,
    "filterIterations": 3,
    "guessUnvoiced": false,
    "harmonicWeight": "0.8",
@@ -72,7 +83,8 @@
   "reference_hz": "440",
   "voicing_gate": {
    "floor_db": "-60",
-   "range_db": "35"
+   "range_db": "35",
+   "reach_seconds": "1"
   },
   "chunk_seconds": 120,
   "margin_seconds": 5
@@ -84,7 +96,7 @@
    "columns": 1,
    "grid": "melody",
    "unit": "Hz",
-   "description": "melody fundamental frequency, quantised to binResolution cents; 0 where unvoiced"
+   "description": "melody fundamental frequency, quantised to bin_cents cents; 0 where unvoiced"
   },
   "confidence": {
    "kind": "series",
@@ -139,7 +151,12 @@
   "melodia_voiced_fraction": {
    "kind": "scalar",
    "unit": "1",
-   "description": "share of rows MELODIA voiced, before the level gate"
+   "description": "share of rows MELODIA voiced, before the level gate (rows it did not measure are not voiced)"
+  },
+  "measured_fraction": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "share of rows MELODIA measured: those within voicing_gate.reach_seconds of a row reaching gate_db; every other row is unvoiced"
   },
   "loud_db": {
    "kind": "scalar",
@@ -149,7 +166,7 @@
   "gate_db": {
    "kind": "scalar",
    "unit": "dBFS",
-   "description": "the gate applied: the higher of voicing_gate.floor_db and loud_db less voicing_gate.range_db; a contour with more than half its rows below it is unvoiced"
+   "description": "the gate applied: the higher of voicing_gate.floor_db and loud_db less voicing_gate.range_db; a contour with more than half its rows below it is unvoiced, and only rows within voicing_gate.reach_seconds of a row reaching it are measured"
   },
   "reference_hz": {
    "kind": "scalar",

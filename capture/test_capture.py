@@ -640,6 +640,18 @@ class Steps(unittest.TestCase):
             self.assertEqual(capture.enrich("probe", "x", self.args, dict(os.environ)),
                              (3, {"status": "nothing_proposed"}))
 
+    def test_match_windows_is_given_the_profile_cache_only_when_one_is_named(self) -> None:
+        body = "import json, sys\nprint(json.dumps({'status': 'unchanged', 'argv': sys.argv[1:]}))\n"
+        seen = []
+        with patch.object(capture, "ENRICH", self.fake_enrich(body)):
+            for cache in (None, self.tmp / "profiles"):
+                args = capture.argparse.Namespace(**vars(self.args), jobs=2, profile_cache=cache)
+                seen.append(capture.enrich("match-windows", "x", args, dict(os.environ))[1]["argv"])
+        self.assertNotIn("--profile-cache", seen[0])
+        self.assertIn("--jobs", seen[0])  # anchor: the arguments were read
+        at = seen[1].index("--profile-cache")
+        self.assertEqual(seen[1][at + 1], str(self.tmp / "profiles"))
+
     def test_an_enrich_that_cannot_start_is_a_failure(self) -> None:
         with patch.object(capture.sys, "executable", str(self.tmp / "no-python")):
             with self.assertRaisesRegex(capture.CaptureError, "enrich probe could not run"):

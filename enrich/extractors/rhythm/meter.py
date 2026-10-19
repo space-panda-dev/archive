@@ -25,12 +25,14 @@ the tracker's beats into:
   between pulses fall at halves and quarters or at thirds;
 - *beats per bar* from how the beat-by-beat pattern (where the harmony
   moves, the accents, the low accents) repeats: a bar of m beats makes beats
-  m and 2m apart alike;
-- *downbeats*, by a bar-position model over the pulses whose evidence is a
-  low-frequency accent and a change of chroma at the bar line, and each
-  bar's *margin*: how much better its downbeat fits that evidence than any
-  other phase of the bar, so a reader (and `rhythm.py`) can tell a placed
-  bar line from a guess;
+  m and 2m apart alike; in a song that changes meter at all, 5 is preferred
+  to 4 where the two repeat about as well;
+- *downbeats*, by a bar-position model over the pulses whose evidence is
+  the low accent (a bass note or a kick), less half the whole accent (the
+  backbeat's snare), and how far the beat-synchronous chroma moves at the
+  beat and across a bar, and each bar's *margin*: how much better its
+  downbeat fits that evidence than any other phase of the bar, so a reader
+  (and `rhythm.py`) can tell a placed bar line from a guess;
 - *spans* of steady tempo and meter, and the *changes* between them: a
   change across which the beat or one of its subdivisions persists is a
   change of meter, not of tempo.
@@ -62,6 +64,17 @@ RELATION_NAMES = tuple(f"{r.numerator}:{r.denominator}" for r in RELATIONS)
 METERS = (4, 3, 5, 7)  # beats per bar, 4 first so a tie (no evidence) is 4; 2 and 6 read as 4 and 3
 LAGS = 14  # the longest beat lag the repetition is measured at: two bars of 7
 METER_MARGIN = 0.02  # how much better than 4 another meter's repetition must be
+# Where a song's bars are not all of one length, how much better than 4 a bar of 5 counts: a song that
+# changes meter at all is one where odd bars are played, and 5 is the commonest of them.
+FIVE_PREFERENCE = 0.01
+# The downbeat evidence: the low accent, less half the whole accent (the backbeat's snare is loud but not
+# low), and half each of how far the harmony moves at the beat and across the bar.
+EVIDENCE_WEIGHTS = {"low": 1.0, "accent": -0.5, "beat_harmony": 0.5, "bar_harmony": 0.5}
+# The least spread each is standardised by: a tenth of an accent's median, and a cosine distance of 0.02 for the
+# harmony (a held chord's beats differ by about 0.004, a change of chord by 0.1 or more).
+EVIDENCE_FLOORS = {"low": 0.1, "accent": 0.1, "beat_harmony": 0.02, "bar_harmony": 0.02}
+RELATIVE_FLOORS = {"low", "accent"}
+BAR_CHANGE_COST = 12.0  # what a bar that ends early (a 2/4 bar in 4/4) costs in units of downbeat evidence
 DIVISION_SECONDS = 0.012  # how far from a half, quarter or third its accent is looked for
 SPAN_TOLERANCE = 0.08  # tempi within 8% are one level; 4:3 is 33% apart
 MINIMUM_SPAN_SECONDS = 8.0
@@ -234,10 +247,18 @@ def reference_level(peak: numpy.ndarray, centre: float, window: float) -> float:
     return float(numpy.percentile(peak[low:high], 95)) if high > low else 0.0
 
 
+def measurable(beats: numpy.ndarray, relation: Fraction, longest: float) -> bool:
+    """Whether the beats lay at least two of the level's pulses at some phase."""
+    return any(len(pulses(beats, relation, phase, longest)) >= 2 for phase in range(relation.denominator))
+
+
 def support_table(beats: Sequence[float], peak: numpy.ndarray, rows: int, window: float, longest: float,
                   relations: Sequence[Sequence[Fraction]]) -> numpy.ndarray:
     """For each second k (the window centred on it) and each of
-    `relations[k]`, the support of that level of the tracker's beats."""
+    `relations[k]`, the support of that level of the tracker's beats; NaN
+    for a level the window's beats are too few to lay two pulses of (at the
+    start and end of the playing, a slow level's groups of beats do not fit
+    in the window), which is not a level without support."""
     beats = numpy.asarray(beats, numpy.float64)
     table = numpy.zeros((rows, len(relations[0]) if rows else 0))
     for k in range(rows):
@@ -247,6 +268,9 @@ def support_table(beats: Sequence[float], peak: numpy.ndarray, rows: int, window
             continue
         reference = reference_level(peak, k, window)
         for j, relation in enumerate(relations[k]):
+            if not measurable(chosen, relation, longest):
+                table[k, j] = numpy.nan
+                continue
             table[k, j] = support(chosen, peak, relation, longest, reference)[0]
     return table
 
@@ -271,8 +295,12 @@ def primary_levels(table: numpy.ndarray, tempo: numpy.ndarray, config: dict[str,
     tracker's choice as evidence too, so a level an octave from it needs
     about 13% more support x preference at the default width: without it, a
     ballad at 66 BPM with eighths, which the tracker counts right, was
-    doubled by the preference alone. Returns the primary tempo (0 where the
-    tracker has none) and the index of its relation."""
+    doubled by the preference alone. A second where an allowed level
+    cannot be measured (NaN in `table`) is no evidence for any: before, the
+    levels a window could measure won the first seconds of a song by
+    default, and the cost of a change kept the song there. Returns the
+    primary tempo (0 where the tracker has none) and the index of its
+    relation."""
     rows = len(tempo)
     ratios = numpy.asarray([float(r) for r in RELATIONS])
     if not rows:
@@ -283,7 +311,10 @@ def primary_levels(table: numpy.ndarray, tempo: numpy.ndarray, config: dict[str,
     safe = numpy.where(allowed, candidates, 1.0)
     weight = preference(safe, config["prior_bpm"], config["prior_octaves"]) * preference(
         ratios, 1.0, config["tracker_octaves"])[None, :]
-    score = numpy.where(allowed, numpy.log(table * weight + 1e-3), -1e9)
+    table = numpy.asarray(table, numpy.float64)
+    unknown = numpy.any(allowed & numpy.isnan(table), axis=1)
+    score = numpy.where(allowed, numpy.log(numpy.nan_to_num(table) * weight + 1e-3), -1e9)
+    score[unknown & (tempo > 0)] = numpy.where(allowed[unknown & (tempo > 0)], 0.0, -1e9)
     score[tempo <= 0] = 0.0
     cost = config["level_switch_cost"]
     total = score[0].copy()
@@ -461,21 +492,33 @@ def meter_scores(similar: numpy.ndarray, half: int = 24) -> numpy.ndarray:
 
 
 def meters(scores: numpy.ndarray, weight: float = 10.0, switch: float = 3.0,
-           margin: float = METER_MARGIN) -> numpy.ndarray:
+           margin: float = METER_MARGIN, five: float = FIVE_PREFERENCE) -> numpy.ndarray:
     """Beats per bar for each beat: METERS through a path weighing each beat's
     scores by `weight` and charging `switch` for a change, so the meter
     changes only where another one is better for a stretch of beats. A meter
     other than 4 must score `margin` better than 4 to count: where nothing
-    repeats (a metronome), the noise in the scores is not a meter."""
+    repeats (a metronome), the noise in the scores is not a meter. Where that
+    path leaves 4 anywhere (the song's bars are not all of one length), the
+    path is chosen again with 5 preferred to 4 by `five`: a 5/4 section
+    repeats at 5 and 10 beats but its halves look alike at 2 and 4, so it
+    read as 4 until the song had shown it changes meter at all (measured on
+    a song with 18 bars of 5/4 after 17 of 4/4: 32% of its bars got their
+    transcription's length, 65% with the preference)."""
     if not len(scores):
         return numpy.zeros(0, int)
-    handicap = numpy.where(numpy.asarray(METERS) == 4, 0.0, margin)
-    return numpy.asarray(METERS)[smooth_choice(weight * (scores - handicap), switch)]
+    names = numpy.asarray(METERS)
+    handicap = numpy.where(names == 4, 0.0, margin)
+    path = names[smooth_choice(weight * (scores - handicap), switch)]
+    if numpy.all(path == 4):
+        return path
+    handicap = numpy.where(names == 5, -five, handicap)
+    return names[smooth_choice(weight * (scores - handicap), switch)]
 
 
-def robust_z(values: numpy.ndarray) -> numpy.ndarray:
+def robust_z(values: numpy.ndarray, floor: float = 0.0) -> numpy.ndarray:
     """Values standardised by median and median absolute deviation, clipped
-    to +-3."""
+    to +-3. The spread is at least `floor`, so values that hardly vary (a
+    held chord's chroma, identical clicks) are not blown up into evidence."""
     values = numpy.asarray(values, numpy.float64)
     if not len(values):
         return values
@@ -483,30 +526,68 @@ def robust_z(values: numpy.ndarray) -> numpy.ndarray:
     spread = 1.4826 * numpy.median(numpy.abs(values - middle))
     if spread <= 0:
         spread = numpy.std(values) or 1.0
-    return numpy.clip((values - middle) / spread, -3, 3)
+    return numpy.clip((values - middle) / max(spread, floor), -3, 3)
 
 
-def downbeat_evidence(pulse: numpy.ndarray, low: numpy.ndarray, chroma: numpy.ndarray) -> numpy.ndarray:
-    """For each pulse: its low accent plus the change of chroma from the two
-    beats before it to the two after, each robustly standardised. A bar line
-    is where a bass note or kick lands and where the harmony moves."""
+def beat_chroma(pulse: numpy.ndarray, chroma: numpy.ndarray) -> numpy.ndarray:
+    """One row a pulse: the chroma of the beat it starts (to the next pulse;
+    the last pulse repeats the beat before), square-rooted so one loud note
+    does not stand for the harmony, and of unit length."""
+    count = len(pulse)
+    if count < 2 or not len(chroma):
+        return numpy.zeros((count, 12))
+    rows = numpy.clip(numpy.round(pulse * ROWS_PER_SECOND).astype(int), 0, len(chroma) - 1)
+    totals = numpy.vstack((numpy.zeros((1, 12)), numpy.cumsum(chroma, axis=0, dtype=numpy.float64)))
+    span = numpy.maximum(rows[1:] - rows[:-1], 1)
+    mean = (totals[numpy.minimum(rows[:-1] + span, len(chroma))] - totals[rows[:-1]]) / span[:, None]
+    mean = numpy.sqrt(numpy.maximum(numpy.vstack((mean, mean[-1:])), 0))
+    return mean / (numpy.linalg.norm(mean, axis=1, keepdims=True) + 1e-12)
+
+
+def harmony_change(beats: numpy.ndarray, reach: numpy.ndarray) -> numpy.ndarray:
+    """For each beat i, how far the harmony moves at it: the cosine distance
+    between the summed beat chroma of the `reach[i]` beats before it and of
+    the `reach[i]` beats from it; 0 where either side is empty or silent."""
+    count = len(beats)
+    totals = numpy.vstack((numpy.zeros((1, 12)), numpy.cumsum(beats, axis=0)))
+    index = numpy.arange(count)
+    reach = numpy.maximum(numpy.asarray(reach, int), 1)
+    before = totals[index] - totals[numpy.maximum(index - reach, 0)]
+    after = totals[numpy.minimum(index + reach, count)] - totals[index]
+    norms = numpy.linalg.norm(before, axis=1) * numpy.linalg.norm(after, axis=1)
+    return numpy.where(norms > 0, 1 - numpy.sum(before * after, axis=1) / numpy.where(norms > 0, norms, 1), 0.0)
+
+
+def downbeat_evidence(pulse: numpy.ndarray, peak: numpy.ndarray, low: numpy.ndarray, chroma: numpy.ndarray,
+                      per_bar: numpy.ndarray) -> numpy.ndarray:
+    """For each pulse, how much it looks like a bar line, as the
+    EVIDENCE_WEIGHTS sum of robust z-scores: its low accent (a bass note or
+    a kick lands), its whole accent with a negative weight (the backbeat's
+    snare is as loud as the kick but not low, so the low accent alone cannot
+    tell beat 1 from beat 2), and how far the beat-synchronous chroma moves
+    at it from the beat before and from the bar before (`per_bar[i]` beats
+    either side): harmony moves at a bar line more often than inside a bar.
+    Measured on an album of dense music against a neural tracker's
+    downbeats, each of these alone tells a downbeat from another beat with
+    an AUC of 0.69 (low), 0.57 (minus the whole accent), 0.60 and 0.58
+    (the harmony); a learned weighting of them and their neighbours' did no
+    better than this one."""
     count = len(pulse)
     if count < 2:
         return numpy.zeros(count)
-    rows = numpy.clip(numpy.round(pulse * ROWS_PER_SECOND).astype(int), 0, max(len(chroma) - 1, 0))
-    totals = numpy.vstack((numpy.zeros((1, 12)), numpy.cumsum(chroma, axis=0, dtype=numpy.float64)))
-    before = numpy.concatenate(([rows[0]] * 2, rows[:-2]))
-    after = numpy.concatenate((rows[2:], [rows[-1]] * 2))
-    first = (totals[rows] - totals[before]) / numpy.maximum(rows - before, 1)[:, None]
-    second = (totals[after] - totals[rows]) / numpy.maximum(after - rows, 1)[:, None]
-    norm = numpy.linalg.norm(first, axis=1) * numpy.linalg.norm(second, axis=1)
-    change = 1 - numpy.sum(first * second, axis=1) / numpy.where(norm > 0, norm, 1)
-    change[norm <= 0] = 0
-    low_peak = at(peaks(numpy.asarray(low, numpy.float64)), pulse)
-    return robust_z(low_peak) + robust_z(change)
+    beats = beat_chroma(pulse, chroma)
+    terms = {"low": at(peaks(numpy.asarray(low, numpy.float64)), pulse), "accent": at(peak, pulse),
+             "beat_harmony": harmony_change(beats, numpy.ones(count, int)),
+             "bar_harmony": harmony_change(beats, numpy.asarray(per_bar, int))}
+    total = numpy.zeros(count)
+    for name, values in terms.items():
+        floor = EVIDENCE_FLOORS[name] * (float(numpy.median(values)) if name in RELATIVE_FLOORS else 1.0)
+        total += EVIDENCE_WEIGHTS[name] * robust_z(values, floor)
+    return total
 
 
-def bar_positions(evidence: numpy.ndarray, per_bar: numpy.ndarray, reset_cost: float = 6.0) -> numpy.ndarray:
+def bar_positions(evidence: numpy.ndarray, per_bar: numpy.ndarray,
+                  reset_cost: float = BAR_CHANGE_COST) -> numpy.ndarray:
     """Each pulse's position in its bar (0 is the downbeat), by Viterbi over
     positions: position j moves to j + 1, and to 0 after the bar's last beat
     (`per_bar[i]` beats); a bar may end early at `reset_cost` (a bar of 2/4
@@ -712,6 +793,7 @@ def analyse(beats: Sequence[float], tempo: numpy.ndarray, rows: Rows, config: di
     primary, path = primary_levels(table, tempo, config)
     alternatives = support_table(beats, peak, seconds, window, longest,
                                  [[RELATIONS[path[k]] * r for r in RELATIONS] for k in range(seconds)])
+    alternatives = numpy.nan_to_num(alternatives)
     alternatives[primary <= 0] = 0
     pulse = primary_pulse(beats, peak, tempo, path, longest)
     if len(pulse) < 2:
@@ -722,7 +804,7 @@ def analyse(beats: Sequence[float], tempo: numpy.ndarray, rows: Rows, config: di
     # Each pulse takes the meter and division of the beat it starts; the last, its predecessor's.
     per_bar = numpy.concatenate((per_beat, per_beat[-1:]))
     division_each = numpy.concatenate((division, division[-1:]))
-    evidence = downbeat_evidence(pulse, low, rows.chroma)
+    evidence = downbeat_evidence(pulse, peak, low, rows.chroma, per_bar)
     position = bar_positions(evidence, per_bar)
     margin = bar_margins(evidence, position, per_bar)
     labels = [meter_label(int(m), int(d)) for m, d in zip(per_bar, division_each)]

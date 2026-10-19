@@ -1,0 +1,68 @@
+{
+ "contract": "archive-extractor/1",
+ "id": "beats-beatthis",
+ "version": "1",
+ "description": "Beat This (Foscarin, Schlüter, and Widmer, ISMIR 2024), the final0 checkpoint: every beat and downbeat with the package's minimal postprocessor (no dynamic Bayesian network), so the metrical level is the model's and nothing asserts a meter. Decodes the content again at its own rate with soundfile. Runs under the operator's beatthis-python, with the checkpoint the operator configures as beatthis-checkpoint, so the archive's environment never imports PyTorch. CPU only, a fixed thread count.",
+ "command": [
+  "${beatthis-python}",
+  "beatthis.py",
+  "${beatthis-checkpoint}"
+ ],
+ "accepts": [
+  "audio/*",
+  "video/*"
+ ],
+ "requires": [
+  "beat_this==1.1.0",
+  "torch==2.14.1+cpu",
+  "torchaudio==2.11.0+cpu",
+  "numpy==2.5.4",
+  "soundfile==0.14.0",
+  "soxr==1.1.0",
+  "einops==0.8.2",
+  "rotary_embedding_torch==0.9.1",
+  "python==3.12.15",
+  "beat_this-final0.ckpt sha256:8c328b45f59d8dd3dff219253ff6a8d6482be57d0133a29140e2febbf8eb8331"
+ ],
+ "needs": [],
+ "parameters": {
+  "model": {
+   "name": "beat_this final0",
+   "package": "beat_this==1.1.0",
+   "file": "beat_this-final0.ckpt",
+   "sha256": "sha256:8c328b45f59d8dd3dff219253ff6a8d6482be57d0133a29140e2febbf8eb8331"
+  },
+  "decode": "soundfile.read float32, both channels, at the file's own rate (beat_this resamples to 22050 Hz mono)",
+  "postprocessor": "minimal",
+  "frame_rate": 50,
+  "device": "cpu",
+  "threads": 3
+ },
+ "outputs": {
+  "beats": {
+   "kind": "events",
+   "unit": "s",
+   "description": "every beat the model finds, at the model's own metrical level"
+  },
+  "downbeats": {
+   "kind": "events",
+   "unit": "s",
+   "description": "the beats the model marks as downbeats; their spacing is not a meter"
+  },
+  "beat_count": {
+   "kind": "scalar",
+   "unit": "beats",
+   "description": "how many beats"
+  },
+  "downbeat_count": {
+   "kind": "scalar",
+   "unit": "beats",
+   "description": "how many downbeats"
+  },
+  "median_bpm": {
+   "kind": "scalar",
+   "unit": "BPM",
+   "description": "60 over the median beat interval; 0 with fewer than two beats"
+  }
+ }
+}

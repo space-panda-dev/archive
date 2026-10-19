@@ -5,6 +5,7 @@
     extract.py run <extractor|all> --content <file> [--digest sha256:<hex>] [--media-type <type>]
                    --bank <dir> [--from <extractor>/<output>] [--jobs <n>] [--config <file>]
                    [--program <name>=<path>]... [--extractors <dir>]... [--timeout <seconds>] [--dry-run]
+                   [--no-prefer]
 
 `run` resolves what the named extractor needs as a graph over the bank, runs
 only the extractors whose entries are missing, each once, upstream first and
@@ -33,9 +34,21 @@ content instead of the content itself: the runner makes the feature first if
 it is missing, then runs the named extractors with the stem as their input,
 its own digest as their content, and the content's directory as where their
 entries are filed (ADR 0075). An extractor never knows it measures a stem.
-With `all`, an extractor whose command names a program that is not
+With `all`, an extractor that makes a file it would accept itself (a
+separator) is left out, so a stem is not separated again; and one whose command names a program that is not
 configured (`${demucs-python}` on a machine without Demucs) is skipped, and
 said to be; named on its own, it fails.
+
+Without `--from`, an extractor whose manifest `prefers` a file feature
+(`melody` prefers `stems/vocals`) measures the first of those the bank
+already holds for the content, as `--from` would, after everything else has
+run; where the bank holds none, it measures the content. A preference may
+set minimums for scalars of its measure (`melody` asks a `voiced_fraction`
+of at least 0.2 on the vocal stem); a measure below one is kept but passed
+over, and the next default input is measured too. A preference never
+makes the feature, and an extractor run only because another needs it always
+measures the content. `--no-prefer` measures the content regardless.
+`Bank.default_entry` reads back what this made.
 
 The runner uses only Python's standard library. It never reads or writes an
 archive and proposes nothing: features are not claims.
@@ -125,6 +138,21 @@ def resolve_command(extractor: bank.Extractor, programs: dict[str, str]) -> list
     return words
 
 
+# The process groups of the extractors running now, so that a runner that is
+# itself stopped (a Spool worker's run past its time) can stop them: each
+# runs in a group of its own, which a signal to the runner's group misses.
+_GROUPS: set[int] = set()
+_GROUPS_LOCK = threading.Lock()
+
+
+def signal_running(signal_number: int) -> None:
+    """Send a signal to every extractor's process group running now."""
+    with _GROUPS_LOCK:
+        groups = list(_GROUPS)
+    for group in groups:
+        _signal_group(group, signal_number)
+
+
 def _signal_group(group: int, signal_number: int) -> None:
     try:
         os.killpg(group, signal_number)
@@ -146,6 +174,8 @@ def run_program(command: list[str], cwd: Path, environment: dict[str, str],
     runner has finished with it."""
     process = subprocess.Popen(command, cwd=cwd, env=environment, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+    with _GROUPS_LOCK:
+        _GROUPS.add(process.pid)
     tail = bytearray()
 
     def read() -> None:
@@ -171,6 +201,8 @@ def run_program(command: list[str], cwd: Path, environment: dict[str, str],
         # The group outlives its leader while any member lives, and its id is
         # not reused until then, so this reaches exactly what the extractor left.
         _signal_group(process.pid, signal.SIGKILL)
+        with _GROUPS_LOCK:
+            _GROUPS.discard(process.pid)
         reader.join()
         assert process.stdout is not None
         process.stdout.close()
@@ -186,6 +218,29 @@ def _fsync_tree(directory: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def place_entry(output_dir: Path, manifest: dict[str, Any], final: Path) -> bool:
+    """File a checked result as an entry: `entry.json` replaces `result.json`,
+    every file becomes owner-only, everything is flushed, and the directory
+    is renamed into place, so the entry is complete or absent. False when
+    another runner filed the same entry first; its entry stands."""
+    (output_dir / bank.RESULT).unlink()
+    (output_dir / bank.ENTRY).write_bytes(json.dumps(manifest, indent=1, sort_keys=True).encode())
+    # A feature can carry the recording (a stem): owner only, as derived media are.
+    # check_result refused any file with another link, so this changes no one else's file.
+    for path in output_dir.iterdir():
+        path.chmod(0o600)
+    output_dir.chmod(0o700)
+    _fsync_tree(output_dir)
+    final.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.rename(output_dir, final)
+    except OSError:
+        if bank.read_entry(final) is None:
+            raise
+        return False
+    return True
 
 
 class Run:
@@ -326,21 +381,7 @@ class Run:
                         "needs": {need: keys[need.split("/", 1)[0]] for need in extractor.needs},
                         **checked, "started_at": started, "ended_at": now(), "runner": RUNNER}
             bank.check_entry(manifest, f"{extractor_id} entry")
-            (output_dir / bank.RESULT).unlink()
-            (output_dir / bank.ENTRY).write_bytes(json.dumps(manifest, indent=1, sort_keys=True).encode())
-            # A feature can carry the recording (a stem): owner only, as derived media are.
-            # check_result refused any file with another link, so this changes no one else's file.
-            for path in output_dir.iterdir():
-                path.chmod(0o600)
-            output_dir.chmod(0o700)
-            _fsync_tree(output_dir)
-            final.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                os.rename(output_dir, final)
-            except OSError:
-                # Another runner filed the same entry first; its entry stands.
-                if bank.read_entry(final) is None:
-                    raise
+            if not place_entry(output_dir, manifest, final):
                 return {"status": "hit", "key": key, "entry": str(final), "raced": True}
             bank.failure_path(self.root, self.directory_digest(), extractor_id, key).unlink(missing_ok=True)
             return {"status": "ran", "key": key, "entry": str(final),
@@ -474,6 +515,8 @@ def run_from(catalog: bank.Catalog, root: Path, content: Path, media_type: str, 
         if source in catalog.order([target]):
             raise RunError(f"{target} would measure {feature}, which it makes or needs; it cannot be its own input")
     first = Run(catalog, root, content, media_type, digest, programs, parameters, timeout)
+    # The source is made with the operator's parameters; what measures it, with those an extractor prefers there.
+    measuring = catalog.overrides_for(feature, parameters)
     made = first.execute([source], jobs, dry_run)
     origin = {"feature": feature, "content": made["content"], "extractors": made["extractors"]}
     status = made["extractors"][source]["status"]
@@ -488,11 +531,75 @@ def run_from(catalog: bank.Catalog, root: Path, content: Path, media_type: str, 
         raise RunError(f"{feature} was made but its entry cannot be found")
     path, stem_digest, stem_type = found
     origin["entry"] = made["extractors"][source]["key"]
-    second = Run(catalog, root, path, stem_type, stem_digest, programs, parameters, timeout,
+    second = Run(catalog, root, path, stem_type, stem_digest, programs, measuring, timeout,
                  filed_under=made["content"], optional=optional)
     answer = second.execute(targets, jobs, dry_run)
     answer["from"] = origin
     return answer
+
+
+def run_default(catalog: bank.Catalog, root: Path, content: Path, media_type: str, digest: str | None,
+                programs: dict[str, str], parameters: dict[str, dict[str, Any]], timeout: float | None,
+                targets: list[str], jobs: int, dry_run: bool, optional: bool) -> dict[str, Any]:
+    """Run `targets` on the content, each on its default input.
+
+    The targets that prefer no feature run first, with everything they need.
+    Then each target that prefers one measures the first preferred feature
+    the bank now holds (`Bank.default_input`), as `run_from` would, or the
+    content where it holds none. Where that measure falls short of the
+    preference's `at_least`, the target measures its next default input as
+    well (the mix, when its vocal stem is mostly unvoiced). A preferring
+    target's answer says which feature it measured (`input`) and the keys of
+    the measures it passed over (`passed_over`); what was run to measure a
+    feature is under `inputs`."""
+    run = Run(catalog, root, content, media_type, digest, programs, parameters, timeout, optional=optional)
+    preferring = [t for t in targets if catalog[t].prefers and catalog[t].accepts(media_type)]
+    plain = [t for t in targets if t not in preferring]
+    answer = run.execute(plain, jobs, dry_run) if plain else {
+        "status": "ok", "content": run.content_digest(), "media_type": media_type, "bank": str(root),
+        "extractors": {}}
+    reader = bank.Bank(root, catalog, parameters)
+    passed_over: dict[str, dict[str, str]] = {}
+    pending = list(preferring)
+    while pending:
+        on_content: list[str] = []
+        by_feature: dict[str, list[str]] = {}
+        for target in pending:
+            feature = reader.default_input(run.content_digest(), target)
+            (by_feature.setdefault(feature, []) if feature else on_content).append(target)
+        if on_content:
+            more = run.execute(on_content, jobs, dry_run)
+            answer["extractors"].update(more["extractors"])
+            answer["status"] = "ok" if answer["status"] == more["status"] == "ok" else "failed"
+        pending = []
+        for feature, group in by_feature.items():
+            made = run_from(catalog, root, content, media_type, run.content_digest(), programs, parameters,
+                            timeout, feature, group, jobs, dry_run, optional)
+            answer.setdefault("inputs", {})[feature] = {"content": made["content"],
+                                                        "extractors": made["extractors"], "from": made["from"]}
+            for target in group:
+                answer["extractors"][target] = {**made["extractors"][target], "input": feature}
+                # A measure that falls short of its preference's `at_least`
+                # moves the default on, to the next preference or the
+                # content: measure that too. Each round passes over one
+                # preference at least, so this ends.
+                if (not dry_run and answer["extractors"][target]["status"] in ("hit", "ran")
+                        and reader.default_input(run.content_digest(), target) != feature):
+                    passed_over.setdefault(target, {})[feature] = answer["extractors"][target]["key"]
+                    pending.append(target)
+            answer["status"] = "ok" if answer["status"] == made["status"] == "ok" else "failed"
+    for target, measures in passed_over.items():
+        answer["extractors"][target]["passed_over"] = measures
+    return answer
+
+
+def makes_content(extractor: bank.Extractor) -> bool:
+    """Whether the extractor makes a file it would itself accept as content:
+    a separator, whose stems are audio. `run all --from` a feature leaves it
+    out, since it would make features of a feature (stems of a stem) that
+    nobody asked for; named on its own, it runs."""
+    return any(declared["kind"] == "file" and extractor.accepts(declared["media_type"])
+               for declared in extractor.outputs.values())
 
 
 def unconfigured(extractor: bank.Extractor, programs: dict[str, str]) -> str | None:
@@ -548,6 +655,8 @@ def main(argv: list[str] | None = None) -> int:
     running.add_argument("--timeout", type=float)
     running.add_argument("--dry-run", action="store_true")
     running.add_argument("--from", dest="source", metavar="EXTRACTOR/OUTPUT")
+    running.add_argument("--no-prefer", action="store_true",
+                         help="measure the content itself, even where an extractor prefers a feature of it")
     arguments = parser.parse_args(argv)
     try:
         config = load_config(arguments.config)
@@ -581,16 +690,22 @@ def main(argv: list[str] | None = None) -> int:
         media_type = arguments.media_type or media_type_of(content)
         if arguments.source is not None:
             if everything:
-                # Everything that can measure the feature; not what makes it.
+                # Everything that can measure the feature; not what makes it,
+                # and not what would make content of it (a separator would
+                # separate the stem again).
                 source = arguments.source.split("/", 1)[0]
-                targets = [t for t in targets if source not in catalog.order([t])]
+                targets = [t for t in targets if source not in catalog.order([t]) and not makes_content(catalog[t])]
             answer = run_from(catalog, root, content, media_type, arguments.digest, programs,
                               config.get("parameters", {}), arguments.timeout, arguments.source, targets,
                               arguments.jobs, arguments.dry_run, everything)
-        else:
+        elif arguments.no_prefer:
             run = Run(catalog, root, content, media_type, arguments.digest, programs, config.get("parameters", {}),
                       arguments.timeout, optional=everything)
             answer = run.execute(targets, arguments.jobs, arguments.dry_run)
+        else:
+            answer = run_default(catalog, root, content, media_type, arguments.digest, programs,
+                                 config.get("parameters", {}), arguments.timeout, targets, arguments.jobs,
+                                 arguments.dry_run, everything)
     except (RunError, bank.BankError) as exc:
         print(json.dumps({"status": "failed", "detail": str(exc)}), file=sys.stderr)
         return 1

@@ -6,7 +6,7 @@
                   [--staging <annex>] [--dry-run]
     enrich match --archive <dir> (--selection | --occurrence) <object id> --limit <decimal>
                  [--staging <annex>] [--dry-run]
-    enrich match-windows --archive <dir> --suggestions <object id> [--jobs <n>]
+    enrich match-windows --archive <dir> --suggestions <object id> [--jobs <n>] [--profile-cache <dir>]
                  [--staging <annex>] [--dry-run | --regenerate]
 
 The command reads the archive only through `archive export`, runs the tool on
@@ -90,15 +90,26 @@ def reader_of(args: argparse.Namespace, env: dict[str, str]) -> adapter.ArchiveR
     return adapter.ArchiveReader.from_export(Path(args.archive), export)
 
 
-def content_path(root: Path, artifact: dict[str, Any]) -> Path:
-    """The Artifact's bytes in the archive's content worktree (layout
-    archive/2, D-1), checked against the digest and size the record states.
-    Reading them changes nothing."""
+def content_location(root: Path, artifact: dict[str, Any]) -> Path:
+    """Where the Artifact's bytes are in the archive's content worktree
+    (layout archive/2, D-1), refused unless a file of the size the record
+    states is there. Its digest is not checked: `content_path` reads it."""
     content = artifact["payload"]["content"]
     hexdigest = content["digest"].removeprefix("sha256:")
     path = root / "content" / "sha256" / hexdigest[0:2] / hexdigest[2:4] / hexdigest
     if not path.is_file():
         raise CommandError(f"the content of {artifact['object_id']} is not locally present at {path}")
+    if path.stat().st_size != content["size"]:
+        raise CommandError(f"the local content of {artifact['object_id']} does not match its record")
+    return path
+
+
+def content_path(root: Path, artifact: dict[str, Any]) -> Path:
+    """The Artifact's bytes in the archive's content worktree (layout
+    archive/2, D-1), checked against the digest and size the record states.
+    Reading them changes nothing."""
+    content = artifact["payload"]["content"]
+    path = content_location(root, artifact)
     hasher, size = hashlib.sha256(), 0
     with path.open("rb") as handle:
         for block in iter(lambda: handle.read(1 << 20), b""):
@@ -436,6 +447,7 @@ def run_match(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
 
 def run_match_windows(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     import cover  # Essentia and numpy are needed by this command only
+    import profile_cache
     import windows
 
     env = environment()
@@ -462,6 +474,9 @@ def run_match_windows(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     read = {record["revision_id"]: record for record in (suggestions, source, stream)}
     works_of: dict[str, set[str]] = {}
     corpus_pieces: dict[str, tuple[cover.Piece, ...]] = {}
+    # Each occurrence's Artifacts, whose content digests key the profile cache
+    # and whose bytes are checked only when they are about to be decoded.
+    corpus_artifacts: dict[str, tuple[dict[str, Any], ...]] = {}
     for work_id, entry in works.items():
         read[entry["work"]["revision_id"]] = entry["work"]
         for link in entry["links"]:
@@ -472,8 +487,9 @@ def run_match_windows(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
             pieces = selection_pieces(reader, selection)
             for record in (occurrence, selection, *(artifact for artifact, _ in pieces)):
                 read[record["revision_id"]] = record
+            corpus_artifacts[occurrence_id] = tuple(artifact for artifact, _ in pieces)
             corpus_pieces[occurrence_id] = tuple(
-                cover.Piece(content_path(reader.root, artifact), piece["start_sample"], piece["end_sample"],
+                cover.Piece(content_location(reader.root, artifact), piece["start_sample"], piece["end_sample"],
                             piece["sample_rate"]) for artifact, piece in pieces)
     used = tuple(adapter.Pin("used", r["object_id"], r["revision_id"])
                  for r in sorted(read.values(), key=lambda r: (r["object_id"], r["revision_id"])))
@@ -497,9 +513,25 @@ def run_match_windows(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
                            f"{stream['payload'].get('sample_rate')} Hz")
     sample_count = stream["payload"]["sample_count"]
     outputs = []
+    checked: set[str] = set()
+
+    def check_content(occurrences: list[str]) -> None:
+        """Hash each file about to be decoded, once, however many
+        occurrences take audio from it."""
+        for occurrence_id in occurrences:
+            for artifact in corpus_artifacts[occurrence_id]:
+                if artifact["payload"]["content"]["digest"] not in checked:
+                    content_path(reader.root, artifact)
+                    checked.add(artifact["payload"]["content"]["digest"])
     try:
+        cache = None if args.profile_cache is None else \
+            profile_cache.ProfileCache(Path(args.profile_cache), software, args.ffmpeg)
         with cover.Comparer(args.jobs, args.ffmpeg, args.ffprobe) as comparer:
-            for occurrence_id, measured in comparer.measure_corpus(corpus_pieces).items():
+            corpus_digests = {key: tuple(a["payload"]["content"]["digest"] for a in artifacts)
+                              for key, artifacts in corpus_artifacts.items()}
+            measured_corpus = profile_cache.measure_corpus(comparer, corpus_pieces, corpus_digests, cache,
+                                                           check_content)
+            for occurrence_id, measured in measured_corpus.items():
                 if isinstance(measured, cover.TooShort):
                     answer["skipped"].append({"occurrence": occurrence_id, "reason": str(measured)})
                 elif isinstance(measured, cover.CoverError):
@@ -620,6 +652,9 @@ def main(argv: list[str] | None = None) -> int:
                                                         "propose work_match version 3 claims")
     windows.add_argument("--suggestions", required=True, help="a span_suggestions version 1 object identifier")
     windows.add_argument("--jobs", type=int, default=1, help="processes measuring and searching (default 1)")
+    windows.add_argument("--profile-cache",
+                         help="a directory that keeps the corpus occurrences' profiles between runs; regenerable, "
+                              "outside any archive (profile_cache.py)")
     windows.add_argument("--regenerate", action="store_true",
                          help="search even when an equivalent run is recorded, and print the answer with every "
                               "Work within the limit; propose nothing")

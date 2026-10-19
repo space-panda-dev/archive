@@ -162,14 +162,26 @@ digest as its content, filing the entry with the recording's
 version that makes other bits makes other content, measured again; one that
 makes the same bits keeps every measure. Declare `"needs": ["stems/vocals"]`
 only for a measure that is about stems as such, such as one comparing two
-of them.
+of them. An extractor whose measure is better on a stem where there is one,
+as a melody is on the vocal stem, declares `"prefers": [{"input":
+"stems/vocals"}]` instead (with `"parameters"` it takes there, if any, and
+`"at_least"` minimums its measure there must reach to stay the default): it
+then measures the stem by default where the bank holds it, and the content
+where it does not, and never makes the stem
+([preferred inputs](feature-bank.md#preferred-inputs)).
 
 The shipped separator, `stems`, is the worked example of an extractor in
 another environment: its command is `["${demucs-python}", "stems.py"]`, so
 the runner starts it with the interpreter the operator configured, and its
 test stands in for the model with fixed gains while running the rest of the
 real program
-([`enrich/test_stems.py`](../enrich/test_stems.py)).
+([`enrich/test_stems.py`](../enrich/test_stems.py)). A second separator,
+`stems-6s`, runs the same program with another pinned model and six stems,
+so its stems are other content and its measures sit beside those of
+`stems`. `notes-basic-pitch`, `f0-pesto`, and `f0-torchcrepe` follow the same
+pattern for note events and pitch tracks: each imports its model's library
+only to load the model, so its test replaces that one function and runs the
+rest.
 
 ## Other media
 

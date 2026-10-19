@@ -1,7 +1,7 @@
 {
  "contract": "archive-extractor/1",
  "id": "rhythm",
- "version": "3",
+ "version": "4",
  "description": "Beats, tempo, and onsets by Essentia's RhythmExtractor2013 (multifeature) and OnsetRate on 44,100 Hz audio in overlapping chunks, and how far onsets sit from the beat grid; the primary tempo level by onset support, its alternatives, meter, downbeats, and spans of steady tempo and meter, from the beats and its own spectral flux and chroma. Decodes for itself: both algorithms need 44,100 Hz and finer hops than frames has.",
  "command": [
   "${python}",
@@ -60,7 +60,7 @@
   "prior_octaves": 1,
   "tracker_octaves": 2,
   "level_switch_cost": 20,
-  "downbeat_margin": 2,
+  "downbeat_margin": 1,
   "meters": [
    4,
    3,
@@ -155,7 +155,7 @@
   "downbeats": {
    "kind": "events",
    "unit": "s",
-   "description": "the pulses that start a bar, only where the bar's downbeat_margin is at least downbeat_margin; value is the bar's length in beats, label its meter (4/4, 3/4, 12/8, ...). On an album of dense commercial music no more than chance (a quarter of bar lines) fell on a transcription's bar lines; at the default margin few are published there"
+   "description": "the pulses that start a bar, only where the bar's downbeat_margin is at least downbeat_margin; value is the bar's length in beats, label its meter (4/4, 3/4, 12/8, ...). On an album of dense music, at the default margin 81% fell on a neural tracker's downbeats, and 96% at a margin of 2; the others about as often one beat off as half a bar off"
   },
   "primary_tempo": {
    "kind": "series",
@@ -163,7 +163,7 @@
    "columns": 1,
    "grid": "seconds",
    "unit": "BPM",
-   "description": "the primary level's tempo: the relation of the tracker's tempo (1:2, 2:3, 3:4, 1:1, 4:3, 3:2, 2:1) with the most onset support times a preference for tempi near prior_bpm and one for the tracker's own octave (tracker_octaves wide), through a path that changes level only on sustained evidence and starts afresh after a break without beats; 0 where the tracker has no beat. Octaves are mostly the preferences': the support hardly tells them apart"
+   "description": "the primary level's tempo: the relation of the tracker's tempo (1:2, 2:3, 3:4, 1:1, 4:3, 3:2, 2:1) with the most onset support times a preference for tempi near prior_bpm and one for the tracker's own octave (tracker_octaves wide), through a path that changes level only on sustained evidence and starts afresh after a break without beats; a second where the window's beats are too few to lay every level is no evidence for any; 0 where the tracker has no beat. Octaves are mostly the preferences': the support hardly tells them apart"
   },
   "tempo_support": {
    "kind": "series",
@@ -179,7 +179,7 @@
    "columns": 1,
    "grid": "seconds",
    "unit": "1",
-   "description": "how clearly the bar lines are placed at the last pulse at or before each second: over the 4 bars either side, the mean downbeat evidence (a low accent plus a change of chroma, each a robust z-score) at the bars' first beats less the largest at any other beat of the bar; 2 to 4 on a band whose bar lines carry a kick and a chord change, below 1 where another phase fits as well; 0 where there is no pulse"
+   "description": "how clearly the bar lines are placed at the last pulse at or before each second: over the 4 bars either side, the mean downbeat evidence (the low accent, less half the whole accent, and half each of the beat-synchronous chroma's move at the beat and across a bar, each a robust z-score) at the bars' first beats less the largest at any other beat of the bar; 2 to 4 on a band whose bar lines carry a kick and a chord change, below 1 where another phase fits as well; 0 where there is no pulse"
   },
   "tempo_spans": {
    "kind": "spans",
@@ -199,7 +199,7 @@
   "meter": {
    "kind": "scalar",
    "unit": "1",
-   "description": "the meter covering the most time in tempo_spans; empty with none"
+   "description": "the meter covering the most time in tempo_spans; empty with none. Where a song's bars are not all of one length, 5 beats a bar is preferred to 4 where they repeat about as well"
   }
  }
 }

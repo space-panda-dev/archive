@@ -28,6 +28,7 @@ import re
 import stat
 import sys
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -55,6 +56,7 @@ PROGRAM = re.compile(r"\$\{([a-z][a-z0-9-]{0,62})\}")
 SUFFIX = re.compile(r"\.[a-z0-9]{1,10}")
 KEY = re.compile(r"sha256:[0-9a-f]{64}")
 SPOOL_CAPABILITY = re.compile(r"[A-Za-z0-9._-]+@[A-Za-z0-9.]+")
+DECIMAL = re.compile(r"-?[0-9]{1,15}(\.[0-9]{1,15})?")
 # The integers every JSON reader holds exactly (an IEEE double's), as RFC 8785 requires.
 MAX_INTEGER = 2 ** 53 - 1
 
@@ -214,6 +216,13 @@ class Extractor:
     def outputs(self) -> dict[str, dict[str, Any]]:
         return self.manifest["outputs"]
 
+    @property
+    def prefers(self) -> list[dict[str, Any]]:
+        """The file features this extractor measures by default where the
+        content has them, in order, each with the parameters it takes there
+        and the minimums its measure there must reach to be the default."""
+        return [{"parameters": {}, "at_least": {}, **preference} for preference in self.manifest.get("prefers", [])]
+
     def accepts(self, media_type: str) -> bool:
         kind, _, sub = media_type.partition("/")
         for pattern in self.manifest["accepts"]:
@@ -259,8 +268,8 @@ def check_manifest(manifest: Any, where: str) -> dict[str, Any]:
     """An extractor manifest, refused unless it is exactly the contract's shape."""
     _require(isinstance(manifest, dict), f"{where}: not a JSON object")
     _require(manifest.get("contract") == EXTRACTOR_CONTRACT, f"{where}: contract must be {EXTRACTOR_CONTRACT}")
-    known = {"contract", "id", "version", "description", "command", "accepts", "requires", "needs", "parameters",
-             "outputs"}
+    known = {"contract", "id", "version", "description", "command", "accepts", "requires", "needs", "prefers",
+             "parameters", "outputs"}
     extra = set(manifest) - known
     _require(not extra, f"{where}: unknown fields {sorted(extra)}")
     _require(isinstance(manifest.get("id"), str) and ID.fullmatch(manifest["id"]) is not None,
@@ -282,6 +291,27 @@ def check_manifest(manifest: Any, where: str) -> dict[str, Any]:
              and len(set(needs)) == len(needs), f"{where}: needs must list distinct features <extractor>/<output>")
     _require(isinstance(manifest.get("parameters", {}), dict), f"{where}: parameters must be an object")
     check_parameters(manifest.get("parameters", {}), f"{where}: parameters")
+    prefers = manifest.get("prefers", [])
+    _require(isinstance(prefers, list), f"{where}: prefers must list preferred inputs")
+    for preference in prefers:
+        _require(isinstance(preference, dict) and set(preference) <= {"input", "parameters", "at_least"}
+                 and isinstance(preference.get("input"), str) and FEATURE.fullmatch(preference["input"]) is not None,
+                 f"{where}: each preference is {{\"input\": \"<extractor>/<output>\", \"parameters\": {{...}}, "
+                 f"\"at_least\": {{...}}}}")
+        minimums = preference.get("at_least", {})
+        _require(isinstance(minimums, dict) and all(
+            isinstance(value, str) and DECIMAL.fullmatch(value) is not None for value in minimums.values()),
+                 f"{where}: a preference's at_least maps outputs to decimal text, such as \"0.2\"")
+        _require(all(isinstance(manifest.get("outputs"), dict)
+                     and manifest["outputs"].get(name, {}).get("kind") == "scalar" for name in minimums),
+                 f"{where}: at_least for {preference['input']} names only scalar outputs it declares")
+        fields = preference.get("parameters", {})
+        _require(isinstance(fields, dict), f"{where}: a preference's parameters must be an object")
+        check_parameters(fields, f"{where}: parameters preferred for {preference['input']}")
+        unknown = set(fields) - set(manifest.get("parameters", {}))
+        _require(not unknown, f"{where}: parameters preferred for {preference['input']} that it does not declare: "
+                              f"{sorted(unknown)}")
+    _require(len({p["input"] for p in prefers}) == len(prefers), f"{where}: a feature is preferred twice")
     outputs = manifest.get("outputs")
     _require(isinstance(outputs, dict) and outputs, f"{where}: outputs must declare at least one output")
     for name, declared in outputs.items():
@@ -312,6 +342,16 @@ class Catalog:
                     raise BankError(f"{extractor.id} needs {need}, which no extractor here declares")
         for extractor_id in self.extractors:
             self.order([extractor_id])
+        for extractor in self.extractors.values():
+            for preference in extractor.prefers:
+                source, output = FEATURE.fullmatch(preference["input"]).groups()  # type: ignore[union-attr]
+                if source not in self.extractors:
+                    continue  # a preference is never needed: one no extractor here can make is never present
+                if self[source].outputs.get(output, {}).get("kind") != "file":
+                    raise BankError(f"{extractor.id} prefers {preference['input']}, which is not a file feature; "
+                                    f"only a file can be content")
+                if source in self.order([extractor.id]):
+                    raise BankError(f"{extractor.id} prefers {preference['input']}, which it makes or needs")
 
     @classmethod
     def load(cls, directories: Iterable[Path] = (EXTRACTORS,)) -> "Catalog":
@@ -387,6 +427,20 @@ class Catalog:
             unknown = set(fields) - set(self[extractor_id].manifest.get("parameters", {}))
             if unknown:
                 raise BankError(f"{where} sets {extractor_id} parameters it does not declare: {sorted(unknown)}")
+
+    def overrides_for(self, feature: str,
+                      overrides: Mapping[str, Mapping[str, Any]] | None = None) -> dict[str, dict[str, Any]]:
+        """The parameter overrides for measuring a file feature as content:
+        each extractor that prefers `feature` takes the parameters its
+        preference names, and the operator's configured fields replace those
+        in turn. Every measure of the feature, by preference or by `--from`,
+        and every reader of one, keys with these."""
+        merged = {extractor_id: dict(fields) for extractor_id, fields in (overrides or {}).items()}
+        for extractor in self.extractors.values():
+            for preference in extractor.prefers:
+                if preference["input"] == feature and preference["parameters"]:
+                    merged[extractor.id] = {**preference["parameters"], **merged.get(extractor.id, {})}
+        return merged
 
     def parameters(self, extractor_id: str,
                    overrides: Mapping[str, Mapping[str, Any]] | None = None) -> dict[str, Any]:
@@ -657,12 +711,20 @@ class Bank:
         self.catalog = catalog if catalog is not None else Catalog.load()
         self.parameters = parameters
 
-    def entry(self, content: str, extractor_id: str, filed_under: str | None = None) -> Entry | None:
+    def entry(self, content: str, extractor_id: str, filed_under: str | None = None,
+              feature: str | None = None) -> Entry | None:
         """The current entry of one extractor for one content digest, or None.
         `filed_under` is the digest whose directory holds it, when the
-        content is a file feature of other content (a stem of a recording);
-        see `input_of`."""
-        key = self.catalog.keys(content, [extractor_id], self.parameters)[extractor_id]
+        content is a file feature of other content (a stem of a recording),
+        and `feature` names that feature (see `input_of` and `entry_from`):
+        an extractor that prefers a feature takes other parameters there, so
+        one that does is refused without it rather than missed."""
+        if filed_under is not None and feature is None and any(
+                p["parameters"] for p in self.catalog[extractor_id].prefers):
+            raise BankError(f"{extractor_id} takes other parameters on a feature it prefers; "
+                            f"say which feature {content} is")
+        parameters = self.parameters if feature is None else self.catalog.overrides_for(feature, self.parameters)
+        key = self.catalog.keys(content, [extractor_id], parameters)[extractor_id]
         found = read_entry(entry_directory(self.root, filed_under or content, extractor_id, key))
         if found is not None and found.manifest["key"] != key:
             raise BankError(f"{found.path} holds key {found.manifest['key']}, not {key}")
@@ -695,6 +757,60 @@ class Bank:
         if described["kind"] != "file":
             raise BankError(f"{feature} is a {described['kind']}, not a file; only a file can be content")
         return entry.path / described["file"], described["sha256"], described["media_type"]
+
+    def entry_from(self, content: str, feature: str, extractor_id: str) -> Entry | None:
+        """The entry an extractor made of a file feature of this content (the
+        melody of a recording's vocal stem), or None when the feature or the
+        measure of it is not in the bank."""
+        found = self.input_of(content, feature)
+        if found is None:
+            return None
+        return self.entry(found[1], extractor_id, filed_under=content, feature=feature)
+
+    def default_input(self, content: str, extractor_id: str) -> str | None:
+        """The file feature an extractor measures by default for this
+        content: the first it prefers that the bank holds for it, or None,
+        for the content itself. A preference with `at_least` is passed over
+        once its measure of the feature is in the bank and any of those
+        scalars falls below its minimum (a vocal stem that is mostly
+        unvoiced); until then, it is the default. The runner and every
+        reader decide by this, so they agree on which entry is the
+        content's."""
+        for preference in self.catalog[extractor_id].prefers:
+            source = preference["input"].split("/", 1)[0]
+            if source not in self.catalog.extractors or self.input_of(content, preference["input"]) is None:
+                continue
+            if preference["at_least"] and self.falls_short(content, preference, extractor_id):
+                continue
+            return preference["input"]
+        return None
+
+    def falls_short(self, content: str, preference: Mapping[str, Any], extractor_id: str) -> bool:
+        """Whether the measure of a preferred feature is in the bank and one
+        of the scalars its preference names is below the minimum given. A
+        value that is not a number is refused rather than read as either."""
+        measured = self.entry_from(content, preference["input"], extractor_id)
+        if measured is None:
+            return False
+        for name, minimum in preference["at_least"].items():
+            value = measured.scalar(name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value:
+                raise BankError(f"{measured.path}: {name} is {value!r}, not a number to compare with {minimum}")
+            if Decimal(repr(value)) < Decimal(minimum):
+                return True
+        return False
+
+    def default_entry(self, content: str, extractor_id: str) -> tuple[Entry | None, str | None]:
+        """The entry an extractor makes of this content by default, and the
+        feature it measured (None for the content itself): the measure of
+        the first preferred feature the bank holds whose measure, if made,
+        reaches the preference's `at_least`, else of the content. The entry
+        is None when that measure is not in the bank; it is never the
+        content's own entry in place of a preferred feature's."""
+        feature = self.default_input(content, extractor_id)
+        if feature is None:
+            return self.entry(content, extractor_id), None
+        return self.entry_from(content, feature, extractor_id), feature
 
 
 def environment_root() -> Path | None:

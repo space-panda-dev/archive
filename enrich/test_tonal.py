@@ -38,6 +38,9 @@ CHORD_SECONDS = 2.0
 # C major: C, F, G, A minor, with their roots in the bass.
 C_MAJOR = ((60, 64, 67), (65, 69, 72), (67, 71, 74), (57, 60, 64))
 C_BASS = (48, 41, 43, 45)
+# C major at home: C, F, C, G, the bass on C half the time.
+C_HOME = ((60, 64, 67), (65, 69, 72), (60, 64, 67), (67, 71, 74))
+C_HOME_BASS = (48, 41, 48, 43)
 # F dorian's vamp: Fm7 and Bb7 (the D of Bb7 is dorian's sixth), with their roots in the bass.
 F_DORIAN = ((65, 68, 72, 75), (62, 65, 68, 70))
 F_BASS = (41, 46)
@@ -299,6 +302,49 @@ class Arithmetic(unittest.TestCase):
         self.assertAlmostEqual(tonal.recording_tuning([-49.0, 49.0, -48.0], [0.6, 0.6, 0.6]), -49.0)
         self.assertIsNone(tonal.recording_tuning([], []))
 
+    def test_a_whole_recordings_tuning_needs_enough_windows(self) -> None:
+        """Four confident windows, or all of a short recording's, and at
+        least half of those at least half pitched."""
+        self.assertTrue(tonal.supported(4, 6, 6))
+        self.assertFalse(tonal.supported(2, 4, 6))  # too few: two windows of a minute's six
+        self.assertTrue(tonal.supported(3, 3, 3))  # a recording too short for four
+        self.assertFalse(tonal.supported(6, 14, 14))  # a minority of the pitched windows
+        self.assertTrue(tonal.supported(7, 14, 14))
+        self.assertFalse(tonal.supported(0, 0, 0))
+
+    def test_a_tuning_from_a_minority_of_windows_is_not_reported_but_still_used(self) -> None:
+        """Fourteen windows, every frame pitched: the first stretch's peaks
+        agree on +16 cents, the rest's only weakly, so few windows are
+        confident. The recording's tuning is not reported, but the windows
+        keep their tunings, near the confident windows' median, and the
+        profiles still follow them."""
+        rows = 216 + 13 * 108
+        tight = numpy.zeros(tonal.BINS)
+        tight[16] = 1.0
+        loose = numpy.full(tonal.BINS, 0.95 / tonal.BINS)
+        loose[16] += 0.05
+
+        def measured(confident_rows: int) -> tuple[dict, numpy.ndarray, list]:
+            tuning = tonal.Tuning(rows)
+            for row in range(rows):
+                tuning.add(row, True, tight if row < confident_rows else loose)
+            return tuning.result(rows * tonal.HOP)
+        outputs, windows, anchors = measured(600)
+        confident = int((windows[:, 1] >= 0.4).sum())
+        self.assertTrue(0 < confident < 7, confident)  # anchor: a minority of fourteen
+        self.assertEqual(outputs["tuning_window_count"], confident)
+        self.assertEqual((outputs["tuning_cents"], outputs["tuning_confidence"]), (0.0, 0.0))
+        self.assertEqual(outputs["tuning_frequency"], 440.0)
+        self.assertEqual(len(anchors), confident)
+        self.assertAlmostEqual(anchors[0][1], 16.5, delta=0.5)
+        self.assertTrue(all(abs(cents - 16.5) < 6 for _, cents in anchors), anchors)
+        self.assertTrue(numpy.all(numpy.abs(windows[:, 0] - 16.5) < 15), windows[:, 0])  # near, not folded
+        # Anchor: a majority of confident windows reports it.
+        outputs, windows, _ = measured(1200)
+        self.assertGreaterEqual(int((windows[:, 1] >= 0.4).sum()), 7)
+        self.assertAlmostEqual(outputs["tuning_cents"], 16.5, delta=1)
+        self.assertGreater(outputs["tuning_confidence"], 0)
+
     def test_each_frame_takes_the_confident_windows_tuning(self) -> None:
         local = tonal.frame_tuning(10, [2.0, 6.0], [10.0, 20.0], 15.0)
         self.assertEqual(local.tolist(), [10.0, 10.0, 10.0, 12.5, 15.0, 17.5, 20.0, 20.0, 20.0, 20.0])
@@ -415,38 +461,66 @@ class Key(unittest.TestCase):
             self.assertEqual(len(notes), 1, name)
         self.assertIn("A harmonic minor scale", tonal.COLLECTION_NAMES)
 
-    def test_the_tonic_decides_between_modes_of_one_collection(self) -> None:
+    @staticmethod
+    def shares(weights: dict[int, float]) -> numpy.ndarray:
+        values = Key.profile(weights)
+        return values / values.sum()
+
+    def test_the_bass_decides_between_modes_of_one_collection(self) -> None:
         # Eb major's notes: Eb F G Ab Bb C D (bins 6 8 10 11 1 3 5).
         notes = {6: 1.0, 8: 1.0, 10: 1.0, 11: 1.0, 1: 1.0, 3: 1.0, 5: 1.0}
-        on_f = self.profile({**notes, 8: 3.0, 3: 2.5, 11: 2.2})  # F, its fifth C, its third Ab
-        found = tonal.key_of(on_f)
+        treble = self.shares(notes)
+        found = tonal.key_of(treble, self.shares({8: 3.0, 1: 1.0, 6: 0.5}))  # the bass on F, then Bb
         self.assertEqual((found["key"], found["mode"], found["scale"]), ("F", "dorian", "minor"))
         self.assertEqual(found["scale_notes"], "F G Ab Bb C D Eb")
-        on_eb = self.profile({**notes, 6: 3.0, 1: 2.5, 10: 2.2})  # Eb, Bb, G
-        self.assertEqual((tonal.key_of(on_eb)["key"], tonal.key_of(on_eb)["mode"]), ("Eb", "ionian"))
-        self.assertGreater(found["key_margin"], 0)
+        on_eb = tonal.key_of(treble, self.shares({6: 3.0, 1: 1.0}))
+        self.assertEqual((on_eb["key"], on_eb["mode"]), ("Eb", "ionian"))
         self.assertLessEqual(found["key_strength"], 1.0)
         self.assertEqual(found["collection"], "Eb major scale")
         self.assertTrue(found["tonic_named"])
-        self.assertGreaterEqual(found["tonic_margin"], float(tonal.KEY["min_tonic_margin"]))
+        self.assertGreaterEqual(found["tonic_confidence"], float(tonal.KEY["tonic"]["min_confidence"]))
+        self.assertGreater(found["tonic_margin"], 0)
         self.assertGreater(found["collection_margin"], 0)
 
-    def test_a_tonic_no_note_leans_towards_is_not_named(self) -> None:
-        """Eb major's notes, none leaning: a best tonic and mode come out, but
-        no tonic leads by the margin, so the label is the collection."""
-        flat = tonal.key_of(self.profile({6: 1.0, 8: 1.0, 10: 1.0, 11: 1.0, 1: 1.0, 3: 1.0, 5: 1.0}))
+    def test_the_major_or_minor_tonic_is_favoured_unless_the_bass_says_otherwise(self) -> None:
+        """Bb major's notes leaning, in the treble, on G, D, and Bb, with the
+        bass mostly on Bb: the templates alone read G aeolian, as version 4
+        did for a song in B-flat; the bass and the favour for the
+        collection's major tonic read Bb ionian. A bass that sits on C, the
+        collection's dorian tonic, as firmly as the vamp's does on F reads C
+        dorian; a bass that leans on it only a little does not."""
+        bb_major = {1: 1.0, 3: 1.0, 5: 1.0, 6: 1.0, 8: 1.0, 10: 1.0, 0: 1.0}  # Bb C D Eb F G A
+        treble = self.shares({**bb_major, 10: 3.0, 5: 2.5, 1: 2.4})
+        low = self.shares({1: 3.0, 10: 2.6, 6: 1.0, 8: 1.0})
+        scores = tonal.key_scores(tonal.key_profile(treble, low))
+        best = tonal.KEY_CANDIDATES[int(numpy.argmax(scores))]
+        self.assertEqual((tonal.NOTES[best[0]], best[1]), ("G", "aeolian"))  # anchor: the templates' reading
+        found = tonal.key_of(treble, low)
+        self.assertEqual((found["key"], found["mode"], found["collection"]), ("Bb", "ionian", "Bb major scale"))
+        firm = tonal.key_of(treble, self.shares({3: 3.0, 8: 1.0}))
+        self.assertEqual((firm["key"], firm["mode"]), ("C", "dorian"))
+        slight = tonal.key_of(treble, self.shares({3: 1.1, 1: 1.0, 10: 1.0}))
+        self.assertNotEqual(slight["key"], "C")
+
+    def test_the_tonic_confidence_is_a_share_of_the_collections_notes(self) -> None:
+        """No evidence but the favour: the two favoured tonics share most of
+        it and neither is named; the confidence is a softmax over seven notes."""
+        flat = tonal.key_of(self.shares({6: 1.0, 8: 1.0, 10: 1.0, 11: 1.0, 1: 1.0, 3: 1.0, 5: 1.0}), numpy.zeros(12))
         self.assertEqual(flat["collection"], "Eb major scale")
-        self.assertLess(flat["tonic_margin"], float(tonal.KEY["min_tonic_margin"]))
+        self.assertIn((flat["key"], flat["mode"]), {("Eb", "ionian"), ("C", "aeolian")})
+        self.assertAlmostEqual(flat["tonic_margin"], 0.0, places=9)
+        self.assertLess(flat["tonic_confidence"], 0.5)
+        self.assertGreater(flat["tonic_confidence"], 1 / 7)
         self.assertFalse(flat["tonic_named"])
         self.assertEqual(tonal.key_label(flat), "Eb major scale")
-        # Anchor: leaning on F names it.
-        leaning = tonal.key_of(self.profile({6: 1.0, 8: 3.0, 10: 1.0, 11: 2.2, 1: 1.0, 3: 2.5, 5: 1.0}))
-        self.assertEqual(tonal.key_label(leaning), "F dorian")
+        evidence = tonal.tonic_evidence(list(range(7)), numpy.zeros(12), numpy.zeros(12), [])
+        self.assertTrue(numpy.array_equal(evidence, numpy.zeros(7)))
         # Asked for a collection, the best tonic of its notes, even where another wins.
-        within = tonal.key_of(self.profile({6: 1.0, 8: 3.0, 10: 1.0, 11: 2.2, 1: 1.0, 3: 2.5, 5: 1.0}),
-                              "Ab major scale")
+        treble = self.shares({6: 1.0, 8: 3.0, 10: 1.0, 11: 2.2, 1: 1.0, 3: 2.5, 5: 1.0})
+        within = tonal.key_of(treble, self.shares({8: 1.0}), "Ab major scale")
         self.assertEqual(within["collection"], "Ab major scale")
-        self.assertIsNone(tonal.key_of(numpy.zeros(12), "Ab major scale"))
+        self.assertEqual(tonal.key_of(treble, self.shares({8: 1.0}))["collection"], "Eb major scale")  # anchor
+        self.assertIsNone(tonal.key_of(numpy.zeros(12), numpy.zeros(12), "Ab major scale"))
 
     def test_the_collection_path_pays_for_each_change(self) -> None:
         names = tonal.COLLECTION_NAMES
@@ -470,13 +544,15 @@ class Key(unittest.TestCase):
 
     def test_a_raised_seventh_reads_harmonic_minor(self) -> None:
         # A harmonic minor: A B C D E F G# (bins 0 2 3 5 7 8 11).
-        found = tonal.key_of(self.profile({0: 3.0, 2: 1.0, 3: 2.2, 5: 1.0, 7: 2.5, 8: 1.0, 11: 1.0}))
+        found = tonal.key_of(self.shares({0: 3.0, 2: 1.0, 3: 2.2, 5: 1.0, 7: 2.5, 8: 1.0, 11: 1.0}),
+                             self.shares({0: 1.0}))
         self.assertEqual((found["key"], found["mode"], found["scale"]), ("A", "harmonic minor", "minor"))
+        self.assertTrue(found["tonic_named"])
         self.assertEqual(found["scale_notes"], "A B C D E F Ab")
 
     def test_no_weight_and_no_contrast_have_no_key(self) -> None:
-        self.assertIsNone(tonal.key_of(numpy.zeros(12)))
-        self.assertIsNone(tonal.key_of(numpy.ones(12)))
+        self.assertIsNone(tonal.key_of(numpy.zeros(12), numpy.zeros(12)))
+        self.assertIsNone(tonal.key_of(numpy.ones(12) / 12, numpy.zeros(12)))
 
     def test_the_bass_leans_the_tonic(self) -> None:
         """C major's notes with the bass on A read A aeolian; with it on C,
@@ -485,15 +561,17 @@ class Key(unittest.TestCase):
         treble[:, [3, 5, 7, 8, 10, 0, 2]] = 1.0
         bass = numpy.zeros((10, 12))
         bass[:, 0] = 1.0
-        on_a = tonal.key_of(tonal.key_profile(treble, bass))
+        on_a = tonal.key_of(*tonal.key_shares(treble, bass))
         bass[:, 0], bass[:, 3] = 0.0, 1.0
-        on_c = tonal.key_of(tonal.key_profile(treble, bass))
+        on_c = tonal.key_of(*tonal.key_shares(treble, bass))
         self.assertEqual(((on_a["key"], on_a["mode"]), (on_c["key"], on_c["mode"])),
                          (("A", "aeolian"), ("C", "ionian")))
-        # A silent frame adds nothing; with no bass the treble decides alone.
+        # A silent frame adds nothing; with no bass the bass shares are zero.
         silent = numpy.vstack([treble, numpy.zeros((5, 12))])
-        self.assertTrue(numpy.allclose(tonal.key_profile(silent, numpy.zeros((15, 12))),
-                                       tonal.key_profile(treble, numpy.zeros((10, 12)))))
+        for made, expected in zip(tonal.key_shares(silent, numpy.zeros((15, 12))),
+                                  tonal.key_shares(treble, numpy.zeros((10, 12)))):
+            self.assertTrue(numpy.allclose(made, expected))
+        self.assertAlmostEqual(float(tonal.key_shares(treble, bass)[0].sum()), 1.0)
 
     def test_regions_lay_overlapping_windows_end_to_end(self) -> None:
         spans = [{"start": 0.0, "end": 30.0, "label": "F dorian", "value": 0.8},
@@ -690,14 +768,14 @@ class Harmony(unittest.TestCase):
         directory = scratch(self)
         for transpose, key, notes in ((0, "C", "C D E F G A B"), (2, "D", "D E F# G A B C#")):
             with self.subTest(transpose=transpose):
-                source = write(directory, f"song{transpose}", progression(C_MAJOR, lambda t: 0, repeats=10,
-                                                                          transpose=transpose, bass=C_BASS))
+                source = write(directory, f"song{transpose}", progression(C_HOME, lambda t: 0, repeats=10,
+                                                                          transpose=transpose, bass=C_HOME_BASS))
                 found = measured(self, directory, source)
                 self.assertEqual((found.scalar("key"), found.scalar("mode"), found.scalar("scale")),
                                  (key, "ionian", "major"))
                 self.assertEqual(found.scalar("scale_notes"), notes)
                 self.assertGreater(found.scalar("key_strength"), 0.7)
-                self.assertGreater(found.scalar("key_margin"), 0)
+                self.assertGreater(found.scalar("tonic_confidence"), 0.5)
                 self.assertEqual(found.scalar("collection"), f"{key} major scale")
                 self.assertTrue(found.scalar("tonic_named"))
                 windows = found.items("keys")
@@ -709,6 +787,19 @@ class Harmony(unittest.TestCase):
                 self.assertEqual([(r["start"], r["label"]) for r in regions], [(0.0, f"{key} ionian")])
                 self.assertEqual(regions[0]["end"], windows[-1]["end"])
                 self.assertFalse(found.scalar("detuned"))
+
+    def test_a_cycle_with_every_root_in_the_bass_names_only_its_notes(self) -> None:
+        """C, F, G, and A minor, each root as long in the bass: C, its major
+        tonic, is the best guess, but A, its minor tonic, has as much bass
+        and nearly as much treble, so the tonic is not named."""
+        directory = scratch(self)
+        found = measured(self, directory, write(directory, "cycle", progression(C_MAJOR, lambda t: 0, repeats=10,
+                                                                                bass=C_BASS)))
+        self.assertEqual((found.scalar("key"), found.scalar("mode"), found.scalar("collection")),
+                         ("C", "ionian", "C major scale"))
+        self.assertGreater(found.scalar("tonic_confidence"), 2 / 7)
+        self.assertFalse(found.scalar("tonic_named"))
+        self.assertEqual([r["label"] for r in found.items("key_regions")], ["C major scale"])
 
     def test_a_dorian_vamp_reads_dorian_not_the_major_key_of_its_notes(self) -> None:
         """Fm7 three bars in four and Bb7 the fourth: the notes are Eb
@@ -753,33 +844,38 @@ class Harmony(unittest.TestCase):
                 if cents == 46:  # anchor: there, the profile on 440 Hz loses its notes
                     self.assertLess(hpcp_share, hpcp_in_tune - 0.05)
 
-    def test_regions_follow_the_notes_and_name_a_tonic_only_when_it_leads(self) -> None:
-        """C major's notes throughout, the weight moving between C, A, and F
-        window by window: the windows disagree on the tonic, the notes do not,
-        so there is one region, labelled by its notes. Then G major's notes
-        for long enough: a second region."""
+    def test_regions_follow_the_notes_not_the_tonic(self) -> None:
+        """C major's notes throughout, the treble and the bass moving between
+        C, A, and F window by window: the windows disagree on the tonic, the
+        notes do not, so there is one region, its tonic chosen from all its
+        frames. Then G major's notes for long enough: a second region."""
         rows = 1620  # nine key windows
         chroma = numpy.zeros((rows, 12))
         chroma[:, [3, 5, 7, 8, 10, 0, 2]] = 1.0
+        bass = numpy.zeros((rows, 12))
         leaning = {3: (3, 10, 7), 0: (0, 7, 3), 8: (8, 3, 0)}  # C, A, F: tonic, fifth, third
         for index, note in enumerate((3, 0, 8, 3, 0)):  # a window's length each
             tonic, fifth, third = leaning[note]
             chroma[index * 324:(index + 1) * 324, [tonic, fifth, third]] = [3.0, 2.5, 2.2]
-        bass = numpy.zeros((rows, 12))
+            bass[index * 324:(index + 1) * 324, note] = 1.0
         pitched = numpy.ones(rows, dtype=bool)
         found = tonal.keys(chroma, bass, pitched, rows * tonal.HOP)
         labels = {span["label"] for span in found["keys"]}
-        self.assertGreaterEqual(len(labels), 2, labels)  # anchor: the windows do disagree
-        self.assertEqual([region["label"] for region in found["key_regions"]], ["C major scale"])
-        self.assertEqual(found["collection"], "C major scale")
+        self.assertGreaterEqual(len(labels), 3, labels)  # anchor: the windows do disagree
+        whole = tonal.key_of(*tonal.key_shares(chroma, bass))
+        self.assertEqual(whole["collection"], "C major scale")
+        self.assertEqual([(region["label"], region["value"]) for region in found["key_regions"]],
+                         [(tonal.key_label(whole), whole["tonic_confidence"])])
         chroma[810:, 8] = 0.0  # F out ...
         chroma[810:, 9] = 1.0  # ... F# in: G major's notes for the second half
         found = tonal.keys(chroma, bass, pitched, rows * tonal.HOP)
         regions = found["key_regions"]
         self.assertEqual(len(regions), 2, regions)
-        self.assertEqual(tonal.key_of(tonal.key_profile(chroma[1000:], bass[1000:]))["collection"], "G major scale")
-        self.assertEqual([region["label"] for region in regions], ["C major scale", "G major scale"])
-        self.assertLess(regions[0]["value"], float(tonal.KEY["min_tonic_margin"]))  # the value is the tonic margin
+        self.assertEqual(tonal.key_of(*tonal.key_shares(chroma[1000:], bass[1000:]))["collection"], "G major scale")
+        for region, collection in zip(regions, ("C major scale", "G major scale")):
+            first, stop = round(region["start"] / tonal.SECONDS_PER_ROW), round(region["end"] / tonal.SECONDS_PER_ROW)
+            within = tonal.key_of(*tonal.key_shares(chroma[first:stop], bass[first:stop]), collection)
+            self.assertEqual(region["label"], tonal.key_label(within))
         self.assertEqual((regions[0]["start"], regions[-1]["end"]), (0.0, found["keys"][-1]["end"]))
 
     def test_pitched_frames_with_empty_profiles_have_no_key(self) -> None:

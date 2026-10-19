@@ -4,9 +4,13 @@
 Each extractor has its own tests; these prove that they work as one bank: a
 three-minute synthetic recording shaped like a recorder's file (48 kHz
 stereo FLAC: room noise, a chord progression with a tune and a click on the
-beat, room noise) goes through `run all`, with `stems` run by the stand-in
-for Demucs's interpreter that `test_stems` uses (the real `stems.py` with
-only the model replaced). Then a second run must run and hash nothing, the
+beat, room noise) goes through `run all`, with `stems` and `stems-6s` run by
+the stand-in for Demucs's interpreter that `test_stems` uses (the real
+programs with only the model replaced), `notes-basic-pitch`, `f0-pesto`, and
+`f0-torchcrepe` by the stand-ins of `test_notes` and `test_f0`, and the
+learned beat and chord extractors by the stand-ins `test_beats_chords` uses
+(their real programs with fixed answers for the models). Then a second run
+must run and hash nothing, the
 whole bank must be what `bank.py` accepts, and `cover.py` must find in it
 the profiles it would measure.
 
@@ -37,6 +41,9 @@ import extract
 import support
 from support import needs_ffmpeg
 from test_cover import needs_essentia
+from test_beats_chords import stand_in_programs
+from test_f0 import fake_python as fake_f0_python
+from test_notes import fake_python as fake_notes_python
 from test_stems import fake_python
 
 RATE = 48000
@@ -137,8 +144,11 @@ class EveryExtractor(unittest.TestCase):
         root = directory / "bank"
         catalog = bank.Catalog.load()
         everything = set(catalog.extractors)
+        demucs = fake_python(directory)
         argv = ["run", "all", "--content", str(audio), "--bank", str(root),
-                "--program", f"demucs-python={fake_python(directory)}"]
+                "--program", f"demucs-python={demucs}", "--program", f"stems-6s-python={demucs}",
+                "--program", f"basic-pitch-python={fake_notes_python(directory)}",
+                "--program", f"f0-python={fake_f0_python(directory)}", *stand_in_programs(directory)]
 
         code, answer = run(argv)
         self.assertEqual(code, 0, answer)
@@ -154,7 +164,21 @@ class EveryExtractor(unittest.TestCase):
         digest = answer["content"]
         entries = check_bank(self, root, catalog)
         self.assertEqual(sorted(e.manifest["extractor"]["id"] for e in entries), sorted(everything))
-        self.assertTrue(all(e.manifest["content"] == digest for e in entries))
+        # Every entry is of the recording, but an extractor that prefers a file
+        # feature this run made (melody, the vocal stem) measured that feature,
+        # filed with the recording; the answer and the reader agree on which.
+        reader = bank.Bank(root, catalog)
+        preferring = {e.id for e in catalog.extractors.values() if e.prefers}
+        self.assertTrue(preferring)  # anchor: some shipped extractor prefers a feature
+        for e in entries:
+            extractor_id = e.manifest["extractor"]["id"]
+            feature = reader.default_input(digest, extractor_id)
+            self.assertEqual(answer["extractors"][extractor_id].get("input"), feature, extractor_id)
+            expected = digest if feature is None else reader.input_of(digest, feature)[1]
+            self.assertEqual(e.manifest["content"], expected, extractor_id)
+            self.assertEqual(e.path.parents[2].name, digest.split(":")[1], extractor_id)
+            self.assertEqual(reader.default_entry(digest, extractor_id)[0].manifest["key"], e.manifest["key"])
+        self.assertTrue(any(answer["extractors"][i].get("input") for i in preferring))
         # Each need an entry recorded is the entry the bank holds now.
         current = {e.manifest["extractor"]["id"]: e.manifest["key"] for e in entries}
         for e in entries:
