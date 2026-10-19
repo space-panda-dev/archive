@@ -300,7 +300,7 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
 - May a bandmate with a relay login assert their own sensitivity limit, at
   least one that only narrows what is shown? [ADR 0088](decisions/0088-bandmates.md) keeps sensitivity claims
   the operator's to send, so the operator records a bandmate's limit with
-  them as its author.
+  them as its author. (ADR 0094, proposed, would answer this)
 - Is [ADR 0085](decisions/0085-documents-lyrics-rights.md)'s rights permit table right: `InC` held by the operator permits
   distribution, `NoC-US` distribution, `NoC-NC` open, everything else (and no
   rights claim) service, and the strictest claim wins whoever asserted it?
