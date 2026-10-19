@@ -254,6 +254,10 @@ def work(catalog: bank.Catalog, directory: Path, programs: dict[str, str], paylo
     content = directory / "attachments" / hex_of(digest)
     if not content.is_file():
         raise Refused(f"the task carries no attachment {hex_of(digest)}")
+    # Hashed here, not trusted to Spool: an extractor run on other bits
+    # would be filed under this digest. The bits will not change on a retry.
+    if bank.file_digest(content) != digest:
+        raise Refused(f"the attachment {hex_of(digest)} is not the bits its digest names")
     root = directory / "bank"
     run = extract.Run(catalog, root, content, media_type, digest, programs, overrides, None)
     answer = run.execute([extractor_id], 1)
@@ -397,7 +401,13 @@ def collect(catalog: bank.Catalog, root: Path, spool: Spool) -> dict[str, Any]:
     failed = {}
     for record in spool.lines("failures"):
         name = record.get("task_id")
-        if isinstance(name, str) and name.startswith(TASK_PREFIX) and not record.get("retried", True):
+        if not (isinstance(name, str) and name.startswith(TASK_PREFIX)):
+            continue
+        retried = record.get("retried")
+        if not isinstance(retried, bool):
+            # Not read as retried (it would vanish) nor as final: said to be malformed.
+            failed[name] = f"the spool's failure record is malformed: retried is {retried!r}"
+        elif not retried:
             failed[name] = record.get("reason")
     ok = all(task["status"] in ("filed", "hit") and task.get("collected") for task in tasks.values())
     return {"status": "ok" if ok and not failed else "failed", "bank": str(root), "tasks": tasks,

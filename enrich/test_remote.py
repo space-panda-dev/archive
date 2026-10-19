@@ -126,7 +126,8 @@ class FakeSpool:
     def tasks(self) -> list[dict]:
         return [json.loads(p.read_text()) for p in sorted((self.root / "tasks").glob("*.json"))]
 
-    def work(self, config: Path, env: dict[str, str] | None = None) -> list[subprocess.CompletedProcess]:
+    def work(self, config: Path, env: dict[str, str] | None = None,
+             damage: bool = False) -> list[subprocess.CompletedProcess]:
         runs = []
         for task in self.tasks():
             if (self.root / "done" / (task["task_id"] + ".json")).exists():
@@ -137,6 +138,10 @@ class FakeSpool:
                 for item in task["attachments"]:
                     shutil.copyfile(self.root / "attachments" / item["sha256"],
                                     directory / "attachments" / item["sha256"])
+                    if damage:
+                        data = bytearray((directory / "attachments" / item["sha256"]).read_bytes())
+                        data[-100] ^= 1
+                        (directory / "attachments" / item["sha256"]).write_bytes(bytes(data))
                 completed = subprocess.run([sys.executable, str(REMOTE), "work", "--config", str(config)],
                                            cwd=directory, input=json.dumps(task["payload"]).encode(),
                                            capture_output=True, env={**os.environ, **(env or {})})
@@ -349,6 +354,38 @@ class PutWorkCollect(unittest.TestCase):
         bad.write_text(json.dumps({"programs": {}, "parameters": {"stems": {"chunk_seconds": 60}}}))
         [run] = self.spool.work(bad)
         self.assertEqual(run.returncode, remote.EX_DATAERR, run.stderr)
+
+    def test_a_worker_hashes_the_attachment_and_refuses_other_bits(self) -> None:
+        self.assertEqual(self.put()[0], 0)
+        config = worker_config(self.directory)
+        # The demucs stand-in would fail (exit 1) had anything run; a refusal exits 65 before it.
+        [run] = self.spool.work(config, env={"STEMS_FAKE": "exit"}, damage=True)
+        self.assertEqual(run.returncode, remote.EX_DATAERR, run.stderr)
+        self.assertIn(b"not the bits its digest names", run.stderr)
+        self.assertNotIn(b"crashed on purpose", run.stderr)
+        self.assertFalse(list((self.spool.root / "done").iterdir()))
+        # Anchor: the same task with its attachment intact runs.
+        [run] = self.spool.work(config)
+        self.assertEqual(run.returncode, 0, run.stderr)
+
+    def test_a_malformed_failure_record_is_a_failure_not_a_retry(self) -> None:
+        self.spool.root.mkdir(parents=True, exist_ok=True)
+        failures = self.spool.root / "failures.jsonl"
+        name = "bank-" + "1" * 64
+        records = [{"task_id": "bank-" + "2" * 64, "reason": "retrying", "retried": True},
+                   {"task_id": "bank-" + "3" * 64, "reason": "gave up", "retried": False},
+                   {"task_id": "other-task", "reason": "not ours"}]
+        failures.write_text("".join(json.dumps(r) + "\n" for r in records[:1]))
+        self.assertEqual(self.collect(), (0, {"status": "ok", "bank": str(self.bank), "tasks": {}, "failed": {}}))
+        for value in ("missing", None, "false", 0):
+            with self.subTest(retried=value):
+                odd = {"task_id": name, "reason": "lost"} | ({} if value == "missing" else {"retried": value})
+                failures.write_text("".join(json.dumps(r) + "\n" for r in records + [odd]))
+                code, answer = self.collect()
+                self.assertEqual((code, answer["status"]), (1, "failed"))
+                self.assertEqual(set(answer["failed"]), {"bank-" + "3" * 64, name})
+                self.assertEqual(answer["failed"]["bank-" + "3" * 64], "gave up")
+                self.assertIn("malformed", answer["failed"][name])
 
     def test_only_an_extractor_that_needs_nothing_travels(self) -> None:
         code, answer = call("put", "structure", "--content", str(self.audio), "--bank", str(self.bank),
