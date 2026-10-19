@@ -99,7 +99,9 @@ A named view is a question World answers by a stated rule
 selected generation when asked and never stored. [`views.py`](views.py) holds
 the registry, the request rules ([`view_requests.py`](view_requests.py)), and
 the chord views; [`record_views.py`](record_views.py) adds the views of
-0.0.10's other records to the same registry. Every view is version 1:
+0.0.10's other records to the same registry. Every view is version 1 but
+`written_rhythm` and `bass_line`, which are version 2 (version 1 was never
+released):
 
 | View | Subject | Answer |
 |---|---|---|
@@ -116,7 +118,7 @@ the chord views; [`record_views.py`](record_views.py) adds the views of
 | `played_bars` | `meter` (a pin) | `form`, `played` (`bar`, `section`, `numerator`, `denominator`) |
 | `tune` | `melody_spans` (a pin) | `notes` (each with `from`), `handoffs`, `left_out` (a machine's spans on the bass line) |
 | `track_credits` | `recording` (an Entity) | `credits` (`claim`, `scope`, `via`, `why`, `refined_by`) |
-| `written_rhythm` | `notes` or `melody_spans` (a pin) | `rule`, `written` (chords and rests: `position`, `duration`, `bar`, `at`; a chord's `notes`, `pitches`, `sounded_share`, `articulation`; a rest's `boundary`), `left_out`, or `why` |
+| `written_rhythm` | `notes` or `melody_spans` (a pin) | `rule`, `written` (chords and rests: `position`, `duration`, `bar`, `at`; a chord's `notes`, `pitches`, `sounded_share`, `articulation`; a rest's `boundary`), `feel`, `clef`, `counts`, `left_out`, or `why` |
 | `bass_line` | `source` (the recording's Artifact) | `lines`: each head notes claim saying `bass`, with `clef` and its written rhythm |
 | `may_publish` | `approval` (a pin) | `may_publish`, `blockers`, `class`, `destination`, `on` |
 
@@ -135,9 +137,17 @@ approval beyond the circle on the day it is made. `written_rhythm` and
 written and `why` says so) and `layer` (0); `written_rhythm` also takes
 `lyrics`, up to 8 timed lyrics pins whose line ends and words mark phrase
 boundaries. Its rule (ADR 0086, amended) is named by its version
-(`notes.RHYTHM_RULES`): onsets on a grid of four points a beat, each note
-filling to the next onset, `staccato` under 60% sounded, and a rest only
-for a silence of a beat or more at a `line_end` or `breath`.
+(`notes.RHYTHM_RULES`, every parameter a named exact decimal repeated in
+`rule`): a constant onset offset is removed and swung eighths are written
+straight; each phrase's onsets are placed by timing error plus notation
+cost; each note fills to the next onset; a rest is written only at a
+`line_end` or `breath`; `staccato` only for a clearly detached short note
+and `tenuto` on a held phrase end; every syllable of the named lyrics lands
+on a note (a held note split, or a note added at the previous pitch, `from`
+says so); octave errors are folded (`folded`, `counts.octave_folded`); and a
+clef is suggested (`clef`, `clef_basis`; the bass line's is always
+`bass`). The answer adds `feel`, `offbeat_position`,
+`onset_offset_samples`, and `counts`.
 
 ```sh
 world/world.py view --list
