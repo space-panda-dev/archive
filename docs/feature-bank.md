@@ -413,10 +413,13 @@ An extractor is retired by removing it from the catalog: `run all` no longer
 makes its entries, and nothing that ships reads them. Its entries stay where
 they are and stay readable, since an entry is described by its own
 `entry.json` (`bank.read_entry` on its directory needs no catalog), and they
-are regenerable: run the retired extractor's directory, from the history,
-with `--extractors <dir>`, and the same version and parameters give the same
-key. A retired id is not reused for another method, so an old entry is never
-read as a new one.
+are regenerable from a checkout of the commit before its removal, run there
+as it was. A key includes the keys of the entries it needs, so the same key
+needs the same upstream versions too: `chords` 2 read `frames` 1, `rhythm` 3,
+and `tonal` 4, and over today's `rhythm` and `tonal` it would be another key
+(and `--extractors` replaces the catalog, so its directory alone has nothing
+to read). A retired id is not reused for another method, so an old entry is
+never read as a new one.
 
 - `chords` (Essentia profiles, retired after version 2). Version 1 named a
   chord per half beat from `tonal`'s profiles by a Viterbi path, with a bass
