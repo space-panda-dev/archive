@@ -143,7 +143,9 @@ SHIPPED = {
     # scalar says which.
     "structure": {"version": "2",
                   "code": "sha256:9fc498fabca00b759a976939890ac94782c8b18110a331ef124bad6da31cfaa1",
-                  "outside": {"detector.py": "sha256:892a47fc87e7ffdd71b2c0fa38c553284ba4b4fd5ed607c0956a1a814075d9e4",
+                  # detector.py changed for ADR 0091's talk gate only; structure uses its
+                  # runs, checkerboard_kernel, and novelty_curve, which did not.
+                  "outside": {"detector.py": "sha256:6cb9ce7e11a2cbd89b4d5094545f2922921901944c25b7e0e311d3733d591eb1",
                               "probe.py": "sha256:6be7514d1671f50e43a07646fe6aa2a54cf4d35a44e608d6a27f58d8d9732384"}},
     # Version 3: clipping at full scale or long at the recording's own peak,
     # overs, events kept where they stand out from their surroundings or
