@@ -270,13 +270,26 @@ parameters are in the manifest's descriptions and in the
 | `chords-jiang` | 1 | none | scalars `chord_count`, `decoded_in_top3`; spans `chords`; files `readings` |
 | `frames` | 1 | none | series `hpcp`, `rms_db`, `centroid`, `rolloff`, `flatness`, `flux`, `onset_hfc`, `mfcc`, `melbands`; scalars `samples`, `seconds` |
 | `colour` | 3 | `frames`: centroid, hpcp, rms_db | series `colour`; files `palette`, `preview` |
+| `f0-pesto` | 1 | none | series `f0`; scalars `rows_from_tracker` |
+| `f0-torchcrepe` | 1 | none | series `f0`; scalars `rows_from_tracker` |
 | `loudness-r128` | 1 | none | scalars `integrated` |
 | `melody` | 2 | none | series `pitch`, `confidence`, `voiced`, `midi`, `cents`, `level_db`; scalars `voiced_fraction`, `melodia_voiced_fraction`, `loud_db`, `gate_db`, `reference_hz`, `samples`; spans `notes` |
+| `notes-basic-pitch` | 1 | none | scalars `note_count`, `seconds`; files `notes` |
 | `quality` | 3 | `frames`: samples | series `correlation`, `peak_db`; scalars `sample_rate`, `channels`, `seconds`, `integrated`, `loudness_range`, `true_peak`, `sample_peak`, `full_scale_samples`, `clipped_seconds`, `dc_offset`, `whole_correlation`, `anti_phase`, `false_stereo`, `noise_floor`, `snr`, `bandwidth`, `band_limited`, `hum_examined`; events `clicks`, `discontinuities`; spans `clipping`, `overs`, `gaps`, `noise_bursts`, `hum` |
 | `rhythm` | 3 | none | series `tempo`, `onset_count`, `onset_deviation`, `offgrid`, `chunk_bpm`, `chunk_confidence`, `primary_tempo`, `tempo_support`, `downbeat_margin`; scalars `bpm`, `confidence`, `onset_rate`, `seconds`, `primary_bpm`, `meter`; events `beats`, `onsets`, `pulse`, `downbeats`, `tempo_changes`; spans `tempo_spans` |
 | `stems` | 1 | none | series `levels`; scalars `vocals_rms_db`, `vocals_peak_db`, `vocals_clamped`, `drums_rms_db`, `drums_peak_db`, `drums_clamped`, `bass_rms_db`, `bass_peak_db`, `bass_clamped`, `other_rms_db`, `other_peak_db`, `other_clamped`, `mix_rms_db`, `samples`, `seconds`; files `vocals`, `drums`, `bass`, `other` |
+| `stems-6s` | 1 | none | series `levels`; scalars `vocals_rms_db`, `vocals_peak_db`, `vocals_clamped`, `drums_rms_db`, `drums_peak_db`, `drums_clamped`, `bass_rms_db`, `bass_peak_db`, `bass_clamped`, `guitar_rms_db`, `guitar_peak_db`, `guitar_clamped`, `piano_rms_db`, `piano_peak_db`, `piano_clamped`, `other_rms_db`, `other_peak_db`, `other_clamped`, `mix_rms_db`, `samples`, `seconds`; files `vocals`, `drums`, `bass`, `guitar`, `piano`, `other` |
 | `structure` | 2 | `frames`: hpcp, rms_db, mfcc, seconds; `rhythm`: onsets, beats | series `novelty`; scalars `floor_db`, `floor`, `reference_db`, `threshold_db`; spans `playing`, `tuning`, `count_ins`, `false_starts`, `endings`, `sections`, `loops` |
 | `tonal` | 4 | `frames`: rms_db | series `pitched`, `tuning_windows`, `chroma`, `bass_chroma`, `dissonance`; scalars `tuning_frequency`, `tuning_cents`, `tuning_confidence`, `tuning_window_count`, `drift_spread_cents`, `detuned`, `key`, `scale`, `mode`, `scale_notes`, `key_strength`, `key_margin`, `collection`, `collection_margin`, `tonic_margin`, `tonic_named`; spans `tuning_drift`, `detuned_spans`, `keys`, `key_regions` |
+
+Five of them run a model in an environment of the operator's, never the
+archive's, each under a program name the operator configures, so `run all`
+skips any that is not configured: `stems` (`${demucs-python}`), `stems-6s`
+(`${stems-6s-python}`, which can be the same interpreter, so that a second
+separation is made only where it is asked for), `notes-basic-pitch`
+(`${basic-pitch-python}`), and `f0-pesto` and `f0-torchcrepe`
+(`${f0-python}`). Each checks its model files against the digests in its
+parameters before loading them.
 
 A version changes whenever an extractor's code or outputs do, so an older
 entry is never read as a newer one (ADR 0073). The versions above 1, and

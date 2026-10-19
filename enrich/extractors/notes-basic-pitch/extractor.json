@@ -1,0 +1,77 @@
+{
+ "contract": "archive-extractor/1",
+ "id": "notes-basic-pitch",
+ "version": "1",
+ "description": "Polyphonic note events by Spotify's Basic Pitch (ICASSP 2022, Apache-2.0) run by ONNX Runtime from the pinned nmp.onnx, on whatever audio is the content: the mix, or a stem by --from stems/bass. Each note's cents and bends are read from the model's pitch contour one bin above Basic Pitch's own mapping, where the pinned model puts a note. Runs under the operator's basic-pitch-python; TensorFlow is never needed.",
+ "command": [
+  "${basic-pitch-python}",
+  "notes.py"
+ ],
+ "accepts": [
+  "audio/*",
+  "video/*"
+ ],
+ "requires": [
+  "ffmpeg",
+  "basic-pitch==0.4.0 (installed without its TensorFlow dependency)",
+  "onnxruntime",
+  "librosa",
+  "numpy",
+  "nmp.onnx sha256:2c3c1d144bfa61ad236e92e169c13535c880469a12a047d4e73451f2c059a0ec (shipped in the basic-pitch wheel)"
+ ],
+ "needs": [],
+ "parameters": {
+  "model": {
+   "name": "basic-pitch icassp_2022 nmp.onnx",
+   "package": "basic-pitch==0.4.0",
+   "sha256": "sha256:2c3c1d144bfa61ad236e92e169c13535c880469a12a047d4e73451f2c059a0ec",
+   "runtime": "onnxruntime"
+  },
+  "decoder": "ffmpeg",
+  "decode_arguments": [
+   "-nostdin",
+   "-hide_banner",
+   "-nostats",
+   "-loglevel",
+   "error",
+   "-i",
+   "{input}",
+   "-map",
+   "0:a:0",
+   "-c:a",
+   "pcm_f32le",
+   "-f",
+   "wav",
+   "{wav}"
+  ],
+  "decode": "basic_pitch.inference.run_inference (librosa load of the WAV, 22050 Hz mono)",
+  "onset_threshold": "0.5",
+  "frame_threshold": "0.3",
+  "minimum_note_length_frames": 11,
+  "minimum_frequency": null,
+  "maximum_frequency": null,
+  "infer_onsets": true,
+  "melodia_trick": true,
+  "contour_offset_bins": 1,
+  "cents": "median over the note's frames of the contour peak within 3 bins of the note's bin plus the offset, interpolated by a parabola through the logarithms",
+  "bends": "per frame, the contour peak within 25 bins of the note's bin plus the offset, weighted by a Gaussian of standard deviation 5 bins, in bins from that bin"
+ },
+ "outputs": {
+  "notes": {
+   "kind": "file",
+   "media_type": "application/json",
+   "suffix": ".json",
+   "description": "{frame_rate, bend_unit, columns, notes}: one row a note, by onset then pitch: onset_s, offset_s, midi (equal-tempered, A4 = 440 Hz), amplitude (Basic Pitch's, 0 to 1), cents (the note's median distance from its MIDI note, within 10 cents of the truth on synthetic tones), bends (per model frame from the onset, about 11.6 ms apart, in thirds of a semitone from the note)"
+  },
+  "note_count": {
+   "kind": "scalar",
+   "unit": "notes",
+   "description": "how many notes"
+  },
+  "seconds": {
+   "kind": "scalar",
+   "unit": "s",
+   "description": "the time of the model's last frame"
+  }
+ }
+}

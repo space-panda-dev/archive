@@ -4,11 +4,13 @@
 Each extractor has its own tests; these prove that they work as one bank: a
 three-minute synthetic recording shaped like a recorder's file (48 kHz
 stereo FLAC: room noise, a chord progression with a tune and a click on the
-beat, room noise) goes through `run all`, with `stems` run by the stand-in
-for Demucs's interpreter that `test_stems` uses (the real `stems.py` with
-only the model replaced), and the learned beat and chord extractors by the
-stand-ins `test_beats_chords` uses (their real programs with fixed answers
-for the models). Then a second run must run and hash nothing, the
+beat, room noise) goes through `run all`, with `stems` and `stems-6s` run by
+the stand-in for Demucs's interpreter that `test_stems` uses (the real
+programs with only the model replaced), `notes-basic-pitch`, `f0-pesto`, and
+`f0-torchcrepe` by the stand-ins of `test_notes` and `test_f0`, and the
+learned beat and chord extractors by the stand-ins `test_beats_chords` uses
+(their real programs with fixed answers for the models). Then a second run
+must run and hash nothing, the
 whole bank must be what `bank.py` accepts, and `cover.py` must find in it
 the profiles it would measure.
 
@@ -40,6 +42,8 @@ import support
 from support import needs_ffmpeg
 from test_cover import needs_essentia
 from test_beats_chords import stand_in_programs
+from test_f0 import fake_python as fake_f0_python
+from test_notes import fake_python as fake_notes_python
 from test_stems import fake_python
 
 RATE = 48000
@@ -140,8 +144,11 @@ class EveryExtractor(unittest.TestCase):
         root = directory / "bank"
         catalog = bank.Catalog.load()
         everything = set(catalog.extractors)
+        demucs = fake_python(directory)
         argv = ["run", "all", "--content", str(audio), "--bank", str(root),
-                "--program", f"demucs-python={fake_python(directory)}", *stand_in_programs(directory)]
+                "--program", f"demucs-python={demucs}", "--program", f"stems-6s-python={demucs}",
+                "--program", f"basic-pitch-python={fake_notes_python(directory)}",
+                "--program", f"f0-python={fake_f0_python(directory)}", *stand_in_programs(directory)]
 
         code, answer = run(argv)
         self.assertEqual(code, 0, answer)

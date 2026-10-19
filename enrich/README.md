@@ -18,7 +18,7 @@ here writes a record: Door decides every revision.
 | [`windows.py`](windows.py) | The whole-recording window search: candidate pass, regions, snapping, claim rounds, and decisions, a standalone tool ([ADR 0072](../docs/decisions/0072-windowed-work-matches.md)) |
 | [`calibrate_windows.py`](calibrate_windows.py) | Checks the window matcher's thresholds against an archive's accepted occurrences; proposes nothing |
 | [`enrich.py`](enrich.py) | The `enrich` command that runs a tool against an archive's records |
-| [`bank.py`](bank.py), [`extract.py`](extract.py), [`extractors/`](extractors/frames/extractor.json) | The feature bank's format and reader, the runner that fills it, and the extractors (one table under [`extract.py`: the feature bank](#extractpy-the-feature-bank) says what each writes): `frames`, `loudness-r128`, `rhythm`, `tonal`, `melody`, `structure`, `quality`, `colour`, `stems`, `beats-beatthis`, `chords-jiang`, and `chords-chordino` ([ADR 0073](../docs/decisions/0073-feature-bank.md), [ADR 0074](../docs/decisions/0074-extractor-contract.md), [ADR 0075](../docs/decisions/0075-stems-as-content.md)) |
+| [`bank.py`](bank.py), [`extract.py`](extract.py), [`extractors/`](extractors/frames/extractor.json) | The feature bank's format and reader, the runner that fills it, and the extractors (one table under [`extract.py`: the feature bank](#extractpy-the-feature-bank) says what each writes): `frames`, `loudness-r128`, `rhythm`, `tonal`, `melody`, `structure`, `quality`, `colour`, `stems`, `stems-6s`, `beats-beatthis`, `chords-jiang`, `chords-chordino`, `notes-basic-pitch`, `f0-pesto`, and `f0-torchcrepe` ([ADR 0073](../docs/decisions/0073-feature-bank.md), [ADR 0074](../docs/decisions/0074-extractor-contract.md), [ADR 0075](../docs/decisions/0075-stems-as-content.md)) |
 | [`hue_range.py`](hue_range.py) | The `colour` extractor's centroid hue limits taken from a set of recordings' `frames` entries, printed as a `--config` ([its README](extractors/colour/README.md#the-hue-range)) |
 | [`media.py`](media.py), [`waveform.py`](waveform.py), [`derived.py`](derived.py) | Derived media, a standalone tool that never touches an archive; the waveform peaks' format and decode; and the layout ([ADR 0069](../docs/decisions/0069-derived-media.md)) |
 | [`requirements.txt`](requirements.txt) | The libraries: numpy (detector, matchers, derived media) and scipy (numpy matcher) |
@@ -728,18 +728,45 @@ Versions, needs, and outputs by kind are listed together in
 | `beats-beatthis` | Python under `${beatthis-python}` (beat_this 1.1.0, PyTorch), with the checkpoint `${beatthis-checkpoint}` | from its own decode at the file's rate (soundfile; the model resamples to 22,050 Hz mono): events `beats` and `downbeats` from Beat This's pinned `final0` checkpoint with its minimal postprocessor, at the model's own metrical level (nothing asserts a meter, and the downbeats' spacing is not one); scalars `beat_count`, `downbeat_count`, `median_bpm` (60 over the median beat interval). On a 69-minute album, 0.20 CPU-seconds a second of audio and 0.76 GB at most |
 | `chords-jiang` | Python under `${jiang-python}` (PyTorch, librosa), from the recogniser's checkout `${jiang-repo}` | from its own decode: spans `chords` (the HMM-decoded labels of Jiang et al.'s large-vocabulary recogniser in Harte spelling, `N` for none, each valued by its label's weight), file `readings` (JSON: per span, the decoded label and the three most probable templates with weights, each a share of the whole template set, so a span's three sum to at most 1), scalars `chord_count` and `decoded_in_top3`. On the same album, 0.17 CPU-seconds a second and 1.6 GB at most |
 | `chords-chordino` | Python under `${chordino-python}` (the vamp host, chord-extractor 0.1.3's Chordino build, librosa) | from its own 44,100 Hz mono decode: spans `chords` (Chordino's simple chord labels in its own spelling, such as `Am7` or `F/A`, `N` for none, tiling the decoded length); scalars `chord_count`, `seconds`. Not learned: a second opinion beside `chords-jiang`. On the same album, 0.042 CPU-seconds a second and 0.56 GB at most |
+| `stems-6s` | Python under `${stems-6s-python}` (Demucs 4.1.0, PyTorch), ffmpeg | the `stems` program with pinned htdemucs_6s weights: `vocals`, `drums`, `bass`, `guitar`, `piano`, `other` as 44.1 kHz stereo 16-bit FLAC, `levels` (six columns), each stem's `_rms_db`, `_peak_db`, `_clamped`; `mix_rms_db`, `samples`, `seconds`. A second separator: its stems are other content than `stems`', so their measures sit beside each other. The names are the model's sources, not instruments: on dense neo-soul a Rhodes came out in `guitar` and `piano` was near silent |
+| `notes-basic-pitch` | Python under `${basic-pitch-python}` (Basic Pitch 0.4.0 by ONNX Runtime, librosa; no TensorFlow), ffmpeg | file `notes` (JSON): every note's `onset_s`, `offset_s`, `midi`, `amplitude`, `cents` (its median distance from the equal-tempered note, read from the model's pitch contour one bin above Basic Pitch's own mapping, where the pinned model puts a note; within 10 cents of the truth on synthetic tones, where Basic Pitch's own mapping read 31 cents sharp), and `bends` (per model frame, in thirds of a semitone); scalars `note_count`, `seconds`. Of the mix or, better, a stem: `--from stems/bass` gives the bass line |
+| `f0-pesto` | Python under `${f0-python}` (PESTO 2.0.1, PyTorch), ffmpeg | series `f0` on grid `f0` (16 kHz, a row every 160 samples, 10 ms): the pitch in Hz (0 where none) and PESTO's confidence; scalar `rows_from_tracker`. One voice: `--from stems/vocals` |
+| `f0-torchcrepe` | Python under `${f0-python}` (torchcrepe 0.0.24 tiny model, PyTorch), ffmpeg | as `f0-pesto`, with the model's periodicity as the confidence: a second opinion. The pitch is decoded here (Viterbi path, then CREPE's local average) because torchcrepe's own decoders add random noise of up to 20 cents |
 
 `--from stems/vocals` measures a stem as content: every extractor runs on it
 unchanged, keyed by the stem's own digest and filed with the recording, after
 the stems are made if they are missing. `stems` runs only where the operator
 configures Demucs's interpreter (`--program demucs-python=<path>`, or
-`programs` in `--config`), and the learned beat and chord extractors only
-where their interpreters and model files are configured
-(`beatthis-python`, `beatthis-checkpoint`, `jiang-python`, `jiang-repo`,
-`chordino-python`); `run all` elsewhere skips them and says so. Each checks
-its model files against the digests its parameters pin and refuses others.
-The Essentia `chords` extractor is retired: its entries stay readable
+`programs` in `--config`); `run all` elsewhere skips it and says so. The other
+model extractors are the same: `stems-6s` runs only with `stems-6s-python`
+(Demucs's interpreter again will do; naming it apart keeps a second
+separation out of `run all` until it is wanted), `notes-basic-pitch` with
+`basic-pitch-python`, the two `f0` trackers with `f0-python`, and the learned
+beat and chord extractors only where their interpreters and model files are
+configured (`beatthis-python`, `beatthis-checkpoint`, `jiang-python`,
+`jiang-repo`, `chordino-python`). Each checks its model files against the
+digests its parameters pin and refuses others. The Essentia `chords`
+extractor is retired: its entries stay readable
 ([retired extractors](../docs/feature-bank.md#retired-extractors)).
+
+### The model extractors' interpreters
+
+Each is a virtual environment of its own, never the archive's. The versions
+are the ones the manifests pin; each program checks its model file's digest
+before loading it, and refuses another version of its library.
+
+- `demucs-python` and `stems-6s-python`: `demucs==4.1.0`, `torch`,
+  `huggingface_hub`, `pyyaml`, `numpy`. The weights are fetched by revision
+  from the Hugging Face hub once and cached (`HF_HOME`); with
+  `HF_HUB_OFFLINE=1` only the cache is read.
+- `basic-pitch-python`: `basic-pitch==0.4.0` installed with `--no-deps`, then
+  `onnxruntime`, `librosa`, `resampy`, `scipy`, `numpy`, `mir_eval`,
+  `pretty_midi`, and `setuptools<81` (resampy imports `pkg_resources`).
+  Basic Pitch's own dependencies name TensorFlow, which is never used (the
+  model is its `nmp.onnx`) and, at 2.14, fails to import beside numpy 2.
+- `f0-python`: `torch` (the CPU build), `torchcrepe==0.0.24`, and
+  `pesto-pitch==2.0.1`; both trackers' weights ship in their wheels. PESTO's
+  checkpoint is a pickle, loaded only after its digest matches.
 
 The format is [docs/feature-bank.md](../docs/feature-bank.md); adding an
 extractor is [docs/adding-an-extractor.md](../docs/adding-an-extractor.md).
@@ -755,4 +782,8 @@ python -m unittest discover -s enrich -p 'test_*.py'
 
 The tests make their audio with numpy and ffmpeg's lavfi sources. Without
 ffmpeg the derived-media tests are skipped, unless
-`ARCHIVE_REQUIRE_INTEGRATION` is set.
+`ARCHIVE_REQUIRE_INTEGRATION` is set. The model extractors are tested with
+stand-ins for their models, running the rest of the real programs; the real
+models run where `ARCHIVE_TEST_DEMUCS_PYTHON` (`stems` and `stems-6s`),
+`ARCHIVE_TEST_BASIC_PITCH_PYTHON` (tones of known pitch must read within 10
+cents), or `ARCHIVE_TEST_F0_PYTHON` (both trackers) names the interpreter.

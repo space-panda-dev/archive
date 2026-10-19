@@ -169,7 +169,13 @@ another environment: its command is `["${demucs-python}", "stems.py"]`, so
 the runner starts it with the interpreter the operator configured, and its
 test stands in for the model with fixed gains while running the rest of the
 real program
-([`enrich/test_stems.py`](../enrich/test_stems.py)).
+([`enrich/test_stems.py`](../enrich/test_stems.py)). A second separator,
+`stems-6s`, runs the same program with another pinned model and six stems,
+so its stems are other content and its measures sit beside those of
+`stems`. `notes-basic-pitch`, `f0-pesto`, and `f0-torchcrepe` follow the same
+pattern for note events and pitch tracks: each imports its model's library
+only to load the model, so its test replaces that one function and runs the
+rest.
 
 ## Other media
 

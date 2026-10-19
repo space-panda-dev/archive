@@ -155,7 +155,22 @@ SHIPPED = {
                "code": "sha256:37bdd43515505b256e90c06f859c2e10797a569183717515c5eca0fb31e6fcc1",
                "outside": {"waveform.py": "sha256:353aceedf74c7a1c2bbaa330fe03847440f1e74213146bcf6bc0b863db39a424",
                            "derived.py": "sha256:d1da556693ea266247cbac481f17672578d5cc90043b3f28730e899cd3c28132"}},
-    "stems": {"version": "1", "code": "sha256:235a4c30a38d1f897958ef1354441011e435709c34732cfe4aad503ab1481c3e", "outside": {}},
+    # The code was made to serve stems-6s too (a Separation names the model and stems); no output changed.
+    "stems": {"version": "1", "code": "sha256:8640df54ce9df76a222134b389ce55f1e6745d4cdbfd7699f352effdc5be4292", "outside": {}},
+    # stems-6s is the stems program with another model and six stems.
+    "stems-6s": {"version": "1",
+                 "code": "sha256:23494ee6838986398b491f243a017b1687921f655db1c51693275931ebf892a2",
+                 "outside": {"extractors/stems/stems.py":
+                                 "sha256:2f387b14db4a6d289edd6ba10ff83568ddeec01855d4f8941dfba906ec9235eb"}},
+    "notes-basic-pitch": {"version": "1",
+                          "code": "sha256:b5448bba015abacd05b07e03eb60e280ae45e3aa01bb5562dd30ef6a0eefe3b2",
+                          "outside": {}},
+    "f0-pesto": {"version": "1",
+                 "code": "sha256:ba157732b055c68b9d1d3921700ee727c354689cd1586e90f2f4f3f36a466d24",
+                 "outside": {}},
+    "f0-torchcrepe": {"version": "1",
+                      "code": "sha256:c4d699901479e035345865983ac6439f94193af30acac3687b8c5c8b26720af9",
+                      "outside": {}},
     # The learned beat and chord extractors keep the album trial's id, version, and
     # parameters, so their keys are the trial's (test_beats_chords checks one).
     "beats-beatthis": {"version": "1",
@@ -815,9 +830,10 @@ class Manifests(unittest.TestCase):
         catalog = bank.Catalog.load()
         self.assertIn("frames", catalog.extractors)
         self.assertIn("loudness-r128", catalog.extractors)
-        programs = {"python": sys.executable, "sh": "/bin/sh", "demucs-python": sys.executable,
-                    "beatthis-python": sys.executable, "beatthis-checkpoint": "/model.ckpt",
-                    "jiang-python": sys.executable, "jiang-repo": "/jiang", "chordino-python": sys.executable}
+        programs = {name: sys.executable for name in ("python", "demucs-python", "stems-6s-python",
+                                                      "basic-pitch-python", "f0-python", "beatthis-python",
+                                                      "jiang-python", "chordino-python")}
+        programs.update({"sh": "/bin/sh", "beatthis-checkpoint": "/model.ckpt", "jiang-repo": "/jiang"})
         for extractor in catalog.extractors.values():
             command = extract.resolve_command(extractor, programs)
             self.assertTrue(any(Path(word).is_file() and Path(word).parent == extractor.directory

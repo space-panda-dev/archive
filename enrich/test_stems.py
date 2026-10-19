@@ -5,8 +5,9 @@ stand-in program: it runs the real `stems.py` (its request handling,
 decoding, chunking, joining, measuring, quantising, FLAC encoding, and
 result) with only the model replaced by fixed gains that sum to the mix.
 Everything after the model is the real writer, so the stems it files are
-the files the real extractor files. One test runs real Demucs when
-ARCHIVE_TEST_DEMUCS_PYTHON names its interpreter.
+the files the real extractor files. `stems-6s` is the same program with
+another model and six stems, and is tested here with the same stand-in.
+Real Demucs runs when ARCHIVE_TEST_DEMUCS_PYTHON names its interpreter.
 """
 
 from __future__ import annotations
@@ -35,33 +36,41 @@ from test_cover import needs_essentia
 from test_beats_chords import stand_in_programs
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "extractors" / "stems"))
+sys.path.insert(0, str(Path(__file__).resolve().parent / "extractors" / "stems-6s"))
 import stems  # noqa: E402
+import stems6s  # noqa: E402
 
 DEMUCS_PYTHON = os.environ.get("ARCHIVE_TEST_DEMUCS_PYTHON")
 
 # The stand-in for Demucs's interpreter. The runner starts it as
-# `<it> <stems.py> <request.json>`; it loads that stems.py and replaces its
-# model, and with STEMS_FAKE_CHUNK its chunk and crossfade, in seconds.
+# `<it> <stems.py> <request.json>` (or stems6s.py); it loads that program and
+# replaces its model, and with STEMS_FAKE_CHUNK its chunk and crossfade, in
+# seconds. stems6s.py runs stems.py's code, so the stand-in replaces them
+# there too. A program of six stems gets a model of six sources.
 FAKE = r'''#!{python}
 import functools, importlib.util, os, sys
 import numpy
 spec = importlib.util.spec_from_file_location("stems_program", sys.argv[1])
-stems = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(stems)
+program = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(program)
+modules = [program] + ([sys.modules["stems"]] if "stems" in sys.modules else [])
 mode = os.environ.get("STEMS_FAKE", "gains")
 if mode == "exit":
     print("the separator crashed on purpose")
     sys.exit(1)
+six = "piano" in program.STEMS
 
 class Gains:
     # Demucs's order, not the manifest's, so the program must reorder.
-    sources = ["drums", "bass", "other", "vocals"]
+    sources = ["drums", "bass", "other", "vocals"] + (["guitar", "piano"] if six else [])
     samplerate = 48000 if mode == "rate" else 44100
     channels = 2
     software = [{"name": "fake-separator", "version": "1"}]
-    gains = [0.1, 0.2, 0.3, 4.0 if mode == "loud" else 0.4]
+    gains = [0.1, 0.2, 0.15, 0.25, 0.2, 0.1] if six else [0.1, 0.2, 0.3, 0.4]
+    if mode == "loud":
+        gains[3] = 4.0
     if mode == "nobass":
-        sources = ["drums", "guitar", "other", "vocals"]
+        sources[1] = "flute" if six else "guitar"
 
     def separate(self, mix):
         out = numpy.stack([mix * numpy.float32(g) for g in self.gains])
@@ -73,14 +82,16 @@ class Gains:
             out = out * numpy.float32(0.5)
         return out
 
-stems.load_model = lambda settings, apply: Gains()
-if os.environ.get("STEMS_FAKE_CHUNK"):
-    chunk, overlap = (int(v) * stems.RATE for v in os.environ["STEMS_FAKE_CHUNK"].split(","))
-    stems.separate = functools.partial(stems.separate, chunk=chunk, overlap=overlap)
-sys.exit(stems.main(sys.argv[2:]))
+for module in modules:
+    module.load_model = lambda settings, apply: Gains()
+    if os.environ.get("STEMS_FAKE_CHUNK") and hasattr(module, "separate"):
+        chunk, overlap = (int(v) * module.RATE for v in os.environ["STEMS_FAKE_CHUNK"].split(","))
+        module.separate = functools.partial(module.separate, chunk=chunk, overlap=overlap)
+sys.exit(program.main(sys.argv[2:]))
 '''
 # Manifest order: vocals, drums, bass, other.
 GAINS = {"vocals": 0.4, "drums": 0.1, "bass": 0.2, "other": 0.3}
+SIX_GAINS = {"vocals": 0.25, "drums": 0.1, "bass": 0.2, "guitar": 0.2, "piano": 0.1, "other": 0.15}
 
 
 def scratch(test: unittest.TestCase) -> Path:
@@ -100,7 +111,7 @@ def run(directory: Path, audio: Path, target: str = "stems", *extra: str,
         program: Path | None = None, env: dict[str, str] | None = None) -> tuple[int, dict]:
     argv = ["run", target, "--content", str(audio), "--bank", str(directory / "bank"), *extra]
     if program is not None:
-        argv += ["--program", f"demucs-python={program}"]
+        argv += ["--program", f"demucs-python={program}", "--program", f"stems-6s-python={program}"]
     out, err = io.StringIO(), io.StringIO()
     with patch.dict(os.environ, env or {}), redirect_stdout(out), redirect_stderr(err):
         code = extract.main(argv)
@@ -519,13 +530,16 @@ class StemAsContent(unittest.TestCase):
         self.assertEqual(answer["from"]["extractors"]["stems"]["status"], "would_run")
         self.assertEqual(answer["extractors"], {})
         self.assertEqual(run(directory, audio, "stems", program=fake_python(directory))[0], 0)
-        # Every other extractor's interpreter configured, so none is skipped.
+        # The learned beat and chord extractors configured too; the rest are skipped.
         code, answer = run(directory, audio, "all", "--from", "stems/other", "--dry-run",
                            *stand_in_programs(directory), program=fake_python(directory))
         self.assertEqual(code, 0, answer)
         self.assertNotIn("stems", answer["extractors"])
         self.assertEqual(set(answer["extractors"]), set(bank.Catalog.load().extractors) - {"stems"})
-        for task in answer["extractors"].values():
+        # Those whose interpreter is not configured here are skipped; the rest would measure the stem.
+        tasks = [task for task in answer["extractors"].values() if task["status"] != "skipped"]
+        self.assertIn("loudness-r128", {e for e, t in answer["extractors"].items() if t["status"] == "would_run"})
+        for task in tasks:
             self.assertEqual(task["task"]["input"]["digest"], answer["content"])
             self.assertEqual(task["task"]["input"]["filed_under"], bank.file_digest(audio))
 
@@ -589,6 +603,93 @@ class StemFrames(unittest.TestCase):
         self.assertTrue(numpy.array_equal(hpcp, fresh))
 
 
+class SixStemsManifest(unittest.TestCase):
+    def test_the_manifest_declares_exactly_what_the_program_implements(self) -> None:
+        extractor = bank.Catalog.load()["stems-6s"]
+        self.assertEqual(extractor.manifest["parameters"], stems6s.parameters())
+        self.assertEqual(extractor.manifest["command"], ["${stems-6s-python}", "stems6s.py"])
+        self.assertEqual(stems6s.STEMS, ("vocals", "drums", "bass", "guitar", "piano", "other"))
+        files = [name for name, out in extractor.outputs.items() if out["kind"] == "file"]
+        self.assertEqual(files, list(stems6s.STEMS))
+        self.assertEqual(extractor.outputs["levels"]["columns"], 6)
+        scalars = {name for name, out in extractor.outputs.items() if out["kind"] == "scalar"}
+        self.assertEqual(scalars, {f"{s}_{m}" for s in stems6s.STEMS for m in ("rms_db", "peak_db", "clamped")}
+                         | {"mix_rms_db", "samples", "seconds"})
+
+    def test_it_differs_from_stems_only_in_its_model_and_its_stems(self) -> None:
+        four, six = stems.parameters(), stems6s.parameters()
+        # Anchor: the two are different methods, so their keys differ.
+        self.assertNotEqual(four["model"], six["model"])
+        self.assertEqual({k: v for k, v in four.items() if k not in ("model", "stems")},
+                         {k: v for k, v in six.items() if k not in ("model", "stems")})
+        self.assertEqual(six["model"]["name"], "htdemucs_6s")
+        self.assertEqual(set(six["model"]["files"]), {"htdemucs_6s.yaml", "5c90dfd2.safetensors"})
+
+
+@needs_ffmpeg
+class SixStems(unittest.TestCase):
+    """stems-6s, the real program through the real runner, with the stand-in model."""
+
+    def test_writes_six_flac_stems_beside_the_four_and_each_is_content(self) -> None:
+        directory = scratch(self)
+        audio = chord_with_clicks(directory / "take.flac", 5)
+        fake = fake_python(directory)
+        code, answer = run(directory, audio, "stems-6s", program=fake, env={"STEMS_FAKE_CHUNK": "2,1"})
+        self.assertEqual(code, 0, answer)
+        reader = bank.Bank(directory / "bank")
+        recording = bank.file_digest(audio)
+        entry = reader.entry(recording, "stems-6s")
+        mix = decode(audio)
+        for stem, gain in SIX_GAINS.items():
+            with self.subTest(stem=stem):
+                got = decode(entry.file(stem))
+                expected = numpy.clip(numpy.rint(mix.astype(numpy.float64) * gain * 32768), -32768, 32767) / 32768
+                self.assertLessEqual(numpy.abs(got - expected).max(), 1 / 32768 + 1e-9)
+                self.assertAlmostEqual(entry.scalar(f"{stem}_rms_db"),
+                                       entry.scalar("mix_rms_db") + 20 * math.log10(gain), places=2)
+        levels = entry.series("levels")
+        self.assertEqual(levels.shape, (-(-mix.shape[1] // 4096) + 1, 6))
+        # Columns in the manifest's order: vocals (0.25) over piano (0.1).
+        numpy.testing.assert_allclose(levels[:, 0] - levels[:, 4], 20 * math.log10(0.25 / 0.1), atol=0.01)
+        # A measure of a six-stem vocal is keyed by that stem and filed with the recording,
+        # beside the same measure of the four-stem vocal, which is other content.
+        code, six = run(directory, audio, "loudness-r128", "--from", "stems-6s/vocals", program=fake)
+        self.assertEqual(code, 0, six)
+        code, four = run(directory, audio, "loudness-r128", "--from", "stems/vocals", program=fake)
+        self.assertEqual(code, 0, four)
+        self.assertNotEqual(six["content"], four["content"])
+        self.assertEqual(six["content"], entry.output("vocals")["sha256"])
+        for answer in (six, four):
+            self.assertEqual(answer["filed_under"], recording)
+            reader.entry(answer["content"], "loudness-r128", filed_under=recording)
+
+    def test_its_failures_name_it(self) -> None:
+        directory = scratch(self)
+        audio = chord_with_clicks(directory / "take.flac", 1)
+        code, answer = run(directory, audio, "stems-6s", program=fake_python(directory), env={"STEMS_FAKE": "nobass"})
+        self.assertEqual(code, 1)
+        self.assertIn("stems-6s: the model has no bass source", answer["extractors"]["stems-6s"]["log"])
+        config = directory / "config.json"
+        config.write_text(json.dumps({"parameters": {"stems-6s": {"stems": ["vocals", "other"]}}}))
+        code, answer = run(directory, audio, "stems-6s", "--config", str(config), program=fake_python(directory))
+        self.assertEqual(code, 1)
+        self.assertIn("stems-6s has fixed settings", answer["extractors"]["stems-6s"]["log"])
+
+    def test_without_its_interpreter_all_skips_it(self) -> None:
+        directory = scratch(self)
+        audio = chord_with_clicks(directory / "take.flac", 1)
+        argv = ["run", "all", "--content", str(audio), "--bank", str(directory / "bank"), "--dry-run",
+                "--program", f"demucs-python={fake_python(directory)}"]
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = extract.main(argv)
+        answer = json.loads(out.getvalue())
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(answer["extractors"]["stems"]["status"], "would_run")
+        self.assertEqual(answer["extractors"]["stems-6s"]["status"], "skipped")
+        self.assertIn("stems-6s-python", answer["extractors"]["stems-6s"]["reason"])
+
+
 @unittest.skipUnless(DEMUCS_PYTHON and Path(DEMUCS_PYTHON).is_file(),
                      "set ARCHIVE_TEST_DEMUCS_PYTHON to Demucs's interpreter to run real separation")
 @needs_ffmpeg
@@ -621,6 +722,19 @@ class RealDemucs(unittest.TestCase):
         again = bank.Bank(directory / "bank").entry(bank.file_digest(audio), "stems")
         self.assertEqual({stem: again.output(stem)["sha256"] for stem in stems.STEMS}, first)
 
+
+    def test_htdemucs_6s_separates_six_stems_that_sum_to_the_mix(self) -> None:
+        directory = scratch(self)
+        audio = chord_with_clicks(directory / "take.flac", 12)
+        code, answer = run(directory, audio, "stems-6s", program=Path(DEMUCS_PYTHON))
+        self.assertEqual(code, 0, answer)
+        entry = bank.Bank(directory / "bank").entry(bank.file_digest(audio), "stems-6s")
+        software = {item["name"]: item["version"] for item in entry.manifest["software"]}
+        self.assertEqual(software["htdemucs_6s"], f"adefossez/HTDemucs-6s@{stems6s.MODEL['revision']}")
+        mix = decode(audio)
+        total = sum(decode(entry.file(stem)).astype(numpy.float64) for stem in stems6s.STEMS)
+        residual = numpy.square(total - mix).mean() / numpy.square(mix).mean()
+        self.assertLess(10 * math.log10(residual), -20)
 
 if __name__ == "__main__":
     unittest.main()
