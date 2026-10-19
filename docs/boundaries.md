@@ -79,6 +79,7 @@ archive views                    rebuilding browsable views (name unsettled)
 enrich/enrich.py probe           count an Artifact's audio streams and propose the facts to Door
 enrich/enrich.py detect          suggest an audio stream's spans and propose them to Door
 enrich/enrich.py match           score a selection against each Work's linked occurrences and propose matches
+enrich/enrich.py propose         read a recording's feature bank entries as claims and propose them to Door
 capture/capture.py import        admit a recorder card's new recordings as sessions, then enrich them
 ```
 
@@ -155,7 +156,11 @@ It needs only the standard library; each extractor brings its own
 environment, named by configuration. Its graph is the few extractors one
 content needs, run in order on one machine; handing a run to another machine
 is Spool's job and is not wired. A claim made from features goes through the
-adapter and Door like any enrichment result.
+adapter and Door like any enrichment result: `enrich propose`'s proposers
+read the bank, never audio, and propose each one's claims with a derivation
+run ([ADR 0079](decisions/0079-machine-harmony-claims.md)); they check each
+claim with World's standard-library contract checks first, the one import
+`enrich/` makes from `world/`.
 
 [`capture/`](../capture/README.md) holds the native importer of new recordings
 ([ADR 0070](decisions/0070-capture-import.md)). `capture import` hashes a

@@ -8,6 +8,8 @@
                  [--staging <annex>] [--dry-run]
     enrich match-windows --archive <dir> --suggestions <object id> [--jobs <n>] [--profile-cache <dir>]
                  [--staging <annex>] [--dry-run | --regenerate]
+    enrich propose --archive <dir> (--artifact <object id> [--stream <claim id>] | --all)
+                   [--proposers <name,...>] [--bank <root>] [--config <file>] [--staging <annex>] [--dry-run]
 
 The command reads the archive only through `archive export`, runs the tool on
 locally present content, and proposes the run and its claims to `door admit`
@@ -616,6 +618,14 @@ def run_match_windows(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     return 0, {**answer, **admission.as_json()}
 
 
+def run_propose(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
+    import propose  # bank features as claims (ADR 0079); see propose.py
+    if args.all and args.stream:
+        raise CommandError("--stream names one Artifact's stream; it cannot go with --all")
+    env = environment()
+    return propose.run(args, env, reader_of(args, env), staging_of(args, env), stream_claims, choose_stream)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="enrich", description="Propose enrichment results to Door")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -659,6 +669,11 @@ def main(argv: list[str] | None = None) -> int:
                          help="search even when an equivalent run is recorded, and print the answer with every "
                               "Work within the limit; propose nothing")
     common(windows)
+    proposing = commands.add_parser("propose", help="read an Artifact's bank features with the named proposers and "
+                                                    "propose their claims, each proposer's with its own run")
+    import propose
+    propose.add_arguments(proposing)
+    common(proposing)
     args = parser.parse_args(argv)
     if args.command == "match-windows" and args.jobs < 1:
         parser.error("--jobs must be at least 1")
@@ -672,10 +687,14 @@ def main(argv: list[str] | None = None) -> int:
             code, answer = run_detect(args)
         elif args.command == "match":
             code, answer = run_match(args)
+        elif args.command == "propose":
+            errors += (propose.ProposeError,)
+            code, answer = run_propose(args)
         else:
             code, answer = run_match_windows(args)
     except errors as exc:
-        print(json.dumps({"status": "failed", "detail": str(exc)}), file=sys.stderr)
+        # What a command made before it failed is kept, and said (propose).
+        print(json.dumps({**getattr(exc, "answer", {}), "status": "failed", "detail": str(exc)}), file=sys.stderr)
         return 1
     print(json.dumps(answer, sort_keys=True))
     return code

@@ -81,8 +81,10 @@ elsewhere and is governed by the specification kept here.
 > Door admits all twenty-four under their profile rules, and the published
 > fixture archive holds a record of each.
 > [`enrich/`](enrich/README.md) proposes machine claims through `door admit`:
-> `enrich probe` (audio stream facts), `enrich detect` (span suggestions), and
-> `enrich match` (work matches), each under a derivation run; `enrich/media.py`
+> `enrich probe` (audio stream facts), `enrich detect` (span suggestions),
+> `enrich match` (work matches), each under a derivation run, and
+> `enrich propose` (machine chords, beats, bass, keys, tuning, notes, and
+> sections read from the feature bank, ADR 0079); `enrich/media.py`
 > makes waveform peaks and listening copies that the relay serves by digest
 > ([ADR 0069](docs/decisions/0069-derived-media.md)). `capture import`
 > ([capture/](capture/README.md), [ADR 0070](docs/decisions/0070-capture-import.md))

@@ -19,6 +19,7 @@ here writes a record: Door decides every revision.
 | [`windows.py`](windows.py) | The whole-recording window search: candidate pass, regions, snapping, claim rounds, and decisions, a standalone tool ([ADR 0072](../docs/decisions/0072-windowed-work-matches.md)) |
 | [`calibrate_windows.py`](calibrate_windows.py) | Checks the window matcher's thresholds against an archive's accepted occurrences; proposes nothing |
 | [`enrich.py`](enrich.py) | The `enrich` command that runs a tool against an archive's records |
+| [`propose.py`](propose.py), [`proposers.py`](proposers.py), [`chord_labels.py`](chord_labels.py) | `enrich propose`: the proposers, which read the feature bank's entries of one recording as claims, and the chord labels they read ([ADR 0079](../docs/decisions/0079-machine-harmony-claims.md)) |
 | [`bank.py`](bank.py), [`extract.py`](extract.py), [`remote.py`](remote.py), [`extractors/`](extractors/frames/extractor.json) | The feature bank's format and reader, the runner that fills it, the same run through Spool on another machine ([ADR 0090](../docs/decisions/0090-extractor-runs-travel-through-spool.md)), and the extractors (one table under [`extract.py`: the feature bank](#extractpy-the-feature-bank) says what each writes): `frames`, `loudness-r128`, `rhythm`, `tonal`, `melody`, `structure`, `quality`, `colour`, `stems`, `stems-6s`, `beats-beatthis`, `chords-jiang`, `chords-chordino`, `notes-basic-pitch`, `f0-pesto`, and `f0-torchcrepe` ([ADR 0073](../docs/decisions/0073-feature-bank.md), [ADR 0074](../docs/decisions/0074-extractor-contract.md), [ADR 0075](../docs/decisions/0075-stems-as-content.md)) |
 | [`hue_range.py`](hue_range.py) | The `colour` extractor's centroid hue limits taken from a set of recordings' `frames` entries, printed as a `--config` ([its README](extractors/colour/README.md#the-hue-range)) |
 | [`media.py`](media.py), [`waveform.py`](waveform.py), [`derived.py`](derived.py) | Derived media, a standalone tool that never touches an archive; the waveform peaks' format and decode; and the layout ([ADR 0069](../docs/decisions/0069-derived-media.md)) |
@@ -561,6 +562,77 @@ split a workset only across machines whose software agrees.
 The workset and the windows file are regenerable: they are measured again
 from the audio. They are derived from the operator's recordings, so they stay
 outside this repository.
+
+## `enrich propose`
+
+```sh
+enrich/enrich.py propose --archive <dir> (--artifact <object id> [--stream <claim id>] | --all)
+                 [--proposers chords-jiang,chords-chordino,beats,bass] [--bank <root>] [--config <file>]
+                 [--staging <annex>] [--export <file>] [--dry-run]
+```
+
+Reads the feature bank's entries of a recording and proposes claims from
+them ([ADR 0079](../docs/decisions/0079-machine-harmony-claims.md), D1.4).
+Features become claims only here: a *proposer* never runs an extractor and
+never measures audio; what it reads is in the bank, found by the keys the
+installed extractors give (with the parameters and extractor directories of
+`--config`, the runner's own configuration, so the keys agree), or it
+proposes nothing and says which features it lacked.
+
+- `--artifact` names the mix; `--stream` chooses its audio stream claim when
+  it has several, as `enrich detect` does, and must describe the first audio
+  stream, the one every extractor decodes. `--all` proposes for every
+  Artifact with exactly one audio stream claim, one at a time (an Artifact
+  with several is reported and left for `--artifact`): the backfill.
+- `--bank` defaults to `ARCHIVE_FEATURE_BANK`; with neither, the command
+  fails.
+- Each proposer is one derivation run and its claims, in one Door batch. The
+  run's method is the proposer's id and version, which is how the first
+  current rule of ADR 0082 ranks machines (`chords-jiang` before
+  `chords-chordino`); its `used` pins the mix Artifact revision and the
+  stream claim; its parameters Artifact holds the proposer's settings and,
+  for each feature read, the feature's name, its extractor, its entry's key,
+  the content it measured and the content it is filed under, and a file's
+  digest; its software is `archive-enrich-propose` and every read entry's
+  recorded software. Each claim pins the mix as `source`, the stream claim,
+  and the run, and its agent is `pkg:generic/archive-enrich-propose@0.1.0`.
+  World's own check of the contract (`world/harmony.py`, `form.py`,
+  `tonality.py`, `notes.py`) runs on every claim before Door sees it.
+- **History stays quiet.** A run equivalent to a recorded one (same method,
+  parameters, inputs, and software) proposes nothing and answers
+  `unchanged`. A new extractor version or a stem made again with other bits
+  is a new key or digest, so a new run, whose claims sit beside the old ones.
+- **Times.** Bank times are seconds from the start of the decoded first
+  audio stream. A time `t` is sample `round(t × sample_rate)` of the pinned
+  stream, half to even, computed exactly from the decimal text the bank
+  wrote (not from a floating-point product), clamped to 0 and `sample_count`.
+  An empty span is dropped; events on one sample are one.
+
+| Proposer | Reads | Proposes |
+|---|---|---|
+| `chords-jiang` | `chords-jiang/chords` and `readings` of the mix | one `chord_stacks` version 2 claim: per span (end asserted), the extractor's three weighted candidates in its order, each read from its Harte label (root, the bass from `/degree` or the root, the quality's other classes as `tones`, the label as `text`; `N` no chord; a label it cannot read is text only), weights as the extractor's own decimal text under the scale its parameters name |
+| `chords-chordino` | `chords-chordino/chords` of the mix | one `chord_stacks` version 2 claim, one unweighted reading a span read from Chordino's label (`Am7`, `F/A`) |
+| `beats` | `rhythm/pulse` and `rhythm/downbeats` of the mix | one `meter_layers` version 2 claim: a beat-only layer of the pulse (no downbeats, no role) and, where any downbeat is published, a bars layer: a bar from each downbeat to the pulse its value of beats later, in the meter its label states, the pulses inside as its beats when their count is the numerator or divides it evenly (as equal groups) |
+| `bass` | `stems/bass`, `tonal/bass_chroma` and `tonal/pitched` of that stem (`extract.py run tonal --from stems/bass`), and `rhythm/pulse` of the mix | one `chord_stacks` version 2 claim citing the bass stem by bank key in `stem`: for each interval between two pulses whose frames are at least half pitched, the strongest class of the mean bass chroma (bin 0 is A) when it leads the next by at least 0.2 of itself, as one bass-only reading weighted by that lead; neighbouring intervals with the same bass are one span, at their least lead |
+| `key` | `tonal/key_regions` of the mix | one `key_regions` claim: a region a span, its reading the label's tonic and mode (`F dorian`) or its note collection (`Eb major scale`), weighted by the span's value, the tonic's confidence |
+| `tuning` | `tonal/tuning_cents`, `tuning_confidence`, `tuning_drift`, `tuning_windows` of the mix | one `tuning` claim: the reference in cents to two places, brought into [-50, 50), with its confidence; drift spans where windows depart from it by more than 10 cents, overlapping ones merged at their mean tuning and concentration. Nothing when the extractor reports no tuning |
+| `notes` | `melody/notes` of melody's default input (the vocal stem where its measure is voiced enough, else the mix) | one `notes` claim, `part` the stem's output (citing the stem) or `mix`, each span a note at its value rounded to a MIDI note |
+| `sections` | `structure/sections` of the mix | one `form_spans` claim with the extractor's labels |
+
+`--proposers` defaults to the first four, which `capture import` runs; the
+last four run only when named. A chord claim holds at most 100,000 spans: a
+longer output is split into consecutive claims of one run.
+
+It prints one JSON object per command: for one Artifact, `status`,
+`artifact` and `stream` (`{id, revision_id}`), and each proposer's `name`,
+`status` (`committed`, `predicted`, `unchanged`, or `nothing_proposed` with
+`missing` features or a `detail`), `run`, and `claims`; for `--all`,
+`status` and that object for each Artifact under `artifacts`. The status is
+the strongest of its parts'. It exits 0, or 3 when nothing was proposed, 1
+on any failure, and 2 when the arguments are not understood. A failed
+proposer fails the command once the proposers before it have finished: what
+they made is kept, and stderr's `{"status": "failed", "detail", ...}` lists
+them.
 
 ## The adapter interface
 

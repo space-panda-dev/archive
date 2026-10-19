@@ -3,7 +3,8 @@
 
     capture import --archive <dir> --staging <annex> --derived-media <root> <directory>
                    [--session-name <name>] [--expect <manifest>] [--jobs <n>]
-                   [--profile-cache <dir>] [--defer-listening-copies] [--dry-run]
+                   [--profile-cache <dir>] [--defer-listening-copies] [--bank <root>]
+                   [--extract-config <file>] [--dry-run]
 
 The importer hashes every file, skips content that is already an Artifact's,
 groups the rest into sessions and sources with a recorder grammar, and
@@ -12,7 +13,8 @@ Artifact per file, the `recording_session` Entity, and one
 `archive.claim/session_parts` claim per source. Then it runs the enrichment
 chain on the new Artifacts, quickest first: `enrich probe`, `enrich detect`
 on each session's primary source, waveform peaks, the listening copies, and
-last `enrich match-windows` on what was detected (see `chain`). It reads the
+`enrich match-windows` on what was detected, and, when a feature bank is
+configured, the bank entries and `enrich propose` (see `chain`). It reads the
 archive only through `archive export`, proposes only through Door, and never
 changes its input.
 
@@ -46,6 +48,7 @@ sys.path.insert(0, str(ENRICH))
 
 import adapter  # noqa: E402
 import grammar as grammars_module  # noqa: E402
+import propose_step  # noqa: E402
 
 BY = AGENT = "pkg:generic/archive-capture@0.1.0"
 ARTIFACT_NAMESPACE = adapter.ARTIFACT_NAMESPACE
@@ -53,6 +56,8 @@ SESSION_NAMESPACE = "archive.audio/session"
 PARTS_CONTRACT = ("archive.claim/session_parts", "1")
 SPANS_CONTRACT = ("archive.claim/span_suggestions", "1")
 WINDOW_MATCH_CONTRACT = ("archive.claim/work_match", "3")
+# What the default proposers make (ADR 0079), needed only with a bank.
+PROPOSED_CONTRACTS = (("archive.claim/chord_stacks", "2"), ("archive.claim/meter_layers", "2"))
 STAGING_REMOTE = "capture-staging"
 # The one source of a session the operator named: files no grammar knows.
 NAMED_SOURCE = "files"
@@ -373,11 +378,12 @@ def run(arguments: list[str], cwd: Path, what: str, env: dict[str, str]) -> str:
 
 
 def enrich(command: str, artifact: str, args: argparse.Namespace, env: dict[str, str],
-           export: Path | None = None) -> tuple[int, dict]:
+           export: Path | None = None, bank: Path | None = None) -> tuple[int, dict]:
     """Run one `enrich` command on an Artifact (on a span suggestions claim
     for `match-windows`); 0 and 3 are answers, anything else fails. With
     ``export``, the command reads that export of the archive's current
-    commit instead of exporting the archive again."""
+    commit instead of exporting the archive again; ``bank`` is the feature
+    bank `propose` reads."""
     target = "--suggestions" if command == "match-windows" else "--artifact"
     arguments = [sys.executable, str(ENRICH / "enrich.py"), command, "--archive", str(args.archive),
                  target, artifact, "--staging", str(args.staging), "--door", args.door,
@@ -388,6 +394,10 @@ def enrich(command: str, artifact: str, args: argparse.Namespace, env: dict[str,
         arguments += ["--jobs", str(args.jobs)]
         if args.profile_cache is not None:
             arguments += ["--profile-cache", str(args.profile_cache)]
+    if command == "propose":
+        arguments += ["--bank", str(bank)]
+        if getattr(args, "extract_config", None):
+            arguments += ["--config", str(args.extract_config)]
     if export is not None:
         arguments += ["--export", str(export)]
     try:
@@ -422,7 +432,11 @@ def chain(sessions: list[Session], args: argparse.Namespace, env: dict[str, str]
     3. Listening copies, `--jobs` at a time, unless deferred to a later
        `enrich/media.py` run.
     4. `enrich match-windows` on each detection, one at a time, each using
-       `--jobs` processes: the slowest step, so it comes last (ADR 0072).
+       `--jobs` processes: the slowest of these (ADR 0072).
+    5. With a feature bank, the chord, rhythm, and tonal entries of each
+       Artifact of each session's primary source, and `enrich propose` on it
+       with the default proposers (ADR 0079, `propose_step.py`); without
+       one, this step is reported as skipped.
 
     A file with no countable audio stream is probed and reported, and
     nothing else runs on it. A failure stops the chain once the step it
@@ -453,9 +467,10 @@ def chain(sessions: list[Session], args: argparse.Namespace, env: dict[str, str]
                 continue
             reader.refresh(args.archive_command, env)
             audio.append((session, artifact, entry))
-        detected = []
+        detected, primary = [], []
         for session, artifact, entry in audio:
             if artifact["digest"] in {item.digest for item in session.primary.files}:
+                primary.append((artifact, entry))
                 _, answer = enrich("detect", artifact["object_id"], args, env, current_export())
                 entry["detect"] = answer["status"]
                 reader.refresh(args.archive_command, env)
@@ -475,6 +490,20 @@ def chain(sessions: list[Session], args: argparse.Namespace, env: dict[str, str]
             entry["match"] = match_report(answer)
             if answer["status"] == "committed":
                 reader.refresh(args.archive_command, env)
+
+        def refreshed_export() -> Path:
+            reader.refresh(args.archive_command, env)
+            return current_export()
+
+        def propose(*arguments: Any, **options: Any) -> tuple[int, dict]:
+            try:
+                return enrich(*arguments, **options)
+            except CaptureError as exc:
+                raise propose_step.StepError(str(exc)) from exc
+        try:
+            propose_step.propose_all(primary, args, env, propose, content_path, refreshed_export)
+        except propose_step.StepError as exc:
+            raise CaptureError(str(exc)) from exc
 
 
 def match_report(answer: dict[str, Any]) -> dict[str, Any]:
@@ -560,8 +589,11 @@ def check_places(args: argparse.Namespace) -> None:
         raise CaptureError(f"{args.directory} is not a directory")
     if not args.derived_media.is_dir():
         raise CaptureError(f"the derived-media root {args.derived_media} is not a directory")
-    for what, place in (("archive", args.archive), ("staging repository", args.staging),
-                        ("derived-media root", args.derived_media)):
+    places = [("archive", args.archive), ("staging repository", args.staging),
+              ("derived-media root", args.derived_media)]
+    if getattr(args, "bank", None) is not None:
+        places.append(("feature bank", args.bank))
+    for what, place in places:
         if place.is_relative_to(args.directory) or args.directory.is_relative_to(place):
             raise CaptureError(f"the input {args.directory} and the {what} {place} overlap")
 
@@ -574,14 +606,16 @@ def describe(session: Session) -> dict[str, Any]:
 
 
 def import_directory(args: argparse.Namespace, grammars: Sequence[Any]) -> dict[str, Any]:
-    for name in ("archive", "staging", "derived_media", "directory"):
-        setattr(args, name, Path(os.path.realpath(getattr(args, name))))
+    for name in ("archive", "staging", "derived_media", "directory", "bank", "extract_config"):
+        if getattr(args, name, None) is not None:
+            setattr(args, name, Path(os.path.realpath(getattr(args, name))))
     check_places(args)
     env = environment()
     reader = adapter.ArchiveReader(args.archive, args.archive_command, env)
     # Refuse an archive the chain cannot finish in before anything is staged:
     # an import whose sessions are committed is not rerun.
-    for contract in (PARTS_CONTRACT, SPANS_CONTRACT, WINDOW_MATCH_CONTRACT):
+    proposing = PROPOSED_CONTRACTS if propose_step.bank_root(args, env) is not None else ()
+    for contract in (PARTS_CONTRACT, SPANS_CONTRACT, WINDOW_MATCH_CONTRACT, *proposing):
         reader.citation(contract)
     files, ignored = read_directory(args.directory)
     if not files:
@@ -640,6 +674,7 @@ def main(argv: list[str] | None = None, grammars: Sequence[Any] = grammars_modul
                               "between imports; regenerable, outside any archive")
     command.add_argument("--defer-listening-copies", action="store_true",
                          help="make peaks only; listening copies are left for a later enrich/media.py run")
+    propose_step.add_arguments(command)
     args = parser.parse_args(argv)
     if args.session_name is not None and not args.session_name.strip():
         parser.error("--session-name must not be empty")
