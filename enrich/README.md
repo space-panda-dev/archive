@@ -24,6 +24,7 @@ here writes a record: Door decides every revision.
 | [`media.py`](media.py), [`waveform.py`](waveform.py), [`derived.py`](derived.py) | Derived media, a standalone tool that never touches an archive; the waveform peaks' format and decode; and the layout ([ADR 0069](../docs/decisions/0069-derived-media.md)) |
 | [`requirements.txt`](requirements.txt) | The libraries: numpy (detector, matchers, derived media) and scipy (numpy matcher) |
 | [`requirements-match.txt`](requirements-match.txt) | The window matcher's interpreter: Essentia, numpy, and scipy for CPython 3.14, pinned by hash |
+| [`bench/`](bench/README.md) | The bench: regression sets for note transcription, scored outside the repository on private data; proposes nothing |
 | `support.py`, `test_*.py`, `tests/` | Synthetic audio, scratch archives built through Door, and the tests |
 
 The adapter and the probe use only Python's standard library; the detector

@@ -68,6 +68,8 @@ enrich/extract.py list | run <extractor|all> --content <file> --bank <dir>
                                  extract features into the regenerable feature bank (proposed)
 enrich/remote.py put | work | collect
                                  the same, run by a Spool worker on another machine (proposed)
+python -m enrich.bench validate | run | check <set>
+                                 score note transcribers against a private evaluation set
 door verify                      full verification of HEAD and a fresh checkpoint
 archive init | status | doctor   setup, state, whole-archive check
 archive maintenance repack       coordinated packing of loose Git objects
@@ -119,10 +121,18 @@ third is the work matcher
 [ADR 0072](decisions/0072-windowed-work-matches.md)), which needs Essentia
 2.1b6.dev1438 and therefore CPython 3.14; `enrich/` and `capture/` run on that
 interpreter, built from hash-pinned wheels. numpy, scipy, and Essentia are the
-only libraries outside the standard library that `enrich/` uses. The
+only libraries outside the standard library that `enrich/` uses, apart from
+the bench below. The
 detector's presets and the first matcher's score limit are the operator's to
 calibrate; the window matcher's thresholds were fitted on the archive's own
 accepted occurrences, and `enrich/calibrate_windows.py` checks them.
+
+`enrich/bench/` is a tool for people changing the pipeline, not part of it:
+it scores note transcribers against evaluation sets kept outside the
+repository, by digest, and records results beside them; it proposes nothing
+and never reads or writes an archive. It runs under its own interpreter
+(numpy, mir_eval, pretty_midi), and each variant under the one its
+configuration names ([its README](../enrich/bench/README.md)).
 
 `enrich/media.py` is different: it proposes nothing and never reads or writes
 an archive. It makes waveform peaks and a listening copy of a recording into a

@@ -106,6 +106,13 @@ scratch copy.
     non-commercial data keeps its weights to the operator's machines.
   The calibrations already done (the detector's held-out sessions, the window
   matcher's report, the melody metrics) are early instances to fold in.
+  The first instance is the horn set, [`enrich/bench`](../enrich/bench/README.md):
+  separated horn solos scored against a jazz-solo database and an aligned
+  saxophone omnibook, data private on the x86-64 laptop and referenced by
+  digest, `basic-pitch` and `horn-d0` baselines, and a `bench-horn` suite that
+  fails when a mean note F1 drops by more than 0.02. Still to come: other
+  tasks' sets, variants run from feature-bank outputs, a held-out split for
+  tuning, and cost in the gate.
 
 ## Operations
 
