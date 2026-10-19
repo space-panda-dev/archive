@@ -142,9 +142,10 @@ Its payload has `sample_rate`, `part`, `notes`, and optional `stem`, `range`,
 A **written length** is `{"count": c, "unit": u}`: `c` notes of value 1/`u`
 of a whole note, `u` from 1 to 1,024. A dotted quarter is `{"count": 3,
 "unit": 8}` and a triplet eighth `{"count": 1, "unit": 12}`. A duration has
-`c` of at least 1; an offset from a downbeat may be 0. It reads the same as
-[ADR 0083](0083-form-and-work-meter.md)'s `at` and allows any unit, because tuplets do not fall on powers of
-two.
+`c` of at least 1; an offset from a downbeat may be 0. It allows any unit,
+because tuplets do not fall on powers of two, and it is the one definition:
+[ADR 0083](0083-form-and-work-meter.md)'s chord offset `at` in an untimed
+bar is a written length too.
 
 ```json
 {
@@ -436,8 +437,8 @@ invariant, and hold no authoritative state outside the claims Door admits.
 - **Cents without a tuning, relative to A = 440 Hz.** Then a detuned
   recording's every note would carry the same large offset, and the pitch
   would not be the step the band played.
-- **Powers of two only for written lengths**, as ADR 0083's `at`. A
-  triplet could not be written; a tuplet field would be a second way to say
+- **Powers of two only for written lengths**, as ADR 0083's draft had its
+  `at`. A triplet could not be written; a tuplet field would be a second way to say
   what a unit of 12 says.
 - **MusicXML or MIDI as the stored form.** Neither counts samples of a
   recording, neither pins provenance, and MIDI cannot say "this is the tune".

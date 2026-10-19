@@ -61,6 +61,7 @@ from world.harmony import (
     check_lineage,
     note_value,
 )
+from world.notes import NotesError, note_length
 
 FORM = ("archive.claim/form", "1")
 FORM_SPANS = ("archive.claim/form_spans", "1")
@@ -612,9 +613,11 @@ def _check_chords(value: Any, length: Fraction, entries: list[dict[str, Any]] | 
         previous = _rising(entry, previous, at, "sequence entry")
         offset = Fraction(0)
         if "at" in chord:
-            position = _closed(chord["at"], {"count", "unit"}, set(), f"{at} at")
-            count = _int(position["count"], f"{at} at count", 0)
-            offset = Fraction(count) * note_value({"denominator": position["unit"]}, f"{at} at unit")
+            # ADR 0086's written length, the one definition, so a triplet offset is writable.
+            try:
+                offset = note_length(chord["at"], f"{at} at", zero=True)
+            except NotesError as error:
+                raise FormError(str(error)) from None
         if offset >= length:
             raise FormError(f"{at} falls at or after the end of its bar")
         if last_offset is not None and offset <= last_offset:

@@ -266,8 +266,10 @@ version 1. An untimed bar has:
   go backwards along a layer;
 - optional `chords`, 1 to 64 objects of `entry` (the index of the pinned
   sequence's entry that changes in this bar) and optional `at`, the offset
-  from the downbeat as `count` (0 or more) notes of value 1/`unit` (`unit`
-  one of 1, 2, 4, 8, 16, 32, 64; absent, the downbeat). Offsets rise within
+  from the downbeat as a written length of
+  [ADR 0086](0086-notes-and-melody.md): `count` (0 or more) notes of value
+  1/`unit`, `unit` 1 to 1,024, so a chord on a triplet is writable (absent,
+  the downbeat). Offsets rise within
   the bar and fall before its end, and entries never go back along a layer:
   a chord held over a bar line is not listed again, and a bar with no
   `chords` continues the chord before it. A chord on the "and" of two in

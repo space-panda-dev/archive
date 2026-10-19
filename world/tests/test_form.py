@@ -327,6 +327,12 @@ class MeterV2Test(unittest.TestCase):
         check_chord_sequence(sequence_claim(3))
         check_meter_layers(meter_claim([{"beats": [0, SECOND, 2 * SECOND]}]), fixture_stream())
 
+    def test_a_chord_on_a_triplet_is_writable(self):
+        """The offset is ADR 0086's written length, which allows a unit of 12."""
+        tied = (("form", FORM_REF), ("sequence", SEQUENCE))
+        claim = untimed_meter([sig(chords=[{"entry": 0}, {"entry": 1, "at": {"count": 2, "unit": 12}}])], *tied)
+        check_meter_layers_v2(claim, form_claim=song(), sequence_claim=sequence_claim(6))
+
     def test_refuses_malformed_untimed_meter(self):
         form, seq = song(), sequence_claim(6)
         tied = (("form", FORM_REF), ("sequence", SEQUENCE))
@@ -348,7 +354,8 @@ class MeterV2Test(unittest.TestCase):
                                                 *tied),
             "chords not ascending": untimed_meter([sig(chords=[{"entry": 0, "at": {"count": 1, "unit": 4}},
                                                               {"entry": 1, "at": {"count": 1, "unit": 4}}])], *tied),
-            "bad unit": untimed_meter([sig(chords=[{"entry": 0, "at": {"count": 1, "unit": 3}}])], *tied),
+            "bad unit": untimed_meter([sig(chords=[{"entry": 0, "at": {"count": 1, "unit": 0}}])], *tied),
+            "unit past 1024": untimed_meter([sig(chords=[{"entry": 0, "at": {"count": 1, "unit": 2048}}])], *tied),
             "locator without document": untimed_meter([sig(locator={"bar": 1})]),
             "felt without written": {"payload": {"layers": [{"bars": [sig()], "role": "felt"}]},
                                      "refs": pins(("work", WORK))},
