@@ -18,7 +18,7 @@ need not be among them: the HMM pays for changes, the readings do not.
 The runner starts it with the interpreter the operator configured as
 `jiang-python` (ADR 0074), never its own, and passes the repository checkout
 the operator configured as `jiang-repo`; every pinned model file in it must
-be the pinned bits. The repository's code predates numpy 1.24 and librosa
+be the pinned bits, and its Python code that of the pinned commit. The repository's code predates numpy 1.24 and librosa
 0.10, so the aliases `np.int`, `np.float`, `np.bool`, and `np.object` are
 restored for it and its constant-Q transform is replaced by the same
 transform in librosa's current interface; both are named in the parameters.
@@ -58,6 +58,12 @@ FILES = {
     f"cache_data/{MODEL_NAME}_s4.best.sdict": "sha256:5ff6b0ec85640e17a09a9b3de68c93fdd45adc24488e8fa9be5715c28d561122",
     "data/submission_chord_list.txt": "sha256:ac68a26e87242fc58c946d476028d4e8c8d12c9e707ced7020a4d7e31c794d7b",
 }
+# The repository's own Python code, every `.py` file in the checkout (67 at
+# that commit): the digest of the lines "<sha256 of the file>  <its path>",
+# sorted by path (`code_digest`). The commit alone pins nothing, since the
+# program runs whatever the checkout holds; an edited, added, or removed
+# module would give other outputs under the same key.
+CODE = "sha256:0d065fd0b95506a737e9abff161f36596c0d9bb6ad73857a73ba531a0300e14f"
 TOP = 3
 
 # The settings, which the manifest must declare exactly.
@@ -106,15 +112,28 @@ def sha256_file(path: Path) -> str:
     return "sha256:" + hasher.hexdigest()
 
 
+def code_digest(repository: Path) -> str:
+    """One digest of every `.py` file in the checkout, outside `.git` and
+    `__pycache__`: the lines "<sha256>  <relative path>", sorted by path."""
+    found = sorted((path.relative_to(repository).as_posix(), path) for path in repository.rglob("*.py")
+                   if not {"__pycache__", ".git"} & set(path.relative_to(repository).parts))
+    lines = "".join(f"{sha256_file(path)}  {name}\n" for name, path in found)
+    return "sha256:" + hashlib.sha256(lines.encode("utf-8")).hexdigest()
+
+
 def check_files(repository: Path) -> None:
-    """Every pinned file must be the bits its digest names: other weights
-    or another chord list are another method, and must be another key."""
+    """Every pinned file must be the bits its digest names: other weights,
+    another chord list, or other code are another method, and must be
+    another key."""
     for name, digest in FILES.items():
         path = repository / name
         if not path.is_file():
             raise JiangError(f"{repository} has no {name}; configure jiang-repo as a checkout of {COMMIT}")
         if sha256_file(path) != digest:
             raise JiangError(f"{name} is not the pinned file {digest}")
+    if code_digest(repository) != CODE:
+        raise JiangError(f"{repository}'s Python code is not that of {COMMIT} ({CODE}); "
+                         f"configure jiang-repo as a clean checkout of it")
 
 
 class Jiang:

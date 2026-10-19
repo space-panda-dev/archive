@@ -20,7 +20,7 @@
   "soundfile==0.14.0",
   "audioread==3.1.0",
   "python==3.11.17",
-  "jiang repo https://github.com/music-x-lab/ISMIR2019-Large-Vocabulary-Chord-Recognition@481f4ce703f8822b99f4037e9104ba1760e21ea3"
+  "jiang repo https://github.com/music-x-lab/ISMIR2019-Large-Vocabulary-Chord-Recognition@481f4ce703f8822b99f4037e9104ba1760e21ea3 (its .py files pinned by digest, sha256:0d065fd0b95506a737e9abff161f36596c0d9bb6ad73857a73ba531a0300e14f)"
  ],
  "needs": [],
  "parameters": {

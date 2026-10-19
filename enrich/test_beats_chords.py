@@ -282,6 +282,44 @@ class PinnedModels(unittest.TestCase):
         with self.assertRaisesRegex(jiang.JiangError, "not the pinned file"):
             jiang.load_model(directory)
 
+    def test_jiang_refuses_a_checkout_whose_code_is_not_the_pinned_commit(self) -> None:
+        """The model files can be the pinned bits while the code that runs
+        them is not: an edited, added, or removed module is refused."""
+        directory = scratch(self)
+        files = {}
+        for name in jiang.FILES:
+            (directory / name).parent.mkdir(parents=True, exist_ok=True)
+            (directory / name).write_bytes(name.encode())
+            files[name] = bank.file_digest(directory / name)
+        (directory / "mir" / "nn").mkdir(parents=True)
+        (directory / "settings.py").write_text("DEFAULT_SR = 22050\n")
+        (directory / "mir" / "nn" / "train.py").write_text("class NetworkInterface: pass\n")
+        pinned = jiang.code_digest(directory)
+        self.assertNotEqual(pinned, jiang.CODE)  # anchor: this checkout is not the shipped pin
+        with patch.object(jiang, "FILES", files), patch.object(jiang, "CODE", pinned):
+            jiang.check_files(directory)
+            # Byte code and Git's own files are not the code.
+            for ignored in ("__pycache__/settings.py", ".git/hooks/x.py"):
+                (directory / ignored).parent.mkdir(parents=True, exist_ok=True)
+                (directory / ignored).write_text("changed = True\n")
+            jiang.check_files(directory)
+            changes = {"edited": lambda: (directory / "settings.py").write_text("DEFAULT_SR = 44100\n"),
+                       "added": lambda: (directory / "mir" / "extra.py").write_text(""),
+                       "removed": lambda: (directory / "mir" / "nn" / "train.py").unlink(),
+                       "renamed": lambda: (directory / "settings.py").rename(directory / "settings2.py")}
+            for name, change in changes.items():
+                with self.subTest(name):
+                    before = {path: path.read_bytes() for path in directory.rglob("*.py")}
+                    change()
+                    with self.assertRaisesRegex(jiang.JiangError, "Python code is not that of"):
+                        jiang.check_files(directory)
+                    for path in directory.rglob("*.py"):
+                        if path not in before:
+                            path.unlink()
+                    for path, data in before.items():
+                        path.write_bytes(data)
+                    jiang.check_files(directory)
+
     def test_chordino_refuses_another_plugin_build(self) -> None:
         directory = scratch(self)
         package = directory / "chord_extractor"
