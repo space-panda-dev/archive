@@ -55,7 +55,9 @@ An entry's key is `sha256:` and the SHA-256 of the canonical JSON of:
 ```
 
 `parameters` are the extractor's declared parameters with the operator's
-configured values replacing them field by field. `needs` has one member for
+configured values replacing them field by field; where the extractor measures
+a file feature it [prefers](#preferred-inputs), the preference's parameters
+replace the declared ones first. `needs` has one member for
 every feature the extractor's manifest needs, so the keys are computed
 upstream first. The test `test_a_key_is_the_digest_of_its_canonical_description`
 in [`enrich/test_bank.py`](../enrich/test_bank.py) writes one key out in full.
@@ -105,8 +107,8 @@ Its failure record and lock sit beside it there. Nothing is ever filed under
 a stem's own digest, so a content's directory holds everything made from it.
 A reader that knows the recording finds the stem in the recording's entry
 and then the measure by the stem's digest in the recording's directory
-(`Bank.input_of` and `Bank.entry(..., filed_under=...)` in
-[`enrich/bank.py`](../enrich/bank.py)). The request an extractor receives
+(`Bank.input_of` and `Bank.entry(..., filed_under=..., feature=...)`, or
+`Bank.entry_from`, in [`enrich/bank.py`](../enrich/bank.py)). The request an extractor receives
 is the same as for any content: `input` names the stem's path, digest, and
 media type.
 
@@ -194,8 +196,8 @@ audio, and `n` decoded samples make `ceil(n / 2048) + 1` rows.
 ```
 
 `contract`, `id`, `version`, `command`, `accepts`, and `outputs` are
-required; `description`, `requires`, `needs`, and `parameters` may be
-given; nothing else is allowed. `version` matches
+required; `description`, `requires`, `needs`, `prefers`, and `parameters` may
+be given; nothing else is allowed. `version` matches
 `[A-Za-z0-9][A-Za-z0-9.]{0,39}`, so that `archive-extractor.<id>@<version>`
 is a Spool capability. Output names match `[a-z][a-z0-9_]{0,62}`.
 A series declares `dtype`, `columns`, and optionally `grid`; a file declares
@@ -206,6 +208,37 @@ for either part.
 In `command`, `${name}` is the program the operator configured under that
 name (`python` defaults to the runner's interpreter, `sh` to `/bin/sh`), and
 a word naming a file in the extractor's directory becomes its absolute path.
+
+### Preferred inputs
+
+`prefers` ([ADR 0076](decisions/0076-preferred-inputs.md), proposed) lists file features of the content that the extractor measures by
+default in place of the content, in order, each with parameters that replace
+its declared ones there (fields it declares; canonical JSON):
+
+```json
+"prefers": [{"input": "stems/vocals", "parameters": {"bin_cents": 2}}]
+```
+
+The default input of an extractor for a content is the first preferred
+feature whose entry the bank holds for that content, and the content itself
+when it holds none. Without `--from`, the runner runs every other target
+first, then measures each preferring target on its default input as `--from`
+would (the feature's digest is the content, filed under the content's
+directory); a preference never makes the feature, and an extractor run only
+because another needs it measures the content. A reader asks
+`Bank.default_entry(content, extractor)` for that entry and the feature it
+measured. A preference is not a need: no entry's meaning depends on it,
+since each entry is keyed by the bits it measured and says which in
+`content`, and nothing waits for a feature that cannot be made here.
+
+The preference's parameters apply whenever the extractor measures that
+feature, by preference or by `--from`, and the operator's configured fields
+replace them in turn, so a reader of a measure of a feature names the
+feature (`Bank.entry_from`); `Bank.entry` refuses to look up, under another
+content's directory, an extractor that prefers a feature with parameters
+without being told which feature it reads. A preferred feature must be a
+`file` output of an extractor in the catalog, not one the extractor makes or
+needs; one that no extractor in the catalog declares is never present.
 
 ## The request
 
@@ -273,7 +306,7 @@ parameters are in the manifest's descriptions and in the
 | `f0-pesto` | 1 | none | series `f0`; scalars `rows_from_tracker` |
 | `f0-torchcrepe` | 1 | none | series `f0`; scalars `rows_from_tracker` |
 | `loudness-r128` | 1 | none | scalars `integrated` |
-| `melody` | 2 | none | series `pitch`, `confidence`, `voiced`, `midi`, `cents`, `level_db`; scalars `voiced_fraction`, `melodia_voiced_fraction`, `loud_db`, `gate_db`, `reference_hz`, `samples`; spans `notes` |
+| `melody` | 3 | none | series `pitch`, `confidence`, `voiced`, `midi`, `cents`, `level_db`; scalars `voiced_fraction`, `melodia_voiced_fraction`, `measured_fraction`, `loud_db`, `gate_db`, `reference_hz`, `samples`; spans `notes` |
 | `notes-basic-pitch` | 1 | none | scalars `note_count`, `seconds`; files `notes` |
 | `quality` | 3 | `frames`: samples | series `correlation`, `peak_db`; scalars `sample_rate`, `channels`, `seconds`, `integrated`, `loudness_range`, `true_peak`, `sample_peak`, `full_scale_samples`, `clipped_seconds`, `dc_offset`, `whole_correlation`, `anti_phase`, `false_stereo`, `noise_floor`, `snr`, `bandwidth`, `band_limited`, `hum_examined`; events `clicks`, `discontinuities`; spans `clipping`, `overs`, `gaps`, `noise_bursts`, `hum` |
 | `rhythm` | 4 | none | series `tempo`, `onset_count`, `onset_deviation`, `offgrid`, `chunk_bpm`, `chunk_confidence`, `primary_tempo`, `tempo_support`, `downbeat_margin`; scalars `bpm`, `confidence`, `onset_rate`, `seconds`, `primary_bpm`, `meter`; events `beats`, `onsets`, `pulse`, `downbeats`, `tempo_changes`; spans `tempo_spans` |
@@ -282,14 +315,16 @@ parameters are in the manifest's descriptions and in the
 | `structure` | 2 | `frames`: hpcp, rms_db, mfcc, seconds; `rhythm`: onsets, beats | series `novelty`; scalars `floor_db`, `floor`, `reference_db`, `threshold_db`; spans `playing`, `tuning`, `count_ins`, `false_starts`, `endings`, `sections`, `loops` |
 | `tonal` | 5 | `frames`: rms_db | series `pitched`, `tuning_windows`, `chroma`, `bass_chroma`, `dissonance`; scalars `tuning_frequency`, `tuning_cents`, `tuning_confidence`, `tuning_window_count`, `drift_spread_cents`, `detuned`, `key`, `scale`, `mode`, `scale_notes`, `key_strength`, `collection`, `collection_margin`, `tonic_margin`, `tonic_confidence`, `tonic_named`; spans `tuning_drift`, `detuned_spans`, `keys`, `key_regions` |
 
-Five of them run a model in an environment of the operator's, never the
+Eight of them run a model in an environment of the operator's, never the
 archive's, each under a program name the operator configures, so `run all`
 skips any that is not configured: `stems` (`${demucs-python}`), `stems-6s`
 (`${stems-6s-python}`, which can be the same interpreter, so that a second
 separation is made only where it is asked for), `notes-basic-pitch`
-(`${basic-pitch-python}`), and `f0-pesto` and `f0-torchcrepe`
-(`${f0-python}`). Each checks its model files against the digests in its
-parameters before loading them.
+(`${basic-pitch-python}`), `f0-pesto` and `f0-torchcrepe`
+(`${f0-python}`), `beats-beatthis` (`${beatthis-python}` with
+`${beatthis-checkpoint}`), `chords-jiang` (`${jiang-python}` with
+`${jiang-repo}`), and `chords-chordino` (`${chordino-python}`). Each checks
+its model files against the digests in its parameters before loading them.
 
 A version changes whenever an extractor's code or outputs do, so an older
 entry is never read as a newer one (ADR 0073). The versions above 1, and
@@ -327,7 +362,9 @@ what each changed:
   peak, overs on their own, events that stand out from the music around
   them or stand alone, and hum only at mains frequencies.
 - `melody` 2 resolves pitch in 2-cent bins, gates voicing by level, and
-  adds `level_db`.
+  adds `level_db`; 3 runs MELODIA only within a second of a row that reaches
+  the gate (`measured_fraction`), prefers the vocal stem where the bank holds
+  it, and resolves pitch in 5-cent bins, 2 on that stem.
 - `colour` 2 stopped copying the peaks into the bank and checks its
   palette; 3 sets the centroid hue's
   default range to 500 Hz to 4 kHz, which

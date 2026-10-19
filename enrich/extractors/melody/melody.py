@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """The melody extractor: a pitch contour, its voicing, and its intonation (ADR 0074).
 
-Version 2: pitch is resolved in 2-cent bins rather than 10 (`binResolution`),
-voicing is gated by level (below), and each row's level is an output.
+Version 2 resolved pitch in 2-cent bins rather than 10, gated voicing by
+level (below), and made each row's level an output. Version 3 measures only
+the rows within reach of the level gate, takes its bins from `bin_cents` (5
+on whatever it measures, 2 on the vocal stem it prefers), and says what share
+of the rows it measured (`measured_fraction`).
 
 It measures the predominant melody of the content's first audio stream with
 Essentia's MELODIA (`PredominantPitchMelodia`), on mono audio at 44,100 Hz
@@ -26,14 +29,18 @@ rows, as the algorithms frame them. Writes, on the `melody` grid:
 and `notes` (spans in seconds, each valued with its MIDI note, by Essentia's
 `PitchContourSegmentation` from the gated contour, on a second decode),
 `voiced_fraction`, `melodia_voiced_fraction` (the share MELODIA voiced
-before the gate), `loud_db` and `gate_db` (below), `reference_hz`, and
-`samples` (the decoded length at 44,100 Hz).
+before the gate), `measured_fraction` (the share of rows it measured; below),
+`loud_db` and `gate_db` (below), `reference_hz`, and `samples` (the decoded
+length at 44,100 Hz).
 
-Pitch is quantised to MELODIA's salience bins, `binResolution` cents apart
-on a grid anchored at 55 Hz: with Essentia's default of 10, every cents value
-is a multiple of 10, too coarse for intonation. Version 2 sets 2 (any value
-from 1 to 10 is accepted): on 40 s of a studio mix and of its vocal stem, 2
-took 1.5 and 2.1 times the time of 10, and 1 took 2.3 and 3.4 times.
+Pitch is quantised to MELODIA's salience bins (`binResolution`), `bin_cents`
+cents apart on a grid anchored at 55 Hz: with Essentia's default of 10, every
+cents value is a multiple of 10, too coarse for intonation. Finer bins cost
+time: on 60 s of a studio mix and of its vocal stem, 5-cent bins took 1.1
+times the time of 10, and 2-cent bins 1.5 and 1.7 times (version 2 used 2
+everywhere). The default is 5, and 2 where the manifest's preference for the
+vocal stem applies, since the sung line is what intonation is read from; any
+value from 1 to 10 is accepted.
 
 The tuning reference is the `reference_hz` parameter (440 Hz). It is not
 read from a tuning extractor: an extractor's needs are fixed (ADR 0074), and
@@ -44,13 +51,17 @@ hertz, so the notes are quantised against the reference rounded to one;
 
 It measures whatever audio it is given: the mix, or a stem when a stem is
 the content. On a mix MELODIA follows the most salient line, which in a
-band is as often a keyboard, a bass, or a horn as the voice. For the sung
-line, measure the vocal stem: `extract.py run melody --content <recording>
---from stems/vocals` (ADR 0075) makes the stems if they are missing and
-files the vocal line's melody with the recording, keyed by the stem's bits.
-The gate below is what makes a stem's melody usable: a separated vocal is
-mostly near-silence with the band's bleed in it, and MELODIA voices that
-bleed as readily as the voice.
+band is as often a keyboard, a bass, or a horn as the voice. So its manifest
+prefers the vocal stem (`"prefers"`, docs/feature-bank.md): where the bank
+already holds a recording's `stems/vocals`, `extract.py run melody` (or
+`all`) measures that stem, as `--from stems/vocals` does (ADR 0075), with
+`bin_cents` 2, and files the vocal line's melody with the recording, keyed
+by the stem's bits; `Bank.default_entry(recording, "melody")` reads it back.
+Where it holds none, it measures the mix; a preference never separates.
+`--no-prefer` measures the mix regardless. The program itself never knows
+which it measures. The gate below is what makes a stem's melody usable: a
+separated vocal is mostly near-silence with the band's bleed in it, and
+MELODIA voices that bleed as readily as the voice.
 
 MELODIA's own voicing decision is relative to the contours present, not to
 level: a noise floor is mostly voiced (white noise at -40 dBFS between tones
@@ -63,6 +74,18 @@ millisecond, 80 cents a row at the default stride), and a contour is kept
 only if at least half its rows reach the gate: `gate_db` is the higher of
 `voicing_gate.floor_db` and `loud_db` less `voicing_gate.range_db`, where
 `loud_db` is the 99th percentile of the recording's row levels.
+
+MELODIA is run only on the rows within `voicing_gate.reach_seconds` (1 s)
+of a row that reaches the gate, since a contour with none of its rows near
+one cannot keep half of them above it; the levels are measured first, on a
+decode of their own, so the gate is known before MELODIA runs. Every other
+row is unvoiced without being measured. This is where a vocal stem saves
+time: its bleed is often more than 35 dB under the voice. On a master
+nearly every row is within reach. A contour longer than the reach on both
+sides of its loud rows is measured only near them, and each stretch of
+measured rows is analysed on its own, so MELODIA's voicing, which is
+relative to the contours in the audio it is given, is relative to that
+stretch (as it is to a chunk's, below).
 
 A whole contour is kept or dropped, so a sung note's quiet tail stays with
 it; a contour that never rises out of the floor goes, and so does noise that
@@ -87,20 +110,23 @@ decoded audio, so this decodes the content again.
 
 The audio is measured a chunk at a time, so memory for the audio does not
 grow with the recording (the rows, 128 times fewer than the samples, are
-held until the gate is known, about 20 MB a recording-hour): each chunk of
-`chunk_seconds` is analysed with `margin_seconds` of audio either side and
-only its own rows are kept, so a contour that crosses a chunk's edge is
-tracked whole within the margin. MELODIA's
-thresholds are relative to the audio it is given, so a chunked contour can
-differ from one measured on the whole recording near quiet or busy
-passages; `chunk_seconds` 0 measures the whole recording at once, exactly as
-the algorithm does, at about 4 bytes a sample of memory, twice.
+held until the gate is known, about 20 MB a recording-hour): each stretch of
+measured rows is cut into chunks of `chunk_seconds`, each analysed with
+`margin_seconds` of audio either side within its stretch, and only its own
+rows are kept, so a contour that crosses a chunk's edge is tracked whole
+within the margin. MELODIA's thresholds are relative to the audio it is
+given, so a chunked contour can differ from one measured on the whole
+recording near quiet or busy passages; `chunk_seconds` 0 measures each
+stretch at once, and with a gate every row reaches (`floor_db` -120 and
+`range_db` 120) the whole recording, exactly as the algorithm does, at
+about 4 bytes a sample of memory, twice. The audio is decoded three times
+(levels, contour, notes); decoding is about 1 % of the time.
 
 `hop_size` is the stride: 256 or 512 measure 2 or 4 times fewer frames, in
 less time, with a coarser contour; the algorithms' continuity and duration
 settings are in milliseconds, so they keep their meaning. The levels are
 measured over whole hops of the decoded stream, not over each chunk, so they
-do not depend on the chunking.
+do not depend on the chunking or on which rows are measured.
 
 Invoked by the runner as `melody.py <request.json>`.
 """
@@ -119,7 +145,7 @@ from typing import Any, Iterable, Iterator
 
 import numpy
 
-VERSION = "2"
+VERSION = "3"
 RATE = 44100
 FRAME = 2048
 LEVEL_FLOOR_DB = -120.0
@@ -134,7 +160,7 @@ DECIMAL = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?")
 # Essentia types each option: an INTEGER one takes only an integer (Essentia
 # refuses a fraction there), a REAL one an integer or decimal text, and a
 # BOOL one a boolean. The test reads the types from Essentia itself.
-PREDOMINANT = {"binResolution": 2, "filterIterations": 3, "guessUnvoiced": False, "harmonicWeight": "0.8",
+PREDOMINANT = {"filterIterations": 3, "guessUnvoiced": False, "harmonicWeight": "0.8",
                "magnitudeCompression": 1, "magnitudeThreshold": 40, "maxFrequency": 20000, "minDuration": 100,
                "minFrequency": 80, "numberHarmonics": 20, "peakDistributionThreshold": "0.9",
                "peakFrameThreshold": "0.9", "pitchContinuity": "27.5625", "referenceFrequency": 55,
@@ -144,8 +170,9 @@ INTEGERS = {"predominant": {"filterIterations", "magnitudeThreshold", "minDurati
                             "timeContinuity"},
             "segmentation": {"pitchDistanceThreshold", "rmsThreshold"}}
 FIXED_OPTIONS = {"guessUnvoiced": False}  # see the module's description
-BIN_RESOLUTION = (1.0, 10.0)  # cents; see the module's description
-GATE = {"floor_db": "-60", "range_db": "35"}
+BIN_CENTS = (1.0, 10.0)  # MELODIA's binResolution; see the module's description
+GATE = {"floor_db": "-60", "range_db": "35", "reach_seconds": "1"}
+REACH_SECONDS = 10.0  # the most reach_seconds may be
 
 
 class MelodyError(Exception):
@@ -163,7 +190,7 @@ def parameters() -> dict[str, Any]:
     """The default settings, which the manifest must declare exactly."""
     return {"decoder": "ffmpeg", "decode_arguments": decode_arguments("{input}"), "sample_scale": 32768,
             "essentia": ESSENTIA_BUILD, "analysis_rate": RATE, "frame_size": FRAME, "hop_size": 128,
-            "equal_loudness": True, "predominant": PREDOMINANT, "segmentation": SEGMENTATION,
+            "equal_loudness": True, "bin_cents": 5, "predominant": PREDOMINANT, "segmentation": SEGMENTATION,
             "reference_hz": "440", "voicing_gate": GATE, "chunk_seconds": 120, "margin_seconds": 5}
 
 
@@ -229,24 +256,29 @@ def settings(given: dict[str, Any]) -> dict[str, Any]:
     gate = given["voicing_gate"]
     if not isinstance(gate, dict) or set(gate) != set(GATE):
         raise MelodyError(f"voicing_gate must set exactly {sorted(GATE)}")
-    floor, span = (_number(gate[name], f"voicing_gate.{name}") for name in ("floor_db", "range_db"))
+    floor, span, reach = (_number(gate[name], f"voicing_gate.{name}") for name in ("floor_db", "range_db",
+                                                                                     "reach_seconds"))
     if not (isinstance(gate["floor_db"], str) and LEVEL_FLOOR_DB <= floor <= 0):
         raise MelodyError(f"voicing_gate.floor_db must be decimal text from {LEVEL_FLOOR_DB:g} to 0 dBFS, "
                           f"not {gate['floor_db']!r}")
     if not (isinstance(gate["range_db"], str) and 0 <= span <= -LEVEL_FLOOR_DB):
         raise MelodyError(f"voicing_gate.range_db must be decimal text from 0 to {-LEVEL_FLOOR_DB:g} dB, "
                           f"not {gate['range_db']!r}")
+    if not (isinstance(gate["reach_seconds"], str) and 0 <= reach <= REACH_SECONDS):
+        raise MelodyError(f"voicing_gate.reach_seconds must be decimal text from 0 to {REACH_SECONDS:g} s, "
+                          f"not {gate['reach_seconds']!r}")
     reference = _number(given["reference_hz"], "reference_hz")
     if isinstance(reference, bool) or not 0 < reference < 22000:
         raise MelodyError(f"reference_hz must be a frequency, not {given['reference_hz']!r}")
     predominant = _options(given["predominant"], PREDOMINANT, "predominant")
-    low, high = BIN_RESOLUTION
-    if not low <= predominant["binResolution"] <= high:
-        raise MelodyError(f"predominant.binResolution must be from {low:g} to {high:g} cents, "
-                          f"not {given['predominant']['binResolution']!r}")
+    bins = _number(given["bin_cents"], "bin_cents")
+    low, high = BIN_CENTS
+    if isinstance(bins, bool) or not low <= bins <= high:
+        raise MelodyError(f"bin_cents must be from {low:g} to {high:g} cents, not {given['bin_cents']!r}")
+    predominant["binResolution"] = float(bins)
     return {"hop": hop, "chunk": (chunk * RATE // hop) * hop, "margin": (margin * RATE // hop) * hop,
             "reference": float(reference), "gate_floor": float(floor), "gate_range": float(span),
-            "predominant": predominant,
+            "reach": int(round(float(reach) * RATE / hop)), "predominant": predominant,
             "segmentation": _options(given["segmentation"], SEGMENTATION, "segmentation")}
 
 
@@ -293,53 +325,77 @@ def decoded_blocks(path: str, ffmpeg: str = "ffmpeg", block_bytes: int = 1 << 20
                               f"{errors.read().decode('utf-8', 'replace').strip()[:300]}")
 
 
-def chunks(blocks: Iterable[numpy.ndarray], chunk: int, margin: int, hop: int
-           ) -> Iterator[tuple[int, numpy.ndarray, int, int | None]]:
-    """The audio cut for analysis: (start, samples, first kept row, kept rows
-    or None for every row to the end). Chunk c keeps rows centred on
-    [c x chunk, (c + 1) x chunk) and is analysed from `margin` before to
-    `margin` after, clipped to the audio; the last chunk keeps every row to
-    the end, so the rows kept are exactly the whole recording's
-    ceil(n / hop) + 1. `chunk` 0 is the whole recording in one piece.
-    `chunk` and `margin` are multiples of `hop`, so every chunk's rows lie
-    on the whole recording's grid."""
+def plan(measured: numpy.ndarray, samples: int, chunk: int, margin: int, hop: int
+         ) -> list[tuple[int, int, int, int]]:
+    """The audio to analyse: (start, end, first kept row, kept rows), in
+    order. `measured` says which rows of the whole recording's grid (row k
+    centred on sample k x hop) are measured; each run of them is cut into
+    chunks of `chunk` samples' rows (0: one piece), each analysed from
+    `margin` before its rows to `margin` after, within its run and the
+    recording, so every chunk's rows lie on the grid and every measured row is
+    kept exactly once. Rows outside every run are not analysed."""
     assert chunk % hop == 0 and margin % hop == 0
+    pieces = []
+    for low, high in spans(measured):
+        stride = chunk // hop or high - low
+        run_start, run_end = low * hop, min(samples, high * hop)
+        for first in range(low, high, stride):
+            last = min(high, first + stride)
+            start = max(run_start, first * hop - margin)
+            end = min(run_end, last * hop + margin)
+            # Rows past the recording's last sample are measured from the audio before them.
+            start = min(start, (end - 1) // hop * hop)
+            pieces.append((start, end, first, last - first))
+    return pieces
+
+
+def cut(blocks: Iterable[numpy.ndarray], pieces: list[tuple[int, int, int, int]], samples: int
+        ) -> Iterator[numpy.ndarray]:
+    """Each piece's samples, [start, end), from the decoded blocks in order,
+    holding no more than a piece and a block at a time. The decode must give
+    the `samples` the first decode did."""
     buffer = numpy.zeros(0, dtype=numpy.float32)
     offset = 0  # the sample index of buffer[0]
-    index = 0
-    pending: list[numpy.ndarray] = []  # blocks not yet joined to the buffer, joined once per chunk
-    waiting = 0
-    for block in blocks:
-        pending.append(block)
-        waiting += len(block)
-        # Chunk `index` is not the last while audio goes on past its end; it
-        # can be cut once its right margin, and one sample more, has arrived.
-        if not chunk or offset + len(buffer) + waiting <= (index + 1) * chunk + margin:
-            continue
-        buffer = numpy.concatenate([buffer, *pending])
-        pending, waiting = [], 0
-        while offset + len(buffer) > (index + 1) * chunk + margin:
-            start = max(0, index * chunk - margin)
-            end = (index + 1) * chunk + margin
-            yield start, buffer[start - offset:end - offset], index * chunk // hop, chunk // hop
-            index += 1
-            drop = max(0, index * chunk - margin) - offset
-            buffer, offset = buffer[drop:], offset + drop
-    buffer = numpy.concatenate([buffer, *pending])
-    total = offset + len(buffer)
-    if total == 0:
-        return
-    if not chunk:
-        yield 0, buffer, 0, None
-        return
-    while True:
-        start = max(0, index * chunk - margin)
-        if (index + 1) * chunk >= total:
-            yield start, buffer[start - offset:], index * chunk // hop, None
-            return
-        end = min(total, (index + 1) * chunk + margin)
-        yield start, buffer[start - offset:end - offset], index * chunk // hop, chunk // hop
-        index += 1
+    blocks = iter(blocks)
+    pending: list[numpy.ndarray] = []
+    have = 0  # samples decoded so far
+    for start, end, _first, _count in pieces:
+        while have < end:
+            block = next(blocks, None)
+            if block is None:
+                break
+            if have + len(block) <= start and not pending:
+                offset = have = have + len(block)  # wholly before the piece: not kept
+                buffer = buffer[:0]
+                continue
+            pending.append(block)
+            have += len(block)
+        buffer = numpy.concatenate([buffer, *pending]) if pending else buffer
+        pending = []
+        if start < offset:
+            raise MelodyError(f"a piece from sample {start} comes after one from {offset}")
+        if start > offset:
+            buffer, offset = buffer[start - offset:], start
+        if have < end:
+            raise MelodyError(f"the audio decoded to {have} samples, not the {samples} it did before")
+        yield buffer[:end - offset]
+    for block in blocks:  # the rest, so the decoder is waited for and its failure seen
+        have += len(block)
+    if have != samples:
+        raise MelodyError(f"the audio decoded to {have} samples, not the {samples} it did before")
+
+
+def spans(rows: numpy.ndarray) -> list[tuple[int, int]]:
+    """The [start, end) ranges of true rows."""
+    edges = numpy.flatnonzero(numpy.diff(numpy.concatenate([[0], rows.astype(numpy.int8), [0]])))
+    return list(zip(edges[::2].tolist(), edges[1::2].tolist()))
+
+
+def reach(rows: numpy.ndarray, distance: int) -> numpy.ndarray:
+    """The rows within `distance` rows of a true row."""
+    count = numpy.concatenate([[0], numpy.cumsum(rows, dtype=numpy.int64)])
+    k = numpy.arange(len(rows))
+    return count[numpy.clip(k + distance + 1, 0, len(rows))] - count[numpy.clip(k - distance, 0, len(rows))] > 0
 
 
 # -- measuring -----------------------------------------------------------------
@@ -448,19 +504,22 @@ def runs(pitch: numpy.ndarray, step_cents: float) -> list[tuple[int, int]]:
     return found
 
 
-def gate(pitch: numpy.ndarray, level_db: numpy.ndarray, floor_db: float, range_db: float, step_cents: float
-         ) -> tuple[numpy.ndarray, float, float]:
-    """The voicing the gate keeps, `loud_db`, and `gate_db`: each contour of
-    rows MELODIA voiced is kept whole if at least half its rows reach the gate,
-    the higher of the floor and the recording's 99th-percentile row level
-    less the range (see the module's description)."""
+def loudness(level_db: numpy.ndarray, floor_db: float, range_db: float) -> tuple[float, float]:
+    """`loud_db`, the recording's 99th-percentile row level, and `gate_db`,
+    the higher of the floor and the loud level less the range."""
     loud = float(numpy.percentile(level_db, LOUD_PERCENTILE)) if len(level_db) else LEVEL_FLOOR_DB
-    threshold = max(floor_db, loud - range_db)
+    return loud, max(floor_db, loud - range_db)
+
+
+def gate(pitch: numpy.ndarray, level_db: numpy.ndarray, gate_db: float, step_cents: float) -> numpy.ndarray:
+    """The voicing the gate keeps: each contour of rows MELODIA voiced is
+    kept whole if at least half its rows reach `gate_db` (see the module's
+    description)."""
     kept = numpy.zeros(pitch.shape, dtype=bool)
     for start, end in runs(pitch, step_cents):
-        if float(numpy.median(level_db[start:end])) >= threshold:
+        if float(numpy.median(level_db[start:end])) >= gate_db:
             kept[start:end] = True
-    return kept, loud, threshold
+    return kept
 
 
 def run(request: dict[str, Any], es: Any) -> dict[str, Any]:
@@ -471,34 +530,31 @@ def run(request: dict[str, Any], es: Any) -> dict[str, Any]:
     melody = Melody(es, chosen)
     hop = chosen["hop"]
     output = Path(request["output_dir"])
+    # First the levels, and from them the gate and the rows within its reach.
     energy = Energy(hop)
-    pitches: list[numpy.ndarray] = []
-    confidences: list[numpy.ndarray] = []
-    kept_rows = 0
-    samples = 0
-    for start, audio, first_row, kept in chunks(energy.tap(decoded_blocks(path)), chunk=chosen["chunk"],
-                                                margin=chosen["margin"], hop=hop):
-        if first_row != kept_rows:
-            raise MelodyError(f"chunk rows begin at {first_row}, after {kept_rows} rows")
-        pitch, confidence = melody.measure(audio)
-        skip = first_row - start // hop
-        end = None if kept is None else skip + kept
-        pitches.append(pitch[skip:end])
-        confidences.append(confidence[skip:end])
-        kept_rows += len(pitches[-1])
-        samples = start + len(audio)
+    samples = sum(len(block) for block in energy.tap(decoded_blocks(path)))
     if samples == 0:
         raise MelodyError(f"{path} decodes to no samples")
     rows = -(-samples // hop) + 1
-    if kept_rows != rows:
-        raise MelodyError(f"{samples} samples made {kept_rows} rows, not the {rows} the grid says")
-    pitch = numpy.concatenate(pitches)
-    confidence = numpy.concatenate(confidences)
     level_db = row_levels(energy.hops(), rows, hop)
+    loud_db, gate_db = loudness(level_db, chosen["gate_floor"], chosen["gate_range"])
+    measured = reach(level_db >= gate_db, chosen["reach"])
+    pieces = plan(measured, samples, chosen["chunk"], chosen["margin"], hop)
+    # Then MELODIA on those rows only; every other row is unvoiced.
+    pitch = numpy.zeros(rows, dtype=numpy.float32)
+    confidence = numpy.zeros(rows, dtype=numpy.float32)
+    # cut() first, so that it is drawn to its end and checks the decode.
+    for audio, (start, _end, first, count) in zip(cut(decoded_blocks(path), pieces, samples), pieces):
+        measured_pitch, measured_confidence = melody.measure(audio)
+        skip = first - start // hop
+        if skip < 0 or skip + count > len(measured_pitch):
+            raise MelodyError(f"rows {first} to {first + count} are not in the audio from sample {start}")
+        pitch[first:first + count] = measured_pitch[skip:skip + count]
+        confidence[first:first + count] = measured_confidence[skip:skip + count]
     melodia_voiced = pitch > 0
     # MELODIA's pitchContinuity is the most a contour moves in a millisecond.
     step = chosen["predominant"]["pitchContinuity"] * hop * 1000 / RATE
-    voiced, loud_db, gate_db = gate(pitch, level_db, chosen["gate_floor"], chosen["gate_range"], step)
+    voiced = gate(pitch, level_db, gate_db, step)
     pitch = numpy.where(voiced, pitch, 0).astype(numpy.float32)
     confidence = numpy.where(voiced, confidence, 0).astype(numpy.float32)
     flags, midi, cents = intonation(pitch, reference)
@@ -508,21 +564,21 @@ def run(request: dict[str, Any], es: Any) -> dict[str, Any]:
         (output / f"{name}.{'u8' if dtype == 'u1' else 'f32'}").write_bytes(
             numpy.ascontiguousarray(values[name], dtype=dtype).tobytes())
     # The notes are segmented from the gated contour, so the audio is decoded
-    # a second time: the gate is known only once the whole recording is.
+    # again: the gate is known only once the whole recording is.
     notes = []
-    for start, audio, first_row, kept in chunks(decoded_blocks(path), chunk=chosen["chunk"],
-                                                margin=chosen["margin"], hop=hop):
+    for audio, (start, _end, first, count) in zip(cut(decoded_blocks(path), pieces, samples), pieces):
         here = pitch[start // hop:start // hop + -(-len(audio) // hop) + 1]
-        # A note belongs to the chunk whose kept rows hold its onset.
-        low, high = first_row * hop / RATE, (None if kept is None else (first_row + kept) * hop / RATE)
+        # A note belongs to the piece whose kept rows hold its onset.
+        low, high = first * hop / RATE, (first + count) * hop / RATE
         for onset, duration, number in melody.notes(here, audio):
             onset += start / RATE
-            if onset >= low and (high is None or onset < high):
+            if low <= onset < high:
                 notes.append({"start": onset, "end": onset + duration, "value": number})
     (output / "notes.json").write_text(json.dumps(notes))
     outputs: dict[str, Any] = {name: {"shape": [rows, 1]} for name in SERIES}
     outputs.update({"notes": {}, "voiced_fraction": {"value": float(voiced.mean())},
                     "melodia_voiced_fraction": {"value": float(melodia_voiced.mean())},
+                    "measured_fraction": {"value": float(measured.mean())},
                     "loud_db": {"value": loud_db}, "gate_db": {"value": gate_db},
                     "reference_hz": {"value": reference}, "samples": {"value": samples}})
     software = [{"name": "ffmpeg", "version": ffmpeg_version()},
