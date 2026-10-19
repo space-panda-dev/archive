@@ -1,6 +1,6 @@
 # 0097. Rights say which use they permit, and a clearance permits one use
 
-Status: proposed (wave 1, drafted 2026-10-19)
+Status: proposed (wave 1, drafted 2026-10-19; open questions settled 2026-10-19)
 
 A rights claim ([ADR 0085](0085-documents-lyrics-rights.md)) gives its
 subject one furthest class. The permit table turns the RightsStatements.org
@@ -44,6 +44,10 @@ this record states it as given.
   permission for one use, in one Work or recording, for one destination
   class; the beyond-circle check reads it. Wave 1, because reach depends on
   it.
+
+The operator settled this record's open questions on 2026-10-19: R4.11
+settles each as its drafter recommended. The decision below states the
+settled choices; the list at the end records them.
 
 ## Decision
 
@@ -89,7 +93,8 @@ with references as version 1: the pack as `subject`, the publisher as
 - **A use named beyond the statement's class needs the licence.** A `uses`
   entry wider than the permit table's class for the statement is admitted
   only when the claim pins a `document`: widening past the table is a fact
-  about a licence, and the licence is its evidence. Narrowing needs nothing.
+  about a licence, and the licence is its evidence. Narrowing needs nothing
+  (R4.11).
 - **Terms bind every use.** Outside the claim's `from` and `until` on the day
   it is read, every use reaches service, as version 1 does.
 - **The circle is still private.** `circle` is the narrowest value: rights
@@ -107,8 +112,11 @@ with references as version 1: the pack as `subject`, the publisher as
 class is the narrowest that any head rights claim about the subject gives
 that use, whoever asserted it. A subject with no rights claim reaches
 service for every use (INV-21). Rights claims stay the operator's to send
-through the relay ([ADR 0088](0088-bandmates.md)); a stranger's claim can
-only narrow.
+through the relay ([ADR 0088](0088-bandmates.md)), even one that only
+narrows, in wave 1 (R4.11); a stranger's claim can only narrow. An origin of
+`sample_pack` ([ADR 0096](0096-origin-of-recordings.md)) implies no rights
+claim: the sample-pack importer (wave 2) proposes a version 2 rights claim
+from the pack's licence for the operator to admit (R4.11).
 
 ### Clearance: one use, in one Work or recording, for one class
 
@@ -120,10 +128,13 @@ one destination class. Its references:
   `musical_work`, `recording`, or `release` (the subjects a rights claim can
   have);
 - exactly one `in`: where the use happens, an Entity of kind `musical_work`
-  or `recording`, or an Artifact (see open question 3);
+  or `recording`, or an Artifact, because the operator's own bounce often
+  has no recording Entity (R4.11);
 - 1 to 8 `grantor` person or organisation Entities: who said yes;
 - at most one `document`: the permission as received (a letter, a licence,
-  an exported message).
+  an exported message). It is optional, as for rights version 1: a spoken
+  yes recorded with the grantor named is still evidence, and the operator's
+  approval relies on it knowingly (R4.11).
 
 Its payload:
 
@@ -142,8 +153,10 @@ Its payload:
 
 `use` and `class` (`service`, `open`, or `distribution`) are required; the
 rest are optional, with ADR 0085's rules for partial dates, jurisdiction,
-text, and document fields (`x-archive-partial-dates`). The envelope `agent`
-is a person.
+text, and document fields (`x-archive-partial-dates`). `jurisdiction` is
+recorded, not computed, like rights' `jurisdiction`, until the open question
+on jurisdiction-specific terms is answered (R4.11). The envelope `agent` is
+a person.
 
 - **Only the operator's clearances count.** A clearance widens reach, so
   only head clearances whose `agent` is the active operator are read. A
@@ -155,7 +168,9 @@ is a person.
   condition the beyond-circle check reads. The publication approval is
   still required (INV-20), still per destination and exact revision.
 - **A clearance names one class and covers that class.** A clearance for
-  `distribution` does not clear `open` (open question 4).
+  `distribution` does not clear `open`: W1.11 says "one destination class",
+  a second clearance is cheap, and permission for a release does not always
+  cover a free web page (R4.11).
 - **A clearance lifts rights only.** Never sensitivity, never a co-writer's
   consent (the sharing gate), never the fresh approval that others' work
   needs (INV-20).
@@ -178,14 +193,16 @@ use on it and on everything in its closure (ADR 0085: everything it pins,
 transitively, through every revision): showing a lead sheet that pins a
 recording listens to the recording too; downloading it redistributes both.
 Pins keep the exercised use, never `derive`, because a pin is not a claim
-that one thing was made from another (open question 5). Lineage is: for
+that one thing was made from another (R4.11). A later record may name which
+pins are derivations (a transcription's recording). Lineage is: for
 every source an output's lineage reaches (ADR 0098 walks it backward), the
 use read is `derive`, whatever the use exercised on the output.
 
 **What the relay and applications exercise.** Inside the circle nothing
 changes: rights never limit it, and every audience is circle class
 ([ADR 0093](0093-audiences.md)). For a destination beyond the circle
-(which the relay does not serve yet; ADR 0093, its question 6), named views,
+(which the relay does not serve until a publisher calls `may_publish`; ADR
+0093), named views,
 listening copies, peaks, and practice audio played in the page are
 `listen`; a file the relay hands over to keep (an export, a document's
 bytes, a rendered mix offered as a download) is `redistribute`.
@@ -200,7 +217,7 @@ website that streams a song is `listen`, a store that sells downloads is
 against all three uses, each of which must pass: the strictest reading, so
 no existing approval reaches further than it does today. ADR 0093 adds no
 approval version (an audience is the approval's `destination`), so
-version 3 carries only `use` (open question 2).
+version 3 carries only `use` (R4.11).
 
 **The check, per covered revision**, on the UTC date of the transition
 (Door) or the publish date (`may_publish`), for the approval's use *u* and
@@ -354,36 +371,22 @@ subject, in one Work or recording, for one destination class.
   scheme beside it), and the contract catalog.
 - `docs/vocabulary.md`: use and clearance, when accepted.
 
-## Open for the operator
+## Settled by the operator (2026-10-19)
 
-1. **May a `uses` entry widen past the permit table only with a pinned
-   licence document?** Recommended: yes, as written; narrowing needs nothing.
-2. **Which approval version carries `use`?** Version 3. ADR 0093 adds no
-   approval version: an audience is named by the approval's existing
-   `destination`, so there is no second version 3 to merge with.
-   Recommended: accept version 3 for `use` alone.
-3. **May a clearance's `in` be an Artifact, not only a Work or recording
-   Entity?** The operator's own bounce often has no recording Entity.
-   Recommended: yes, an Artifact or a `musical_work` or `recording` Entity.
-4. **Does a clearance for one class also clear narrower classes?**
-   Recommended: no, exactly the class it names, as W1.11 says "one
-   destination class"; a second clearance is cheap, and permissions for a
-   release do not always cover a free web page.
-5. **Do pins carry the exercised use, and only lineage carry `derive`?**
-   Recommended: yes for now; a later record may name which pins are
-   derivations (a transcription's recording), which could widen lead sheets
-   read from licensed material.
-6. **Should a clearance require its `document`?** Recommended: no, as for
-   rights version 1; a spoken yes recorded with the grantor named is still
-   evidence, and the operator's approval relies on it knowingly.
-7. **May a participant or member assert a rights claim that only narrows?**
-   W1.7 lets members narrow sensitivity; rights stay the operator's (ADR
-   0088). Recommended: not in wave 1; clearances stay operator-only always,
-   because they widen.
-8. **Does an origin of `sample_pack` ([ADR 0096](0096-origin-of-recordings.md)) imply a rights claim?**
-   Recommended: no; origin and rights stay separate claims (ADR 0010). The
-   sample-pack importer (wave 2) proposes a version 2 rights claim from the
-   pack's licence for the operator to admit.
-9. **Is a clearance's `jurisdiction` read?** Recommended: recorded, not
-   computed, like rights' `jurisdiction`, until the open question on
-   jurisdiction-specific terms is answered.
+All by R4.11, as recommended.
+
+1. **Widening `uses` only with a licence document.** Yes; narrowing needs
+   nothing.
+2. **Which approval version carries `use`.** Version 3, for `use` alone.
+3. **A clearance's `in` as an Artifact.** Yes: an Artifact, or a
+   `musical_work` or `recording` Entity.
+4. **Does a clearance clear narrower classes?** No, exactly the class it
+   names.
+5. **Pins carry the exercised use; only lineage carries `derive`.** Yes, for
+   now.
+6. **Must a clearance pin its `document`?** No.
+7. **Members' narrowing rights claims.** Not in wave 1; clearances stay
+   operator-only always.
+8. **Does `sample_pack` origin imply rights?** No; the importer proposes a
+   rights claim for the operator to admit.
+9. **Is a clearance's `jurisdiction` read?** Recorded, not computed.

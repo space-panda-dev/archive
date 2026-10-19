@@ -1,6 +1,6 @@
 # 0094. People's writes: grants are transitions, and members set their own limits
 
-Status: proposed (wave 1, drafted 2026-10-19)
+Status: proposed (wave 1, drafted 2026-10-19; open questions settled 2026-10-19)
 
 [ADR 0088](0088-bandmates.md) lets a bandmate with a relay login assert
 claims in their own name. What they may send is one fixed list,
@@ -58,6 +58,11 @@ W1.7); this record states them as given.
   entered on their behalf stay valid; the member may lift or tighten them.
   This answers the open question about bandmates asserting their own limit.
 
+The operator settled this record's open questions on 2026-10-19 (round 4
+answers R4.2, R4.3, R4.5, R4.7 and R4.8; R4.11 settles the rest as
+recommended). The decision below states the settled choices; the list at the
+end records them.
+
 ## Decision
 
 ### A grant is a transition, not a claim
@@ -91,8 +96,8 @@ A grant is not a policy revision. Policy declares desired state for copies,
 retention and disclosure ([ADR 0007](0007-policy.md)); a grant authorizes
 proposals. So INV-17 ("policy only adds") does not govern it, and a later
 grant may turn an ability off, as a publication withdrawal ends an approval.
-Whether a grant needs a policy revision, as S-32 ties publication approvals
-to one, is question 4 below.
+A grant cites no policy revision until the policy language exists, the
+same answer the open question gives for circle disclosure (R4.11).
 
 **The contract.** References: exactly one `grantee`, a person Entity
 revision; exactly one `authorizer`, a person Entity revision, which Door
@@ -101,7 +106,8 @@ person who proposed the change, normally the operator. Payload:
 
 - `ability`: one of `annotate`, `cut`, `admit` (below; W1.6 calls the third
   "upload", and the [naming table](../vocabulary.md#naming-discipline) says
-  *admit*);
+  *admit*; the operator confirmed `admit`, and applications may label it
+  "Upload", R4.7);
 - `decision`: `allow` or `deny`;
 - `audiences`: 1 to 16 distinct audience names, each 1 to 200 characters,
   exactly as ADR 0093's audience transitions name them (a name is never
@@ -123,14 +129,17 @@ person who proposed the change, normally the operator. Payload:
 
 **Door's part.** A release installs the bundle and adds `WriteGrant` to
 Door's `transitionDispatchTable`. The handler checks: the authorizer is the
-active operator; the grantee is a person Entity and not the active operator
-(question 6); the payload is closed and its audience names distinct; and no
-two grants in one batch name the same grantee, ability and audience. A grant
-has no effect on Door's own derived state: Door records it, and World and
-the relay read it. Door checks audience names only by shape; a grant naming
-no live audience is admitted and grants nothing. ADR 0093 records audiences
-as transitions and has Door refuse a circle approval that names no live
-audience; whether Door should refuse such a grant too is question 9.
+active operator; the grantee is a person Entity and not the active operator,
+since a self-grant authorizes nothing new (R4.2, below); the payload is
+closed and its audience names distinct; every audience name is the name of a
+live audience ([ADR 0093](0093-audiences.md)) in the state the transition
+commits against, so Door refuses a grant that names no live audience (R4.5),
+as it refuses a circle approval to one; and no two grants in one batch name
+the same grantee, ability and audience. The grantee need not have a login
+yet, so the operator can prepare a grant before a person's first sign-in
+(R4.11). A grant has no effect on Door's own derived state: Door records it,
+and World and the relay read it. A grant that named a live audience stays
+admitted when that audience later ends, and grants nothing there.
 
 **One act per change, latest wins.** There is no separate withdrawal
 contract: turning an ability off is a `deny` grant. For each grantee,
@@ -152,9 +161,16 @@ set; before ADR 0093, the circle is the one audience). Otherwise the draft
 is refused **`not_granted`** (403), a new code under
 [ADR 0058](0058-door-refusal-codes.md)'s rule, naming the ability.
 
+**The operator's internet login (R4.2).** Over the internet the operator's
+person is a member ([ADR 0092](0092-internet-exposure.md)) and reads the
+union of the audiences that list it (ADR 0093). The view's rule gives that
+login all three abilities, in member capacity, over those audiences; no grant
+names the operator, and Door refuses one that does. It still sends only what
+member capacity allows: no transition, no operator-only contract.
+
 | Ability | Default | What it admits |
 |---|---|---|
-| `annotate` | allowed | Claims and assessments about readable things: everything now in `MEMBER_CONTRACTS` except `sharing_consent` (judgments, span annotations, selection kind and title, contributions and band memberships, links of a take to a Work, and the music-fact claims of ADRs 0077 to 0086), and a contribution at [ADR 0095](0095-participation.md)'s session scope |
+| `annotate` | allowed | Claims and assessments about readable things: everything now in `MEMBER_CONTRACTS` except `sharing_consent` (judgments, span annotations, selection kind and title, contributions and band memberships, links of a take to a Work, and the music-fact claims of ADRs 0077 to 0086), a contribution at [ADR 0095](0095-participation.md)'s session scope, and an origin claim (ADR 0096) about readable content, never `own_capture` (R4.4) |
 | `cut` | allowed | `archive.claim/audio_selection` version 2, pinning readable Artifact revisions, with the caller as its envelope `agent` (W1.6); and [ADR 0098](0098-content-lineage.md)'s lineage claim, which W1.12 gives to anyone with a cut grant |
 | `admit` | denied | Artifacts whose content the relay staged for the caller, with the claims that describe them in the same batch: a document source (ADR 0085) and [ADR 0096](0096-origin-of-recordings.md)'s origin claim |
 
@@ -230,7 +246,14 @@ stays the operator's (ADR 0088). Beyond the circle, an Artifact with no
 origin is others' work (W1.13), so admitting it widens nothing.
 
 Members admit Artifacts, not Entities: a recording session for an admitted
-phone recording is still the operator's to create (question 7).
+phone recording is still the operator's to create (R4.11).
+
+**Staging transport and scope (R4.11).** Today's staging takes 64 MiB of
+base64 JSON and only document types; audio and sample libraries are larger.
+Members' staging uses a streamed staging route with a size cap from
+configuration, accepts audio and document media types only, and stages
+Artifacts only. A member's admission starts no enrichment run; the
+operator's next run picks it up.
 
 ### Members set their own limits
 
@@ -242,18 +265,31 @@ member assert `archive.claim/sensitivity`":
   person's own (ADR 0018); a member never sends one in another's name.
 - **On content that records them.** Every `subject` must **record the
   caller**: it is
-  - the subject of a head contribution (ADR 0078, at `recording`, `span` or
-    `channel` scope, or ADR 0095's `session` scope) naming the caller as
-    contributor, that the operator asserted or affirmed, or an Artifact in a
-    session such a session-scope contribution names; or
+  - the session of a head participation ([ADR 0095](0095-participation.md)'s
+    `session`-scope contribution) naming the caller as contributor, or an
+    Artifact that session's head `session_parts` lists, where the
+    participation was asserted by the operator, affirmed by the operator, or
+    asserted by the caller themselves, and the active operator's standing on
+    that revision is not `rejected` (R4.3);
+  - the subject of a head contribution at `recording`, `span` or `channel`
+    scope (ADR 0078) naming the caller as contributor, that the operator
+    asserted or affirmed (see Still open 1);
+  - content the caller deposited: the subject of a head origin claim
+    ([ADR 0096](0096-origin-of-recordings.md)) that names the caller in the
+    `depositor` role, which the operator has not rejected (R4.8); or
   - a subject of one of the caller's own head sensitivity claims, so that a
     limit the operator entered on their behalf can always be revised by
     them.
 
   A subject that fails the test is refused `not_granted` with the reason.
-  Requiring the operator's assertion or affirmation follows W1.9: no one can
-  block the operator's sharing by claiming to play on a recording
-  (question 2).
+  The test is for limits only (R4.3). A member's own participation selects
+  what they may limit, because a limit only narrows (INV-26); it does not
+  make them a participant, which still needs the operator's assertion or
+  affirmation (W1.9, ADR 0095). Someone else's unaffirmed claim that the
+  caller played does not select. The operator can reject a self-asserted
+  participation; a rejection stops it selecting new limits, but a limit the
+  member already set stays theirs and binds until they lift it (INV-26),
+  subject only to the operator's one-destination override.
 - **Lifting and tightening.** Because ADR 0085's rule takes each person's
   latest sensitivity claim about an object as their limit, a member lifts
   or tightens simply by asserting a later claim, or by superseding their own
@@ -270,11 +306,20 @@ member assert `archive.claim/sensitivity`":
   caller's own head sensitivity claims pins, readable or not. The member
   learns nothing new by this: the identifiers are in their own limit, which
   they already read (`readable_by` serves a member their own records). The
-  content stays unserved while any limit forbids it (question 1).
+  content stays unserved while any limit forbids it. This is the least W1.7
+  needs (R4.11).
 
 The member's limit binds exactly as the operator-entered one does: it caps
 the readable set, publication, and every unattended act (ADR 0018). The
 operator's one-destination override (INV-26) is unchanged.
+
+**A depositor's limits bind like a recorded person's (R4.8).** What a friend
+deposits may not record them: a sample library they bought, or a recording
+of someone else. The operator decided that a depositor's limits on what they
+deposited bind exactly as the limits of a person the content records. That
+changes INV-26's wording and ADR 0018's; [ADR 0096](0096-origin-of-recordings.md),
+which owns the depositor role, proposes the amendment text. The depositor clause of
+the test above takes effect with those amendments, never before them.
 
 ### World and the relay
 
@@ -295,8 +340,9 @@ operator's one-destination override (INV-26) is unchanged.
   selected generation, as it reads the readable set (`Access`). A grant the
   operator commits through the relay refreshes World before the answer
   (`Relay._door`), so it applies to the next request; one committed with
-  operator tools applies from the next refresh. Door does not re-check grants
-  (question 5).
+  operator tools applies from the next refresh. Door does not re-check grants:
+  the relay enforces them (W1.5), and only the relay and the operator reach
+  Door's socket (ADR 0054) (R4.11).
 
 **The rules live in World until a release installs them.** A new module,
 `world/grants.py`, would hold the effective-grant rule, the defaults, the
@@ -388,12 +434,14 @@ Verified on 2026-10-19 to exist; a later implementation would change:
 
 - `world/circle.py`: `MEMBER_CONTRACTS` (split by ability; add
   `audio_selection` version 2 and `sensitivity` version 1, and the sibling
-  records' contribution version 2, ADR 0095, origin version 1, ADR 0096,
+  records' contribution version 2, ADR 0095, origin version 1 (under
+  `annotate`, and under `admit` with staged content), ADR 0096,
   and lineage version 1, ADR 0098),
   `check_member_draft` (ability check, Artifacts under `admit`, the
   sensitivity subject exception), `readable_by` (unchanged rule, now relied
   on for own limits and admitted content).
-- `world/grants.py` (new): effective grants, defaults, records-them test.
+- `world/grants.py` (new): effective grants, defaults, records-them test
+  (operator-counted or self-asserted participation, part credits, depositor).
 - `world/views.py`: `check_request` and `catalogue` gain
   `archive.view/write_grants` and `archive.view/person_limits`.
 - `world/documents.py`: `check_stage_request` (members with `admit`),
@@ -403,55 +451,48 @@ Verified on 2026-10-19 to exist; a later implementation would change:
 - `relay/served.py`: `stage_document` and `check_contents` admit a member's
   staged bytes under `admit`.
 - `relay/staging.py`: `Documents.stage` and `Documents.staged_for`
-  (already per agent; media types and size, question 7).
+  (already per agent; a streamed route, audio and document types, a size cap
+  from configuration).
 - `relay/relay.py`: `Relay.archive` (`caller.grants`), `Relay._door`,
   `check_proposal`.
 - `relay/refusals.py`: `not_granted` (403); `relay/openapi.json`.
 - `door/src/Archive/Door/TransitionDryRun.hs`: `TransitionKind`,
   `transitionDispatchTable`, and the transition validation for
-  `WriteGrant`.
+  `WriteGrant` (live audience names, grantee not the operator).
 - A specification release under `spec/` installing `write_grant` version 1
   and Door's rules for it; `docs/vocabulary.md` on acceptance.
 
-## Open for the operator
+## Settled by the operator (2026-10-19)
 
-1. **Seeing what your own limit hides.** A member may pin, in a new limit,
-   subjects of their own limits even when they cannot read them, and so sees
-   those identifiers (never content). Recommended: accept; it is the least
-   W1.7 needs, and the identifiers are already in the member's own record.
-2. **Who counts as recorded.** The records-them test accepts only
-   contributions or participation the operator asserted or affirmed (W1.9's
-   rule). Recommended: accept; a member whose participation is not yet
-   affirmed asks the operator, as today. ADR 0095 (its question 8)
-   recommends that, for selecting what a limit covers, any participation
-   naming the person should count, affirmed or not; the decisions do not
-   settle which.
-3. **Depositors' limits.** What a friend admits may not record them, so W1.7
-   does not let them limit it. Recommended: let a depositor (ADR 0096) limit
-   what they deposited, by reading ADR 0018's "a person the content records"
-   as including its depositor; this changes INV-26's wording and needs the
-   operator's decision. ADR 0096 (its question 2) asks the same.
-4. **Policy revision.** S-32 ties a publication approval to a policy
-   revision. Recommended: a grant cites none until the policy language
-   exists, the same answer the open question gives for circle disclosure.
-5. **Door re-checking grants.** Recommended: no; the relay enforces (W1.5),
-   and only the relay and the operator reach Door's socket (ADR 0054).
-6. **The operator's own internet login** (member capacity, W1.3).
-   Recommended: the view's rule gives the operator's person all three
-   abilities in member capacity, and Door refuses a grant naming the
-   operator, since a self-grant authorizes nothing new. Grants are over
-   audiences, and ADR 0093 keeps the operator out of every audience; which
-   audiences this login reads is ADR 0092's question 2 and ADR 0093's
-   question 7, which recommend differently.
-7. **Staging transport and scope.** Staging takes 64 MiB of base64 JSON and
-   only document types; audio and sample libraries are larger. Recommended: a
-   streamed staging route with a size cap from configuration, audio and
-   document types only, Artifacts only (sessions stay the operator's), and
-   no enrichment run started by a member's admission: the operator's next run
-   picks it up.
-8. **Grants before a login.** Recommended: a grant may name any person
-   Entity, with or without a login, so the operator can prepare one.
-9. **Door and audience names.** Now that ADR 0093 records audiences in the
-   archive, should Door refuse a grant naming no live audience, as it
-   refuses a circle approval to one? This record keeps the shape check
-   only; neither draft decided it.
+1. **Seeing what your own limit hides.** Accepted: a member may pin subjects
+   of their own limits in a new limit, seeing identifiers, never content
+   (R4.11).
+2. **Who counts as recorded.** For limits only, participation naming the
+   person that the operator asserted or affirmed, or that the person asserted
+   themselves; the participant tier still counts only the operator's; the
+   operator can reject a self-asserted participation (R4.3).
+3. **Depositors' limits.** A depositor's limits bind like a recorded
+   person's; ADR 0096 proposes the INV-26 and ADR 0018 amendment text (R4.8).
+4. **Policy revision.** A grant cites none until policy exists (R4.11).
+5. **Door re-checking grants.** No; the relay enforces (R4.11).
+6. **The operator's own internet login.** It reads the union of the audiences
+   that list it (R4.2); the view gives it all three abilities in member
+   capacity, and Door refuses a grant naming the operator (R4.11).
+7. **Staging transport and scope.** A streamed route with a configured size
+   cap, audio and document types, Artifacts only, no enrichment run started
+   by a member (R4.11).
+8. **Grants before a login.** A grant may name any person Entity (R4.11).
+9. **Door and audience names.** Door refuses a grant that names no live
+   audience (R4.5).
+10. **The ability's name.** `admit`; applications may label it "Upload"
+    (R4.7).
+
+### Still open
+
+1. **Self-asserted part-level credits.** R4.3 lets a person's own
+   session-scope participation select what they may limit, but says nothing
+   of their own `recording`, `span` or `channel` contribution naming
+   themselves, which this record still counts only when the operator
+   asserted or affirmed it. *Recommend:* treat them the same as R4.3's
+   participation, since a limit only narrows: a person's own credit on a
+   part selects that part for their limit, and the operator can reject it.

@@ -1,6 +1,6 @@
 # 0093. A relay has several named audiences
 
-Status: proposed (wave 1, drafted 2026-10-19)
+Status: proposed (wave 1, drafted 2026-10-19; open questions settled 2026-10-19)
 
 [ADR 0088](0088-bandmates.md) gives a relay one circle: a destination of
 class circle, named in the relay's configuration, with a list of members and
@@ -33,6 +33,10 @@ W1.15); this record states it as given.
   The readable set is computed per audience."
 - **W1.15 Federation stays open**, recorded in the
   [open questions](../open-questions.md).
+
+The operator settled this record's open questions on 2026-10-19 (round 4
+answers R4.2 and R4.9; R4.11 settles the rest as recommended). The decision
+below states the settled choices; the list at the end records them.
 
 ## Decision
 
@@ -70,9 +74,11 @@ states the whole membership.
   members.
 - `authorizer`: exactly one. It pins the current revision of the active
   operator's person, as ADR 0051 requires of an approval.
-- `member`: 1 to 64 person Entity revisions, all distinct, never the
-  operator's person. The operator reads everything already (ADR 0088). None
-  when `ended`.
+- `member`: 1 to 64 person Entity revisions, all distinct. The operator's
+  person may be listed (R4.2). That changes only what the operator's
+  internet login reads, which is member capacity
+  ([ADR 0092](0092-internet-exposure.md)); over the tailnet the operator
+  reads everything already (ADR 0088). None when `ended`.
 - `band`: at most one organisation Entity revision. It takes over ADR 0088's
   configured `band`: the band whose members may assert its lead sheet, and
   whose own records count as members' records in this audience.
@@ -82,7 +88,7 @@ manifest, lock, expected-heads, and single-commit rules. `door admit` refuses
 it. Door refuses a revision when:
 
 - its authorizer is not the active operator;
-- a `member` is not an Entity of kind `person`, or is the operator;
+- a `member` is not an Entity of kind `person`;
 - the `band` is not an organisation;
 - it supersedes anything other than the current head of the same audience
   object;
@@ -107,8 +113,10 @@ destination and its members as the people reached:
    sharing gate lets it reach that audience;
 2. **What it pins**, transitively, as before;
 3. **Members' own**: claims and assessments whose agent is a member of *this*
-   audience, or its band, when everything they pin is readable in this
-   audience;
+   audience other than the operator's person, or its band, when everything
+   they pin is readable in this audience. Listing the operator in an
+   audience never discloses the operator's records: they still need an
+   approval;
 4. **The audience itself**: its head revision and its members' person
    Entities, so a member knows who else reads what they write.
 
@@ -118,7 +126,9 @@ limit an audience, because each audience is circle class, which is private
 records are still counted (INV-24).
 
 A member reads the union of the sets of the audiences they belong to, plus
-their own records. A record a member asserts reaches the audiences they
+their own records. The operator's internet login reads the union of the
+sets of the audiences that list the operator, and nothing more (R4.2; see
+Still open). A record a member asserts reaches the audiences they
 belong to in which what it pins is readable, and no others. A producer's note
 on a song disclosed to both the band and the crew reaches the crew. It
 reaches the band only when the producer is also in the band, or when the
@@ -131,30 +141,35 @@ audience's members. A co-written song approved to the band passes on the
 operator's approval. The same song approved to the producers' crew, which
 includes someone outside the band, is blocked from that audience's readable
 set until every co-writer has given a head `approve` consent naming the
-crew's audience name and covering the revisions. Nothing in the gate itself
-changes.
+crew's audience name and covering the revisions. The operator's person,
+when listed, is not counted among the people the gate checks: reaching the
+operator discloses nothing. Nothing else in the gate changes.
 
-**What the relay does.** The relay's `callers` configuration still maps each
-tailnet login to a person (ADR 0056), and ADR 0092's `internet.logins` maps
-each verified Access email to one. The
+**What the relay does.** The relay's `callers` configuration still maps a
+tailnet login to a person (ADR 0056), now only the operator's (ADR 0092),
+and ADR 0092's `internet.logins` maps each verified Access email to one. The
 relay reads the live audiences from the selected World generation, and they
 change with each snapshot:
 
 - A caller is in `member` capacity when their person is in at least one live
-  audience. A caller who is neither the operator nor a member of any audience
-  is refused `forbidden_identity`. ADR 0088's start-up rule that every member
+  audience, or when they are the operator on the internet ingress (ADR
+  0092). A caller who is neither the operator on the tailnet nor a member of
+  any live audience is refused `forbidden_identity`; that includes the
+  operator's internet login while no audience lists the operator. ADR 0088's start-up rule that every member
   is a caller is dropped: a person may be in an audience before they have a
   login, and an approval to that audience may overcount them, which is
   allowed (ADR 0016).
 - The answer's `caller` object gains `audiences`: the names of the caller's
-  live audiences, sorted. The operator's answer lists none.
+  live audiences, sorted. The operator's tailnet answer lists none; the
+  operator's internet answer lists the audiences that name the operator.
 - Named views, media routes, and member drafts check against the caller's
   readable set (the union above), exactly where ADR 0088 checks against the
   circle's. A draft that names an audience's band as its agent is checked
   against the bands of the caller's own audiences.
-- The relay's configured `circle` goes away. Until a release installs the
-  audience contract, the relay keeps reading ADR 0088's configuration as one
-  audience. To migrate, the operator commits one audience transition with the
+- The relay's configured `circle` goes away: membership lives in the
+  archive (R4.9). Until the specification release that installs the audience
+  contract, the relay keeps reading ADR 0088's configuration as one
+  audience; that release is the switchover (R4.9). To migrate, the operator commits one audience transition with the
   old destination name and members. Every approval already given names that
   destination, so it keeps its effect, with nothing re-approved. After that,
   a relay configured with a `circle` while World holds a live audience
@@ -190,9 +205,18 @@ does.
   beyond its band. A band-only audience needs none.
 - Sensitivity cannot tell one audience from another. `AMBER` lets an object
   reach every audience. Keeping something from the crew but not the band is
-  done by not approving it to the crew (Open for the operator, 3). An `AMBER`
-  object still reaches no member who reads through the internet, because
-  Cloudflare is a service processor (ADR 0092, its question 1).
+  done by not approving it to the crew; there is no per-audience label
+  (R4.11). An `AMBER` object still reaches no member who reads through the
+  internet, because Cloudflare is a service processor; the "circle" setting
+  will write `GREEN` instead (ADR 0092, R4.1).
+- The operator can see what an audience sees from any browser by listing
+  themselves in it. Over the tailnet, `archive.view/readable_set` still
+  previews any audience.
+- A personal-use licence, such as a bought tablature, reaches every audience
+  as it reached the one circle, because every audience is private; the
+  64-member cap keeps audiences small (R4.11).
+- A destination anyone can sign up to is not served through the relay until
+  a publisher exists that calls `may_publish` (ADR 0085) (R4.11).
 - An audience never names another archive. Someone else's content enters
   only by the operator holding it in custody (W1.15).
 - The readable set is computed once per audience for each snapshot. At a few
@@ -217,7 +241,10 @@ does.
   does not know member by member is not circle class.
 - **Rights limiting a large audience.** ADR 0085 decided that the circle is
   private. W1.8 makes every audience circle class. Drawing a line by size
-  would be a new decision (Open for the operator, 2).
+  would be a new decision; the operator kept ADR 0085's rule (R4.11).
+- **Keep the operator out of every audience**, previewing through
+  `archive.view/readable_set`. R4.2 chose the opposite, so the operator's
+  internet login has something to read.
 
 ## New nouns
 
@@ -267,43 +294,36 @@ A later implementation would change:
   no change. They govern beyond the circle, and an audience is inside it.
 - A specification release: the `audience` contract and the transition
   dispatch entry. Also `docs/vocabulary.md` (the circle entry) and ADR 0088,
-  which this record would amend.
+  which this record would amend (membership in the archive; the operator may
+  be listed, for the internet ingress only).
 
-## Open for the operator
+## Settled by the operator (2026-10-19)
 
-1. **Where membership lives.** W1.8 says "a member list" without saying
-   where. This record puts the list in the archive, as a transition,
-   amending ADR 0088's configuration. *Recommend: accept it. Otherwise
-   joining an audience discloses with no record.*
-2. **Personal-use licences in a larger audience.** ADR 0085 lets a bought
-   tablature, licensed to one person, reach the circle. With several
-   audiences, that includes a crew of friends. *Recommend: keep it as
-   decided, because every audience is private. The 64-member cap keeps
-   audiences small.*
-3. **A limit for one audience.** Traffic Light Protocol has one label for
-   the circle (`AMBER`). A bandmate cannot say "the band, not the crew" with
-   a limit. *Recommend: no per-audience label for now. The operator does not
-   approve to that audience, and the member's own limit (W1.7) can still
-   narrow it to private.*
-4. **Members seeing each other.** Rule 4 shows members who else is in their
-   audience. *Recommend: yes. People should know who reads what they write.
-   A person Entity labelled `RED` is still withheld.*
-5. **The member cap.** The sketch allows 1 to 64 members. *Recommend: 64,
-   which is small enough to be "people the operator knows". A larger group
-   is a service or open destination.*
-6. **Relay service for a self-signup destination.** W1.8 classes it as
-   service or open, but nothing yet serves such a destination through the
-   relay. *Recommend: leave it unserved until a publisher exists that calls
-   `may_publish` (ADR 0085).*
-7. **The operator in an audience.** ADR 0092 (proposed) makes the operator's
-   own Cloudflare login member capacity (W1.3). The operator is never an
-   audience member here, so that login reads only the operator's own
-   records. *Recommend: keep the operator out of every audience. The
-   operator reads everything over the tailnet. If ADR 0092 wants the operator
-   to preview what an audience sees, use `archive.view/readable_set`.*
-   ADR 0092 (its question 2) recommends the opposite; the decisions do not
-   settle which.
-8. **When the relay stops reading configuration.** *Recommend: from the
-   specification release that installs `archive.transition/audience`. A
-   relay with both a configured `circle` and a live audience refuses to
-   start.*
+1. **Where membership lives.** In the archive, as an operator transition,
+   amending ADR 0088's configuration (R4.9).
+2. **Personal-use licences in a larger audience.** Kept as ADR 0085 decided;
+   every audience is private, and the 64-member cap keeps them small (R4.11).
+3. **A limit for one audience.** No per-audience label; the operator does not
+   approve to that audience, and a member's own limit can narrow to private
+   (R4.11).
+4. **Members seeing each other.** Yes, by rule 4; a person Entity labelled
+   `RED` stays withheld (R4.11).
+5. **The member cap.** 64 (R4.11).
+6. **Relay service for a self-signup destination.** Unserved until a
+   publisher exists that calls `may_publish` (R4.11).
+7. **The operator in an audience.** The operator may be listed; the
+   operator's internet login reads the union of the audiences that list it
+   (R4.2). Listing never discloses the operator's records (rule 3).
+8. **When the relay stops reading configuration.** At the specification
+   release that installs `archive.transition/audience`; a relay with both a
+   configured `circle` and a live audience refuses to start (R4.9).
+
+### Still open
+
+1. **The operator's own unapproved records over the internet.** R4.2 gives
+   the operator's internet login exactly the union of its audiences, so an
+   annotation the operator makes from a browser is not shown back to that
+   login until it is approved, although every other member sees their own.
+   *Recommend:* show the operator's internet login its own records whose
+   pins are readable in one of its audiences, as any member sees their own,
+   without adding them to any audience's set.

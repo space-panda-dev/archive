@@ -1,6 +1,6 @@
 # 0092. Internet exposure through Cloudflare Access; internet logins are members
 
-Status: proposed (wave 1, drafted 2026-10-19)
+Status: proposed (wave 1, drafted 2026-10-19; open questions settled 2026-10-19)
 
 The relay reaches people only over the operator's tailnet
 ([ADR 0056](0056-tailnet-relay.md)). `tailscale serve` terminates HTTPS,
@@ -48,6 +48,10 @@ W1.3); this record states it as given.
   Cloudflare is always member capacity, including the operator's own.
   Operator capacity exists only over the tailnet.
 
+The operator settled this record's open questions on 2026-10-19 (round 4
+answers R4.1 and R4.2; R4.11 settles the rest as recommended). The decision
+below states the settled choices; the list at the end records them.
+
 ## Decision
 
 **The relay has two ingresses, told apart by the socket, never by a
@@ -58,8 +62,11 @@ Tunnel connector on the archive machine forwards to the internet port and
 to nothing else. The relay knows a request's ingress from the listener that
 accepted it.
 
-- The **tailnet listener** behaves as ADR 0056 and ADR 0088 say. It reads
-  `Tailscale-User-Login` and ignores every Cloudflare header.
+- The **tailnet listener** behaves as ADR 0056 says. It reads
+  `Tailscale-User-Login` and ignores every Cloudflare header. Its `callers`
+  bind only the operator: members come in over the internet only, so each
+  ingress has one rule (R4.11). The bandmates' tailnet logins of ADR 0088
+  are removed from `callers`.
 - The **internet listener** never reads `Tailscale-User-Login`. It requires
   a valid Access token, and every caller it admits has capacity `member`
   (W1.3), whoever they are.
@@ -143,10 +150,18 @@ beside `callers` (which stay the tailnet logins):
   are (ADR 0088). The operator's own email may be listed; it acts as the
   operator's person in capacity `member`.
 
+The email-to-person binding stays configuration, like tailnet logins: it is
+how a login is recognised, not what it may do. What a login may propose is
+a grant, which is archive evidence ([ADR 0094](0094-peoples-writes.md))
+(R4.11).
+
 A relay without `internet` opens no second port and is unchanged. Which
 audiences an internet login may read is ADR 0093's decision. This record
 requires only that every person in `logins` other than the operator be a
-member of at least one audience.
+member of at least one audience. The operator's internet login reads the
+union of the audiences the operator lists themselves in (R4.2, below); while
+no audience lists the operator, that login is refused `forbidden_identity`,
+as any internet caller in no audience is (ADR 0093).
 
 **Capacity comes from the ingress.** `Caller` gains `ingress`. A caller's
 capacity is `operator` only when the ingress is `tailnet` and the person is
@@ -156,13 +171,37 @@ route or contract (ADR 0088's `operator_only`). The `archive` block's
 `caller` becomes `{agent, capacity, ingress}`. Logs keep the agent, never
 the email, as they keep no tailnet login (ADR 0060).
 
+**The operator's internet login reads the audiences it is listed in (R4.2).**
+ADR 0088 says "the operator is never a member", and a member's readable set
+leaves out the operator's own records unless they are disclosed. Over the
+internet the operator's login is a member: it reads the union of the
+readable sets of the audiences whose member lists name the operator's person
+([ADR 0093](0093-audiences.md)), which includes the operator's own records
+exactly where those sets pin them. This amends ADR 0088's clause for the
+internet ingress only. Over the tailnet the operator is never a member and
+reads everything, as today. Whether that login also sees its own unapproved
+records is still open (ADR 0093, Still open 1).
+
+**Capacity is not recorded on claims (R4.11).** A claim the operator makes
+over the internet names the operator's person, as a tailnet one does. Named
+views (ADR 0082) rank it as the operator's, and member rules let it
+supersede the operator's own records of member contracts. That is accepted:
+it is the same person, and the tailnet can supersede back. If a stolen
+session comes to matter more, a later record can add the ingress to the
+proposal manifest. [ADR 0095](0095-participation.md) and
+[ADR 0098](0098-content-lineage.md) rely on this.
+
 **Cloudflare is a processor destination, granted and recorded.** Cloudflare
 terminates TLS and could read every byte the internet listener sends: view
 answers, documents, listening copies, stems and practice renders. It
 computes on that content and shows it to no one else, which is ADR 0016's
 processor. A hosted network provider is class `service` (ADR 0016) (W1.2).
 That holds only while its terms do not let it keep or train on content, and
-those terms have not been checked here (Open for the operator, 5).
+those terms have not been checked here. Before the first route is committed,
+the operator reads Cloudflare's current terms for traffic and Access logs and
+records the finding in the route's `reason`; terms that let it keep or train
+on content make it distribution, and no route of class `service` may then be
+committed (R4.11).
 
 A disclosure must be recorded before content is sent, naming the
 destination, the content, and the policy revision (S-32). An audience's
@@ -202,7 +241,9 @@ that a destination is reached through a processor.
 - `authorizer` is exactly one reference, pinning the current revision of
   the active operator's appointed person Entity, as a publication approval's
   does. `policy` is at most one reference, pinning a `policy_revision` Claim
-  revision (Open for the operator, 4).
+  revision. It is optional in version 1, because no policy language exists
+  yet (ADR 0007), and the first release that ships policy requires it
+  (R4.11).
 
 It is a transition, so `door transition` commits it and `door admit`
 refuses it (ADR 0051). For each pair of destination and processor, the
@@ -234,7 +275,26 @@ at the circle. A processor shows content to no one, and ADR 0085's permit
 table governs only who may be shown. `may_show` gains the ingress: a member
 on the internet is shown an object only when both checks pass. The tailnet
 ingress is unchanged. A `RED` object stays the operator's alone, and an
-`AMBER` object reaches no internet caller (Open for the operator, 1).
+`AMBER` object reaches no internet caller. Cloudflare is never treated as
+circle to get around this (R4.1).
+
+**Planned amendment to ADR 0085: "circle" writes `GREEN` (R4.1).** ADR 0085
+maps the application's "circle" setting to `AMBER`, whose furthest class is
+circle; Cloudflare is service, and INV-26 lets only a limit's author lift a
+limit, so as ADR 0085 stands everything set to "circle" is withheld from
+every internet member. When this record is accepted, ADR 0085 is amended
+(ADR 0085 itself is not edited by this proposal):
+
+- its table's "circle" row becomes `GREEN` (furthest class service: the
+  circle and its processors), and `AMBER` is no longer offered as an
+  application setting, though it stays admissible;
+- from the amendment on, the "circle" setting writes `GREEN`. Claims already
+  written stay as they are: an existing `AMBER` limit stays tailnet-only
+  until its author relabels it, and members may relabel their own
+  ([ADR 0094](0094-peoples-writes.md)); the operator may relabel the
+  operator's;
+- applications show an `AMBER` claim as "circle (tailnet only)", so the
+  difference stays visible.
 
 **Destroy reports the processor.** A processor that received content is a
 possible external survivor (ADR 0004, S-32). A destroy of an object reports
@@ -269,15 +329,23 @@ its Door profile rules: an authorizer pinned to the active operator,
 - Every byte members read passes through Cloudflare in plaintext, and the
   archive says so. Destroy names Cloudflare as a possible survivor, and a
   route can be ended at any time.
-- What a person labelled `AMBER` cannot reach an internet member. The
-  application's "circle" setting writes `AMBER` (ADR 0085), so as decided
-  today most of what the operator shares with the band is withheld online.
-  Question 1 below has to be answered before this is useful.
+- What a person labelled `AMBER` cannot reach an internet member. Once ADR
+  0085 is amended, the "circle" setting writes `GREEN`, so new circle
+  limits pass through Cloudflare. Older `AMBER` limits stay tailnet-only
+  until their authors relabel them, so until then some of what the
+  operator shares with the band is withheld online and counted as such.
 - The relay makes an outbound HTTPS request to the team domain for keys.
   If that fails and the keys are not cached, the internet listener refuses
   everyone and the tailnet is unaffected.
 - RS256 verification needs RSA, which Python's standard library does not
-  provide (Open for the operator, 7).
+  provide. The relay alone gains the `cryptography` package, pinned, and
+  `docs/boundaries.md` records it; RSA verification is never hand-written
+  (R4.11).
+- Bandmates who reached the relay through the tailnet under ADR 0088 move
+  to Access logins; the tailnet serves only the operator.
+- A stolen Access session of the operator's is a member, not the operator,
+  yet its claims are ranked as the operator's, because capacity is not
+  recorded on claims. The tailnet can supersede them.
 
 ## Relation to other decisions
 
@@ -288,10 +356,12 @@ its Door profile rules: an authorizer pinned to the active operator,
 - [ADR 0060](0060-relay-interface-and-role.md): `caller` gains `ingress`,
   and one refusal code is added.
 - [ADR 0088](0088-bandmates.md): amended. Capacity depends on the ingress as
-  well as the person, and the operator's person can be a member over the
-  internet (Open for the operator, 2).
+  well as the person; the operator's person is a member over the internet,
+  reading the union of the audiences it is listed in (R4.2), and never over
+  the tailnet; tailnet `callers` bind only the operator.
 - [ADR 0085](0085-documents-lyrics-rights.md): `may_show` gains the ingress;
-  sensitivity is checked at service over the internet.
+  sensitivity is checked at service over the internet. Amendment planned:
+  the "circle" setting writes `GREEN` (R4.1).
 - [ADR 0054](0054-door-service-for-applications.md) and
   [ADR 0063](0063-relay-read-speed.md): unchanged. Door stays on its local
   socket, and both listeners share one relay, its cache, and its write lock.
@@ -319,6 +389,8 @@ its Door profile rules: an authorizer pinned to the active operator,
   needs no new contract but doubles every operator act. An approval of class
   service would also apply ADR 0085's rights check, which governs showing,
   and would refuse a bought tablature that only passes through.
+- **Treat Cloudflare as circle**, so `AMBER` passes. R4.1 rules it out: a
+  processor that sees plaintext is not a person chosen one by one.
 - **Operator capacity over the internet with a second factor.** W1.3 rules it
   out. Governing over a provider that sees plaintext would also make that
   provider part of every transition.
@@ -378,47 +450,25 @@ its Door profile rules: an authorizer pinned to the active operator,
   `exp`, unknown `kid`, the operator's email as a member, and no route.
 - `spec/archive-spec.md` in a later release: `processor_route` version 1.
 
-## Open for the operator
+## Settled by the operator (2026-10-19)
 
-1. **`AMBER` cannot pass through a service processor.** ADR 0085 maps the
-   application's "circle" setting to `AMBER`, whose furthest class is
-   circle. W1.2 makes Cloudflare service, and INV-26 lets only a limit's
-   author lift it. So as decided, everything set to "circle" is withheld
-   from every internet member. *Recommended:* amend ADR 0085 so the
-   application's "circle" setting writes `GREEN` from now on (circle and its
-   processors). Existing `AMBER` limits stay tailnet-only until their
-   authors relabel them; W1.7 (ADR 0094) lets members do that themselves.
-   Do not treat Cloudflare as circle to get around this.
-2. **The operator's internet login has no readable set.** ADR 0088 and
-   `check_circle_config` say "the operator is never a circle member", and a
-   member's readable set excludes the operator's own claims unless they are
-   disclosed. *Recommended:* the operator's internet login reads what the
-   audiences it is listed in read (ADR 0093), plus its own records that
-   those pin. Amend ADR 0088's clause for the internet ingress only.
-3. **Capacity is not recorded on claims.** A claim the operator makes over
-   the internet names the operator's person, as a tailnet one does. W1.4's
-   tiers (ADR 0082 views) will rank it as the operator's, and member rules
-   let it supersede the operator's own records of member contracts.
-   *Recommended:* accept this for now. It is the same person, and the
-   tailnet can supersede back. If a stolen session matters more, a later
-   record can add the ingress to the proposal manifest. [ADR 0095](0095-participation.md) (its
-   question 2) and [ADR 0098](0098-content-lineage.md) (its question 5) depend on this answer.
-4. **The route's policy revision.** S-32 requires a policy revision, and no
-   policy language exists (ADR 0007; compare the open question on circle
-   disclosures). *Recommended:* make `policy` optional in version 1, and
-   require it in the first release that ships policy.
-5. **Service or distribution.** ADR 0016 makes a processor whose terms let
-   it keep or train on content distribution. Cloudflare's terms for traffic
-   and Access logs have not been checked. *Recommended:* the operator reads
-   the current terms before the first route is committed, and records the
-   finding in the route's `reason`.
-6. **Bandmates' tailnet logins from ADR 0088.** *Recommended:* after this
-   record, tailnet `callers` bind only the operator, and members come in over
-   the internet only. That keeps one rule per ingress.
-7. **RSA for RS256.** *Recommended:* add the `cryptography` package, pinned,
-   to the relay only, and record it in `docs/boundaries.md`. Do not
-   hand-write RSA verification.
-8. **Where the email-to-person binding lives.** It is configuration here,
-   like tailnet logins. W1.5 makes grants evidence. *Recommended:* keep the
-   binding in configuration and the grants in archive evidence (ADR 0094).
-   A binding is how a login is recognised, not what it may do.
+1. **`AMBER` through a service processor.** ADR 0085 is amended so the
+   "circle" setting writes `GREEN` from now on; existing `AMBER` limits stay
+   tailnet-only until their authors relabel them, and members may relabel
+   their own (ADR 0094). Cloudflare is never treated as circle (R4.1).
+2. **The operator's internet login.** It reads the union of the audiences the
+   operator lists themselves in; ADR 0088's "the operator is never a member"
+   is amended for the internet ingress only (R4.2).
+3. **Capacity on claims.** Not recorded; accepted for now, and a later
+   record may add the ingress to the proposal manifest (R4.11). ADR 0095 and
+   ADR 0098 rely on this.
+4. **The route's policy revision.** Optional in version 1, required in the
+   first release that ships policy (R4.11).
+5. **Service or distribution.** The operator reads Cloudflare's current terms
+   before the first route and records the finding in its `reason` (R4.11).
+6. **Bandmates' tailnet logins.** Tailnet `callers` bind only the operator;
+   members come in over the internet only (R4.11).
+7. **RSA for RS256.** The pinned `cryptography` package, in the relay only,
+   recorded in `docs/boundaries.md` (R4.11).
+8. **Where the email-to-person binding lives.** Configuration; grants are
+   archive evidence (ADR 0094) (R4.11).

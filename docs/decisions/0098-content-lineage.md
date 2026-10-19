@@ -1,6 +1,6 @@
 # 0098. Content lineage: an Artifact can say what it was made from
 
-Status: proposed (wave 1, drafted 2026-10-19)
+Status: proposed (wave 1, drafted 2026-10-19; open questions settled 2026-10-19)
 
 A sample cut from a rehearsal, a bounce built from three such samples, a
 stem admitted because someone sent it, a practice render kept as evidence:
@@ -56,6 +56,10 @@ W1.14); this record states it as given.
   (`dependent_destroy` / `dependent_source_gone`, ADR 0024), never a silent
   survivor.
 
+The operator settled this record's open questions on 2026-10-19 (round 4
+answer R4.6; R4.11 settles the rest as recommended). The decision below
+states the settled choices; the list at the end records them.
+
 ## Decision
 
 ### `archive.claim/lineage` version 1
@@ -69,7 +73,10 @@ inputs. It maps to PROV's `wasDerivedFrom`, used as a mapping only
   an Artifact or an `archive.claim/audio_selection` Claim revision
   (version 2; a later version when a release installs one). A stem the
   output was made from is cited through the recording it was separated
-  from (below);
+  from (below). An input that is not in the archive (a commercial record
+  sampled but never admitted) is not expressible as lineage; the output's
+  origin claim (ADR 0096, `commercial_release`) carries it until the source
+  is admitted (R4.11);
 - at most one `run`: a derivation run Claim revision, when a machine made
   the output ([ADR 0064](0064-derivation-runs.md)).
 
@@ -138,7 +145,8 @@ Its payload, every field optional:
 
 **Door rules** (a specification release adds them with the bundle): one
 `output` Artifact; distinct inputs, none of them the output, and none with
-the output's content digest; an `input` target that is an Artifact or an
+the output's content digest (Door refuses only this self-lineage; longer
+cycles are tolerated, below, R4.11); an `input` target that is an Artifact or an
 installed selection version; `inputs` the same length as the `input`
 references, with a stem only on an Artifact input; every span's `input` in
 range and at least one of `from` and `to`, with `0 <= start_sample <
@@ -150,9 +158,11 @@ input. The agent is any person, or a tool's Package URL with a `run`.
 has the cut grant ([ADR 0094](0094-peoples-writes.md)) may assert it over
 what their audiences can read, like a cut; the relay adds the contract to
 the member contracts under that grant, and its existing rule that every pin
-be readable applies. A tool that admits a derived file (an admitted stem, a
-chosen render, a sample render in wave 2) proposes the lineage claim in the
-same batch as the Artifact, as a run's outputs travel with the run.
+be readable applies. Archive's own tools that admit a derived file (an
+admitted stem, a chosen render, a sample render in wave 2) must propose its
+lineage claim in the same batch as the Artifact, as a run's outputs travel
+with the run; what people admit through the relay is never required to
+carry lineage (R4.11).
 
 **Judging it.** A lineage claim is judged with `archive.assessment/judgment`
 like any claim, and disagreement stands side by side (INV-7). For reach and
@@ -163,11 +173,13 @@ Anyone else's `rejected`, and the asserter's own `withdrawn`, are kept and
 shown but set nothing aside, because each would widen reach. For the same
 reason reach reads every revision of a lineage object, as it reads every
 revision of any object today: a revision that drops an input widens nothing
-until the operator rejects the revision that named it. The relay refuses a
-`rejected` judgment of a lineage claim drafted in member capacity
+until the operator rejects the revision that named it (R4.11). The relay
+refuses a `rejected` judgment of a lineage claim drafted in member capacity
 (`operator_only`): a login through Cloudflare is member capacity, the
 operator's own included ([ADR 0092](0092-internet-exposure.md), W1.3), and
-the record alone cannot show the capacity it was made in.
+the record alone cannot show the capacity it was made in. Capacity is not
+recorded on records for now (ADR 0092, R4.11), so this relay refusal is the
+whole guard.
 
 ### Reach is computed backward through lineage (W1.13)
 
@@ -203,8 +215,11 @@ nothing enforces today.
 **Origin is [ADR 0096](0096-origin-of-recordings.md)'s.** Lineage caps reach; it never stands in for
 origin. An output with lineage and no origin claim keeps ADR 0096's unknown
 origin, so beyond the circle it is still others' work needing a fresh
-approval (INV-20). Whether a complete lineage may ever supply an origin is
-question 1 below.
+approval (INV-20). The one exception: a `complete: true` lineage claim that
+the active operator asserted or affirmed lets the output take the most
+restrictive origin of its sources, so it is own work only when every source
+is; ADR 0096 states the rule (R4.11). A member's lineage, or an incomplete
+one, never supplies origin, because that could widen.
 
 **Cost.** Building the pin map gains one pass over lineage claims and over
 the operator's judgments of them: linear in records, done once per Reacher
@@ -223,7 +238,8 @@ in edges; nothing in this record depends on that optimisation.
 ### Destroy follows lineage (W1.14)
 
 Installing the lineage contract defines the reachability D-5 asks for, so
-a specification release replaces D-9's refusal with this rule. When a
+a specification release replaces D-9's blanket refusal with this rule
+(R4.6). When a
 destroy claim destroys content D, the **dependents** of D are the output
 Artifacts of every committed lineage claim revision, judged or not, any of
 whose `input` references pins an Artifact with content D, or an
@@ -246,7 +262,9 @@ recorded. Door refuses a missing, extra, or doubled disposition.
   narrow, destroy to stay complete.
 - **The other lineage claims.** A `document_source` document `derived_from`
   D (a transcript of the destroyed recording) and an admitted export that
-  `joined` D are dependents by the same rule (question 4).
+  `joined` D are dependents by the same rule, which surfaces the erasure
+  question per file without answering it. Export `rendered` does not count
+  for destroy: claims carry no bytes, so it counts for reach only (R4.11).
 - **Cost.** Door already replays the committed history; it builds one index
   from input object to lineage outputs in that pass, so a destroy checks its
   dependents in time linear in the lineage claims.
@@ -288,7 +306,8 @@ derived from destroyed content means stays
   and Door's destroy check. (5) Its claims are evidence; its effects on
   reach and dependents are computed, never stored. (6) A claim contract,
   not a subsystem.
-- **Lineage span** (the decision's placement). (1) It says where in the
+- **Lineage span** (the decision's placement; the operator accepted the
+  word, R4.11). (1) It says where in the
   output a part of an input landed, which no selection or alignment says
   across two pieces of content. (2) No verb. (3) None. (4) It is a field of
   the lineage claim. (5) No. (6) A detail of the contract. The word
@@ -371,43 +390,28 @@ derived from destroyed content means stays
   its refusal with the dependent computation; `validatePublicationReach`
   follows `Reach.hs`.
 - `spec/archive-spec.md`: D-5 (reachability) and the D-9 paragraph ending
-  "MUST NOT guess reachability", plus the contract bundle and its profile
+  "MUST NOT guess reachability", replaced by lineage dependents (R4.6), plus the contract bundle and its profile
   rules; `docs/vocabulary.md`: *lineage claim*, *lineage span*,
   *transform*, and *reach* ("everything it pins or was made from").
 
-## Open for the operator
+## Settled by the operator (2026-10-19)
 
-1. **Can lineage ever supply origin?** W1.13 says an Artifact with
-   "neither lineage nor origin" stays unknown origin, which reads as if
-   lineage alone were enough; but treating a member's lineage as origin
-   would let it widen (an unknown-origin bounce becoming the operator's own
-   work because its named sources are). Recommend: lineage never stands in
-   for origin, except a `complete: true` lineage claim the operator asserted
-   or affirmed, which lets the output take the most restrictive origin of
-   its sources (ADR 0096 to state it; as drafted, ADR 0096 leaves this
-   question to this record).
-2. **The word.** Recommend *lineage span* for the decision's placement,
-   since *placement* names managed copies (ADR 0032).
-3. **Withdrawal and revision.** Recommend that neither the asserter's
-   `withdrawn` nor a revision that drops an input widens reach; only the
-   operator's `rejected` of the exact revision does.
-4. **Which existing claims are lineage for destroy.** Recommend
-   `document_source` `derived_from` and export `joined` count (so a
-   transcript is a dependent of its recording, which surfaces the erasure
-   question per file without answering it), and export `rendered` does not
-   (claims carry no bytes; it counts for reach only).
-5. **Capacity in the record.** World cannot tell an operator judgment made
-   over the tailnet from one made through Cloudflare. Recommend the relay
-   refuse member-capacity rejections of lineage now, and ADR 0092 or 0094
-   decide whether transitions and operator judgments should record capacity
-   (ADR 0092, its question 3, recommends not recording it for now).
-6. **Inputs that are not in the archive** (a commercial record sampled but
-   never admitted). Recommend: not expressible as lineage; the output's
-   origin claim (ADR 0096, `commercial_release`) carries it until the
-   source is admitted.
-7. **Required lineage.** Recommend that Archive's own tools that admit a
-   derived file (stem, render, sample render) must propose its lineage in
-   the same batch, and that what people admit through the relay is never required to.
-8. **Cycles.** Recommend Door refuse only self-lineage (output among
-   inputs, by object or digest) and World tolerate longer cycles, giving
-   every member of one the same, strictest reach.
+1. **Can lineage ever supply origin?** Only a `complete: true` lineage claim
+   the operator asserted or affirmed, giving the output the most restrictive
+   origin of its sources; ADR 0096 states it (R4.11).
+2. **The word.** *Lineage span* (R4.11).
+3. **Withdrawal and revision.** Neither widens reach; only the operator's
+   `rejected` of the exact revision does (R4.11).
+4. **Existing claims as lineage for destroy.** `document_source`
+   `derived_from` and export `joined` count; export `rendered` does not
+   (R4.11).
+5. **Capacity in the record.** The relay refuses member-capacity rejections
+   of lineage; capacity is not recorded for now (ADR 0092) (R4.11).
+6. **Inputs not in the archive.** Not expressible as lineage; the output's
+   origin claim carries them (R4.11).
+7. **Required lineage.** Archive's own tools must propose it; people's
+   admissions through the relay never must (R4.11).
+8. **Cycles.** Door refuses only self-lineage; World gives a cycle one,
+   strictest reach (R4.11).
+9. **Replacing D-9's blanket refusal.** Accepted: lineage dependents replace
+   it (R4.6).

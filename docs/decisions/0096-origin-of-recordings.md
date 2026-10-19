@@ -1,6 +1,6 @@
 # 0096. Recordings and Artifacts have an origin
 
-Status: proposed (wave 1, drafted 2026-10-19)
+Status: proposed (wave 1, drafted 2026-10-19; open questions settled 2026-10-19)
 
 [ADR 0010](0010-publication.md) says the `origin` claim decides whether
 something is the operator's own work, which publishes once approved, or
@@ -43,6 +43,10 @@ this record states it as given.
 - **Context (W1.13, ADR 0098).** "An Artifact with neither lineage nor
   origin stays unknown origin (others' work beyond the circle, today's
   default)."
+
+The operator settled this record's open questions on 2026-10-19 (round 4
+answers R4.4, R4.8 and R4.10; R4.11 settles the rest as recommended). The
+decision below states the settled choices; the list at the end records them.
 
 ## Decision
 
@@ -93,6 +97,13 @@ The roles allowed depend on the value:
 | `unknown` | someone looked and could not tell | nothing | `depositor`, `document` |
 
 A `depositor` is never the operator, and never appears on `own_capture`.
+"Participant" in `participant_capture` means the recorder, not a session
+participant ([ADR 0095](0095-participation.md)): a friend's own recording of
+a session the operator did not attend is `participant_capture` naming the
+friend in `captured_by`, and the scheme's definition says so (R4.11).
+`generated` is for what a program or model produced, and is others' work
+even when it came from the operator's own instrument; a synth part the
+operator played and recorded is `own_capture` (R4.11).
 `unknown` is a statement ("I asked and nobody knows"); no claim at all means
 nobody has said. Both are treated the same below.
 
@@ -115,15 +126,25 @@ nobody has said. Both are treated the same below.
 
 - `own_capture` only from the active operator. It is the one value that
   loosens governance (below), so nobody else can claim the operator's work
-  for them.
+  for them (R4.4).
 - every other value from any person, because each only narrows: it makes
-  content others' work, which needs more approval, never less.
+  content others' work, which needs more approval, never less. Through the
+  relay, a member needs the `annotate` ability to assert origin about
+  content they can already read, and `admit` to send it with content they
+  admit ([ADR 0094](0094-peoples-writes.md)) (R4.4).
 - a supersession keeps the agent of what it supersedes (D-3, as ADR 0088
   checks it).
 
-A machine never asserts origin: an importer that knows it read the
-operator's recorder card proposes the claim under the operator's person, as
-the capture import does for its other drafts (see Open, 3).
+A machine never asserts origin. The capture import proposes `own_capture`
+only for content from capture grammars the operator has marked in
+configuration as the operator's own devices, under the operator's person
+with the importer as `by`; content from any other grammar gets no origin
+claim from the import (R4.10).
+
+**A member's admission carries an origin.** Every Artifact a member admits
+through the relay comes with an origin draft in the same proposal; `unknown`
+is allowed, so a member's content never arrives without anyone having been
+asked (R4.11).
 
 **Origin and `work_origin` are separate.** ADR 0010 separates a composition
 from a recording of it, and so does this: a take of a co-written song that
@@ -154,11 +175,15 @@ claim. From them:
 - **Content without its own origin**: a stem
   ([ADR 0075](0075-stems-as-content.md)) or derived media
   ([ADR 0069](0069-derived-media.md)) takes it from its source, since each is
-  the recording it came from. A lineage output (ADR 0098) does not: lineage
-  never stands in for origin there, so an output with lineage and no origin
-  claim of its own is unknown origin. Whether a complete lineage the operator
-  asserted or affirmed may let an output take its sources' origin is
-  ADR 0098's question 1, not decided here. With neither origin nor lineage
+  the recording it came from. A lineage output (ADR 0098) generally does
+  not: an output with lineage and no origin claim of its own is unknown
+  origin. The one exception (R4.11, ADR 0098): when a head `complete: true`
+  lineage claim about the output was asserted or affirmed by the active
+  operator, and not rejected, the output takes the most restrictive origin
+  of its sources. It is own work only when every input is own work by these
+  rules, and its governing origins are then its inputs' governing origins,
+  shown as inherited. A member's lineage, or an incomplete one, never
+  supplies origin, since that could widen. With neither origin nor lineage
   content is unknown origin, as W1.13 says.
 
 ### Reach
@@ -195,7 +220,10 @@ returns the entry to the strict side.
 - The run records `release_suggestion_distance` in its parameters and pins
   the origin revisions it read (ADR 0067), so a later change of origin is a
   reason to rerun, never a silent change to an earlier run's suggestions.
-- Whether 0.11 is switched on now is Open, 1.
+- 0.11 is not switched on yet. Origin is recorded now, and every entry
+  stays at 0.08 until ADR 0071's check against the shadow's accepted
+  performances includes release audio; then a later run switches it on
+  (R4.11).
 
 ### Depositor and origin agent
 
@@ -213,10 +241,50 @@ The depositor role gives no authorship and no say over sharing: it is not
 a writer (ADR 0088), not a captured-by party, and not a rights holder
 unless a rights claim names them. It records provenance, so the archive can
 answer "which of this came from Rosa's drive" years later, and a later
-retire or destroy of a friend's deposit can be planned by query. A depositor
-who is also recorded in the content has their limit as anyone recorded does
-(ADR 0018, INV-26). Whether a depositor may limit what they deposited is
-Open, 2.
+retire or destroy of a friend's deposit can be planned by query. A
+`captured_by` person's consent does not gate sharing beyond the circle in
+wave 1; their sensitivity limit already binds where the content records them
+(W1.7), and a consent would need `sharing_consent` version 2 pinning an
+origin claim (R4.11).
+
+**A depositor's limits bind like a recorded person's (R4.8).** A depositor
+may set a sensitivity limit on what they deposited, and it binds until they
+lift it, exactly as the limit of a person the content records. A friend's
+bought albums do not record them, so this needs INV-26 and ADR 0018 to say
+so. When this record is accepted, they are amended as follows (neither is
+edited by this proposal). [ADR 0094](0094-peoples-writes.md) applies the
+rule at the relay: its records-them test admits a member's limit on content
+whose head origin claim names them as depositor and which the operator has
+not rejected.
+
+*Proposed INV-26* (in `docs/invariants.md`; the changed words are "or
+deposited"):
+
+> **INV-26. A limit binds until its author lifts it.** The strictest
+> sensitivity claim on an object caps its disclosure, and a limit set by a
+> person the content records, or a person who deposited it, is lifted only
+> by that person. The operator may go past it only for one named
+> destination, no further out than service, with a recorded reason.
+> (ADR 0018, ADR 0096; in `docs/invariants.md` both are links)
+
+*Proposed amendment to ADR 0018*: its first rule's heading becomes "**A
+person the content records, or who deposited it, may limit its
+disclosure.**", and this paragraph is added after it:
+
+> A depositor is the person whose library the archive took the content
+> from, named in the `depositor` role of a head origin claim (ADR 0096)
+> that the operator has not rejected. Custody of someone else's material is
+> held on their behalf, so they keep a say over where it goes even when it
+> does not record them. Their limit is a sensitivity claim whose source is
+> that person, it binds exactly as a recorded person's does, and only they
+> lift it. Being a depositor gives no authorship and no consent over
+> sharing; it gives only the limit. If the operator later rejects the
+> origin claim, the depositor can set no new limit through it, and a limit
+> already set still binds until its author lifts it.
+
+The rest of ADR 0018 (only the person withdraws; the operator's
+one-destination override; nothing past a limit to open or distribution)
+applies to depositors unchanged.
 
 ### World and the relay
 
@@ -231,10 +299,10 @@ Open, 2.
   set and `may_show` do not change.
 - **Relay.** `origin` version 1 joins the member contracts of
   `world/circle.py`, over readable subjects as ADR 0088 requires, under the
-  grants of [ADR 0094](0094-peoples-writes.md) (which ability covers it is Open, 4); `own_capture`
-  from a member is refused
-  `operator_only`. A member's admission (ADR 0094) carries an origin draft in
-  the same proposal (Open, 4).
+  grants of [ADR 0094](0094-peoples-writes.md): `annotate` for readable
+  subjects, `admit` with staged content (R4.4); `own_capture` from a member
+  is refused `operator_only`. A member's admission (ADR 0094) carries an
+  origin draft in the same proposal, `unknown` allowed (R4.11).
 
 ## Consequences
 
@@ -253,6 +321,11 @@ Open, 2.
   later.
 - The vocabulary's existing **Origin** entry gains a contract and a closed
   set; **depositor** is added as a role.
+- A friend who deposits a library keeps a limit over it, though it does not
+  record them, once INV-26 and ADR 0018 are amended (R4.8).
+- The operator's rehearsal captures from their own configured devices get
+  `own_capture` from the capture import; everything else needs a person to
+  say (R4.10).
 
 ## Alternatives considered
 
@@ -314,42 +387,36 @@ contract and a closed set.
   `origin` view.
 - `enrich/enrich.py` `match_corpus` and the limit chosen near the exact
   path, and `enrich/cover.py` `SEARCH` for `release_suggestion_distance`.
-- `capture/capture.py` `plan`, if the capture import proposes
-  `own_capture` (Open, 3).
+- `capture/capture.py` `plan`: propose `own_capture` for operator-marked
+  capture grammars (R4.10), and the capture configuration that marks them.
+- `docs/invariants.md` (INV-26) and ADR 0018, amended as above on
+  acceptance.
 
-## Open for the operator
+## Settled by the operator (2026-10-19)
 
-1. **Switch on 0.11 now?** It was measured on eight positives and has no
-   quarter-rate counterpart. Recommended: record origin now, keep 0.08 for
-   every entry until ADR 0071's check against the shadow's accepted
-   performances includes release audio, then switch it on.
-2. **May a depositor set a limit on what they deposited?** INV-26 protects a
-   limit only for a person the content records, and a friend's bought albums
-   do not record them. Recommended: yes, as a narrowing sensitivity claim
-   that binds until they lift it, which needs an amendment to INV-26 and
-   ADR 0018, so it is not assumed here. ADR 0094 (its question 3) asks the
-   same.
-3. **Should the capture import propose `own_capture`?** Its agent is the
-   importer, and `own_capture` must be the operator's. Recommended: the
-   operator marks capture grammars as their own devices in configuration,
-   and the import proposes `own_capture` under the operator's person with
-   the importer as `by`; content from other grammars gets no origin.
-4. **Must a member's admission carry an origin?** Recommended: yes, in the same
-   proposal, `unknown` allowed, so a member's content never arrives without
-   anyone having been asked. ADR 0094 places origin under the `admit`
-   ability, with the staged Artifacts it describes. Which ability, if any,
-   lets a member assert origin about other readable content (the Relay
-   paragraph above) neither draft decided; `annotate` does not list it.
+1. **Switch on 0.11 now?** No: record origin now, keep 0.08 until ADR 0071's
+   check includes release audio (R4.11).
+2. **May a depositor limit what they deposited?** Yes; their limits bind
+   like a recorded person's, with the INV-26 and ADR 0018 amendment text
+   above (R4.8). ADR 0094 applies it at the relay.
+3. **Should the capture import propose `own_capture`?** Only for capture
+   grammars the operator configured as their own devices (R4.10).
+4. **Must a member's admission carry an origin, and which ability covers
+   origin?** Yes, in the same proposal, `unknown` allowed (R4.11); origin
+   about existing readable content needs `annotate`, and `own_capture` stays
+   operator-only (R4.4).
 5. **A friend's own recordings of sessions the operator did not attend.**
-   `participant_capture` reads as "someone else recorded it", which fits,
-   though the friend did not take part in any of the operator's sessions
-   ([ADR 0095](0095-participation.md)). Recommended: use it, naming the friend in `captured_by`, and
-   note in the scheme's definition that "participant" means the recorder.
-6. **Should a `captured_by` person's consent gate sharing beyond the
-   circle, as a co-writer's does?** Recommended: not in wave 1; their
-   sensitivity limit already binds (W1.7), and a consent would need
-   `sharing_consent` version 2 pinning an origin claim.
-7. **Is `generated` by the operator's own instrument own work?** W1.10 makes
-   it its own value, so as drafted it is others' work. Recommended: keep it
-   so; a synth part the operator played and recorded is `own_capture`, and
-   `generated` is for what a program or model produced.
+   `participant_capture` naming the friend; "participant" means the recorder
+   (R4.11).
+6. **`captured_by` consent beyond the circle.** Not in wave 1 (R4.11).
+7. **`generated` by the operator's own instrument.** Others' work; what the
+   operator played and recorded is `own_capture` (R4.11).
+
+### Still open
+
+1. **Naming oneself depositor of existing content.** With `annotate` (R4.4)
+   a member may assert an origin claim naming themselves as depositor of any
+   readable content, and R4.8 then lets them limit it until the operator
+   rejects the claim. *Recommend:* for limits, count a depositor only when
+   the operator asserted or affirmed the origin claim, or when it came in
+   the same admission as the content the depositor admitted.

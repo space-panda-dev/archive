@@ -1,6 +1,6 @@
 # 0095. Participation is a contribution at session scope, and only the operator counts it
 
-Status: proposed (wave 1, drafted 2026-10-19)
+Status: proposed (wave 1, drafted 2026-10-19; open questions settled 2026-10-19)
 
 Friends and bandmates are getting logins of their own ([ADRs 0092](0092-internet-exposure.md) to [0094](0094-peoples-writes.md)),
 and three applications will read World: the rehearsal review app, the
@@ -42,6 +42,10 @@ and the tiers of W1.4); this record states them as given.
   0082), e.g. tiers operator > participant > other member > machine. No
   weight is ever stored on a claim (INV-8).
 
+The operator settled this record's open questions on 2026-10-19 (round 4
+answer R4.3; R4.11 settles the rest as recommended). The decision below
+states the settled choices; the list at the end records them.
+
 ## Decision
 
 **`archive.claim/contribution` version 2 adds the `session` scope.**
@@ -60,7 +64,10 @@ installed for the claims that cite it. A `session` claim:
   performer types `performer`, `instrument`, or `vocal`, with their
   attributes, instruments, and vocals as ADR 0078 checks them. `instrument`
   still needs at least one instrument. A role with no instrument is
-  `performer`: "took part";
+  `performer`: "took part". Only these performer types: the engineer who
+  recorded a rehearsal, or a producer in the room, is credited at
+  `recording` scope on the parts, and widening the scope's role list is an
+  additive later change (R4.11);
 - may keep `text` and `credited_as`, and the asserter fields `run`,
   `document`, `document_url`, `retrieved_at`, `locator`, and `confidence`,
   exactly as version 1;
@@ -105,7 +112,14 @@ for a session, at a snapshot, when every one of these holds:
    that exact revision is `affirmed`.
 
 The active operator is the person the head operator appointment names, as
-World reads it today (`world/record_views.py`'s `_operator`). A person whose
+World reads it today (`world/record_views.py`'s `_operator`). Only the active
+operator's assertions and affirmations count: after operator succession, a
+former operator's stop counting until the new operator affirms them, and the
+view lists them in `claimed` saying so (R4.11). An affirmation counts
+whichever ingress it was made through: counting changes what views rank,
+never what is disclosed or granted, so it is not the operator capacity W1.3
+keeps on the tailnet, and capacity is not recorded on records
+([ADR 0092](0092-internet-exposure.md)) (R4.11). A person whose
 participation counts for a session is a **participant** of it. Rule 3 is
 what keeps anyone from promoting themselves: a member's own claim is a
 suggestion of equal standing to anyone's until the operator affirms it. The
@@ -114,6 +128,18 @@ affirmation pins a revision, so an asserter who revises an affirmed claim
 operator affirms the new revision. Another person's rejection never
 uncounts it: W1.9 makes counting the operator's alone. It is still listed,
 as `disputed`, beside the count.
+
+**Selecting a limit is not counting (R4.3).** Counting decides only the
+participant tier. Which content a person may limit because it records them
+is a wider test, for limits only, that ADR 0094 applies at the relay: a
+participation naming the person selects the session when the operator
+asserted or affirmed it, or when that person asserted it themselves. A
+self-asserted participation therefore lets a bandmate limit "the rehearsals
+I play in" at once, without promoting them: it does not count until the
+operator affirms it. The operator can reject a self-asserted participation
+(rule 2), which stops it selecting new limits; a limit already set binds
+until its author lifts it (INV-26). Someone else's unaffirmed participation
+naming a person selects nothing for that person.
 
 **Band membership suggests, and never counts.** A **suggested participant**
 is a person a band membership places in the band on the session's date and
@@ -130,8 +156,10 @@ that is `ended` with no `to` is suggested with `uncertain` true.
 No record holds a session's date. The session's label carries one as text
 from the capture filename (ADR 0070), but a label is a name and never
 identity or evidence (D-8), and P-5 forbids substituting a capture time.
-So the date is a view parameter, and without one nothing is suggested
-(Open 3).
+So the date is a view parameter, supplied by the client, and without one
+nothing is suggested. A later decision adds a session date claim (from the
+capture file's start, `unknown` when absent), alongside wave 2's capture
+work, and the view's default then reads it (R4.11).
 
 **`archive.view/session_participants` version 1.** Its question is "who
 took part in this session, who says so, and who might have?". Its subject is
@@ -181,7 +209,7 @@ in one of four tiers, highest first:
 |---|---|
 | `operator` | the active operator's person |
 | `participant` | a person who is a participant of a session the claim's subject belongs to |
-| `member` | any other person |
+| `member` | any other person, or an organisation (a band-adopted lead sheet, ADR 0084, is about a Work, which has no session) |
 | `machine` | a model or process Entity, or the claim pins a `run` |
 
 A claim's subject belongs to a session when an Artifact whose samples it
@@ -208,9 +236,12 @@ tier. If the operator withdraws an affirmation, the next answer ranks the
 same claim lower, and no record changes. Like ADR 0082's tiers, these rank
 evidence for one question as the operator chose them; they say nothing about
 belief in general, and a viewer who wants another ranking asks for another
-rule (INV-8). How the asserter tier sits beside ADR 0082's `document` tier,
-and which rule adopts it first, is Open 1; this record changes no served
-view's rule.
+rule (INV-8). This record changes no served view's rule (R4.11). The first
+adopter is a new version of `chords_current`, served beside version 1, that
+after the chosen person's tier and before documents chooses other people's
+claims by asserter tier `operator` then `participant`, and still only lists
+`member` claims. Span annotations get an ordering view in the review app's
+wave.
 
 **Grants and capacity are a different question (ADR 0094).** A session-scope
 contribution is a contribution, which the default annotate grant covers
@@ -227,7 +258,9 @@ operator's own records, which ADR 0088 never discloses by inheritance; a
 member reading the view sees a participant only when the operator disclosed
 the claims that count them, and `withheld` says what was kept. A member's
 asserter tiers are therefore computed from what they may read, and may
-differ from the operator's (Open 4).
+differ from the operator's. There is no exception to ADR 0088: the operator
+discloses participations with the session, and a client can offer to
+include them in the approval (R4.11).
 
 **Door's part.** A specification release installs contribution version 2
 with the profile rules ADR 0078 already needs (required roles that depend on
@@ -269,6 +302,8 @@ pins the session Entity revision, which must be readable to the caller
 - Members see counts only for what the operator disclosed, so the operator
   has to disclose participations with the session for members' views to
   rank by them.
+- A bandmate can limit the rehearsals they say they played in straight
+  away (ADR 0094, R4.3), while their tier waits for the operator.
 - No invariant changes. INV-7 keeps every participation, counted or not;
   INV-8 is kept by naming the rule and its question and storing nothing;
   INV-24 by `claimed`, `disputed`, and `withheld`.
@@ -377,54 +412,20 @@ detail of the contribution contract.
 - `docs/vocabulary.md` (Credits; Review and views): session scope,
   participation, participant, suggested participant, asserter tier.
 
-## Open for the operator
+## Settled by the operator (2026-10-19)
 
-1. **Where does the asserter tier sit beside ADR 0082's tiers, and which
-   rule adopts it first?** D4.2 orders `person` (the chosen person),
-   `document`, `machine`, and never chooses another person's claim. W1.4's
-   tiers rank asserters. Recommendation: change no served rule now; the
-   first adopter is a new version of `chords_current`, served beside version
-   1, that after the chosen person's tier and before documents chooses
-   other people's claims by asserter tier `operator` then `participant`,
-   and still only lists `member` claims; span annotations get an ordering
-   view in the review app's wave.
-2. **Does an operator affirmation made through Cloudflare (member
-   capacity, [ADR 0092](0092-internet-exposure.md)) count?** A record does not say which capacity sent
-   it, and the judgment's agent is the operator's person either way.
-   Recommendation: it counts. Counting changes what views rank, never what
-   is disclosed or granted, so it is not the operator capacity W1.3 keeps on
-   the tailnet. If the operator wants it tailnet-only, the relay would have
-   to refuse an operator's judgment of a participation in member capacity,
-   which is a grant rule for ADR 0094. This depends on ADR 0092's question 3
-   (capacity is not recorded on records).
-3. **Where does a session's date come from?** No record holds it, and the
-   label is not evidence. Recommendation: the view takes `on` from the
-   client for now; a later decision adds a session date claim (from the
-   capture file's start, `unknown` when absent), alongside wave 2's capture
-   work, and the view's default reads it.
-4. **Should participation claims be readable to an audience whenever the
-   session is?** Otherwise a member's tiers differ from the operator's.
-   Recommendation: no exception to ADR 0088; the operator discloses
-   participations with the session, and a client can offer to include them
-   in the approval.
-5. **May non-performers be session participants** (the engineer who
-   recorded a rehearsal, a producer in the room)? W1.9 says a performer
-   role. Recommendation: performer types only now; others are credited at
-   `recording` scope on the parts, and widening the scope's role list is an
-   additive later change.
-6. **What tier does a claim whose agent is an organisation take** (a
-   band-adopted lead sheet, ADR 0084)? Recommendation: `member`, since a
-   Work has no session; revisit if a band ever asserts about a recording.
-7. **Whose affirmation counts after operator succession?** Recommendation:
-   only the active operator's; a former operator's affirmations stop
-   counting until the new operator affirms, and the view says so in
-   `claimed`.
-8. **May a sensitivity limit select "the rehearsals I play in" by
-   participation** ([ADR 0018](0018-people-in-the-archive.md), and an
-   [open question](../open-questions.md#claims-and-provenance) this record
-   does not settle)? Recommendation: yes, in the decision that settles limit
-   selection (ADR 0094's area): a limit only narrows (INV-26), so any
-   participation naming the person should select, counted or not; counting
-   matters only for ranking. ADR 0094's test for which subjects a member may
-   limit accepts only participation the operator asserted or affirmed (its
-   question 2); the decisions do not settle which.
+1. **The asserter tier beside ADR 0082's tiers.** No served rule changes now;
+   the first adopter is a new `chords_current` version beside version 1
+   (R4.11).
+2. **An operator affirmation made through Cloudflare.** It counts (R4.11).
+3. **A session's date.** A view parameter from the client for now; a later
+   session date claim (R4.11).
+4. **Participation readable with the session.** No exception to ADR 0088;
+   the operator discloses participations with the session (R4.11).
+5. **Non-performers as participants.** Performer types only now (R4.11).
+6. **An organisation's tier.** `member` (R4.11).
+7. **Affirmation after succession.** Only the active operator's (R4.11).
+8. **Selecting a limit by participation.** For limits only, participation
+   asserted or affirmed by the operator, or asserted by the person
+   themselves, selects; the participant tier still counts only the
+   operator's; the operator can reject a self-asserted participation (R4.3).
