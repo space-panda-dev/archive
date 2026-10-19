@@ -42,8 +42,12 @@ scratch copy.
   calibration set before it changes.
 - **Few references.** A Work with few occurrences in the archive was not
   matched; it needs more reference recordings.
-- **Window matching cost.** About 170 s per imported recording; a
-  reference-feature cache is being built (branch `perf/match-cache`).
+- **Profile cache in real imports.** Use `--profile-cache` in real imports
+  once a release carrying it is deployed (the deployed import does not have
+  the flag).
+- **Identical corpus pieces.** Two pairs of corpus occurrences in the
+  studio-test scratch copy have identical pieces (the profile cache shares
+  one entry per pair); find out why.
 - **Detector presets.** The detector preset copied from live jams labels
   studio vocals as talk. A studio preset is needed; an audit of accepted
   occurrences is under way.
