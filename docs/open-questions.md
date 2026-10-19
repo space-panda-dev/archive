@@ -105,7 +105,8 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
 - What origin values mark the operator's own work across media (a recording, a
   book, a photograph) ([ADR 0010](decisions/0010-publication.md))? A musical
   Work's origin, co-written Works included, is [ADR 0088](decisions/0088-bandmates.md)'s `work_origin`;
-  recordings and other media have none.
+  recordings and other media have none. (ADR 0096, proposed, would answer
+  this for recordings and Artifacts.)
 - Does a disclosure to the circle need a policy revision before the policy
   language exists? [ADR 0088](decisions/0088-bandmates.md) records it as a publication approval, which S-32
   ties to a policy revision.
@@ -215,7 +216,8 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
   at a looser distance (about 0.11, on the exact scale); until an origin is
   recorded, every corpus entry is judged alike, at 0.118 on the quarter-rate
   scale and 0.08 on the exact one
-  ([ADR 0071](decisions/0071-essentia-cover-similarity.md)).
+  ([ADR 0071](decisions/0071-essentia-cover-similarity.md)). (ADR 0096,
+  proposed, would answer this.)
 - Do the window matcher's thresholds hold outside the recordings that chose
   them? The hit limit (0.20), the quarter-rate suggestion distance (0.118),
   and the near-tie margin (0.02) were chosen on one calibration workset of
