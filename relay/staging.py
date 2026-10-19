@@ -119,15 +119,29 @@ class Documents:
         self.prune()
         return {**row, "media_type": media_type, "artifacts": artifacts}
 
+    @staticmethod
+    def _read(path: Path) -> dict[str, Any] | None:
+        """One index entry, or None when it cannot be read or is not an
+        entry this relay wrote: an object with a `row` naming a digest and a
+        numeric `staged_at`. A malformed entry is never a staged document."""
+        try:
+            entry = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(entry, dict) or not isinstance(entry.get("row"), dict) \
+                or not isinstance(entry["row"].get("digest"), str) \
+                or not isinstance(entry.get("staged_at"), (int, float)) or isinstance(entry.get("staged_at"), bool):
+            return None
+        return entry
+
     def staged_for(self, agent: str) -> dict[str, dict[str, Any]]:
         """What this caller staged and may still admit, by digest."""
         found = {}
         for path in sorted(self.index.glob("*.json")) if self.index.is_dir() else []:
-            try:
-                entry = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
+            entry = self._read(path)
+            if entry is None:
                 continue
-            if entry.get("agent") == agent and time.time() - entry.get("staged_at", 0) <= KEEP_SECONDS:
+            if entry.get("agent") == agent and time.time() - entry["staged_at"] <= KEEP_SECONDS:
                 found[entry["row"]["digest"]] = entry
         return found
 
@@ -137,11 +151,9 @@ class Documents:
         now = time.time() if now is None else now
         entries: dict[str, list[tuple[Path, dict[str, Any]]]] = {}
         for path in sorted(self.index.glob("*.json")) if self.index.is_dir() else []:
-            try:
-                entry = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                entry = {"row": {"digest": None}, "staged_at": 0}
-            entries.setdefault(entry["row"].get("digest"), []).append((path, entry))
+            # A malformed entry is old: its file goes, and it names no digest.
+            entry = self._read(path) or {"row": {"digest": None}, "staged_at": 0}
+            entries.setdefault(entry["row"]["digest"], []).append((path, entry))
         removed = []
         for digest, items in entries.items():
             if all(now - entry.get("staged_at", 0) <= KEEP_SECONDS for _, entry in items):

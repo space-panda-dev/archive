@@ -141,7 +141,7 @@ whatever a sensitivity label keeps from the circle (`world/circle.py`,
 `relay/access.py`); it is read once a World generation. A view is given only
 the member's readable set, says how many records it `withheld`, and may name
 nothing outside it (`not_disclosed`, whether or not it exists); the
-`readable_set` and `reach` views are the operator's. A member's admission
+`readable_set`, `reach`, and `may_publish` views are the operator's. A member's admission
 drafts must cite member contracts, name the member (or the band, for a lead
 sheet they adopted), and pin and supersede only what they may read.
 Staging documents is the operator's.

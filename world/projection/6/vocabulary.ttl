@@ -345,3 +345,18 @@ arch:work_origin a rdf:Property ; rdfs:comment "work_origin 1: own, co_written, 
 arch:writer a rdf:Property ; rdfs:comment "work_origin 1: a person who wrote the Work." .
 arch:written_duration a rdf:Property ; rdfs:comment "A written length node." .
 arch:written_in_band a rdf:Property ; rdfs:comment "work_origin 1: the band the Work was written in." .
+
+# Revision 7: specification 0.0.10's amendments (ADRs 0085, 0086, 2026-10-19).
+arch:articulation a rdf:Property ; rdfs:comment "notes 1, melody 1: one written articulation of a note, such as staccato; a document's or a person's, never a machine's (revision 7)." .
+arch:bass_line a rdf:Property ; rdfs:comment "notes 1: true when the part is the bass line, a line of its own (revision 7)." .
+arch:carried_by a rdf:Property ; rdfs:comment "timed_lyrics 1: the notes that carry a syllable (revision 7)." .
+arch:carrying_notes a rdf:Property ; rdfs:comment "timed_lyrics 1: a notes claim revision whose notes carry syllables (revision 7)." .
+arch:carrying_onsets a rdf:Property ; rdfs:comment "timed_lyrics 1: the onset sample of one note that carries a syllable; several are a melisma (revision 7)." .
+arch:destination a rdf:Property ; rdfs:comment "publication_approval 2: the destination, recorded exactly (revision 7)." .
+arch:end_char a rdf:Property ; rdfs:comment "timed_lyrics 1: where a syllable ends in its word, in code points from 0, exclusive (revision 7)." .
+arch:exposure_class a rdf:Property ; rdfs:comment "publication_approval 2: the exposure class of the destination, the furthest the approval reaches (revision 7)." .
+arch:publication_decision a rdf:Property ; rdfs:comment "publication_approval 2: approve, or hold_back (revision 7)." .
+arch:start_char a rdf:Property ; rdfs:comment "timed_lyrics 1: where a syllable starts in its word, in code points from 0 (revision 7)." .
+arch:timed_syllables a rdf:Property ; rdfs:comment "timed_lyrics 1: one syllable node of a word (revision 7)." .
+arch:withdrawal_reason a rdf:Property ; rdfs:comment "publication_withdrawal 2: why the approval is withdrawn. Minted by World, since arch:reason names a judgment's (revision 7)." .
+arch:word_syllable a rdf:Property ; rdfs:comment "timed_lyrics 1: a syllable's number in its word (revision 7)." .

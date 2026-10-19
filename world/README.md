@@ -45,7 +45,10 @@ python3 -m unittest world.tests.test_contributions
 These modules hold the rules of the 0.0.10 records. Specification 0.0.10
 installs their contracts (D-18), and World re-checks each claim with its
 module before it projects it ([`contract_graphs.py`](contract_graphs.py),
-projection 6, revision 6). Each module needs only the standard library.
+projection 6, revision 6; revision 7 adds the amendments of 2026-10-19:
+syllables and the notes that carry them, articulation, the bass line, and
+publication approval and withdrawal version 2). Each module needs only the
+standard library.
 
 | Module | Record | Holds |
 |---|---|---|
@@ -55,10 +58,10 @@ projection 6, revision 6). Each module needs only the standard library.
 | [`views.py`](views.py) | [ADR 0082](../docs/decisions/0082-views-and-current.md) | the named views and the first current rule |
 | [`form.py`](form.py) | [ADR 0083](../docs/decisions/0083-form-and-work-meter.md) | form, form spans, meter layers version 2 (with ADR 0079's additions) |
 | [`lead_sheets.py`](lead_sheets.py) | [ADR 0084](../docs/decisions/0084-lead-sheets.md) | lead sheets, changes since, a render's export request |
-| [`documents.py`](documents.py) | [ADR 0085](../docs/decisions/0085-documents-lyrics-rights.md) | document sources, timed lyrics, sensitivity, rights, reach, staging checks |
-| [`notes.py`](notes.py) | [ADR 0086](../docs/decisions/0086-notes-and-melody.md) | notes, melody, melody spans, written lengths, instrument fields |
+| [`documents.py`](documents.py) | [ADR 0085](../docs/decisions/0085-documents-lyrics-rights.md) | document sources, timed lyrics and their syllables, sensitivity, rights, reach (`Reacher`, read once per set of records), staging checks |
+| [`notes.py`](notes.py) | [ADR 0086](../docs/decisions/0086-notes-and-melody.md) | notes, melody, melody spans, articulation, the bass line, written lengths and written rhythm, instrument fields |
 | [`catalogue.py`](catalogue.py) | [ADR 0087](../docs/decisions/0087-tracklists-and-correspondence.md) | tracklists, recording audio, catalogue correspondence, credits per track |
-| [`circle.py`](circle.py) | [ADR 0088](../docs/decisions/0088-bandmates.md) | the relay's circle, the readable set, work origin, sharing consent and gate |
+| [`circle.py`](circle.py) | [ADR 0088](../docs/decisions/0088-bandmates.md) | the relay's circle, the readable set, work origin, sharing consent and gate, publication approval and withdrawal version 2, the check beyond the circle, `may_publish` |
 | [`exports.py`](exports.py) | [ADR 0089](../docs/decisions/0089-practice-audio-and-exports.md) | practice requests and keys, transposition, export requests, keys and claims, MusicXML `<harmony>` |
 
 Their tests run with the rest: `python3 -m unittest discover -s world/tests`.
@@ -111,8 +114,11 @@ the chord views; [`record_views.py`](record_views.py) adds the views of
 | `lead_sheet_changes` | `lead_sheet` (a pin) | `changes` (`role`, `pinned`, `kind`, `by`, `verdict`) |
 | `played_sections` | `form` (a pin) | `played` (`section`, `label`, `kind`) |
 | `played_bars` | `meter` (a pin) | `form`, `played` (`bar`, `section`, `numerator`, `denominator`) |
-| `tune` | `melody_spans` (a pin) | `notes` (each with `from`), `handoffs` |
+| `tune` | `melody_spans` (a pin) | `notes` (each with `from`), `handoffs`, `left_out` (a machine's spans on the bass line) |
 | `track_credits` | `recording` (an Entity) | `credits` (`claim`, `scope`, `via`, `why`, `refined_by`) |
+| `written_rhythm` | `notes` or `melody_spans` (a pin) | `rule`, `written` (chords and rests: `position`, `duration`, `bar`, `at`; a chord's `notes`, `pitches`, `sounded_share`, `articulation`; a rest's `boundary`), `left_out`, or `why` |
+| `bass_line` | `source` (the recording's Artifact) | `lines`: each head notes claim saying `bass`, with `clef` and its written rhythm |
+| `may_publish` | `approval` (a pin) | `may_publish`, `blockers`, `class`, `destination`, `on` |
 
 `chord_names` and `chords_current` take `transpose` (ADR 0089) and `key`: a
 key reading for `chord_names`; for `chords_current`, `{"reading": …}` or
@@ -121,7 +127,17 @@ key reading for `chord_names`; for `chords_current`, `{"reading": …}` or
 default spelling names the chord, as before. `standing` takes `judge` (the
 caller's person by default), `at`, and `reading`; `reach` and
 `readable_set` take `on`, the date terms are read on (today by default);
-`played_bars` takes `layer` (0).
+`played_bars` takes `layer` (0). `may_publish` takes `on`: a publisher asks
+it when it publishes, since rights expire and consents change (ADR 0085,
+amended); it applies `circle.beyond_circle`, the rule Door applies to an
+approval beyond the circle on the day it is made. `written_rhythm` and
+`bass_line` take `meter` (a timed meter claim's pin; without one nothing is
+written and `why` says so) and `layer` (0); `written_rhythm` also takes
+`lyrics`, up to 8 timed lyrics pins whose line ends and words mark phrase
+boundaries. Its rule (ADR 0086, amended) is named by its version
+(`notes.RHYTHM_RULES`): onsets on a grid of four points a beat, each note
+filling to the next onset, `staccato` under 60% sounded, and a rest only
+for a silence of a beat or more at a `line_end` or `breath`.
 
 ```sh
 world/world.py view --list
@@ -315,7 +331,7 @@ band membership is an `org:Membership`. Chord names are views and are not
 projected. World answers no generic `current`; a named current rule is
 asked for with `world view` (below).
 
-Specification 0.0.10's claims (revision 6) are re-checked by their modules
+Specification 0.0.10's claims (revisions 6 and 7) are re-checked by their modules
 and projected by `contract_graphs.py`, as the section above says; the
 shapes of [`projection/6/`](projection/6/projection.json) declare each
 field, and the domain graph holds D-18's rights scheme.

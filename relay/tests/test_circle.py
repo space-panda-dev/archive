@@ -301,10 +301,13 @@ class CircleChecks(unittest.TestCase):
 
         def unreadable(*args, **kwargs):
             raise ValueError("unreadable")
-        with mock.patch.object(access.documents, "reach", unreadable):
-            found = access.load(self.store, world.PROJECTION_VERSION, self.operator, self.circle, date.today())
-        self.assertEqual(found.circle_set.revisions, frozenset())
-        self.assertIn(lead_sheet, found.circle_set.withheld)
+        for target in ("reach", "__init__"):        # one object's reach, or the records as a whole
+            with self.subTest(unreadable=target):
+                with mock.patch.object(access.documents.Reacher, target, unreadable):
+                    found = access.load(self.store, world.PROJECTION_VERSION, self.operator, self.circle,
+                                        date.today())
+                self.assertEqual(found.circle_set.revisions, frozenset())
+                self.assertIn(lead_sheet, found.circle_set.withheld)
         own = {rid for rid, r in found.by_revision.items() if r.get("agent") == self.member}
         self.assertEqual(found.readable(access.Caller(self.member, "member")), frozenset(own))
 
@@ -338,6 +341,16 @@ class CircleChecks(unittest.TestCase):
         status, _, answer = call("POST", "/world/view", request)
         self.assertEqual(status, 200, answer)
         self.assertEqual(set(answer["result"]["answer"]["revisions"]), set(self.access.circle_set.revisions))
+        # So is whether an approval may still publish: it names rights and limits.
+        approval = next(r for r in self.access.records
+                        if (r.get("contract") or [None])[0] == "archive.transition/publication_approval")
+        asked = {"view": "archive.view/may_publish", "version": "1",
+                 "subject": {"approval": {"id": approval["object_id"], "revision_id": approval["revision_id"]}}}
+        status, _, answer = call("POST", "/world/view", asked, login=MEMBER_LOGIN)
+        self.assertEqual((status, answer["error"]["code"]), (403, "operator_only"))
+        status, _, answer = call("POST", "/world/view", asked)
+        self.assertEqual(status, 200, answer)
+        self.assertFalse(answer["result"]["answer"]["may_publish"])
 
     def test_view_refusals(self) -> None:
         call = self.relay()

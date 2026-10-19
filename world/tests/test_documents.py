@@ -555,6 +555,117 @@ class Lines(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Syllables and the notes that carry them (ADR 0085, amended 2026-10-19)
+
+
+VOCAL = pin(0xF3)          # a notes claim of the vocal part, about MIX
+BASS_NOTES = pin(0xF4)     # a notes claim about OTHER, another Artifact
+VOCAL_ONSETS = [s(12), s(12.2), s(12.3), s(12.4)]
+
+
+def notes_target(about: dict, onsets: list[int]) -> dict:
+    return {"shape": "claim", "contract": ("archive.claim/notes", "1"), "id": None,
+            "payload": {"sample_rate": RATE, "part": "voice",
+                        "notes": [{"onset_sample": o, "offset_sample": o + 100, "pitch": 60 + n}
+                                  for n, o in enumerate(onsets)]},
+            "refs": [{"role": "source", **about}, {"role": "stream", **MIX_STREAM}]}
+
+
+SYLLABLE_TARGETS = {**TARGETS, VOCAL["revision_id"]: {**notes_target(MIX, VOCAL_ONSETS), "id": VOCAL["id"]},
+                    BASS_NOTES["revision_id"]: {**notes_target(OTHER, VOCAL_ONSETS), "id": BASS_NOTES["id"]}}
+
+
+def sung() -> dict:
+    """A person's timing of "Paper" as two syllables, Pa-per, the second a
+    melisma over two notes of the vocal line."""
+    c = tapped()
+    c["payload"]["lines"][0]["words"][0]["syllables"] = [
+        {"syllable": 1, "start_char": 0, "end_char": 2, "start_sample": s(12), "end_sample": s(12.2),
+         "carried_by": {"notes": VOCAL["revision_id"], "onsets": [s(12)]}},
+        {"syllable": 2, "start_char": 2, "end_char": 5, "start_sample": s(12.2), "end_sample": s(12.4),
+         "carried_by": {"notes": VOCAL["revision_id"], "onsets": [s(12.2), s(12.3)]}},
+    ]
+    c["refs"].append({"role": "notes", **VOCAL})
+    return c
+
+
+def syllable(c: dict, n: int) -> dict:
+    return c["payload"]["lines"][0]["words"][0]["syllables"][n]
+
+
+class Syllables(unittest.TestCase):
+    def check(self, c: dict) -> dict:
+        return check_timed_lyrics(c, SYLLABLE_TARGETS)
+
+    def bad(self, c: dict, words: str):
+        with self.assertRaises(DocumentError) as caught:
+            self.check(c)
+        self.assertIn(words, str(caught.exception))
+
+    def test_a_word_holds_syllables_carried_by_notes(self):
+        self.check(sung())
+        c = sung()
+        del syllable(c, 0)["carried_by"], syllable(c, 1)["carried_by"]
+        c["refs"] = [r for r in c["refs"] if r["role"] != "notes"]
+        self.check(c)                                     # placed on the samples only
+
+    def test_syllables_keep_their_order_and_bounds(self):
+        for change, words in (
+                (lambda c: syllable(c, 1).update(syllable=1), "later syllable"),
+                (lambda c: syllable(c, 1).update(start_char=1), "in characters"),
+                (lambda c: syllable(c, 1).update(end_char=2), "end after it starts in characters"),
+                (lambda c: syllable(c, 1).update(start_sample=s(12.1)), "within its word"),
+                (lambda c: syllable(c, 1).update(end_sample=s(12.5)), "within its word"),
+                (lambda c: syllable(c, 0).update(end="held"), "syllable 0"),
+                (lambda c: syllable(c, 0).update(confidence="0.9"), "confidence"),
+                (lambda c: c["payload"]["lines"][0]["words"][0].update(syllables=[]), "syllables")):
+            c = sung()
+            change(c)
+            with self.subTest(words=words):
+                self.bad(c, words)
+
+    def test_carrying_notes_are_pinned_notes_of_the_same_recording(self):
+        c = sung()
+        syllable(c, 1)["carried_by"]["onsets"] = [s(12.3), s(12.2)]
+        self.bad(c, "strictly increase")
+        c = sung()
+        syllable(c, 1)["carried_by"]["onsets"] = [s(12.25)]
+        self.bad(c, "is no note of")                     # World's check: Door does not read the notes
+        c = sung()
+        syllable(c, 0)["carried_by"]["notes"] = BASS_NOTES["revision_id"]
+        self.bad(c, "does not pin")
+        c = sung()
+        c["refs"].append({"role": "notes", **BASS_NOTES})
+        self.bad(c, "another Artifact revision")
+        c = sung()
+        del syllable(c, 0)["carried_by"], syllable(c, 1)["carried_by"]
+        self.bad(c, "no syllable names")
+        c = sung()
+        c["refs"] = [r for r in c["refs"] if r["role"] != "notes"] + [{"role": "notes", **EARLIER}]
+        self.bad(c, "notes")
+
+    def test_locators_count_a_syllable_in_code_points(self):
+        check_locators(sung(), LYRIC.encode())
+        c = sung()
+        syllable(c, 1)["end_char"] = 6
+        with self.assertRaises(DocumentError):
+            check_locators(c, LYRIC.encode())
+        accented = "Caf\u00e9 au lait on the\nsecond line\n".encode()
+        c = sung()
+        syllable(c, 1)["end_char"] = 4                   # four code points, five bytes
+        syllable(c, 0)["end_char"] = 2
+        check_locators(c, accented)
+
+    def test_the_view_joins_syllables_and_names_their_notes(self):
+        word = lyric_view(sung(), LYRIC.encode())[0]["words"][0]
+        self.assertEqual([x["text"] for x in word["syllables"]], ["Pa", "per"])
+        self.assertEqual("".join(x["text"] for x in word["syllables"]), word["text"])
+        self.assertEqual(word["syllables"][1]["carried_by"],
+                         {"notes": VOCAL["revision_id"], "onsets": [s(12.2), s(12.3)]})
+        self.assertNotIn("syllables", lyric_view(sung(), LYRIC.encode())[0]["words"][1])
+
+
+# ---------------------------------------------------------------------------
 # archive.claim/sensitivity version 1
 
 
@@ -697,6 +808,21 @@ def shown(records, object_id, viewer=BANDMATE, audience="circle") -> bool:
 
 
 class Reach(unittest.TestCase):
+    def test_a_reacher_reads_the_records_once_for_every_object(self):
+        """The readable set asks the reach of each object it adds; the pin
+        map is built once, not per object (it grew with the square of the
+        archive), and the answers equal reach's one at a time."""
+        records = world() + [as_record(label("AMBER", MIX), 0x63, SENSITIVITY)]
+        objects = sorted({r["object_id"] for r in records})
+        expected = {o: reach(o, records, OPERATOR["id"], TODAY) for o in objects}
+        self.assertNotEqual(len({e.furthest for e in expected.values()}), 1)   # anchor: they differ
+        built = mock.Mock(wraps=documents._pins)
+        with mock.patch.object(documents, "_pins", built):
+            reacher = documents.Reacher(records, OPERATOR["id"], TODAY)
+            got = {o: reacher.reach(o) for o in objects + objects}
+        self.assertEqual(built.call_count, 1)
+        self.assertEqual(got, expected)
+
     def test_closure_follows_pins_and_what_a_document_was_made_from(self):
         records = world() + [as_record(transcript_source(), 0x70, DOCUMENT_SOURCE)]
         found = closure(TIMING, records)

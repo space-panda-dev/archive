@@ -66,7 +66,14 @@ def drafted_export() -> dict[str, Any]:
                 minute += 1
                 records.append({**draft, "revision_id": revision,
                                 "at": f"2026-01-02T{minute // 60:02d}:{minute % 60:02d}:00Z"})
-    export = {key: base[key] for key in ("archive_id", "context", "contracts", "snapshot", "spec", "status")}
+    export = {key: base[key] for key in ("archive_id", "context", "snapshot", "spec", "status")}
+    # The bundles the catalog installs now, not those of the export the base
+    # was cut from: a bundle amended or added since (as 0.0.10's were before
+    # release) is the one each draft cites by digest.
+    export["contracts"] = [
+        {key: bundle[key] for key in ("context", "id", "schema", "version")}
+        for bundle in (json.loads((ROOT / "spec/contracts" / ("sha256-" + digest.removeprefix("sha256:") + ".json"))
+                                  .read_text()) for digest in installed.values())]
     export["records"] = records
     return export
 

@@ -27,6 +27,9 @@ from world.notes import (
     melody_in_bars,
     notes_range,
     tune_notes,
+    written_rhythm,
+    RHYTHM_RULES,
+    ARTICULATIONS,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -367,6 +370,160 @@ class RecordingMelody(unittest.TestCase):
             check_melody_spans(spans_claim([span(0, 4, VOICE)], VOICE), stream, swapped)
         # Without the notes claims, only the claim's own rules apply.
         check_melody_spans(spans_claim([span(25, 35, GUITAR)], GUITAR), stream)
+
+
+# ---------------------------------------------------------------------------
+# ADR 0086, amended 2026-10-19: articulation, the bass line, written rhythm
+
+
+BASS = pin(0xd5)
+BASS_STEM = dict(STEM, output="bass")
+
+
+class Articulation(unittest.TestCase):
+    def test_a_document_or_a_person_writes_articulation(self):
+        claim = notes_claim([note(0, 0.2, 60, articulation=["staccato", "accent"]), note(0.5, 1, 62)],
+                            ref("document", DOCUMENT), alignment={"method": "manual"})
+        check_notes(claim, fixture_stream())
+        check_notes(notes_claim([note(0, 1, 60, articulation=["fermata"])]), fixture_stream())   # a person's
+        check_melody(melody_claim([{"pitch": 60, "duration": length(1, 4), "articulation": ["marcato"]},
+                                   {"rest": True, "duration": length(1, 4)}]))
+
+    def test_a_machine_writes_none(self):
+        # Anchor: the same note without the mark is admissible from the run.
+        check_notes(notes_claim([note(0, 0.2, 60)], ref("run", RUN), stem=STEM), fixture_stream())
+        with self.assertRaises(NotesError):
+            check_notes(notes_claim([note(0, 0.2, 60, articulation=["staccato"])], ref("run", RUN), stem=STEM),
+                        fixture_stream())
+        with self.assertRaises(NotesError):
+            check_melody(melody_claim([{"pitch": 60, "duration": length(1, 4), "articulation": ["tenuto"]}],
+                                      ref("run", RUN)))
+
+    def test_names_are_distinct_and_known(self):
+        self.assertEqual(len(ARTICULATIONS), 6)
+        for marks in ([], ["staccato", "staccato"], ["strong-accent"], [1], "staccato", list(ARTICULATIONS) * 2):
+            with self.subTest(marks=marks), self.assertRaises(NotesError):
+                check_notes(notes_claim([note(0, 1, 60, articulation=marks)]), fixture_stream())
+        with self.assertRaises(NotesError):
+            check_melody(melody_claim([{"pitch": 60, "duration": length(1, 4)},
+                                       {"rest": True, "duration": length(1, 4), "articulation": ["fermata"]}]))
+
+
+class BassLine(unittest.TestCase):
+    def test_the_bass_stem_says_bass(self):
+        check_notes(notes_claim([note(0, 1, 40)], ref("run", RUN), stem=BASS_STEM, bass=True), fixture_stream())
+        check_notes(notes_claim([note(0, 1, 40)], bass=True), fixture_stream())          # a person's bass part
+        with self.assertRaises(NotesError):
+            check_notes(notes_claim([note(0, 1, 40)], ref("run", RUN), stem=BASS_STEM), fixture_stream())
+        with self.assertRaises(NotesError):
+            check_notes(notes_claim([note(0, 1, 40)], bass=False), fixture_stream())
+
+    def setUp(self):
+        self.voice = notes_claim([note(0, 1, 67), note(1, 2, 69)], revision=VOICE)
+        self.bass = notes_claim([note(4, 5, 40), note(5, 6, 43)], revision=BASS, part="bass", bass=True)
+        self.claims = {VOICE["revision_id"]: self.voice, BASS["revision_id"]: self.bass}
+        self.payload = spans_claim([span(0, 4, VOICE), span(4, 8, BASS)], VOICE, BASS)["payload"]
+
+    def test_a_machine_span_on_the_bass_is_left_out_and_counted(self):
+        left: list = []
+        tune = tune_notes(self.payload, self.claims, by_person=False, left_out=left)
+        self.assertEqual([n["pitch"] for n in tune], [67, 69])
+        self.assertEqual([(x["notes"], x["start_sample"]) for x in left], [(BASS["revision_id"], 4 * SECOND)])
+
+    def test_a_persons_bass_solo_is_the_tune_as_asserted(self):
+        left: list = []
+        tune = tune_notes(self.payload, self.claims, by_person=True, left_out=left)
+        self.assertEqual([n["pitch"] for n in tune], [67, 69, 40, 43])
+        self.assertEqual(left, [])
+
+
+def timed_meter(bars: int = 8, bar_seconds: float = 2.0, numerator: int = 4, denominator: int = 4,
+                **bar_fields) -> dict:
+    """A timed meter of even 4/4 bars, two seconds each: a beat is half a second."""
+    return {"layers": [{"bars": [
+        {"start_sample": int(i * bar_seconds * SECOND), "end_sample": int((i + 1) * bar_seconds * SECOND),
+         "numerator": numerator, "denominator": denominator, **bar_fields} for i in range(bars)]}]}
+
+
+def kinds(answer: dict) -> list:
+    return [(w["kind"], w["duration"]["count"], w["duration"]["unit"], w.get("boundary"),
+             tuple(w.get("articulation", ()))) for w in answer["written"]]
+
+
+class WrittenRhythm(unittest.TestCase):
+    """The operator's case: short sung notes with silences between them are
+    dotted eighths and sixteenths marked staccato, not note, rest, note."""
+
+    def test_short_notes_fill_to_the_next_onset_and_are_staccato(self):
+        sung = [note(0, 0.15, 60), note(0.375, 0.42, 62), note(0.5, 0.7, 64), note(0.75, 1.0, 65)]
+        answer = written_rhythm(sung, timed_meter())
+        # Dotted eighth, sixteenth, eighth, then the last note's own length.
+        self.assertEqual(kinds(answer), [
+            ("chord", 3, 16, None, ("staccato",)), ("chord", 1, 16, None, ("staccato",)),
+            ("chord", 1, 8, None, ()), ("chord", 1, 8, None, ())])
+        self.assertNotIn("rest", [w["kind"] for w in answer["written"]])
+        self.assertEqual(answer["rule"], {"version": "1", "divisions": 4, "staccato_below": "0.6",
+                                          "rest_beats": "1"})
+        self.assertEqual(answer["written"][1]["bar"], 0)
+        self.assertEqual(answer["written"][1]["at"], {"count": 3, "unit": 16})
+        self.assertEqual(answer["written"][0]["sounded_share"], "0.4")
+
+    def test_a_long_silence_at_a_phrase_boundary_is_a_rest(self):
+        sung = [note(0, 0.5, 60), note(2.0, 2.4, 62)]
+        # Anchor: the silence, 1.5 s, is three beats of half a second.
+        self.assertGreaterEqual(sung[1]["onset_sample"] - sung[0]["offset_sample"], 3 * SECOND // 2)
+        line_end = [[{"line": 1, "start_sample": 0, "end_sample": int(0.5 * SECOND)},
+                     {"line": 2, "start_sample": 2 * SECOND, "end_sample": 3 * SECOND}]]
+        answer = written_rhythm(sung, timed_meter(), lyrics=line_end)
+        self.assertEqual(kinds(answer)[:2], [("chord", 1, 4, None, ()), ("rest", 3, 4, "line_end", ())])
+        # No lyrics cover it: a breath.
+        self.assertEqual(kinds(written_rhythm(sung, timed_meter()))[1][3], "breath")
+        between_words = [[{"line": 1, "start_sample": 0, "end_sample": 3 * SECOND, "words": [
+            {"word": 1, "start_sample": 0, "end_sample": int(0.4 * SECOND)},
+            {"word": 2, "start_sample": 2 * SECOND, "end_sample": int(2.4 * SECOND)}]}]]
+        self.assertEqual(kinds(written_rhythm(sung, timed_meter(), lyrics=between_words))[1][3], "breath")
+
+    def test_no_rest_inside_a_word_or_for_a_short_silence(self):
+        sung = [note(0, 0.4, 60), note(2.0, 2.4, 62)]
+        held_word = [[{"line": 1, "start_sample": 0, "end_sample": 3 * SECOND, "words": [
+            {"word": 1, "start_sample": 0, "end_sample": int(2.4 * SECOND)}]}]]
+        answer = written_rhythm(sung, timed_meter(), lyrics=held_word)
+        self.assertEqual(kinds(answer)[0], ("chord", 1, 1, None, ("staccato",)))
+        self.assertNotIn("rest", [w["kind"] for w in answer["written"]])
+        unwordy_line = [[{"line": 1, "start_sample": 0, "end_sample": 3 * SECOND}]]
+        self.assertNotIn("rest", [w["kind"] for w in written_rhythm(sung, timed_meter(),
+                                                                    lyrics=unwordy_line)["written"]])
+        short = [note(0, 0.2, 60), note(0.45, 0.9, 62)]       # a silence under one beat
+        self.assertNotIn("rest", [w["kind"] for w in written_rhythm(short, timed_meter())["written"]])
+
+    def test_notes_starting_together_are_a_chord_and_written_marks_stay(self):
+        sung = [note(0, 0.5, 48), note(0, 0.5, 55, articulation=["accent"]), note(0.5, 1, 52)]
+        answer = written_rhythm(sung, timed_meter())
+        self.assertEqual(answer["written"][0]["pitches"], [48, 55])
+        self.assertEqual(answer["written"][0]["notes"], [0, 1])
+        self.assertEqual(answer["written"][0]["articulation"], ["accent"])
+
+    def test_onsets_snap_to_the_grid_and_outside_notes_are_counted(self):
+        sung = [note(0.01, 0.5, 60), note(0.49, 1, 62), note(30, 31, 64)]
+        answer = written_rhythm(sung, timed_meter())
+        self.assertEqual([w["position"] for w in answer["written"]], [length(0, 1), length(1, 4)])
+        self.assertEqual(answer["left_out"], 1)                 # past the meter's last bar
+
+    def test_compound_bars_and_a_beats_only_layer(self):
+        compound = timed_meter(numerator=6, denominator=8, grouping=[3, 3])
+        answer = written_rhythm([note(0, 0.9, 60), note(1.0, 2.0, 62)], compound)
+        self.assertEqual(answer["written"][0]["duration"], length(3, 8))
+        beats = {"layers": [{"beats": [int(i * 0.5 * SECOND) for i in range(16)]}]}
+        answer = written_rhythm([note(0, 0.5, 60), note(0.5, 1, 62)], beats)
+        self.assertEqual(answer["written"][0]["duration"], length(1, 4))
+        self.assertIsNone(answer["written"][0]["bar"])
+
+    def test_the_rule_is_named_by_version(self):
+        self.assertEqual(set(RHYTHM_RULES), {"1"})
+        with self.assertRaises(NotesError):
+            written_rhythm([note(0, 1, 60)], timed_meter(), version="2")
+        with self.assertRaises(NotesError):
+            written_rhythm([note(0, 1, 60)], untimed_meter((4, 4))["payload"])
 
 
 class EarlierContractsUnchanged(unittest.TestCase):

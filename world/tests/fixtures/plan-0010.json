@@ -1824,6 +1824,152 @@
    ]
   },
   {
+   "name": "world 0.0.10 amended: a bass line, articulation, and sung syllables",
+   "command": "admit",
+   "records": [
+    {
+     "key": "w-notes-bass",
+     "namespace": "archive.claim/notes",
+     "name": "world-w-notes-bass",
+     "shape": "claim",
+     "contracts": [
+      {
+       "id": "archive.claim/notes",
+       "version": "1"
+      }
+     ],
+     "payload": {
+      "sample_rate": 8000,
+      "part": "bass",
+      "bass": true,
+      "notes": [
+       {
+        "onset_sample": 0,
+        "offset_sample": 200,
+        "pitch": 40,
+        "articulation": [
+         "accent"
+        ]
+       },
+       {
+        "onset_sample": 500,
+        "offset_sample": 900,
+        "pitch": 43
+       },
+       {
+        "onset_sample": 3000,
+        "offset_sample": 3400,
+        "pitch": 45
+       }
+      ]
+     },
+     "refs": [
+      {
+       "role": "source",
+       "pin": "recording"
+      },
+      {
+       "role": "stream",
+       "pin": "stream"
+      }
+     ]
+    },
+    {
+     "key": "w-timed-syllables",
+     "namespace": "archive.claim/timed_lyrics",
+     "name": "world-w-timed-syllables",
+     "shape": "claim",
+     "contracts": [
+      {
+       "id": "archive.claim/timed_lyrics",
+       "version": "1"
+      }
+     ],
+     "payload": {
+      "sample_rate": 8000,
+      "scheme": "text",
+      "alignment": {
+       "method": "manual"
+      },
+      "lines": [
+       {
+        "line": 1,
+        "start_sample": 0,
+        "end_sample": 2000,
+        "words": [
+         {
+          "word": 1,
+          "start_sample": 0,
+          "end_sample": 1000,
+          "syllables": [
+           {
+            "syllable": 1,
+            "start_char": 0,
+            "end_char": 5,
+            "start_sample": 0,
+            "end_sample": 1000,
+            "carried_by": {
+             "notes": "$revision:w-notes",
+             "onsets": [
+              0
+             ]
+            }
+           }
+          ]
+         },
+         {
+          "word": 5,
+          "start_sample": 1000,
+          "end_sample": 2000,
+          "syllables": [
+           {
+            "syllable": 1,
+            "start_char": 0,
+            "end_char": 2,
+            "start_sample": 1000,
+            "end_sample": 1500,
+            "carried_by": {
+             "notes": "$revision:w-notes",
+             "onsets": [
+              1000
+             ]
+            }
+           },
+           {
+            "syllable": 2,
+            "start_char": 2,
+            "end_char": 4,
+            "start_sample": 1500,
+            "end_sample": 2000
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     },
+     "refs": [
+      {
+       "role": "document",
+       "pin": "w-lyrics"
+      },
+      {
+       "role": "source",
+       "pin": "recording"
+      },
+      {
+       "role": "stream",
+       "pin": "stream"
+      },
+      {
+       "role": "notes",
+       "pin": "w-notes"
+      }
+     ]
+    }
+   ]
+  },
+  {
    "name": "world 0.0.10: disclosed to a circle",
    "command": "transition",
    "records": [
@@ -1850,6 +1996,97 @@
       {
        "role": "covers",
        "pin": "w-lead-sheet"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "world 0.0.10 amended: approvals that state their class",
+   "command": "transition",
+   "records": [
+    {
+     "key": "w-publication-v2",
+     "namespace": "archive.transition/publication_approval",
+     "name": "world-publication-v2",
+     "shape": "claim",
+     "contracts": [
+      {
+       "id": "archive.transition/publication_approval",
+       "version": "2"
+      }
+     ],
+     "payload": {
+      "destination": "world-circle-2",
+      "decision": "approve",
+      "class": "circle"
+     },
+     "refs": [
+      {
+       "role": "authorizer",
+       "pin": "operator"
+      },
+      {
+       "role": "covers",
+       "pin": "w-lead-sheet"
+      }
+     ]
+    },
+    {
+     "key": "w-publication-held",
+     "namespace": "archive.transition/publication_approval",
+     "name": "world-publication-held",
+     "shape": "claim",
+     "contracts": [
+      {
+       "id": "archive.transition/publication_approval",
+       "version": "2"
+      }
+     ],
+     "payload": {
+      "destination": "world-site",
+      "decision": "hold_back",
+      "class": "open"
+     },
+     "refs": [
+      {
+       "role": "authorizer",
+       "pin": "operator"
+      },
+      {
+       "role": "covers",
+       "pin": "w-lead-sheet"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "world 0.0.10 amended: a withdrawal of either version",
+   "command": "transition",
+   "records": [
+    {
+     "key": "w-withdrawal-v2",
+     "namespace": "archive.transition/publication_withdrawal",
+     "name": "world-withdrawal-v2",
+     "shape": "claim",
+     "contracts": [
+      {
+       "id": "archive.transition/publication_withdrawal",
+       "version": "2"
+      }
+     ],
+     "payload": {
+      "reason": "World fixture withdrawal"
+     },
+     "refs": [
+      {
+       "role": "authorizer",
+       "pin": "operator"
+      },
+      {
+       "role": "withdraws",
+       "pin": "w-publication-v2"
       }
      ]
     }

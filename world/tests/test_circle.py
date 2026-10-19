@@ -15,7 +15,15 @@ import json
 import unittest
 from pathlib import Path
 
+from datetime import date, timedelta
+
 from world.circle import (
+    PUBLICATION_APPROVAL_2,
+    PUBLICATION_WITHDRAWAL_2,
+    beyond_circle,
+    check_publication_approval_v2,
+    check_publication_withdrawal_v2,
+    may_publish,
     BAND_MEMBERSHIP,
     LEAD_SHEET,
     MEMBER_CONTRACTS,
@@ -575,6 +583,171 @@ class ClientCommitTest(unittest.TestCase):
                         {"role": "real", "writes": "commit"}, None, []):
             with self.subTest(archive=archive):
                 self.assertFalse(client_may_commit(archive))
+
+
+# ---------------------------------------------------------------------------
+# Publication beyond the circle (ADR 0085, amended 2026-10-19)
+
+TODAY = date.today()
+SENSITIVITY = ("archive.claim/sensitivity", "1")
+RIGHTS = ("archive.claim/rights", "1")
+
+
+def approval_v2(n: int, covers: list[dict], cls: str, destination: str = PUBLIC, decision: str = "approve") -> dict:
+    """A version 2 approval: the fixture's version 1 approval with a class."""
+    made = approval(n, covers, destination=destination, decision=decision)
+    made["contracts"] = [{"id": PUBLICATION_APPROVAL_2[0], "version": "2"}]
+    made["payload"]["class"] = cls
+    return made
+
+
+def withdrawal_v2(n: int, of: dict) -> dict:
+    made = withdrawal(n, of)
+    made["contracts"] = [{"id": PUBLICATION_WITHDRAWAL_2[0], "version": "2"}]
+    return made
+
+
+def rights(n: int, subject: dict, statement: str = "InC", holder: str = OPERATOR, **payload) -> dict:
+    return record(n, "claim", contract=RIGHTS, payload={"statement": statement, **payload},
+                  refs=[ref("subject", subject), ref("holder", PEOPLE[holder])])
+
+
+def label(n: int, subject: dict, tlp: str, agent: str = OPERATOR) -> dict:
+    made = record(n, "claim", contract=SENSITIVITY, agent=agent, payload={"label": tlp},
+                  refs=[ref("subject", subject)])
+    made["at"] = "2026-01-01T00:00:00Z"
+    return made
+
+
+class BeyondCircleTest(unittest.TestCase):
+    """Door refuses, and may_publish answers, by one rule (S-30, S-32)."""
+
+    def setUp(self):
+        self.own = origin(0x100, "own", work=OWN_WORK_E)
+        self.sheet = lead_sheet(0x200, work=OWN_WORK_E)
+        self.held = [rights(0x500, MIX_A), rights(0x501, LYRICS_A), rights(0x502, OWN_WORK_E)]
+        self.records = BASE + [self.own, self.sheet] + self.held
+
+    def blockers(self, records, payload, covers):
+        return beyond_circle(payload, [c["revision_id"] for c in covers], index(records), OPERATOR, TODAY)
+
+    def test_held_rights_and_no_label_allow_distribution(self):
+        payload = {"destination": PUBLIC, "decision": "approve", "class": "distribution"}
+        self.assertEqual(self.blockers(self.records, payload, [self.sheet]), [])
+
+    def test_unknown_rights_stop_at_service(self):
+        records = BASE + [self.own, self.sheet] + self.held[:2]          # the Work has no rights claim
+        for cls, blocked in (("service", False), ("open", True), ("distribution", True)):
+            payload = {"destination": PUBLIC, "decision": "approve", "class": cls}
+            with self.subTest(cls=cls):
+                found = self.blockers(records, payload, [self.sheet])
+                self.assertEqual(bool(found), blocked)
+                if blocked:
+                    self.assertTrue(any(OWN_WORK in line and "no rights claim" in line for line in found), found)
+
+    def test_a_label_and_an_expired_licence_block(self):
+        payload = {"destination": PUBLIC, "decision": "approve", "class": "service"}
+        amber = self.records + [label(0x510, LYRICS_A, "AMBER")]
+        found = self.blockers(amber, payload, [self.sheet])
+        self.assertTrue(any("AMBER" in line and LYRICS in line for line in found), found)
+        expired = BASE + [self.own, self.sheet, self.held[0], self.held[2],
+                          rights(0x511, LYRICS_A, "NoC-NC", until=(TODAY - timedelta(days=400)).isoformat()[:4])]
+        payload["class"] = "open"
+        self.assertTrue(any("NoC-NC" in line for line in self.blockers(expired, payload, [self.sheet])))
+
+    def test_a_co_written_work_needs_each_co_writers_consent(self):
+        co = origin(0x101, "co_written", [OPERATOR, MATE], band=True)
+        sheet = lead_sheet(0x201)
+        records = BASE + [co, sheet, rights(0x503, WORK_E)] + self.held[:2]
+        payload = {"destination": PUBLIC, "decision": "approve", "class": "service"}
+        found = self.blockers(records, payload, [sheet])
+        self.assertEqual(len(found), 1)
+        self.assertIn(MATE, found[0])
+        agreed = records + [consent(0x300, co, [sheet], destination=PUBLIC)]
+        self.assertEqual(self.blockers(agreed, payload, [sheet]), [])
+        elsewhere = records + [consent(0x301, co, [sheet], destination="another site")]
+        self.assertTrue(self.blockers(elsewhere, payload, [sheet]))
+        refused = records + [consent(0x302, co, [sheet], destination=PUBLIC, decision="refuse")]
+        self.assertTrue(self.blockers(refused, payload, [sheet]))
+
+    def test_nothing_is_checked_inside_the_circle_or_on_a_hold_back(self):
+        bare = BASE + [self.own, self.sheet]
+        for payload in ({"destination": DESTINATION, "decision": "approve", "class": "circle"},
+                        {"destination": PUBLIC, "decision": "hold_back", "class": "distribution"}):
+            with self.subTest(payload=payload):
+                self.assertEqual(self.blockers(bare, payload, [self.sheet]), [])
+
+    def test_may_publish_says_everything_that_blocks(self):
+        ok = approval_v2(0x600, [self.sheet], "distribution")
+        records = self.records + [ok]
+        answer = may_publish(ok["revision_id"], index(records), OPERATOR, TODAY)
+        self.assertEqual((answer["may_publish"], answer["blockers"]), (True, []))
+        later = records + [withdrawal_v2(0x601, ok)]
+        answer = may_publish(ok["revision_id"], index(later), OPERATOR, TODAY)
+        self.assertFalse(answer["may_publish"])
+        self.assertIn(rid(0x601), answer["blockers"][0])
+        for made, words in ((approval(0x602, [self.sheet], destination=PUBLIC), "version 1"),
+                            (approval_v2(0x603, [self.sheet], "circle"), "not beyond the circle"),
+                            (approval_v2(0x604, [self.sheet], "open", decision="hold_back"), "hold_back")):
+            with self.subTest(words=words):
+                answer = may_publish(made["revision_id"], index(self.records + [made]), OPERATOR, TODAY)
+                self.assertFalse(answer["may_publish"])
+                self.assertTrue(any(words in line for line in answer["blockers"]), answer["blockers"])
+        with self.assertRaises(CircleError):
+            may_publish(self.sheet["revision_id"], index(records), OPERATOR, TODAY)
+
+    def test_rights_are_read_on_the_day_asked(self):
+        licence = rights(0x512, LYRICS_A, "NoC-NC", until=str(TODAY.year + 1))
+        records = BASE + [self.own, self.sheet, self.held[0], self.held[2], licence]
+        made = approval_v2(0x605, [self.sheet], "open")
+        records.append(made)
+        self.assertTrue(may_publish(made["revision_id"], index(records), OPERATOR, TODAY)["may_publish"])
+        later = TODAY.replace(year=TODAY.year + 2)
+        self.assertFalse(may_publish(made["revision_id"], index(records), OPERATOR, later)["may_publish"])
+
+
+def as_view(r: dict) -> dict:
+    """A record as the claim checks take one."""
+    return {key: r[key] for key in ("payload", "refs", "agent", "revision_id")}
+
+
+class ApprovalVersion2Test(unittest.TestCase):
+    def setUp(self):
+        self.sheet = lead_sheet(0x200, work=OWN_WORK_E)
+        self.records = BASE + [origin(0x100, "own", work=OWN_WORK_E), self.sheet]
+
+    def test_the_contracts_check(self):
+        made = approval_v2(0x700, [self.sheet], "service")
+        targets = as_targets(self.records)
+        check_publication_approval_v2(as_view(made), targets)
+        for change in (lambda p: p.pop("class"), lambda p: p.update({"class": "friends"}),
+                       lambda p: p.update(decision="refuse")):
+            bad = copy.deepcopy(made)
+            change(bad["payload"])
+            with self.subTest(payload=bad["payload"]), self.assertRaises(CircleError):
+                check_publication_approval_v2(as_view(bad), targets)
+        withdrawn = withdrawal_v2(0x701, made)
+        targets = as_targets(self.records + [made])
+        check_publication_withdrawal_v2(as_view(withdrawn), targets, self.records + [made])
+        of_v1 = approval(0x702, [self.sheet])
+        check_publication_withdrawal_v2(as_view(withdrawal_v2(0x703, of_v1)), as_targets(self.records + [of_v1]))
+        with self.assertRaises(CircleError):          # withdrawn already, by a version 1 withdrawal
+            check_publication_withdrawal_v2(as_view(withdrawn), targets, self.records + [made, withdrawal(0x704, made)])
+        with self.assertRaises(CircleError):          # withdraws something that is no approval
+            check_publication_withdrawal_v2(as_view(withdrawal_v2(0x705, self.sheet)), targets)
+
+    def test_the_circle_reads_a_version_2_approval_of_class_circle(self):
+        to_circle = approval_v2(0x710, [self.sheet], "circle", destination=DESTINATION)
+        self.assertIn(self.sheet["revision_id"],
+                      readable_set(index(self.records + [to_circle]), OPERATOR, CIRCLE, everywhere).revisions)
+        withdrawn = self.records + [to_circle, withdrawal_v2(0x711, to_circle)]
+        self.assertEqual(readable_set(index(withdrawn), OPERATOR, CIRCLE, everywhere).revisions, frozenset())
+        beyond = approval_v2(0x712, [self.sheet], "service", destination=DESTINATION)
+        self.assertEqual(readable_set(index(self.records + [beyond]), OPERATOR, CIRCLE, everywhere).revisions,
+                         frozenset())
+        old = approval(0x713, [self.sheet])
+        withdrawn_by_v2 = self.records + [old, withdrawal_v2(0x714, old)]
+        self.assertEqual(readable_set(index(withdrawn_by_v2), OPERATOR, CIRCLE, everywhere).revisions, frozenset())
 
 
 if __name__ == "__main__":

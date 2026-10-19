@@ -256,6 +256,9 @@ RECHECKS: dict[tuple[str, str], Callable[[dict[str, Any], Lookups], Any]] = {
     ("archive.claim/sharing_consent", "1"): _with_operator(circle.check_sharing_consent,
                                                            ("archive.claim/sharing_consent", "1")),
     ("archive.claim/export", "1"): _with_targets(exports.check_export),
+    circle.PUBLICATION_APPROVAL_2: _with_targets(circle.check_publication_approval_v2),
+    circle.PUBLICATION_WITHDRAWAL_2: lambda r, l: circle.check_publication_withdrawal_v2(
+        record_view(r), targets(r, l.records), l.records.values()),
 }
 
 
@@ -296,6 +299,7 @@ TERMS: dict[tuple[str, str], str] = {
     ("archive.claim/sensitivity", "label"): ARCH + "tlp_label",
     ("archive.claim/sensitivity", "reason"): ARCH + "limit_reason",
     ("archive.claim/sharing_consent", "reason"): ARCH + "consent_reason",
+    ("archive.transition/publication_withdrawal", "reason"): ARCH + "withdrawal_reason",
     ("archive.claim/span_annotation", "kind"): ARCH + "mark_kind",
     ("archive.claim/lead_sheet", "parts.*.name"): ARCH + "part_name",
     ("archive.claim/export", "software"): ARCH + "export_software",
@@ -526,6 +530,10 @@ def _special(graph: _Graph, owner: NamedNode, path: str, key: str, value: Any, r
         # The written bar this bar was placed from, in the untimed meter it pins.
         graph.add(owner, graph.term(path, key)[0],
                   NamedNode(f"{node_of('meter')}:layer={value['layer']}:bar={value['bar']}"))
+        return True
+    if contract == ("archive.claim/timed_lyrics", "1") and path == "lines.*.words.*.syllables.*.carried_by.notes":
+        # The notes claim revision a syllable's notes are of, as a pin.
+        graph.add(owner, graph.term(path, key)[0], graph.record_uri(value))
         return True
     if contract == ("archive.claim/melody_spans", "1") and path == "spans.*.notes":
         graph.add(owner, graph.term(path, key)[0], graph.record_uri(value))

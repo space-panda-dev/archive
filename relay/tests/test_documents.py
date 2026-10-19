@@ -156,5 +156,23 @@ class StagingChecks(unittest.TestCase):
         self.assertEqual(list(documents.index.glob("*.json")), [])
 
 
+    def test_a_malformed_index_entry_is_no_staged_document(self) -> None:
+        status, answer = self.stage(LYRICS)
+        self.assertEqual(status, 200, answer)
+        documents = self.harness.relay.documents
+        digest = answer["result"]["digest"]
+        # Entries this relay never wrote: no row, a row without a digest, a
+        # string for staged_at, a list, and bytes that are not JSON.
+        for name, text in (("no-row", '{"agent": "%s", "staged_at": 1}' % self.operator),
+                           ("no-digest", '{"row": {}, "agent": "%s", "staged_at": 1}' % self.operator),
+                           ("odd-time", '{"row": {"digest": "sha256:00"}, "staged_at": "now"}'),
+                           ("list", "[]"), ("garbage", "{")):
+            (documents.index / f"{name}.json").write_text(text, encoding="utf-8")
+        self.assertEqual(set(documents.staged_for(self.operator)), {digest})
+        self.assertEqual(documents.prune(), [])
+        self.assertFalse(any((documents.index / f"{name}.json").exists()
+                             for name in ("no-row", "no-digest", "odd-time", "list", "garbage")))
+        self.assertIn(digest, documents.staged_for(self.operator))
+
 if __name__ == "__main__":
     unittest.main()

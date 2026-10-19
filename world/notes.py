@@ -26,6 +26,8 @@ by its one check in `world/harmony.py` (`check_stem_citation`,
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
+from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any
 
@@ -54,6 +56,9 @@ MAX_TEXT = 200
 MAX_LABEL = 100
 MAX_URL = 2000
 SELECTIONS = ("all", "highest", "lowest")
+# Written, never measured (ADR 0086, amended 2026-10-19): MusicXML's names,
+# but `marcato`, which MusicXML calls `strong-accent`.
+ARTICULATIONS = ("staccato", "staccatissimo", "tenuto", "accent", "marcato", "fermata")
 
 
 class NotesError(ValueError):
@@ -175,6 +180,18 @@ def _check_document_url(payload: dict[str, Any], has_document: bool, where: str)
             raise NotesError(f"{where} document_url must be an http or https URL")
 
 
+def _check_articulation(item: dict[str, Any], machine_only: bool, where: str) -> None:
+    """A note's or pitch item's articulation: 1 to 6 distinct names, never on
+    a claim that pins a run and no document (a machine measures no marks)."""
+    if "articulation" not in item:
+        return
+    if machine_only:
+        raise NotesError(f"{where} has articulation, but a claim with a run and no document writes none")
+    marks = _list(item["articulation"], f"{where} articulation", 1, len(ARTICULATIONS))
+    if any(not isinstance(m, str) or m not in ARTICULATIONS for m in marks) or len(set(marks)) != len(marks):
+        raise NotesError(f"{where} articulation must be distinct names from {ARTICULATIONS}")
+
+
 def check_stem_citation(value: Any, where: str = "stem") -> dict[str, Any]:
     """A stem cited by bank key: ADR 0079's one check, raising NotesError."""
     try:
@@ -246,7 +263,7 @@ def check_notes(claim: dict[str, Any], stream_claim: dict[str, Any],
                       by_role["source"][0], "source", f"{where} tuning")
     payload = _closed(record["payload"], {"sample_rate", "part", "notes"},
                       {"stem", "range", "unpitched", "confidence_scale", "strings", "capo",
-                       "document_url", "alignment"}, f"{where} payload")
+                       "document_url", "alignment", "bass"}, f"{where} payload")
     if _int(payload["sample_rate"], f"{where} sample_rate", 1) != rate:
         raise NotesError(f"{where} sample_rate differs from the stream's")
     _text(payload["part"], f"{where} part", MAX_LABEL)
@@ -254,7 +271,12 @@ def check_notes(claim: dict[str, Any], stream_claim: dict[str, Any],
         if by_role["analysed"]:
             raise NotesError(f"{where} cites a bank stem and an analysed Artifact; a part is read from one")
         check_stem_citation(payload["stem"], f"{where} stem")
+    if "bass" in payload and payload["bass"] is not True:
+        raise NotesError(f"{where} bass must be true when present")
+    if isinstance(payload.get("stem"), dict) and payload["stem"].get("output") == "bass" and "bass" not in payload:
+        raise NotesError(f"{where} is read from the bass stem and must say bass")
     has_document = bool(by_role["document"])
+    machine_only = bool(by_role["run"]) and not has_document
     if has_document != ("alignment" in payload):
         raise NotesError(f"{where} states an alignment exactly when it places a document")
     if has_document:
@@ -284,7 +306,8 @@ def check_notes(claim: dict[str, Any], stream_claim: dict[str, Any],
     for index, note in enumerate(notes):
         at = f"{where} note {index}"
         _closed(note, {"onset_sample", "offset_sample", "pitch"},
-                {"cents", "velocity", "confidence", "locator"}, at)
+                {"cents", "velocity", "confidence", "locator", "articulation"}, at)
+        _check_articulation(note, machine_only, at)
         onset = _int(note["onset_sample"], f"{at} onset_sample", low, high - 1)
         _int(note["offset_sample"], f"{at} offset_sample", onset + 1, count)
         pitch = _int(note["pitch"], f"{at} pitch", 0, 127)
@@ -351,6 +374,7 @@ def check_melody(claim: dict[str, Any], meter_claim: dict[str, Any] | None = Non
     if "part" in payload:
         _text(payload["part"], f"{where} part", MAX_LABEL)
     has_document = bool(by_role["document"])
+    machine_only = bool(by_role["run"]) and not has_document
     _check_document_url(payload, has_document, where)
     items = _list(payload["notes"], f"{where} notes", 1, MAX_MELODY_NOTES)
     total = Fraction(0)
@@ -364,8 +388,9 @@ def check_melody(claim: dict[str, Any], meter_claim: dict[str, Any] | None = Non
             if item["rest"] is not True:
                 raise NotesError(f"{at} rest must be true")
         else:
-            _closed(item, {"pitch", "duration"}, {"locator"}, at)
+            _closed(item, {"pitch", "duration"}, {"locator", "articulation"}, at)
             _int(item["pitch"], f"{at} pitch", 0, 127)
+            _check_articulation(item, machine_only, at)
             pitched = True
         total += note_length(item["duration"], f"{at} duration")
         if "locator" in item:
@@ -515,16 +540,30 @@ def handoffs(payload: dict[str, Any]) -> list[dict[str, Any]]:
             if a["end_sample"] == b["start_sample"] and a["notes"] != b["notes"]]
 
 
-def tune_notes(payload: dict[str, Any], notes_claims: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+def tune_notes(payload: dict[str, Any], notes_claims: dict[str, dict[str, Any]], *,
+               by_person: bool = True, left_out: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """The recording's tune, a view of a checked melody spans claim and the
     notes claims it pins (keyed by revision id): in each span, the selected
     claim's notes whose onsets fall in it, each with `from`, the notes claim
     it came from. `highest` keeps, of the notes starting together, the
     highest; `lowest` the lowest; `all` keeps every one. A note keeps its own
-    offset, which may ring past its span."""
+    offset, which may ring past its span.
+
+    The bass line is never the tune by default (ADR 0086, amended
+    2026-10-19): when the melody spans claim's agent is not a person
+    (`by_person` false), a span on a notes claim that says `bass` is left
+    out, and appended to `left_out` with why, so the answer says what it
+    skipped (INV-24). A person's span on the bass (a bass solo) is kept."""
     tune = []
     for span in payload["spans"]:
-        chosen = [n for n in notes_claims[span["notes"]]["payload"]["notes"]
+        selected = notes_claims[span["notes"]]["payload"]
+        if not by_person and selected.get("bass") is True:
+            if left_out is not None:
+                left_out.append({"start_sample": span["start_sample"], "end_sample": span["end_sample"],
+                                 "notes": span["notes"],
+                                 "why": "a machine's span on the bass line; the bass is never the tune by default"})
+            continue
+        chosen = [n for n in selected["notes"]
                   if span["start_sample"] <= n["onset_sample"] < span["end_sample"]]
         select = span.get("select", "all")
         if select != "all":
@@ -536,3 +575,219 @@ def tune_notes(payload: dict[str, Any], notes_claims: dict[str, dict[str, Any]])
             chosen = [by_onset[onset] for onset in sorted(by_onset)]
         tune += [{**note, "from": span["notes"]} for note in chosen]
     return tune
+
+
+# ---------------------------------------------------------------------------
+# Written rhythm: sounded notes written on a meter's beat grid (ADR 0086,
+# amended 2026-10-19). A view, computed and never stored; its thresholds are
+# named by the view's version, so two readings at one version agree.
+
+
+@dataclass(frozen=True)
+class RhythmRule:
+    """The thresholds of one version of the written rhythm view: `divisions`
+    grid points per beat, a note `staccato` when it sounds less than
+    `staccato_below` of the interval to the next onset, and a rest only for a
+    silence of at least `rest_beats` beats at a phrase boundary."""
+
+    version: str
+    divisions: int
+    staccato_below: Fraction
+    rest_beats: Fraction
+
+    def describe(self) -> dict[str, Any]:
+        return {"version": self.version, "divisions": self.divisions,
+                "staccato_below": _decimal_text(self.staccato_below), "rest_beats": _decimal_text(self.rest_beats)}
+
+
+RHYTHM_RULES = {"1": RhythmRule("1", 4, Fraction(3, 5), Fraction(1))}
+
+
+def _decimal_text(value: Fraction) -> str:
+    """A non-negative fraction as exact decimal text, to four places."""
+    scaled = round(value * 10000)
+    whole, part = divmod(scaled, 10000)
+    return str(whole) if part == 0 else f"{whole}.{part:04d}".rstrip("0")
+
+
+def _length(value: Fraction) -> dict[str, int]:
+    """A written length as the claims write one: count notes of 1/unit."""
+    return {"count": value.numerator, "unit": value.denominator}
+
+
+@dataclass(frozen=True)
+class Beat:
+    """One beat of a timed meter layer: its sample, its written value in whole
+    notes, its written position from the layer's first beat, and its bar
+    (None in a layer of beats only)."""
+
+    sample: int
+    value: Fraction
+    position: Fraction
+    bar: int | None
+
+
+def beat_grid(meter_payload: dict[str, Any], layer: int = 0) -> tuple[list[Beat], list[Fraction], int]:
+    """The beats of one layer of a checked timed meter claim (ADR 0077,
+    0083), and each bar's written start, plus the sample the last beat
+    ends at. A bar's beats are its `beats` samples, or its span divided
+    evenly; a beat's value is its group of the `grouping` over the
+    denominator, or one over it. A layer of beats only has quarter beats
+    unless it states `beat_unit`, and its last beat ends one beat after."""
+    layers = meter_payload.get("layers") if isinstance(meter_payload, dict) else None
+    if not isinstance(layers, list) or not 0 <= layer < len(layers) or not isinstance(layers[layer], dict):
+        raise NotesError(f"meter has no layer {layer}")
+    found = layers[layer]
+    beats: list[Beat] = []
+    bar_starts: list[Fraction] = []
+    position = Fraction(0)
+    if "bars" in found:
+        end = None
+        for index, bar in enumerate(found["bars"]):
+            if "start_sample" not in bar:
+                raise NotesError("the written rhythm needs a timed meter; this layer's bars have no samples")
+            groups = bar.get("grouping") or [1] * bar["numerator"]
+            values = [Fraction(g, bar["denominator"]) for g in groups]
+            if "beats" in bar:
+                samples = list(bar["beats"])
+            else:
+                span = bar["end_sample"] - bar["start_sample"]
+                total = sum(values, Fraction(0))
+                samples, at = [], Fraction(0)
+                for value in values:
+                    samples.append(bar["start_sample"] + int(span * at / total))
+                    at += value
+            bar_starts.append(position)
+            for sample, value in zip(samples, values):
+                beats.append(Beat(sample, value, position, index))
+                position += value
+            end = bar["end_sample"]
+        return beats, bar_starts, end
+    unit = Fraction(1, 4)
+    if isinstance(found.get("beat_unit"), dict):
+        unit = Fraction(found["beat_unit"]["count"], found["beat_unit"]["unit"])
+    samples = found["beats"]
+    for sample in samples:
+        beats.append(Beat(sample, unit, position, None))
+        position += unit
+    last = samples[-1] + (samples[-1] - samples[-2] if len(samples) > 1 else 1)
+    return beats, [], last
+
+
+def _written_at(sample: float, beats: list[Beat], end: int) -> Fraction:
+    """The written position of a sample: linear within its beat."""
+    index = max(0, bisect_right([b.sample for b in beats], sample) - 1)
+    beat = beats[index]
+    following = beats[index + 1].sample if index + 1 < len(beats) else end
+    span = max(following - beat.sample, 1)
+    return beat.position + beat.value * Fraction(round(sample) - beat.sample, span)
+
+
+def _snap(position: Fraction, beats: list[Beat], divisions: int) -> Fraction:
+    """A written position moved to the nearest grid point of its beat."""
+    index = max(0, bisect_right([b.position for b in beats], position) - 1)
+    beat = beats[index]
+    step = beat.value / divisions
+    return beat.position + step * round((position - beat.position) / step)
+
+
+def _beat_samples(sample: int, beats: list[Beat], end: int) -> int:
+    index = max(0, bisect_right([b.sample for b in beats], sample) - 1)
+    following = beats[index + 1].sample if index + 1 < len(beats) else end
+    return max(following - beats[index].sample, 1)
+
+
+def _boundary(onset: int, silence: tuple[int, int], lines: list[dict[str, Any]]) -> str | None:
+    """The phrase boundary a silence falls at, or None (ADR 0086, amended):
+    `line_end` where a timed lyrics line ends on the note before it; `breath`
+    where it lies between two words of a line, or no line covers it. Inside
+    a word, or inside a line that places no words, it is no boundary."""
+    start, end = silence
+    if any(onset < line["end_sample"] <= end for line in lines):
+        return "line_end"
+    covering = [line for line in lines if line["start_sample"] <= start and line["end_sample"] >= end]
+    if not covering:
+        return "breath"
+    for line in covering:
+        words = line.get("words", [])
+        if not words:
+            return None
+        if any(w["start_sample"] < end and w["end_sample"] > start for w in words):
+            return None     # the silence is inside a word
+    return "breath"
+
+
+def written_rhythm(notes: list[dict[str, Any]], meter_payload: dict[str, Any], *, layer: int = 0,
+                   lyrics: list[dict[str, Any]] | None = None, version: str = "1") -> dict[str, Any]:
+    """Sounded notes written on a meter's beat grid. `notes` are notes as a
+    notes claim holds them (or a tune's), `meter_payload` a checked timed
+    meter claim's payload, and `lyrics` the `lines` of timed lyrics claims of
+    the same recording, whose line ends and words say where phrases end.
+
+    Notes starting together are one chord. Each chord's onset moves to the
+    nearest grid point (`divisions` per beat), and its written value fills
+    the interval to the next chord's onset, on the grid. A chord that sounds
+    less than `staccato_below` of that interval is marked `staccato` rather
+    than followed by a rest. A rest is written only when the silence after
+    it is at least `rest_beats` beats long and falls at a phrase boundary
+    (`line_end` or `breath`); each rest says which. A note keeps the
+    articulation its claim writes. Notes outside the meter's beats are left
+    out and counted, never moved (INV-24). Returns {rule, written,
+    left_out}; `written` items are `{kind, position, duration, bar, at}`
+    with, for a chord, its notes' indices, pitches, onset, sounded share,
+    and articulation, and for a rest its boundary."""
+    if version not in RHYTHM_RULES:
+        raise NotesError(f"no written rhythm rule has version {version}")
+    rule = RHYTHM_RULES[version]
+    beats, bar_starts, end = beat_grid(meter_payload, layer)
+    lines = [line for claim in (lyrics or []) for line in claim]
+    inside = [(i, n) for i, n in enumerate(notes) if beats[0].sample <= n["onset_sample"] < end]
+    left_out = len(notes) - len(inside)
+    groups: list[tuple[Fraction, list[tuple[int, dict[str, Any]]]]] = []
+    for index, note in sorted(inside, key=lambda pair: (pair[1]["onset_sample"], pair[1]["pitch"])):
+        at = _snap(_written_at(note["onset_sample"], beats, end), beats, rule.divisions)
+        if groups and groups[-1][0] == at:
+            groups[-1][1].append((index, note))
+        else:
+            groups.append((at, [(index, note)]))
+
+    def place(position: Fraction) -> dict[str, Any]:
+        if not bar_starts:
+            return {"bar": None, "at": _length(position)}
+        bar = max(0, bisect_right(bar_starts, position) - 1)
+        return {"bar": bar, "at": _length(position - bar_starts[bar])}
+
+    written: list[dict[str, Any]] = []
+    for number, (at, chord) in enumerate(groups):
+        onset = chord[0][1]["onset_sample"]
+        offset = max(n["offset_sample"] for _, n in chord)
+        if number + 1 < len(groups):
+            next_at, next_onset = groups[number + 1][0], groups[number + 1][1][0][1]["onset_sample"]
+        else:
+            next_at = _snap(_written_at(offset, beats, end), beats, rule.divisions)
+            next_onset = max(offset, onset + 1)
+        step = beats[max(0, bisect_right([b.position for b in beats], at) - 1)].value / rule.divisions
+        if next_at <= at:
+            next_at = at + step
+        marks = sorted({m for _, n in chord for m in n.get("articulation", [])})
+        share = Fraction(min(offset, next_onset) - onset, max(next_onset - onset, 1))
+        rest = None
+        silence = (offset, next_onset)
+        if number + 1 < len(groups) and next_onset - offset >= rule.rest_beats * _beat_samples(offset, beats, end):
+            boundary = _boundary(onset, silence, lines)
+            if boundary is not None:
+                note_end = _snap(_written_at(offset, beats, end), beats, rule.divisions)
+                note_end = min(max(note_end, at + step), next_at)
+                if note_end < next_at:
+                    rest = {"kind": "rest", "position": _length(note_end), "duration": _length(next_at - note_end),
+                            **place(note_end), "boundary": boundary}
+                    next_at = note_end
+        if rest is None and number + 1 < len(groups) and share < rule.staccato_below and "staccato" not in marks \
+                and "staccatissimo" not in marks:
+            marks = sorted(set(marks) | {"staccato"})
+        written.append({"kind": "chord", "notes": [i for i, _ in chord], "pitches": [n["pitch"] for _, n in chord],
+                        "onset_sample": onset, "position": _length(at), "duration": _length(next_at - at),
+                        **place(at), "sounded_share": _decimal_text(share), "articulation": marks})
+        if rest is not None:
+            written.append(rest)
+    return {"rule": rule.describe(), "written": written, "left_out": left_out}

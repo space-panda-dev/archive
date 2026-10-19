@@ -128,6 +128,62 @@ class RecordViews(unittest.TestCase):
         self.assertEqual([(n["onset_sample"], n["from"]) for n in answer["notes"]],
                          [(0, notes["revision_id"]), (1000, notes["revision_id"])])
         self.assertEqual(answer["handoffs"], [])
+        self.assertEqual(answer["left_out"], [])          # the operator, a person, chose every span
+
+    def test_written_rhythm_writes_sounded_notes_on_the_beats(self):
+        bass = self.pin("archive.claim/notes", "world-w-notes-bass")
+        meter = self.pin("archive.claim/meter_layers", "world-fixture-meter-placed")
+        written = self.answer(request("written_rhythm", {"notes": bass}, meter=meter))["answer"]
+        # Two 4/4 bars of 2000 samples: a beat is 500. The first note sounds
+        # 200 of its 500 and is staccato, keeping its written accent; the
+        # long silence after the second, with no lyrics, is a breath.
+        self.assertEqual([(w["kind"], w["duration"], w.get("articulation"), w.get("boundary"))
+                          for w in written["written"]],
+                         [("chord", {"count": 1, "unit": 4}, ["accent", "staccato"], None),
+                          ("chord", {"count": 3, "unit": 16}, [], None),
+                          ("rest", {"count": 17, "unit": 16}, None, "breath"),
+                          ("chord", {"count": 3, "unit": 16}, [], None)])
+        self.assertEqual(written["rule"]["version"], "1")
+        lyrics = self.pin("archive.claim/timed_lyrics", "world-fixture-timed-lyrics")
+        sung = self.answer(request("written_rhythm", {"notes": bass}, meter=meter, lyrics=[lyrics]))["answer"]
+        self.assertEqual(sung["written"][2]["boundary"], "line_end")     # the lyric's first line ends there
+        nothing = self.answer(request("written_rhythm", {"notes": bass}))["answer"]
+        self.assertEqual((nothing["written"], nothing["left_out"]), ([], 3))
+        self.assertIn("no meter", nothing["why"])
+
+    def test_the_bass_line_is_a_line_of_its_own(self):
+        bass = self.record("archive.claim/notes", "world-w-notes-bass")
+        other = self.record("archive.claim/notes", "world-fixture-notes")      # a part named bass, not marked
+        recording = object_id(self.archive, "archive.core/artifact", "fixture-recording")
+        meter = self.pin("archive.claim/meter_layers", "world-fixture-meter-placed")
+        lines = self.answer(request("bass_line", {"source": recording}, meter=meter))["answer"]["lines"]
+        claims = {line["claim"]: line for line in lines}
+        self.assertIn(bass["revision_id"], claims)
+        self.assertNotIn(other["revision_id"], claims)
+        self.assertEqual(claims[bass["revision_id"]]["clef"], "bass")
+        self.assertEqual(len(claims[bass["revision_id"]]["written"]), 4)
+
+    def test_may_publish_answers_on_the_day_asked(self):
+        v1 = self.pin("archive.transition/publication_approval", "world-publication")
+        answer = self.answer(request("may_publish", {"approval": v1}, on="2026-10-19"))["answer"]
+        self.assertFalse(answer["may_publish"])
+        self.assertTrue(any("version 1" in line for line in answer["blockers"]), answer["blockers"])
+        held = self.pin("archive.transition/publication_approval", "world-publication-held")
+        answer = self.answer(request("may_publish", {"approval": held}, on="2026-10-19"))["answer"]
+        self.assertEqual((answer["class"], answer["may_publish"]), ("open", False))
+        self.assertTrue(any("hold_back" in line for line in answer["blockers"]))
+        with self.assertRaises(views.ViewError):
+            self.answer(request("may_publish", {"approval": self.pin("archive.claim/notes", "world-w-notes-bass")}))
+
+    def test_a_version_2_withdrawal_takes_back_a_version_2_approval(self):
+        circle = {"destination": "world-circle-2", "members": [self.guest]}
+        answer = self.answer(request("readable_set", {"circle": circle}, on="2026-10-19"))["answer"]
+        self.assertEqual(answer["revisions"], [])
+        # Anchor: the same lead sheet is readable through the version 1 approval to the first circle.
+        first = {"destination": "world-circle", "members": [self.guest]}
+        sheet = self.record("archive.claim/lead_sheet", "world-fixture-lead-sheet")
+        self.assertIn(sheet["revision_id"],
+                      self.answer(request("readable_set", {"circle": first}, on="2026-10-19"))["answer"]["revisions"])
 
     def test_track_credits_say_why(self):
         recording = object_id(self.archive, "archive.core/entity", "fixture-recording")

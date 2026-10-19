@@ -40,6 +40,7 @@ SENSITIVITY = ("archive.claim/sensitivity", "1")
 RIGHTS = ("archive.claim/rights", "1")
 AUDIO_STREAM = ("archive.claim/audio_stream", "1")
 DERIVATION_RUN = ("archive.claim/derivation_run", "1")
+NOTES = ("archive.claim/notes", "1")                    # ADR 0086, a syllable's carrying notes
 
 OBJECT_ID = re.compile(r"urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 REVISION_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
@@ -58,6 +59,9 @@ MAX_TEXT = 2000
 MAX_URL = 2000
 MAX_LINES = 10000
 MAX_WORDS = 200
+MAX_SYLLABLES = 32          # per word (ADR 0085, amended 2026-10-19)
+MAX_CARRIED_ONSETS = 64     # notes one syllable is sung on
+MAX_LYRIC_NOTES = 8         # notes claims one timed lyrics claim pins
 MAX_SUBJECTS = 1000
 MAX_DOCUMENT_BYTES = 64 * 1024 * 1024
 SPAN_ENDS = ("asserted", "held")
@@ -513,7 +517,7 @@ def check_document_source(claim: dict[str, Any], targets: dict[str, dict[str, An
 
 LOCATOR_SCHEMES = ("text", "lrc")
 LYRIC_ROLES = {"document": (1, 1), "source": (1, 1), "stream": (1, 1), "work": (0, 1),
-               "run": (0, 1), "corrects": (0, 8)}
+               "run": (0, 1), "corrects": (0, 8), "notes": (0, MAX_LYRIC_NOTES)}
 
 
 def _check_span(item: dict[str, Any], count: int, held: list[bool], where: str) -> tuple[int, int]:
@@ -537,12 +541,73 @@ def _check_confidence(item: dict[str, Any], scaled: bool, where: str) -> None:
         raise DocumentError(f"{where} confidence must be exact decimal text")
 
 
+def _pinned_onsets(by_role: dict[str, list[dict[str, Any]]], targets: dict[str, dict[str, Any]],
+                   where: str) -> dict[str, set[int]]:
+    """The onsets of each pinned notes claim, by revision, after checking it
+    is a notes claim about the lyrics' own `source` revision, pinned once."""
+    source = by_role["source"][0]
+    onsets: dict[str, set[int]] = {}
+    for ref in by_role["notes"]:
+        at = f"{where} notes {ref['revision_id']}"
+        if ref["revision_id"] in onsets:
+            raise DocumentError(f"{at} is pinned twice")
+        target = _claim(targets, ref, {NOTES}, at)
+        about = [r for r in target.get("refs", []) if isinstance(r, dict) and r.get("role") == "source"]
+        if len(about) != 1 or (about[0].get("id"), about[0].get("revision_id")) != (source["id"], source["revision_id"]):
+            raise DocumentError(f"{at} is about another Artifact revision than the lyrics' source")
+        payload = target.get("payload") if isinstance(target.get("payload"), dict) else {}
+        notes = payload.get("notes") if isinstance(payload.get("notes"), list) else []
+        onsets[ref["revision_id"]] = {n.get("onset_sample") for n in notes if isinstance(n, dict)}
+    return onsets
+
+
+def _check_syllables(word: dict[str, Any], span: tuple[int, int], count: int, scaled: bool,
+                     onsets: dict[str, set[int]], named: set[str], where: str) -> None:
+    """A word's syllables: numbered in order, within the word's span, each at
+    or after the one before it in samples and in characters; a syllable's
+    notes are notes of a pinned claim (ADR 0085, amended 2026-10-19)."""
+    previous_number, previous_end, previous_char = 0, span[0], 0
+    for index, syllable in enumerate(_list(word["syllables"], f"{where} syllables", 1, MAX_SYLLABLES)):
+        at = f"{where} syllable {index}"
+        _closed(syllable, {"syllable", "start_char", "end_char", "start_sample", "end_sample"},
+                {"confidence", "carried_by"}, at)
+        if _int(syllable["syllable"], f"{at} syllable", 1) <= previous_number:
+            raise DocumentError(f"{at} must name a later syllable of the word than the syllable before it")
+        previous_number = syllable["syllable"]
+        start_char = _int(syllable["start_char"], f"{at} start_char", 0)
+        end_char = _int(syllable["end_char"], f"{at} end_char", 1)
+        if end_char <= start_char:
+            raise DocumentError(f"{at} must end after it starts in characters")
+        if start_char < previous_char:
+            raise DocumentError(f"{at} must start at or after the syllable before it in characters")
+        previous_char = end_char
+        start, end = _check_span(syllable, count, [], at)
+        if start < previous_end or end > span[1]:
+            raise DocumentError(f"{at} must lie within its word, at or after the syllable before it")
+        previous_end = end
+        _check_confidence(syllable, scaled, at)
+        if "carried_by" in syllable:
+            carried = _closed(syllable["carried_by"], {"notes", "onsets"}, set(), f"{at} carried_by")
+            if carried["notes"] not in onsets:
+                raise DocumentError(f"{at} carried_by names a notes claim the claim does not pin")
+            named.add(carried["notes"])
+            sung = _list(carried["onsets"], f"{at} carried_by onsets", 1, MAX_CARRIED_ONSETS)
+            for number, onset in enumerate(sung):
+                _int(onset, f"{at} carried_by onset {number}", 0)
+                if number and onset <= sung[number - 1]:
+                    raise DocumentError(f"{at} carried_by onsets must strictly increase")
+                if onset not in onsets[carried["notes"]]:
+                    raise DocumentError(f"{at} carried_by onset {onset} is no note of {carried['notes']}")
+
+
 def check_timed_lyrics(claim: dict[str, Any], targets: dict[str, dict[str, Any]]) -> dict[str, Any]:
     """Check an `archive.claim/timed_lyrics` version 1 claim: lines, and
-    optionally words, of one lyric document placed at sample spans of one
-    recording's stream. A line is named by its number in the document and a
-    word by its number in that line; the claim holds no word of the lyric.
-    Returns the payload; raises DocumentError."""
+    optionally words and their syllables, of one lyric document placed at
+    sample spans of one recording's stream. A line is named by its number in
+    the document, a word by its number in that line, and a syllable by its
+    number in the word and its characters; the claim holds no word of the
+    lyric. A syllable may name the notes of a pinned notes claim that carry
+    it. Returns the payload; raises DocumentError."""
     where = "timed lyrics"
     record = _closed(claim, {"payload", "refs"}, {"revision_id", "agent"}, where)
     by_role = _refs_by_role(record["refs"], LYRIC_ROLES, where)
@@ -565,6 +630,8 @@ def check_timed_lyrics(claim: dict[str, Any], targets: dict[str, dict[str, Any]]
     for ref in by_role["corrects"]:
         _claim(targets, ref, {TIMED_LYRICS}, f"{where} corrects")
     _distinct_objects(by_role["corrects"], f"{where} corrects")
+    onsets = _pinned_onsets(by_role, targets, where)
+    named: set[str] = set()
     alignment = _closed(payload["alignment"], {"method"}, {"max_error_samples"}, f"{where} alignment")
     _text(alignment["method"], f"{where} alignment method", MAX_NAME)
     if "max_error_samples" in alignment:
@@ -588,7 +655,7 @@ def check_timed_lyrics(claim: dict[str, Any], targets: dict[str, dict[str, Any]]
         words = _list(line["words"], f"{at} words", 1, MAX_WORDS) if "words" in line else []
         for number, word in enumerate(words):
             here = f"{at} word {number}"
-            _closed(word, {"word", "start_sample", "end_sample"}, {"end", "confidence"}, here)
+            _closed(word, {"word", "start_sample", "end_sample"}, {"end", "confidence", "syllables"}, here)
             if _int(word["word"], f"{here} word", 1) <= word_number:
                 raise DocumentError(f"{here} must name a later word of the line than the word before it")
             word_number = word["word"]
@@ -597,6 +664,10 @@ def check_timed_lyrics(claim: dict[str, Any], targets: dict[str, dict[str, Any]]
                 raise DocumentError(f"{here} must lie within its line, after the word before it")
             word_end = w_end
             _check_confidence(word, scaled, here)
+            if "syllables" in word:
+                _check_syllables(word, (w_start, w_end), facts["sample_count"], scaled, onsets, named, here)
+    if named != set(onsets):
+        raise DocumentError(f"{where} pins notes claims that no syllable names")
     if any(held) != ("hold_rule" in payload):
         raise DocumentError(f"{where} states hold_rule exactly when some end is held")
     if "hold_rule" in payload:
@@ -646,8 +717,9 @@ def document_lines(data: bytes, scheme: str) -> list[list[str]]:
 
 def check_locators(claim: dict[str, Any], data: bytes) -> None:
     """Check that every line and word a timed lyrics claim names is in the
-    document's bytes. Door does not read content, so this is a check for an
-    importer or a view, not an admission rule."""
+    document's bytes, and that each syllable's characters fall within its
+    word (counted in Unicode code points). Door does not read content, so
+    this is a check for an importer or a view, not an admission rule."""
     payload = claim["payload"]
     lines = document_lines(data, payload["scheme"])
     for index, line in enumerate(payload["lines"]):
@@ -658,12 +730,29 @@ def check_locators(claim: dict[str, Any], data: bytes) -> None:
             if word["word"] > len(lines[line["line"] - 1]):
                 raise DocumentError(f"timed lyrics line {index} names word {word['word']} of line {line['line']}, "
                                     f"which has {len(lines[line['line'] - 1])}")
+            text = lines[line["line"] - 1][word["word"] - 1]
+            for syllable in word.get("syllables", []):
+                if syllable["end_char"] > len(text):
+                    raise DocumentError(f"timed lyrics line {index} word {word['word']} syllable "
+                                        f"{syllable['syllable']} ends at character {syllable['end_char']}, "
+                                        f"but the word has {len(text)}")
+
+
+def _syllable_view(word: str, syllable: dict[str, Any]) -> dict[str, Any]:
+    out = {"syllable": syllable["syllable"], "text": word[syllable["start_char"]:syllable["end_char"]],
+           "start_sample": syllable["start_sample"], "end_sample": syllable["end_sample"]}
+    if "carried_by" in syllable:
+        out["carried_by"] = {"notes": syllable["carried_by"]["notes"],
+                             "onsets": list(syllable["carried_by"]["onsets"])}
+    return out
 
 
 def lyric_view(claim: dict[str, Any], data: bytes) -> list[dict[str, Any]]:
-    """The lines of a timed lyrics claim with their words joined from the
-    document, for display. A view: regenerable, never stored, and shown only
-    where the document itself may be shown."""
+    """The lines of a timed lyrics claim with their words, and each word's
+    syllables, joined from the document, for display; a syllable names the
+    notes that carry it (`carried_by`: the notes claim and its notes'
+    onsets), so a lead sheet sets it under them. A view: regenerable, never
+    stored, and shown only where the document itself may be shown."""
     check_locators(claim, data)
     lines = document_lines(data, claim["payload"]["scheme"])
     view = []
@@ -673,7 +762,9 @@ def lyric_view(claim: dict[str, Any], data: bytes) -> list[dict[str, Any]]:
             "line": line["line"], "start_sample": line["start_sample"], "end_sample": line["end_sample"],
             "text": " ".join(words),
             "words": [{"word": w["word"], "text": words[w["word"] - 1],
-                       "start_sample": w["start_sample"], "end_sample": w["end_sample"]}
+                       "start_sample": w["start_sample"], "end_sample": w["end_sample"],
+                       **({"syllables": [_syllable_view(words[w["word"] - 1], s) for s in w["syllables"]]}
+                          if "syllables" in w else {})}
                       for w in line.get("words", [])],
         })
     return view
@@ -837,9 +928,11 @@ def _pins(records: list[dict[str, Any]]) -> dict[str, set[str]]:
     return pins
 
 
-def closure(object_id: str, records: list[dict[str, Any]]) -> list[str]:
-    """The object and everything it pins, transitively, in the order found."""
-    pins = _pins(records)
+def closure(object_id: str, records: list[dict[str, Any]],
+            pins: dict[str, set[str]] | None = None) -> list[str]:
+    """The object and everything it pins, transitively, in the order found.
+    `pins`, from `_pins(records)`, saves rebuilding the map per object."""
+    pins = _pins(records) if pins is None else pins
     seen, queue = [object_id], [object_id]
     while queue:
         for nxt in sorted(pins.get(queue.pop(0), ())):
@@ -873,9 +966,83 @@ def _rights_limit(payload: dict[str, Any], holders: set[str], operator: str, tod
     return permitted
 
 
+class Reacher:
+    """Reach over one set of records, read once: the pin map, the head
+    sensitivity and rights claims by subject, and each object's kind are
+    built when it is made, and each object's reach is computed once. A
+    readable set asks the reach of every object it adds; rebuilding these per
+    object made it grow with the square of the archive."""
+
+    def __init__(self, records: Iterable[dict[str, Any]], operator: str, today: date) -> None:
+        self.records = list(records)
+        self.operator, self.today = operator, today
+        self.pins = _pins(self.records)
+        self.kinds = {r["object_id"]: (r["shape"], r.get("kind")) for r in self.records}
+        self.sensitivity: dict[str, list[dict[str, Any]]] = {}
+        self.rights: dict[str, list[dict[str, Any]]] = {}
+        for record in heads(self.records):
+            index = {SENSITIVITY: self.sensitivity, RIGHTS: self.rights}.get(_contract(record))
+            if index is None:
+                continue
+            for subject in dict.fromkeys(ref["id"] for ref in record["refs"] if ref["role"] == "subject"):
+                index.setdefault(subject, []).append(record)
+        self._known: dict[str, Reach] = {}
+
+    def closure(self, object_id: str) -> list[str]:
+        return closure(object_id, self.records, self.pins)
+
+    def reach(self, object_id: str) -> Reach:
+        if object_id not in self._known:
+            self._known[object_id] = self._reach(object_id)
+        return self._known[object_id]
+
+    def _reach(self, object_id: str) -> Reach:
+        found = self.closure(object_id)
+        why: list[str] = []
+
+        latest: dict[tuple[str, str], dict[str, Any]] = {}
+        for subject in found:
+            for record in self.sensitivity.get(subject, ()):
+                key = (record["agent"], subject)
+                held = latest.get(key)
+                order = (record["at"], -CLASSES.index(LABELS[record["payload"]["label"]]))
+                if held is None or order > (held["at"], -CLASSES.index(LABELS[held["payload"]["label"]])):
+                    latest[key] = record
+        labelled = "distribution"
+        for (agent, subject), record in sorted(latest.items()):
+            limit = LABELS[record["payload"]["label"]]
+            if CLASSES.index(limit) < CLASSES.index("distribution"):
+                why.append(f"{agent} labels {subject} {record['payload']['label']} ({record['revision_id']}): "
+                           f"no further than {limit}")
+            if CLASSES.index(limit) < CLASSES.index(labelled):
+                labelled = limit
+
+        rights = "distribution"
+        for subject in found:
+            shape, kind = self.kinds.get(subject, (None, None))
+            if not (shape == "artifact" or (shape == "entity" and kind in RIGHTS_SUBJECT_KINDS)):
+                continue
+            about = self.rights.get(subject, [])
+            if not about:
+                if CLASSES.index("service") < CLASSES.index(rights):
+                    rights = "service"
+                why.append(f"{subject} has no rights claim: no further than service")
+                continue
+            for record in about:
+                holders = {ref["id"] for ref in record["refs"] if ref["role"] == "holder"}
+                limit = _rights_limit(record["payload"], holders, self.operator, self.today)
+                if CLASSES.index(limit) < CLASSES.index("distribution"):
+                    why.append(f"{subject} is {record['payload']['statement']} ({record['revision_id']}): "
+                               f"no further than {limit}")
+                if CLASSES.index(limit) < CLASSES.index(rights):
+                    rights = limit
+        return Reach(labelled, rights, tuple(why))
+
+
 def reach(object_id: str, records: list[dict[str, Any]], operator: str, today: date) -> Reach:
     """How far `object_id` may reach under the sensitivity and rights claims
-    on it and on everything it pins (`closure`).
+    on it and on everything it pins (`closure`). For many objects over the
+    same records, make one `Reacher` and ask it.
 
     `records` are committed records, each `{object_id, revision_id, shape,
     agent, at, payload, refs, supersedes}` with `contract` (id, version) for a
@@ -889,55 +1056,7 @@ def reach(object_id: str, records: list[dict[str, Any]], operator: str, today: d
     claim that permits a class beyond service, or it goes no further than
     service; the strictest claim wins, and a personal-use licence keeps it to
     the circle. Rights never limit the circle, which is private."""
-    live = heads(records)
-    found = closure(object_id, records)
-    within = set(found)
-    why: list[str] = []
-
-    latest: dict[tuple[str, str], dict[str, Any]] = {}
-    for record in live:
-        if _contract(record) != SENSITIVITY:
-            continue
-        for ref in record["refs"]:
-            if ref["role"] != "subject" or ref["id"] not in within:
-                continue
-            key = (record["agent"], ref["id"])
-            held = latest.get(key)
-            order = (record["at"], -CLASSES.index(LABELS[record["payload"]["label"]]))
-            if held is None or order > (held["at"], -CLASSES.index(LABELS[held["payload"]["label"]])):
-                latest[key] = record
-    labelled = "distribution"
-    for (agent, subject), record in sorted(latest.items()):
-        limit = LABELS[record["payload"]["label"]]
-        if CLASSES.index(limit) < CLASSES.index("distribution"):
-            why.append(f"{agent} labels {subject} {record['payload']['label']} ({record['revision_id']}): "
-                       f"no further than {limit}")
-        if CLASSES.index(limit) < CLASSES.index(labelled):
-            labelled = limit
-
-    kinds = {r["object_id"]: (r["shape"], r.get("kind")) for r in records}
-    rights_claims = [r for r in live if _contract(r) == RIGHTS]
-    rights = "distribution"
-    for subject in found:
-        shape, kind = kinds.get(subject, (None, None))
-        if not (shape == "artifact" or (shape == "entity" and kind in RIGHTS_SUBJECT_KINDS)):
-            continue
-        about = [r for r in rights_claims
-                 if any(ref["role"] == "subject" and ref["id"] == subject for ref in r["refs"])]
-        if not about:
-            if CLASSES.index("service") < CLASSES.index(rights):
-                rights = "service"
-            why.append(f"{subject} has no rights claim: no further than service")
-            continue
-        for record in about:
-            holders = {ref["id"] for ref in record["refs"] if ref["role"] == "holder"}
-            limit = _rights_limit(record["payload"], holders, operator, today)
-            if CLASSES.index(limit) < CLASSES.index("distribution"):
-                why.append(f"{subject} is {record['payload']['statement']} ({record['revision_id']}): "
-                           f"no further than {limit}")
-            if CLASSES.index(limit) < CLASSES.index(rights):
-                rights = limit
-    return Reach(labelled, rights, tuple(why))
+    return Reacher(records, operator, today).reach(object_id)
 
 
 def may_show(object_id: str, viewer: str, audience: str, records: list[dict[str, Any]],

@@ -23,14 +23,18 @@ import copy
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from world import catalogue, circle, documents, exports, form, harmony, judgments, lead_sheets, notes, tonality
 from world.tests.test_door_agreement import (
+    BY,
     ROOT,
+    _canonical,
     Agreement,
     Change,
     both,
@@ -44,6 +48,7 @@ from world.tests.test_door_agreement import (
     whole,
 )
 from world.tests.test_conformance import build_fixture_archive, integration_binaries, remove_tree
+from world.tests.test_door_agreement_beyond_circle import TRANSITION_KEYS
 
 
 def agent(key: str) -> Change:
@@ -67,6 +72,18 @@ def at(*path: Any) -> Callable[[dict[str, Any]], Any]:
 
 def append_to(path: Callable[[dict[str, Any]], Any], value: Any) -> Change:
     return payload(lambda p: path(p).append(copy.deepcopy(value)))
+
+
+def syllable(index: int, *rest: str) -> Callable[[dict[str, Any]], Any]:
+    """The fixture's first word's syllable `index` (0.0.10 amendment)."""
+    return at("lines", 0, "words", 0, "syllables", index, *rest)
+
+
+def carried_by(key: str) -> Change:
+    """Name the fixture claim `key` as what carries the first syllable."""
+    def change(record: dict[str, Any], test: "Agreement010") -> None:
+        syllable(0, "carried_by")(record["payload"])["notes"] = test.pinned(key)["revision_id"]
+    return change
 
 
 Case = tuple[str, str, Change, bool]
@@ -250,6 +267,17 @@ DOCUMENTS: list[Case] = [
     ("timed-lyrics", "lines that overlap", set_in(at("lines", 1), "start_sample", 1500), True),
     ("timed-lyrics", "a line that ends before it starts", set_in(at("lines", 1), "end_sample", 2000), False),
     ("timed-lyrics", "a line past the stream", set_in(at("lines", 1), "end_sample", 4001), False),
+    ("timed-syllables", "syllables carried by notes, as admitted", keep, True),
+    ("timed-syllables", "syllables that overlap in time", set_in(syllable(1), "start_sample", 300), False),
+    ("timed-syllables", "syllables whose characters overlap", set_in(syllable(1), "start_char", 2), False),
+    ("timed-syllables", "an empty syllable", set_in(syllable(0), "end_char", 0), False),
+    ("timed-syllables", "a syllable past its word", set_in(syllable(1), "end_sample", 1100), False),
+    ("timed-syllables", "syllables out of order", set_in(syllable(1), "syllable", 1), False),
+    ("timed-syllables", "carrying onsets out of order",
+     set_in(syllable(1, "carried_by"), "onsets", [400, 0]), False),
+    ("timed-syllables", "a syllable carried by a claim it does not pin", carried_by("notes"), False),
+    ("timed-syllables", "a syllable carried by a claim it also pins",
+     both(pin("notes", "notes"), carried_by("notes")), True),
     ("sensitivity", "the limit as admitted", keep, True),
     ("sensitivity", "a limit by a band", agent("ensemble"), False),
     ("sensitivity", "a limit by another person", agent("guest"), True),
@@ -270,6 +298,16 @@ NOTES: list[Case] = [
     ("notes", "a range that ends before it starts", set_in(at("range"), "start_sample", 4000), False),
     ("notes", "notes derived from and correcting one revision",
      both(pin("derived_from", "chords"), pin("corrects", "notes")), True),
+    ("notes-sung", "articulated notes as admitted", keep, True),
+    ("notes-sung", "an articulation named twice", set_in(at("notes", 0), "articulation", ["staccato", "staccato"]), False),
+    ("notes-sung", "an articulation outside the list", set_in(at("notes", 0), "articulation", ["legato"]), False),
+    ("notes-sung", "every articulation", set_in(at("notes", 0), "articulation",
+     ["staccato", "staccatissimo", "tenuto", "accent", "marcato", "fermata"]), True),
+    ("notes-bass-line", "the bass line as admitted", keep, True),
+    ("notes-bass-line", "a bass line that says false", set_in(whole, "bass", False), False),
+    ("notes-bass-line", "a part without the bass mark", delete_in(whole, "bass"), True),
+    ("melody-articulated", "the articulated melody as admitted", keep, True),
+    ("melody-articulated", "an articulation on a rest", set_in(at("notes", 1), "articulation", ["staccato"]), False),
     ("melody", "the melody as admitted", keep, True),
     ("melody", "a melody laid on a timed meter", repin("meter", "meter-placed"), False),
     ("melody", "a melody derived from and correcting one revision",
@@ -342,6 +380,35 @@ DOOR_ONLY: list[Case] = [
     ("sensitivity", "a limit by a tool", as_tool, False),
     ("meter-placed", "a correction of the untimed meter", pin("corrects", "meter-written"), False),
     ("meter-placed", "a correction of a timed meter (anchor)", pin("corrects", "meter-chart"), True),
+]
+
+# Publication beyond the circle (ADR 0085, amended 2026-10-19): Door's
+# refusal in `door transition` and World's `circle.beyond_circle` read the
+# same sensitivity, rights, origin, and consent claims on the same UTC date.
+# In the fixture, `title` reaches a take labelled AMBER, `notes` has rights
+# no claim lifts past service, and `origin` touches a co-written Work whose
+# co-writer consented to the circle only. Every approval and withdrawal there
+# is already withdrawn, so a withdrawal here is refused for that.
+BEYOND: list[Case] = [
+    ("publication-v2", "an approval to the circle as admitted", keep, True),
+    ("publication-v2", "to a service of what a label keeps in the circle",
+     both(set_in(whole, "class", "service"), set_in(whole, "destination", "fixture-site")), False),
+    ("publication-v2", "to a service of notes nothing limits",
+     both(set_in(whole, "class", "service"), set_in(whole, "destination", "fixture-site"), repin("covers", "notes")),
+     True),
+    ("publication-v2", "openly, of notes whose rights stop at service",
+     both(set_in(whole, "class", "open"), set_in(whole, "destination", "fixture-site"), repin("covers", "notes")),
+     False),
+    ("publication-v2", "to a service, of a co-written Work's origin, with no co-writer's consent",
+     both(set_in(whole, "class", "service"), set_in(whole, "destination", "fixture-site"), repin("covers", "origin")),
+     False),
+    ("publication-v2", "held back from distribution, which nothing need allow",
+     both(set_in(whole, "class", "distribution"), set_in(whole, "decision", "hold_back")), True),
+    ("publication-v2", "an approval with no class", delete_in(whole, "class"), False),
+    ("withdrawal-v2", "a second withdrawal of an approval already withdrawn", keep, False),
+    ("withdrawal-v2", "a version 2 withdrawal of a version 1 approval already withdrawn",
+     repin("withdraws", "publication"), False),
+    ("withdrawal-v2", "a withdrawal of something that is no approval", repin("withdraws", "title"), False),
 ]
 
 ALL = HARMONY + METER + FORM + KEYS + JUDGMENTS + LEAD_SHEETS + DOCUMENTS + NOTES + CATALOGUE + BANDMATES + EXPORTS + DOOR_ONLY
@@ -478,6 +545,69 @@ class Agreement010(unittest.TestCase):
             return False, f"{type(exc).__name__}: {exc}"
         return True, ""
 
+    # -- transitions: publication beyond the circle --------------------------
+
+    def door_transitions(self, record: dict[str, Any]) -> tuple[bool, str]:
+        """Door's verdict on `record` as a new transition, by `door
+        transition --dry-run`, which writes nothing; every object it pins is
+        expected at its head, as the fixture builder expects them."""
+        type(self).count += 1
+        name = f"door-agreement-transition-{self.count}"
+        namespace = record["contracts"][0]["id"]
+        from fixture.build import object_id
+        objectid = object_id(self.export["archive_id"], namespace, name)
+        draft = {key: record[key] for key in ("spec", "shape", "agent", "payload", "refs", "contracts")}
+        draft.update({"object_id": objectid, "supersedes": [], "by": BY})
+        heads = {object_: r["revision_id"] for object_, r in self.heads().items()}
+        expected = [{"object_id": objectid, "revision_id": None}] + [
+            {"object_id": object_, "revision_id": heads[object_]}
+            for object_ in sorted({ref["id"] for ref in record["refs"]})]
+        proposal = self.tmp / "proposals" / name
+        (proposal / "records").mkdir(parents=True)
+        (proposal / "records/transition.json").write_bytes(_canonical(draft))
+        (proposal / "manifest.json").write_bytes(_canonical({
+            "protocol": "archive-transition/1", "records": ["records/transition.json"],
+            "identities": [{"object_id": objectid, "namespace": namespace, "name": name}],
+            "expected_heads": expected}))
+        completed = subprocess.run([self.door, "transition", "--proposal", str(proposal), "--dry-run"],
+                                   cwd=self.root, env=self.environment, capture_output=True, text=True)
+        return completed.returncode == 0, (completed.stderr or completed.stdout).strip()
+
+    def world_transitions(self, record: dict[str, Any]) -> tuple[bool, str]:
+        """World's verdict: the contract's check, and for an approval, nothing
+        `circle.beyond_circle` names on today's UTC date, Door's date."""
+        claim = {"payload": record["payload"], "refs": record["refs"], "agent": record["agent"]}
+        cited = {(c["id"], c["version"]) for c in record["contracts"]}
+        today = datetime.now(timezone.utc).date()
+        try:
+            if circle.PUBLICATION_APPROVAL_2 in cited:
+                payload = circle.check_publication_approval_v2(claim, self.targets())
+                covers = [ref["revision_id"] for ref in record["refs"] if ref["role"] == "covers"]
+                blockers = circle.beyond_circle(payload, covers, self.by_revision, self.manifest["operator_id"],
+                                                today)
+                if blockers:
+                    return False, "; ".join(blockers)
+            elif circle.PUBLICATION_WITHDRAWAL_2 in cited:
+                circle.check_publication_withdrawal_v2(claim, self.targets(), self.export["records"])
+            else:
+                raise AssertionError(f"no World check for {sorted(cited)}")
+        except AssertionError:
+            raise
+        except Exception as exc:
+            return False, f"{type(exc).__name__}: {exc}"
+        return True, ""
+
+    def test_beyond_the_circle(self):
+        self.assertEqual({case[3] for case in BEYOND}, {True, False})
+        for key, label, change, admitted in BEYOND:
+            with self.subTest(base=key, case=label):
+                record = copy.deepcopy(self.record(key))
+                change(record, self)
+                door, door_reason = self.door_transitions(record)
+                self.assertEqual(door, admitted, f"Door: {door_reason}")
+                world, world_reason = self.world_transitions(record)
+                self.assertEqual(world, admitted, f"World: {world_reason}")
+
     def agree(self, cases: list[Case], world_too: bool = True) -> None:
         for key, label, change, admitted in cases:
             with self.subTest(base=key, case=label):
@@ -539,7 +669,9 @@ class Agreement010(unittest.TestCase):
             data = json.loads((ROOT / "spec" / version / "contracts.json").read_text())
             return {(c["id"], c["version"]) for c in data["contracts"]}
         added = catalog("0.0.10") - catalog("0.0.9")
-        covered = {(c["id"], c["version"]) for key, *_ in ALL for c in self.record(key)["contracts"]}
+        covered = {(c["id"], c["version"]) for key, *_ in ALL + BEYOND for c in self.record(key)["contracts"]}
+        # Transitions go through `door transition`, in the beyond-circle agreement.
+        covered |= {(c["id"], c["version"]) for key in TRANSITION_KEYS for c in self.record(key)["contracts"]}
         self.assertEqual(added, covered)
 
 

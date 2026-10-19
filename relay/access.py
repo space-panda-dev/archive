@@ -35,7 +35,7 @@ REVISION_ID = circles.REVISION_ID
 # Views whose answers are read from sensitivity, rights, and publication
 # approvals: what may reach whom is the operator's to read (ADR 0088), and a
 # member's filtered records could not answer them truly anyway.
-OPERATOR_VIEWS = frozenset({"archive.view/readable_set", "archive.view/reach"})
+OPERATOR_VIEWS = frozenset({"archive.view/readable_set", "archive.view/reach", "archive.view/may_publish"})
 # Raw queries and every transition are the operator's (ADR 0088).
 OPERATOR_ROUTES = circles.OPERATOR_ROUTES
 
@@ -151,12 +151,21 @@ class Access:
         return None
 
     def _reach(self):
+        """Each object's furthest class, from one `documents.Reacher` built
+        over this generation's records (the pin map and the claims by
+        subject are read once, not per object)."""
         known: dict[str, str] = {}
+        try:
+            reacher: documents.Reacher | None = documents.Reacher(self.records, self.operator, self.today)
+        except (ValueError, KeyError, TypeError, IndexError):
+            reacher = None                          # every object is unknown, so withheld
 
         def reach(object_id: str) -> str:
             if object_id not in known:
                 try:
-                    known[object_id] = documents.reach(object_id, self.records, self.operator, self.today).furthest
+                    if reacher is None:
+                        raise ValueError("the records could not be read for reach")
+                    known[object_id] = reacher.reach(object_id).furthest
                 except (ValueError, KeyError, TypeError, IndexError):
                     known[object_id] = "unknown"    # never widens: the readable set withholds it
             return known[object_id]

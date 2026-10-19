@@ -116,6 +116,7 @@ wsh:Revision a sh:NodeShape ;
   sh:property [ sh:path arch:chosen_lyrics ; sh:nodeKind sh:IRI ; rdfs:comment "lead_sheet 1 (revision 6)." ] ;
   sh:property [ sh:path arch:chosen_melody ; sh:nodeKind sh:IRI ; rdfs:comment "lead_sheet 1 (revision 6)." ] ;
   sh:property [ sh:path arch:chosen_meter ; sh:nodeKind sh:IRI ; rdfs:comment "lead_sheet 1 (revision 6)." ] ;
+  sh:property [ sh:path arch:carrying_notes ; sh:nodeKind sh:IRI ; rdfs:comment "timed_lyrics 1: a notes claim whose notes carry syllables (revision 7)." ] ;
   sh:property [ sh:path arch:consent_covers ; sh:nodeKind sh:IRI ; rdfs:comment "sharing_consent 1 (revision 6)." ] ;
   sh:property [ sh:path arch:consent_origin ; sh:nodeKind sh:IRI ; rdfs:comment "sharing_consent 1 (revision 6)." ] ;
   sh:property [ sh:path arch:described_document ; sh:nodeKind sh:IRI ; rdfs:comment "document_source 1 (revision 6)." ] ;

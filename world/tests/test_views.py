@@ -172,6 +172,9 @@ class Requests(unittest.TestCase):
             "played_bars": {"meter": SOURCE},
             "tune": {"melody_spans": SOURCE},
             "track_credits": {"recording": RECORDING},
+            "written_rhythm": {"notes": SOURCE},
+            "bass_line": {"source": RECORDING},
+            "may_publish": {"approval": SOURCE},
         }
         for key in views.VIEWS:
             reached = []

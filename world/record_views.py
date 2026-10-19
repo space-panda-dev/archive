@@ -1,16 +1,20 @@
 """Named views of 0.0.10's records beyond ADR 0082's chord views: a judge's
 standing, an object's reach, a circle's readable set, what changed under a
 lead sheet, the played order of a form's sections and a meter's bars, a
-recording's tune and its hand-offs, and the credits of a recording.
+recording's tune and its hand-offs, the credits of a recording, notes
+written on a beat grid, a recording's bass line, and whether an approval
+may still publish.
 
 Each is a question World answers by a rule its own module states
 (`judgments.standing`, `documents.reach`, `circle.readable_set`,
 `lead_sheets.changes_since`, `form.form_order` and `form.bar_order`,
-`notes.tune_notes` and `notes.handoffs`, `catalogue.track_credits`); this
+`notes.tune_notes` and `notes.handoffs`, `catalogue.track_credits`,
+`notes.written_rhythm`, `circle.may_publish`); this
 module only reads the request and the records, as `world/views.py` does,
 and its registry joins that one, so a view is listed exactly when it is
 answered. Every answer is computed when asked and never stored (S-18). Each
-view is version 1; `world/views.py` says how versions change.
+view is version 1; the written rhythm's thresholds are its version's
+(`notes.RHYTHM_RULES`); `world/views.py` says how versions change.
 
 Records are given as `world/views.py` takes them, with `object_id`, `at`,
 `supersedes`, and an Entity's `kind` as well. Standard library only.
@@ -32,6 +36,9 @@ FORM = ("archive.claim/form", "1")
 METER = {("archive.claim/meter_layers", "1"), ("archive.claim/meter_layers", "2")}
 MELODY_SPANS = ("archive.claim/melody_spans", "1")
 NOTES = ("archive.claim/notes", "1")
+TIMED_LYRICS = ("archive.claim/timed_lyrics", "1")
+METER_TIMED = {("archive.claim/meter_layers", "1"), ("archive.claim/meter_layers", "2")}
+APPROVALS = {("archive.transition/publication_approval", "1"), ("archive.transition/publication_approval", "2")}
 LEAD_SHEET = ("archive.claim/lead_sheet", "1")
 TRACKLIST = ("archive.claim/tracklist", "1")
 RECORDING_AUDIO = ("archive.claim/recording_audio", "1")
@@ -207,9 +214,10 @@ def readable_set(world: list[dict[str, Any]], subject: dict[str, Any], params: d
     records = {r["revision_id"]: r for r in world}
     on = date.fromisoformat(params["on"])
     try:
+        reacher = documents.Reacher(world, operator, on)
         found = circle.readable_set(records, operator, circle.Circle(
             given["destination"], frozenset(given["members"]), given.get("band")),
-            lambda object_id: documents.reach(object_id, world, operator, on).furthest)
+            lambda object_id: reacher.reach(object_id).furthest)
     except (ValueError, KeyError) as error:
         raise _fail(ValueError(str(error))) from None
     answer = {"revisions": sorted(found.revisions), "withheld": sorted(found.withheld),
@@ -324,11 +332,132 @@ def tune(world: list[dict[str, Any]], subject: dict[str, Any], params: dict[str,
         if ref.get("role") == "notes":
             pinned[ref["revision_id"]] = _view(_record(world, {"id": ref["id"], "revision_id": ref["revision_id"]},
                                                        {NOTES}, "a notes claim"))
+    left_out: list[dict[str, Any]] = []
     try:
-        notes_tune = notes.tune_notes(claim["payload"], pinned)
+        notes_tune = notes.tune_notes(claim["payload"], pinned, by_person=_is_person(world, claim.get("agent")),
+                                      left_out=left_out)
     except (ValueError, KeyError) as error:
         raise _fail(ValueError(str(error))) from None
-    return {"notes": notes_tune, "handoffs": notes.handoffs(claim["payload"])}
+    return {"notes": notes_tune, "handoffs": notes.handoffs(claim["payload"]), "left_out": left_out}
+
+
+def _is_person(world: list[dict[str, Any]], agent: Any) -> bool:
+    """Whether an agent is a person Entity World holds; a tool's Package URL
+    or an unknown agent is not."""
+    return any(r.get("object_id") == agent and r.get("shape") == "entity" and r.get("kind") == "person"
+               for r in world)
+
+
+# ---------------------------------------------------------------------------
+# archive.view/written_rhythm version 1
+
+
+def _rhythm_subject(subject: Any) -> dict[str, Any]:
+    _closed(subject, set(), {"notes", "melody_spans"}, "subject")
+    if len(subject) != 1:
+        raise _bad("subject must be exactly one of {notes} or {melody_spans}")
+    (name, value), = subject.items()
+    return {name: _pin(value, f"subject {name}")}
+
+
+def _rhythm_parameters(params: dict[str, Any], caller: str | None) -> dict[str, Any]:
+    _closed(params, set(), {"meter", "layer", "lyrics"}, "parameters")
+    lyrics = params.get("lyrics", [])
+    if not isinstance(lyrics, list) or len(lyrics) > 8:
+        raise _bad("parameters lyrics must be a list of at most 8 timed lyrics claims")
+    return {"meter": None if params.get("meter") is None else _pin(params["meter"], "parameters meter"),
+            "layer": _index(params.get("layer", 0), "parameters layer"),
+            "lyrics": [_pin(pin, f"parameters lyrics {n}") for n, pin in enumerate(lyrics)]}
+
+
+def _write(world: list[dict[str, Any]], sounded: list[dict[str, Any]], params: dict[str, Any]) -> dict[str, Any]:
+    """Sounded notes written on the named meter's grid, or why nothing is."""
+    rule = notes.RHYTHM_RULES["1"].describe()
+    if params["meter"] is None:
+        return {"rule": rule, "written": [], "left_out": len(sounded),
+                "why": "no meter claim was named, so there is no beat grid to write on"}
+    meter = _record(world, params["meter"], METER_TIMED, "a meter claim")
+    lines = [_record(world, pin, {TIMED_LYRICS}, "a timed lyrics claim")["payload"]["lines"]
+             for pin in params["lyrics"]]
+    try:
+        return notes.written_rhythm(sounded, meter["payload"], layer=params["layer"], lyrics=lines)
+    except (ValueError, KeyError, TypeError, IndexError) as error:
+        raise _fail(ValueError(str(error))) from None
+
+
+def written_rhythm(world: list[dict[str, Any]], subject: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    """Sounded notes written on a meter's beat grid (ADR 0086, amended
+    2026-10-19): a notes claim's notes, or a recording's tune. Each note
+    fills to the next onset; a short one is marked staccato; a rest is
+    written only for a long silence at a lyric line's end or a breath."""
+    if "notes" in subject:
+        claim = _record(world, subject["notes"], {NOTES}, "a notes claim")
+        sounded = claim["payload"]["notes"]
+        left: list[dict[str, Any]] = []
+    else:
+        played = tune(world, {"melody_spans": subject["melody_spans"]}, {})
+        sounded, left = played["notes"], played["left_out"]
+    answer = _write(world, sounded, params)
+    if left:
+        answer["tune_left_out"] = left
+    return answer
+
+
+# ---------------------------------------------------------------------------
+# archive.view/bass_line version 1
+
+
+def _bass_subject(subject: Any) -> dict[str, Any]:
+    _closed(subject, {"source"}, set(), "subject")
+    return {"source": _object_id(subject["source"], "subject source")}
+
+
+def _bass_parameters(params: dict[str, Any], caller: str | None) -> dict[str, Any]:
+    _closed(params, set(), {"meter", "layer"}, "parameters")
+    return {"meter": None if params.get("meter") is None else _pin(params["meter"], "parameters meter"),
+            "layer": _index(params.get("layer", 0), "parameters layer"), "lyrics": []}
+
+
+def bass_line(world: list[dict[str, Any]], subject: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    """A recording's bass line, a line of its own (ADR 0086, amended
+    2026-10-19): every head notes claim about the recording that says
+    `bass`, each written by the written rhythm view for a bass clef staff,
+    never merged into a melody. Nothing is chosen between two asserters'
+    bass lines; both are listed."""
+    if not any(r.get("object_id") == subject["source"] for r in world):
+        raise ViewError("view_subject_not_found", f"no record is of {subject['source']}")
+    lines = []
+    for claim in sorted(_heads(world, {NOTES}), key=lambda c: c["revision_id"]):
+        payload = claim.get("payload") or {}
+        sources = [ref["id"] for ref in claim.get("refs", []) if ref.get("role") == "source"]
+        if payload.get("bass") is not True or sources != [subject["source"]]:
+            continue
+        lines.append({"claim": claim["revision_id"], "agent": claim.get("agent"), "part": payload.get("part"),
+                      **({"range": payload["range"]} if "range" in payload else {}),
+                      "clef": "bass", **_write(world, payload["notes"], params)})
+    return {"lines": lines}
+
+
+# ---------------------------------------------------------------------------
+# archive.view/may_publish version 1
+
+
+def _approval_subject(subject: Any) -> dict[str, Any]:
+    _closed(subject, {"approval"}, set(), "subject")
+    return {"approval": _pin(subject["approval"], "subject approval")}
+
+
+def may_publish(world: list[dict[str, Any]], subject: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    """Whether a publication approval still permits publication on the date
+    `on` (ADR 0085, amended 2026-10-19), and everything that blocks it. A
+    publisher calls it when it publishes; 0.0.10 ships none."""
+    _record(world, subject["approval"], APPROVALS, "a publication approval")
+    records = {r["revision_id"]: r for r in world}
+    try:
+        return circle.may_publish(subject["approval"]["revision_id"], records, _operator(world),
+                                  date.fromisoformat(params["on"]))
+    except (ValueError, KeyError, TypeError) as error:
+        raise _fail(ValueError(str(error))) from None
 
 
 # ---------------------------------------------------------------------------
@@ -385,6 +514,15 @@ VIEWS: dict[tuple[str, str], dict[str, Any]] = {
     (VIEW + "track_credits", "1"): {
         "question": "Which credits apply to this recording, and why?",
         "subject": _recording_subject, "parameters": _no_parameters},
+    (VIEW + "written_rhythm", "1"): {
+        "question": "How are these sounded notes written on this meter's beats?",
+        "subject": _rhythm_subject, "parameters": _rhythm_parameters},
+    (VIEW + "bass_line", "1"): {
+        "question": "What is this recording's bass line, written on its beats?",
+        "subject": _bass_subject, "parameters": _bass_parameters},
+    (VIEW + "may_publish", "1"): {
+        "question": "May this publication approval still publish, on this date?",
+        "subject": _approval_subject, "parameters": _on_parameters},
 }
 
 HANDLERS: dict[tuple[str, str], Callable[[list, dict, dict], dict]] = {
@@ -396,4 +534,7 @@ HANDLERS: dict[tuple[str, str], Callable[[list, dict, dict], dict]] = {
     (VIEW + "played_bars", "1"): played_bars,
     (VIEW + "tune", "1"): tune,
     (VIEW + "track_credits", "1"): track_credits,
+    (VIEW + "written_rhythm", "1"): written_rhythm,
+    (VIEW + "bass_line", "1"): bass_line,
+    (VIEW + "may_publish", "1"): may_publish,
 }

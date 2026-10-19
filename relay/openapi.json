@@ -2734,7 +2734,7 @@
     "/world/view": {
       "post": {
         "summary": "Answer one named view from World's selected generation (ADR 0082)",
-        "description": "The caller's person is the default person or judge. A member's view reads only their readable set (ADR 0088), states how many records were withheld, and may name nothing outside it (not_disclosed); the readable set and reach views are the operator's. Answers are cached per generation, request, and caller.",
+        "description": "The caller's person is the default person or judge. A member's view reads only their readable set (ADR 0088), states how many records were withheld, and may name nothing outside it (not_disclosed); the readable set, reach, and may_publish views are the operator's. Answers are cached per generation, request, and caller.",
         "security": [
           {
             "tailnet": []

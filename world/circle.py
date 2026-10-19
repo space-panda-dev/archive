@@ -24,12 +24,21 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Callable, Iterable
+
+from world import documents
 
 WORK_ORIGIN = ("archive.claim/work_origin", "1")
 SHARING_CONSENT = ("archive.claim/sharing_consent", "1")
 PUBLICATION_APPROVAL = ("archive.transition/publication_approval", "1")
 PUBLICATION_WITHDRAWAL = ("archive.transition/publication_withdrawal", "1")
+# ADR 0085, amended 2026-10-19: an approval states its class; a withdrawal
+# withdraws an approval of either version.
+PUBLICATION_APPROVAL_2 = ("archive.transition/publication_approval", "2")
+PUBLICATION_WITHDRAWAL_2 = ("archive.transition/publication_withdrawal", "2")
+APPROVALS = frozenset({PUBLICATION_APPROVAL, PUBLICATION_APPROVAL_2})
+WITHDRAWALS = frozenset({PUBLICATION_WITHDRAWAL, PUBLICATION_WITHDRAWAL_2})
 BAND_MEMBERSHIP = ("archive.claim/band_membership", "1")
 LEAD_SHEET = ("archive.claim/lead_sheet", "1")
 PERFORMANCE_WORK = {("archive.claim/performance_work", v) for v in ("1", "2", "3")}
@@ -41,7 +50,9 @@ OBJECT_ID = re.compile(r"urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4
 REVISION_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
 ORIGINS = ("own", "co_written", "others")
 DECISIONS = ("approve", "refuse")
+APPROVAL_DECISIONS = ("approve", "hold_back")
 CLASSES = ("private", "circle", "service", "open", "distribution")
+BEYOND_CIRCLE = ("service", "open", "distribution")
 ROLES = ("scratch", "shadow", "live")
 WRITES = ("dry-run", "commit")
 MAX_NAME = 200
@@ -512,12 +523,20 @@ class Readable:
     why: dict[str, str]
 
 
+def _withdrawn(records: Iterable[dict[str, Any]]) -> dict[str, str]:
+    """Each withdrawn approval revision, and the withdrawal (of either
+    version) that withdrew it."""
+    return {ref.get("revision_id"): r["revision_id"] for r in records if _contract(r) in WITHDRAWALS
+            for ref in r.get("refs", []) if isinstance(ref, dict) and ref.get("role") == "withdraws"}
+
+
 def _approvals_to(records: list[dict[str, Any]], destination: str, operator: str) -> list[dict[str, Any]]:
-    withdrawn = {rid for r in records if _contract(r) == PUBLICATION_WITHDRAWAL
-                 for ref in r.get("refs", []) if ref.get("role") == "withdraws"
-                 for rid in [ref.get("revision_id")]}
+    """Live approvals to the circle: version 1, which reaches no further than
+    the circle, and version 2 whose class is `circle`."""
+    withdrawn = _withdrawn(records)
     return [r for r in records
-            if _contract(r) == PUBLICATION_APPROVAL
+            if (_contract(r) == PUBLICATION_APPROVAL
+                or (_contract(r) == PUBLICATION_APPROVAL_2 and (r.get("payload") or {}).get("class") == "circle"))
             and r["revision_id"] not in withdrawn
             and (r.get("payload") or {}).get("destination") == destination
             and (r.get("payload") or {}).get("decision") == "approve"
@@ -586,6 +605,148 @@ def readable_by(caller: str, operator: str, circle_set: Readable, records: dict[
         return frozenset(records)
     own = {rid for rid, r in records.items() if r.get("agent") == caller}
     return circle_set.revisions | own
+
+
+# ---------------------------------------------------------------------------
+# Publication beyond the circle (ADR 0085, amended 2026-10-19)
+
+
+def check_publication_approval_v2(claim: dict[str, Any], targets: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Check an `archive.transition/publication_approval` version 2 record:
+    version 1 with the `class` of its destination. Whether an approval
+    beyond the circle was allowed is `beyond_circle`, which Door applies on
+    the day of the transition and `may_publish` on the day asked."""
+    where = "publication approval"
+    record = _closed(claim, {"payload", "refs"}, {"revision_id", "agent"}, where)
+    payload = _closed(record["payload"], {"destination", "decision", "class"}, set(), f"{where} payload")
+    _text(payload["destination"], f"{where} destination", MAX_NAME)
+    if payload["decision"] not in APPROVAL_DECISIONS:
+        raise CircleError(f"{where} decision must be one of {', '.join(APPROVAL_DECISIONS)}")
+    if payload["class"] not in CLASSES:
+        raise CircleError(f"{where} class must be one of {', '.join(CLASSES)}")
+    by_role = _refs_by_role(record["refs"], {"authorizer": (1, 1), "covers": (1, 1 << 30)}, where)
+    _entity(targets, by_role["authorizer"][0], "person", f"{where} authorizer")
+    for ref in by_role["covers"]:
+        if _target(targets, ref, f"{where} covers").get("shape") != "claim":
+            raise CircleError(f"{where} covers pins Claim revisions")
+    return payload
+
+
+def check_publication_withdrawal_v2(claim: dict[str, Any], targets: dict[str, dict[str, Any]],
+                                    others: Iterable[dict[str, Any]] = ()) -> dict[str, Any]:
+    """Check an `archive.transition/publication_withdrawal` version 2 record:
+    version 1 whose `withdraws` pins an approval of version 1 or 2. With
+    `others`, the archive's other records, also that no withdrawal of either
+    version withdraws the same approval."""
+    where = "publication withdrawal"
+    record = _closed(claim, {"payload", "refs"}, {"revision_id", "agent"}, where)
+    payload = _closed(record["payload"], set(), {"reason"}, f"{where} payload")
+    if "reason" in payload:
+        _text(payload["reason"], f"{where} reason", MAX_REASON)
+    by_role = _refs_by_role(record["refs"], {"authorizer": (1, 1), "withdraws": (1, 1)}, where)
+    _entity(targets, by_role["authorizer"][0], "person", f"{where} authorizer")
+    withdrawn = by_role["withdraws"][0]
+    target = _target(targets, withdrawn, f"{where} withdraws")
+    if target.get("shape") != "claim" or _contract(target) not in APPROVALS:
+        raise CircleError(f"{where} withdraws a publication approval of version 1 or 2")
+    for other in others:
+        if other.get("revision_id") != record.get("revision_id") and _contract(other) in WITHDRAWALS \
+                and withdrawn["revision_id"] in _ref_revisions(other, "withdraws"):
+            raise CircleError(f"{where}: {withdrawn['revision_id']} is already withdrawn by {other['revision_id']}")
+    return payload
+
+
+def _ref_revisions(record: dict[str, Any], role: str) -> list[str]:
+    return [r.get("revision_id") for r in record.get("refs", []) if isinstance(r, dict) and r.get("role") == role]
+
+
+def _as_world(record: dict[str, Any]) -> dict[str, Any]:
+    """A record as `documents.reach` reads one: `contract`, an Entity's
+    `kind`, `at`, and `supersedes` as references."""
+    out = dict(record)
+    contract = _contract(record)
+    if contract:
+        out["contract"] = contract
+    if record.get("shape") == "entity" and "kind" not in out:
+        out["kind"] = (record.get("payload") or {}).get("kind")
+    out["supersedes"] = [{"revision_id": rid} for rid in _superseded_ids(record)]
+    out.setdefault("at", "")
+    return out
+
+
+def reacher(records: dict[str, dict[str, Any]], operator: str, today: date) -> documents.Reacher:
+    """Reach over these records, in either envelope form, read once."""
+    return documents.Reacher([_as_world(r) for r in records.values()], operator, today)
+
+
+def beyond_circle(payload: dict[str, Any], covers: list[str], records: dict[str, dict[str, Any]], operator: str,
+                  today: date, reach: documents.Reacher | None = None) -> list[str]:
+    """What blocks an approval beyond the circle on `today` (S-30, S-32):
+    for an `approve` of class service, open, or distribution, each covered
+    revision's object must reach the class by sensitivity and by rights (the
+    strictest claim winning), and ADR 0088's sharing gate must pass for the
+    destination, so every co-writer of a co-written Work the covered
+    revisions touch has a head `approve` consent naming the destination
+    exactly and covering every covered revision. Returns one line per
+    blocker, naming the object, label, statement, writer, and revision;
+    empty when nothing blocks it. Door refuses by the same rule on the UTC
+    date of the transition; no override past a sensitivity limit is
+    defined."""
+    cls = payload.get("class")
+    if payload.get("decision") != "approve" or cls not in BEYOND_CIRCLE:
+        return []
+    reach = reach or reacher(records, operator, today)
+    level = CLASSES.index(cls)
+    blockers: list[str] = []
+    for rid in covers:
+        record = records.get(rid)
+        if record is None:
+            blockers.append(f"{rid} is not a revision in the archive")
+            continue
+        found = reach.reach(record["object_id"])
+        for kind, limit in (("sensitivity", found.labelled), ("rights", found.rights)):
+            if level > CLASSES.index(limit):
+                blockers.append(f"{rid} ({record['object_id']}): its {kind} lets it reach no further than {limit}")
+        for line in found.why:
+            limit = line.rsplit("no further than ", 1)[-1]
+            if limit in CLASSES and level > CLASSES.index(limit):
+                blockers.append(f"{rid}: {line}")
+    gate = sharing_gate(covers, payload.get("destination"), cls, None, records, operator)
+    for writer, rid in gate.missing:
+        blockers.append(f"co-writer {writer} has no head approve consent to {payload.get('destination')!r} "
+                        f"covering {rid}")
+    return blockers
+
+
+def may_publish(approval: str, records: dict[str, dict[str, Any]], operator: str, today: date) -> dict[str, Any]:
+    """Whether a publication approval still permits publication on `today`,
+    and if not, everything that blocks it (ADR 0085, amended 2026-10-19): it
+    is not the head, is withdrawn, holds back, is version 1 (which states no
+    class and reaches no further than the circle), or is to the circle or
+    private; or `beyond_circle` blocks it. A publisher calls this when it
+    publishes, because rights expire and consents change. A view: computed,
+    never stored."""
+    record = records.get(approval)
+    if record is None or _contract(record) not in APPROVALS:
+        raise CircleError(f"{approval} is not a publication approval", "view_subject_not_found")
+    payload = record.get("payload") or {}
+    blockers: list[str] = []
+    superseding = sorted(r["revision_id"] for r in records.values() if approval in _superseded_ids(r))
+    if superseding:
+        blockers.append(f"the approval is not the head: {', '.join(superseding)} supersedes it")
+    withdrawn = _withdrawn(records.values())
+    if approval in withdrawn:
+        blockers.append(f"the approval is withdrawn by {withdrawn[approval]}")
+    if payload.get("decision") != "approve":
+        blockers.append(f"the approval's decision is {payload.get('decision')}, not approve")
+    if _contract(record) == PUBLICATION_APPROVAL:
+        blockers.append("a version 1 approval states no class and reaches no further than the circle")
+    elif payload.get("class") not in BEYOND_CIRCLE:
+        blockers.append(f"the approval's class is {payload.get('class')}, which is not beyond the circle")
+    else:
+        blockers += beyond_circle(payload, _ref_revisions(record, "covers"), records, operator, today)
+    return {"approval": approval, "destination": payload.get("destination"), "class": payload.get("class"),
+            "on": today.isoformat(), "may_publish": not blockers, "blockers": blockers}
 
 
 # ---------------------------------------------------------------------------
