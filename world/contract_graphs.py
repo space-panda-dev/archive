@@ -33,7 +33,8 @@ from typing import Any, Callable
 
 from pyoxigraph import Literal, NamedNode, Quad, Store
 
-from world import catalogue, circle, documents, exports, form, harmony, judgments, lead_sheets, notes, tonality
+from world import (catalogue, circle, documents, envelope_rules, exports, form, harmony, judgments, lead_sheets, notes,
+                   tonality)
 
 ARCH = "urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#"
 RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
@@ -262,6 +263,7 @@ def recheck(record: dict[str, Any], contract: tuple[str, str], lookups: Lookups)
     """Re-check one record by its contract's module; raise ContractGraphError."""
     try:
         RECHECKS[contract](record, lookups)
+        envelope_rules.check(record, contract, lookups.entity_kind, lookups.records)
     except ContractGraphError:
         raise
     except (ValueError, KeyError, TypeError) as exc:
