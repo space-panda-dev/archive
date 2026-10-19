@@ -2,7 +2,7 @@
 """Run an enrichment tool against an archive's records and propose its result.
 
     enrich probe --archive <dir> --artifact <object id> [--staging <annex>] [--export <file>] [--dry-run]
-    enrich detect --archive <dir> --artifact <object id> [--stream <claim id>] [--preset jam|show]
+    enrich detect --archive <dir> --artifact <object id> [--stream <claim id>] [--preset jam|show|studio]
                   [--staging <annex>] [--dry-run]
     enrich match --archive <dir> (--selection | --occurrence) <object id> --limit <decimal>
                  [--staging <annex>] [--dry-run]
@@ -637,7 +637,7 @@ def main(argv: list[str] | None = None) -> int:
     detect = commands.add_parser("detect", help="suggest spans of an Artifact's audio stream and propose them")
     detect.add_argument("--artifact", required=True, help="the Artifact's object identifier")
     detect.add_argument("--stream", help="the audio_stream claim to measure against, when there are several")
-    detect.add_argument("--preset", default="jam", help="the detector preset: jam or show")
+    detect.add_argument("--preset", default="jam", help="the detector preset: jam, show, or studio")
     common(detect)
     match = commands.add_parser("match", help="compare a selection or occurrence with the occurrences linked to "
                                               "each Work and propose work_match claims")

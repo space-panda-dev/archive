@@ -36,9 +36,9 @@ import numpy as np
 
 import probe
 
-AGENT = "pkg:generic/archive-enrich-detect@0.1.0"
+AGENT = "pkg:generic/archive-enrich-detect@0.2.0"
 METHOD_ID = "archive-enrich/detect-spans"
-METHOD_VERSION = "1"
+METHOD_VERSION = "2"
 CLASSES = ("music", "talk", "quiet", "unknown")
 MAX_SPANS = 10_000
 
@@ -46,8 +46,9 @@ MAX_SPANS = 10_000
 # is in decibels relative to full scale; nothing is a float, so a preset is
 # canonical JSON (ADR 0064). Ported from the V2 detector's `jam` and `show`
 # presets; the hop, chroma, quiet, and classification values are new or
-# translated from that detector's fixed constants. None of them has been
-# calibrated on real recordings in this form (README.md).
+# translated from that detector's fixed constants. Only the talk level gate
+# (`talk_reference_percentile`, `talk_margin_db`) was fitted on real
+# recordings (ADR 0091); the rest is uncalibrated (README.md).
 _COMMON = {
     "hop_ms": 100,
     "silence_threshold_db": -35,
@@ -64,6 +65,9 @@ _COMMON = {
     "classify_min_ms": 2000,
     "rank_threshold_percent": 35,
     "rank_band_percent": 5,
+    "assign_talk": 1,
+    "talk_reference_percentile": 80,
+    "talk_margin_db": 13,
 }
 PRESETS: dict[str, dict[str, int]] = {
     "jam": {**_COMMON,
@@ -75,12 +79,14 @@ PRESETS: dict[str, dict[str, int]] = {
              "window_ms": 5000, "min_transition_delta_db": 5, "min_transition_spacing_ms": 90000,
              "max_loudness_transitions": 30, "max_review_points": 70, "review_cluster_gap_ms": 45000},
 }
+# Masters and studio imports: `jam`'s edges, and never `talk` (ADR 0091).
+PRESETS["studio"] = {**PRESETS["jam"], "assign_talk": 0}
 _DURATIONS = ("silence_min_ms", "min_break_ms", "merge_gap_ms", "min_segment_ms", "window_ms",
               "min_transition_spacing_ms", "chroma_block_ms", "chroma_min_spacing_ms", "review_cluster_gap_ms",
               "quiet_min_ms", "classify_min_ms")
 _POSITIVE = ("max_silence_breaks", "max_loudness_transitions", "max_review_points", "chroma_kernel_blocks",
              "min_transition_delta_db", "chroma_min_hz", "chroma_max_hz")
-_PERCENTILES = ("chroma_peak_percentile", "quiet_floor_percentile")
+_PERCENTILES = ("chroma_peak_percentile", "quiet_floor_percentile", "talk_reference_percentile")
 
 # Krumhansl-Schmuckler key profiles, as the V2 detector's key confidence used.
 MAJOR_PROFILE = (6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88)
@@ -139,6 +145,10 @@ def check_preset(values: dict[str, Any]) -> dict[str, int]:
     if values["quiet_margin_db"] < 0 or not 0 <= values["rank_band_percent"] <= values["rank_threshold_percent"] \
             or values["rank_threshold_percent"] + values["rank_band_percent"] > 100:
         raise DetectorError("quiet_margin_db and the rank threshold and band must leave a usable range")
+    if values["assign_talk"] not in (0, 1):
+        raise DetectorError("assign_talk must be 0 (never talk) or 1")
+    if values["talk_margin_db"] < 0:
+        raise DetectorError("talk_margin_db must not be negative")
     return dict(values)
 
 
@@ -524,24 +534,40 @@ def percentile_ranks(values: list[float | None]) -> list[Fraction | None]:
     return ranks
 
 
-def classify(features: list[tuple[float | None, float | None]], p: dict[str, int]) -> list[str]:
-    """The V2 detector's session-relative rule: each span's key confidence
-    and spectral flatness are ranked among the recording's other unquiet
-    spans (flatness inverted), and the mean rank is `music` at or above the
-    threshold plus the band, `talk` at or below the threshold minus the
-    band, and otherwise, or without a rank, `unknown`."""
+def is_talk_level(level_db: float | None, reference_db: float, p: dict[str, int]) -> bool:
+    """The absolute evidence talk needs (ADR 0091): the span's median hop
+    level more than `talk_margin_db` below the recording's reference level,
+    and a preset that assigns talk at all."""
+    return p["assign_talk"] == 1 and level_db is not None and level_db < reference_db - p["talk_margin_db"]
+
+
+def classify(features: list[tuple[float | None, float | None, float | None]], reference_db: float,
+             p: dict[str, int]) -> list[str]:
+    """The V2 detector's session-relative rule, gated by level: each span's
+    key confidence and spectral flatness are ranked among the recording's
+    other unquiet spans (flatness inverted), and the mean rank is `music` at
+    or above the threshold plus the band. At or below the threshold minus
+    the band the rank only nominates `talk`: the span is `talk` when its
+    median level (the third feature) also passes `is_talk_level`, and
+    `unknown` when it does not. Between the two, or without a rank, it is
+    `unknown`."""
     key_ranks = percentile_ranks([f[0] for f in features])
     flat_ranks = [None if r is None else 1 - r for r in percentile_ranks([f[1] for f in features])]
     music = Fraction(p["rank_threshold_percent"] + p["rank_band_percent"], 100)
     talk = Fraction(p["rank_threshold_percent"] - p["rank_band_percent"], 100)
     classes = []
-    for key, flat in zip(key_ranks, flat_ranks):
+    for key, flat, (_, _, level) in zip(key_ranks, flat_ranks, features):
         ranks = [r for r in (key, flat) if r is not None]
         if not ranks:
             classes.append("unknown")
             continue
         score = sum(ranks, Fraction(0)) / len(ranks)
-        classes.append("music" if score >= music else "talk" if score <= talk else "unknown")
+        if score >= music:
+            classes.append("music")
+        elif score <= talk and is_talk_level(level, reference_db, p):
+            classes.append("talk")
+        else:
+            classes.append("unknown")
     return classes
 
 
@@ -595,15 +621,17 @@ def detect_hops(hops: Hops, stream: Stream, values: dict[str, int]) -> Detection
     features = []
     for s, e in unquiet:
         if (e - s) < p["classify_min_ms"] // hop * size:
-            features.append((None, None))
+            features.append((None, None, None))
             continue
         first, last = s // size, -(-e // size)
-        features.append((key_confidence(hops.chroma[first:last]), float(np.mean(hops.flatness[first:last]))))
-    classes = dict(zip(unquiet, classify(features, p)))
+        features.append((key_confidence(hops.chroma[first:last]), float(np.mean(hops.flatness[first:last])),
+                         float(np.median(level[first:last]))))
+    reference = float(np.percentile(level, p["talk_reference_percentile"]))
+    classes = dict(zip(unquiet, classify(features, reference, p)))
     spans = [(s, e, "quiet" if s in quiet_starts else classes[(s, e)]) for s, e in bounds]
     report = {"points": {name: len(found) for name, found in signals.items()}, "review_points": len(points),
               "regions": len(regions), "boundaries": len(edges), "quiet_runs": len(quiet),
-              "floor_db": round(floor, 3)}
+              "floor_db": round(floor, 3), "talk_reference_db": round(reference, 3)}
     return Detection(stream.sample_rate, count, size, spans, report)
 
 
