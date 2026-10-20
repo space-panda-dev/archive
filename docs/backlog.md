@@ -156,7 +156,7 @@ copies need up to 11.4 GB each on a 93-minute recording and a long one runs
 nearly alone). Left: the background queue idles the laptop because a job
 waiting for cores or memory holds every job behind it, and routed stems are
 offered here only after local work (backfill the queue behind a waiting
-job, by the recorded costs); Jiang over windows, so several copies fit;
+job, by the recorded costs); Jiang over windows, so several copies fit (built as `chords-jiang` 2, ADR 0112's last amendment);
 the usable proposal per recording or in parallel (23% of time-to-usable).
 The Mac worker now gets the content as WavPack (73% of the
 float WAV, decoding to its very samples) and can run two tasks at once:
