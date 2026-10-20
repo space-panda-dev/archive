@@ -157,9 +157,9 @@ command, `rg -n '^##' enrich/README.md`).
 | `enrich/extract.py` | 985 | feature-bank runner: `main` (`list`, `run` with `--region` and `--exact`, `equivalence`), `cut_region`, `run_default`, `run_from`; `Run.stand_in` |
 | `enrich/bank.py` | 1394 | `Catalog` (452; `within` for regions), `Bank` (1064; `candidates`, `stands_in`, `measured_over`, `probe_falls_short`): the bank format; equivalence records (`check_equivalence` 888, `decisions`); region keys (`key_of`, `check_region`), `covering`, bank requests (`ask`, `requests`) at the end (ADR 0112) |
 | `enrich/equivalence.py` | 262 | `measure`: the equivalence record of interchangeable entries; `MEASURES` (note F1, f0 cents, voicing) |
-| `enrich/regions.py` | 254 | song spans by precedence, `regions_of`, `regions_for`, `expensive`, `plan` per mode (ADR 0112); tests `enrich/test_regions.py` |
+| `enrich/regions.py` | 259 | song spans by precedence, `regions_of`, `regions_for`, `expensive`, `plan` per mode (ADR 0112); tests `enrich/test_regions.py` |
 | `enrich/remote.py` | 502 | extractor runs through Spool: `put`, `work`, `collect` (ADR 0090) |
-| `enrich/backfill.py` | 1053 | `enrich backfill` (ADR 0112): `plan` (modes from `regions.plan`, region jobs, requests first), `Planner.state` (reads the bank through `Bank`, over a region through `Catalog.within`), `unit_order` (probes first), `layout`/`copies`, `check_remote` (stand-in routing), `Runner` (the pool and the Spool fan-out); tests `enrich/test_backfill.py` |
+| `enrich/backfill.py` | 1591 | `enrich backfill` (ADR 0112 and its amendment): `Planning`/`plan` (modes from `regions.plan`, region jobs, requests first, `request_key`), `Schedule.tier` (fast or background), `prioritise`, `projection` (time to usable and to done), `Planner.state` (reads the bank through `Bank`, over a region through `Catalog.within`), `unit_order` (probes first), `layout`/`copies`, `check_remote` (stand-in routing), `Runner` (the pool by `Job.priority`, the background held until usable, the Spool window, `--follow` intake), `Proposals`, `Follow`; tests `enrich/test_backfill.py` |
 | `enrich/media.py`, `waveform.py`, `derived.py` | 193, 161, 62 | derived media (ADR 0069) |
 | `enrich/support.py` | 291 | test support: synthetic audio, scratch archives |
 | `enrich/extractors/<id>/` | | `extractor.json` + program; longest: `quality/quality.py` 1317, `tonal/tonal.py` 986, `structure/structure.py` 871, `rhythm/meter.py` 821 |
@@ -181,8 +181,9 @@ Stand-in stems by a measured tolerance (ADR 0090's amendment) are built:
 `Bank.candidates`; tests `enrich/test_equivalence.py`
 ([format](docs/feature-bank.md#interchangeable-entries)). Bulk import (ADR
 0112) is built: `enrich backfill` with its modes, region entries, bank
-requests and song regions; what is left (`--follow`, readers of region
-entries, the region stems mismatch) is step 0 of
+requests and song regions, the fast tier first (every recording usable)
+and the background by priority, and `--follow`; what is left (readers of
+region entries, the region stems mismatch) is step 0 of
 [docs/backlog.md](docs/backlog.md).
 Pitfall: the backfill's job events are `ran`/`failed`; `done` is only its
 last line.

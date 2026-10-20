@@ -287,8 +287,10 @@ experiment floor gets its cost axis from this.
 
 ## For the operator to confirm
 
-1. The expensive threshold (0.04 CPU-seconds per audio-second), and that it
-   is measured on the bank's machine.
+1. The expensive threshold, and that it is measured on the bank's machine:
+   proposed 0.04 CPU-seconds per audio-second, raised to 0.05 by the
+   [amendment](#amendment-2026-10-20-usable-first-the-rest-in-the-background)
+   once the cost gate measured `chords-chordino` at 0.042.
 2. The region margin and merge gap: proposed, 10 s each side and merging
    regions less than 30 s apart.
 3. The precedence of song spans: occurrences, then plain selections, then
@@ -306,4 +308,138 @@ experiment floor gets its cost axis from this.
 6. Under `songs`, `asr-whisper` eager for voice notes and on demand for
    rehearsals.
 7. When the GPU worker is away, the laptop separates (proposed default:
-   yes in `eager`, no in `songs`).
+   yes in `eager`, no in `songs`). Superseded by the amendment: every mode
+   has a limit, and free cores here take routed work in every mode.
+
+## Amendment (2026-10-20): usable first, the rest in the background
+
+Status: accepted (operator, 2026-10-20) for the direction: change what is
+waited for, a fast pass over everything first, stems and what measures them
+in the background by priority, anything opened ahead of all of it, and
+time-to-usable reported next to time-to-done. The numbers and the exact
+line of "usable" are the operator's to confirm (below).
+
+**Why.** Measured in the first round, `--eager` on the laptop alone runs at
+0.337 seconds per audio-second saturated, so the 23-hour shadow takes 6-8
+hours before anything new can be read; three quarters of that is `stems`.
+Nothing a reader needs first (chords, sections, key, tempo) waits on a stem.
+
+### Usable
+
+**A recording is usable when** it is probed (its `audio_stream` claim is
+admitted), the bank holds a whole-content entry (or a stand-in) of every
+unit of the **fast tier** for it, and an `enrich propose --all` has run
+after the last of them was made, so its chords (`chords-jiang`,
+`chords-chordino`), beats and bars (`rhythm`), key and tuning (`tonal`) and
+sections (`structure`) are admitted claims; with `--world-store`, World has
+been refreshed after that proposal, so they are searchable. Nothing that
+measures a stem is part of it. A region entry does not count (no reader
+takes one yet); under `songs`, where `chords-jiang` is expensive and made
+over song regions, a recording is usable without Jiang's chords.
+
+**The fast tier** is every unit that measures the content itself (no `--from`
+feature), prefers no feature, needs only fast units, and whose recorded cost
+is at most `fast_above` CPU-seconds per audio-second (proposed 0.2). By the
+cost gate's baseline that is `rhythm` (0.032), `tonal` (0.028),
+`chords-jiang` (0.151), `chords-chordino` (0.042) and `structure` (0.003);
+`frames` comes with what needs it. A configuration may set an extractor's
+`tier` outright. Everything else is the **background tier**: `stems`
+(1.445), `f0-pesto` on each stem (0.186, 0.174), `melody` (0.076, it prefers
+the vocal stem), `tonal` on the bass stem (0.026) and `notes-basic-pitch`
+(0.107).
+
+**Time-to-usable** is from the backfill's start until every recording it
+found is usable (the `usable` event; `time_to_usable_s` in `done`);
+**time-to-done** until everything the mode asks for is made and proposed
+(`time_to_done_s`). The dry run projects both from the recorded costs: the
+fast tier's CPU-seconds (times a load factor of 1.15, the measured rise
+under a full machine) over the cores, and then the background over the cores
+and the worker together. Both are the headline numbers, and both are
+cost-gated through the per-unit gate.
+
+### Order
+
+1. **Requests** (`requests/`), in either tier, ahead of everything; what a
+   request waits for (the stems a measure of a stem needs) is promoted with
+   it. A request is removed once its entry is made, or at planning when it
+   already is.
+2. **The fast tier over every recording**, then `propose --all`. No
+   background job starts before that proposal has run.
+3. **The background tier by recording**: song recordings first (any song
+   region by the precedence above), then the most recently admitted (the
+   first `at` of the Artifact's records: the archive holds no recording date
+   a scheduler could read), then the rest; within a recording, what others
+   wait for first. Proposals run in batches as background units land, at
+   most every `propose_every_seconds` (900), and once at the end.
+
+**`--follow`** (needs `--commit`) keeps the pool running: it reads new
+requests every `poll_seconds` and plans them first, and looks for new
+admissions every `rescan_seconds` (600: probe, plan, fast tier first),
+until the unit is stopped or `--follow-seconds` pass. **A request is made
+only under its own key.** The scheduler computes the key its configuration
+gives what the request asks for, as `bank.ask` computes it; when that is
+not the request's key, the asker reads with other parameters, so what the
+scheduler would make would never answer it: the request is reported and
+kept. The relay's `bank_parameters` must therefore be the backfill
+configuration's `parameters` (none on the shadow today).
+
+### The pool
+
+- **A copy is reserved the cores it uses**, not its thread count: a
+  `cores` setting beside `threads`. `chords-chordino`'s `threads` parameter
+  is 3 and part of its key, but it uses one core (CPU time equals wall time),
+  so it is reserved 1; `chords-jiang` (3 threads, 1.7 cores used) 2;
+  `notes-basic-pitch` is held to 1 thread and uses 3.4, so it is reserved 3.
+  No extractor version changes.
+- **The recorded costs are the cost gate's baseline** (2026-10-20), as
+  CPU-seconds per audio-second of one pass, in `backfill.SETTINGS` and
+  `regions.PROFILED_COSTS`; the threshold for expensive moves to 0.05, between
+  `chords-chordino` (0.042) and `melody` (0.076), so the units the span
+  detector and matching read stay whole.
+- **The worker.** At most `spool_in_flight` (2) routed tasks are with the
+  spool at once, chosen in the queue's order, so a request is the next task
+  put; with `overflow` (default on), free cores here take routed work the
+  worker is not holding. **No mode waits for ever**: a worker that files
+  nothing for `local_when_away_seconds` (songs 1800, eager 900, on-demand
+  600) plus the time its oldest task should take (`remote_cost` times its
+  audio) is absent; its tasks are made here and nothing more is put to it
+  for that long.
+
+### Projected on the shadow (22.8 h of audio, the laptop's 8 cores)
+
+From the recorded costs, not measured end to end:
+
+| | fast tier | usable after | background | done after |
+|---|---|---|---|---|
+| laptop alone | 0.294 core-s per audio-s | about 50 min | 2.32 core-s per audio-s | about 7.4 h |
+| laptop, Mac at 0.277 (today) | | about 50 min | | about 4.6 h |
+| laptop, Mac at 0.10 (FLAC, two tasks) | | about 50 min | | about 3.0 h |
+| `chords-jiang` in the background | 0.121 | about 21 min | | about the same |
+
+**Measured** (2026-10-20, laptop only, `--eager`, the two profiled
+recordings, 3269 s of audio, a scratch copy and a fresh bank, no
+proposers): usable after 183 s (projected 234 s), done after 3180 s (round
+1, without tiers: 2921 s). With two recordings the end is one recording's
+`stems` on one two-thread copy, now started after the fast tier, so the
+tiers cost 9% of time-to-done there and buy usable 17 times sooner; at the
+shadow's scale the background is bound by throughput, not by that tail.
+
+The laptop's background share below the Mac's stems (`f0-pesto` twice,
+`notes-basic-pitch`, `melody`) is 0.65 core-s per audio-s, 1.9 h alone on
+the shadow: with stems off the laptop, it bounds time-to-done until
+`f0-pesto` moves to the GPU.
+
+### For the operator to confirm (amendment)
+
+1. The line of "usable" above, and that `chords-jiang` is in it (about 50
+   minutes on the shadow) rather than made first in the background (about
+   21 minutes to usable with Chordino's chords): `fast_above` 0.2, or
+   `tier: background` for `chords-jiang`.
+2. "Most recent" as the Artifact's first admission until a recording date
+   exists.
+3. The absent-worker limits per mode (1800, 900, 600 s, plus the task's
+   expected time), two tasks in flight, and the laptop taking overflow in
+   every mode.
+4. Background proposals at most every 15 minutes.
+5. That the background never starts before the fast tier's proposal, even
+   though cores idle while it runs.

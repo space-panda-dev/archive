@@ -153,7 +153,8 @@ class Plans(unittest.TestCase):
     def test_expensive_is_the_measured_cost_above_the_threshold(self) -> None:
         self.assertEqual(sorted(e for e in self.EXTRACTORS if regions.expensive(e)),
                          ["chords-jiang", "f0-pesto", "melody", "notes-basic-pitch", "stems"])
-        self.assertTrue(regions.expensive("rhythm", {"rhythm": 0.05}))
+        self.assertTrue(regions.expensive("rhythm", {"rhythm": 0.06}))
+        self.assertFalse(regions.expensive("chords-chordino"))  # 0.042: the threshold was 0.04 until measured
         self.assertFalse(regions.expensive("stems", {"stems": 0.5}, threshold=1))
 
     def test_each_mode_plans_what_it_should(self) -> None:

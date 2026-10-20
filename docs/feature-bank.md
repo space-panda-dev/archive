@@ -101,7 +101,12 @@ are never stitched together.
 measured when the content is a preferred input. A request is written to a
 temporary name and linked into place, so asking again finds the same file and
 the first asker's request stands (`bank.ask`); `bank.requests` lists them and
-refuses a damaged or misnamed one rather than skipping it.
+refuses a damaged or misnamed one rather than skipping it. The scheduler
+(`enrich backfill`, ahead of all other work; with `--follow`, as they
+arrive) removes a request once its entry is made, and makes one only when
+the key its own configuration gives is the request's: an asker with other
+parameters would never read what it made, so that request is reported and
+kept.
 
 ## Layout
 

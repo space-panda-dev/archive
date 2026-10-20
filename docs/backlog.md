@@ -137,10 +137,14 @@ region stems disagree with whole stems over the same span (bass SNR
 region entry yet (`enrich propose` and the relay read whole entries), so a
 region entry is made and never read. A region that is the whole recording
 is made whole. Next levers by size: the Mac worker's throughput (two tasks
-at once, or FLAC instead of float WAV), f0-pesto on MPS, the layout's
-reserved widths (chordino reserves 3 cores and uses 1, basic-pitch reserves
-1 and uses about 3), then the cost gate's numbers replacing `SETTINGS` and
-`regions.PROFILED_COSTS`.
+at once, or FLAC instead of float WAV), f0-pesto on MPS. Round 2 (ADR
+0112's amendment): the backfill makes every recording usable first (the
+fast tier, then a proposal) and stems and what measures them in the
+background by priority, requests first; it reports time-to-usable and
+time-to-done, reserves each copy the cores it uses, takes its costs from
+the cost gate's baseline, and never waits for ever for an absent worker.
+Projected on the shadow: usable in about 50 minutes, done in about 4.6
+hours with the Mac as it is (not yet measured end to end).
 
 Four pieces can be built at once, each on its own branch. `enrich/bank.py`
 is shared: **gpu** owns `Bank.entry`'s lookup and the manifest check,
@@ -163,12 +167,9 @@ scheduler has added it.
   refused at the start unless a passing equivalence record is in the bank,
   with a worker entry that does not stand in made here; `f0-pesto --from
   stems/vocals` ordered before `melody` so its probe is read. Left:
-  `--follow` (serve `requests/` as they arrive) and removing a request once
-  its entry is made; region jobs on Spool (a task carries no region until
-  triage's task `/2`); the `bench-cost` suite, whose baselines replace both
-  the scheduler's `SETTINGS` costs and `regions.PROFILED_COSTS`, which
-  differ today (f0-pesto per unit against per recording); a first dry run
-  on a copy of the shadow.
+  region jobs on Spool (a task carries no region until
+  triage's task `/2`); declaring the `bench-cost` suite with wf; a first
+  dry run on a copy of the shadow, and a measured time-to-usable there.
   As decided: `enrich/backfill.py` and `enrich/enrich.py backfill`
   (ADR 0112's flags). Plan from the archive (the Artifacts `enrich propose
   --all` finds) and the bank: compute the mode's keys, drop those present
