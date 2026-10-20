@@ -235,7 +235,7 @@ class ArchiveReader:
         reader.load(export)
         return reader
 
-    def load(self, export: dict[str, Any]) -> None:
+    def load(self, export: dict[str, Any], installed: dict[tuple[str, str], str] | None = None) -> None:
         self.export = export
         self.snapshot: str | None = export.get("snapshot")
         self.archive_id: str = export["archive_id"]
@@ -247,7 +247,12 @@ class ArchiveReader:
         for record in self.records:
             if record["revision_id"] not in superseded:
                 self.heads[record["object_id"]] = record
-        # The installed bundles, by the digest Door resolves a citation by.
+        # The installed bundles, by the digest Door resolves a citation by:
+        # canonical JSON of every bundle takes about a second on a 0.0.10
+        # archive, so a refresh (same archive, same specification) keeps them.
+        if installed is not None:
+            self.installed = installed
+            return
         self.installed: dict[tuple[str, str], str] = {}
         for bundle in export["contracts"]:
             self.installed[(bundle["id"], bundle["version"])] = digest_of(canonical(bundle))
@@ -277,7 +282,7 @@ class ArchiveReader:
                                f"{since.get('archive_id')} at {since.get('spec')} while it was being read")
         known = set(self.by_revision)
         added = [record for record in since["records"] if record["revision_id"] not in known]
-        self.load({**self.export, "snapshot": since["snapshot"], "records": [*self.records, *added]})
+        self.load({**self.export, "snapshot": since["snapshot"], "records": [*self.records, *added]}, self.installed)
 
     def citation(self, contract: tuple[str, str]) -> dict[str, str]:
         digest = self.installed.get(contract)

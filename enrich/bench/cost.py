@@ -32,7 +32,9 @@ baseline is `baselines/cost/backfill.json`, and the gate fails when
 Each unit carries its backfill tier, and the result carries the two
 headline numbers per audio-second as the backfill projects them on this
 machine alone: `time_to_usable_per_audio_s` (the fast tier's CPU seconds
-times the load factor, over the cores) and `time_to_done_per_audio_s` (every
+times the load factor, over the cores; `time_to_usable_clip_s` adds the
+recorded seconds of one recording's usable proposal, `usable_proposal_s`,
+from `backfill.SCHEDULE`, which this suite does not measure) and `time_to_done_per_audio_s` (every
 unit's, likewise). A baseline recorded before tiers is compared by the
 result's tiers.
 
@@ -125,7 +127,8 @@ def plan(config_path: Path, cores: int) -> list[dict[str, Any]]:
     order = backfill.unit_order(list(schedule.units), catalog)
     return [{"unit": u.name, "extractor": u.extractor, "source": u.source,
              "threads": shape[u.extractor]["threads"], "tier": schedule.tier(u, catalog),
-             "load_factor": schedule.load_factor} for u in order]
+             "load_factor": schedule.load_factor,
+             "propose_s": schedule.propose_seconds_per_recording} for u in order]
 
 
 def fast_sum(rows: list[dict[str, Any]], tiers: dict[str, str]) -> float:
@@ -178,7 +181,7 @@ def measure(root: Path, cores: int | None = None, runner: Runner = run_unit, log
             if not isinstance(answer, dict) or answer.get("status") != "ok":
                 detail = answer.get("detail") if isinstance(answer, dict) else answer
                 raise BenchError(f"cost: {unit['unit']} failed: {str(detail)[-600:]}")
-            row = {**{k: v for k, v in unit.items() if k != "load_factor"}, "cpu_s": round(cpu, 2), "wall_s": round(wall, 2),
+            row = {**{k: v for k, v in unit.items() if k not in ("load_factor", "propose_s")}, "cpu_s": round(cpu, 2), "wall_s": round(wall, 2),
                    "cpu_per_audio_s": round(cpu / seconds, 4), "status": answer.get("status")}
             rows.append(row)
             log(f"  {unit['unit']:<38} {unit['threads']} thr  {cpu:7.1f} cpu s  {wall:7.1f} s  "
@@ -186,12 +189,18 @@ def measure(root: Path, cores: int | None = None, runner: Runner = run_unit, log
     total = sum(r["cpu_per_audio_s"] for r in rows)
     fast = fast_sum(rows, {r["unit"]: r["tier"] for r in rows})
     load = units[0]["load_factor"] if units else 1.0
+    proposal = units[0]["propose_s"] if units else 0.0
     return {"contract": CONTRACT, "clip_sha256": digest[7:], "audio_seconds": round(seconds, 3),
             "machine": platform.machine(), "cores": cores,
             "finished": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "units": rows, "total_cpu_per_audio_s": round(total, 4),
             "fast_cpu_per_audio_s": round(fast, 4), "load_factor": load,
             "time_to_usable_per_audio_s": round(fast * load / cores, 4),
+            # The usable proposal is not measured here (it needs an archive and
+            # Door): the recorded seconds of one recording's, the tail after
+            # the fast pass that proposals recording by recording leave.
+            "usable_proposal_s": proposal,
+            "time_to_usable_clip_s": round(seconds * fast * load / cores + proposal, 1),
             "time_to_done_per_audio_s": round(total * load / cores, 4),
             "bounds": {"total": TOTAL_BOUND, "unit": UNIT_BOUND, "unit_slack": UNIT_SLACK}}
 
