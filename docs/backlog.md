@@ -134,9 +134,10 @@ with its implementation in a later specification release.
   [ADR 0107](decisions/0107-multi-device-and-live.md),
   [ADR 0108](decisions/0108-live-analysis.md),
   [ADR 0109](decisions/0109-rehearsal-node.md),
-  [ADR 0110](decisions/0110-shared-clock.md)). Pad maps
-  ([ADR 0111](decisions/0111-pad-maps.md)) are not placed; they build on
-  lineage (step 1), sampler banks (step 2) and MIDI capture (step 5).
+  [ADR 0110](decisions/0110-shared-clock.md),
+  [ADR 0111](decisions/0111-pad-maps.md)). Pad maps come last within
+  step 5: they build on lineage (step 1), sampler banks (step 2) and MIDI
+  capture (step 5).
 - **Notification and watch spike.** A self-hosted push service on the
   tailnet with action buttons, and web push from a home-screen web app,
   first; whether actions and voice replies work on the watch is unverified.
