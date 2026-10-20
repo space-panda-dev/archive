@@ -508,7 +508,7 @@ parameters are in the manifest's descriptions and in the
 |---|---|---|---|
 | `beats-beatthis` | 1 | none | scalars `beat_count`, `downbeat_count`, `median_bpm`; events `beats`, `downbeats` |
 | `chords-chordino` | 1 | none | scalars `chord_count`, `seconds`; spans `chords` |
-| `chords-jiang` | 1 | none | scalars `chord_count`, `decoded_in_top3`; spans `chords`; files `readings` |
+| `chords-jiang` | 2 | none | scalars `chord_count`, `decoded_in_top3`; spans `chords`; files `readings` |
 | `frames` | 1 | none | series `hpcp`, `rms_db`, `centroid`, `rolloff`, `flatness`, `flux`, `onset_hfc`, `mfcc`, `melbands`; scalars `samples`, `seconds` |
 | `colour` | 3 | `frames`: centroid, hpcp, rms_db | series `colour`; files `palette`, `preview` |
 | `f0-pesto` | 2 | none | series `f0`, `level_db`; scalars `rows_from_tracker`, `loud_db` |

@@ -144,10 +144,13 @@ SETTINGS: dict[str, dict[str, Any]] = {
     "stems": {"threads": 2, "cores": 2, "memory_gb": 3.0, "cost": 1.445, "remote_cost": 0.223,
               "transport": "wavpack"},
     "f0-pesto": {"cost": 0.186, "memory_gb": 1.5},
-    # Jiang holds the whole recording's features: on the whole shadow its
-    # copies peaked at 11.4 GB resident on a 93-minute recording (round 2,
-    # 2026-10-20), and four 2 GB reservations sent the laptop into swap.
-    "chords-jiang": {"cores": 2, "cost": 0.151, "memory_gb": 2.0, "memory_gb_per_hour": 6.0},
+    # Version 1 held the whole recording's features: its copies peaked at
+    # 11.4 GB resident on a 93-minute recording (round 2, 2026-10-20). Version
+    # 2 holds a ten-minute sample's (2 GB at most, measured 1.8 GB on a 9-minute
+    # recording) and per hour only its spectrogram, features and outputs
+    # (about 0.6 GB, counted from their sizes; 0.8 reserved until measured on
+    # a long recording).
+    "chords-jiang": {"cores": 2, "cost": 0.151, "memory_gb": 2.0, "memory_gb_per_hour": 0.8},
     "notes-basic-pitch": {"cores": 3, "cost": 0.107, "memory_gb": 1.5},
     "melody": {"cost": 0.076},
     "chords-chordino": {"cores": 1, "cost": 0.042},

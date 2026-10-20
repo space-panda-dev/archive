@@ -1,8 +1,8 @@
 {
  "contract": "archive-extractor/1",
  "id": "chords-jiang",
- "version": "1",
- "description": "Jiang, Li, Wang, and Xia (ISMIR 2019) large-vocabulary chord recognition: the published five-model ensemble over its hybrid constant-Q spectrogram, decoded by its HMM over the submission chord list (sevenths, extensions, suspensions, inversions), with each decoded span's three most probable templates and their weights. Decodes the content again with librosa. Runs under the operator's jiang-python, from the repository checkout the operator configures as jiang-repo, so the archive's environment never imports PyTorch. CPU only, a fixed thread count.",
+ "version": "2",
+ "description": "Jiang, Li, Wang, and Xia (ISMIR 2019) large-vocabulary chord recognition: the published five-model ensemble over its hybrid constant-Q spectrogram, decoded by its HMM over the submission chord list (sevenths, extensions, suspensions, inversions), with each decoded span's three most probable templates and their weights. Decodes the content again with librosa, a block at a time. A recording longer than ten minutes is measured a chunk at a time, each convolutional layer normalised by its statistics over a ten-minute sample of the recording rather than all of it (version 2), so its memory is bounded. Runs under the operator's jiang-python, from the repository checkout the operator configures as jiang-repo, so the archive's environment never imports PyTorch. CPU only, a fixed thread count.",
  "command": [
   "${jiang-python}",
   "jiang.py",
@@ -17,6 +17,7 @@
   "librosa==0.11.0",
   "numpy==1.26.4",
   "scipy==1.17.1",
+  "soxr==1.1.0",
   "soundfile==0.14.0",
   "audioread==3.1.0",
   "python==3.11.17",
@@ -44,7 +45,8 @@
    "weight": "mean over the span's frames of the per-frame softmax over the decoder's chord templates of get_chord_tag_obs log-probabilities"
   },
   "device": "cpu",
-  "threads": 3
+  "threads": 3,
+  "windows": "a recording longer than 600 s: tuning and spectrogram 8192 frames at a time with 128 frames of audio either side; each convolutional layer normalised per channel by the mean and deviation over 600 s of it in blocks of 64 frames spread evenly, each with 10 frames either side; features 8192 frames at a time with 10 either side; the recurrent layer 8192 frames at a time each way, carrying its state; the decoder over the whole"
  },
  "outputs": {
   "chords": {

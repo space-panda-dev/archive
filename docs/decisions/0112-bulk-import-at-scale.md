@@ -530,3 +530,47 @@ whole-content only. Readers take region entries (`bank.RegionView`,
 data: confirm on the laptop with Demucs that a region's stems match the
 whole's above 90 dB (bass notes F1 at least 0.98), and add the bench's
 region test.
+
+## Amendment (2026-10-20): Jiang's memory is bounded (`chords-jiang` 2)
+
+Status: proposed on `fast3/jiang`; whether `chords-jiang` returns to the
+fast tier is the operator's.
+
+**Why it grew.** Version 1 held 16 channels of the whole recording's
+spectrogram in the networks' first layers, and librosa's tuning estimate
+held its whole short-time spectrum: about 2 GB plus 6 GB an hour.
+
+**What is the same.** The audio is decoded and resampled a block at a time,
+the tuning estimated and the constant-Q spectrogram computed a chunk at a
+time on the whole run's frame grid, the recurrent layer run a chunk at a
+time in each direction carrying its state, and the decoder keeps one row of
+scores: each gives version 1's values (the tuning and the decoder's choices
+exactly, the spectrogram to float rounding, 2.4e-7 relative). A recording
+of ten minutes or less runs the networks as version 1 did: on the laptop
+its spans and readings are byte for byte version 1's (a 554 s recording and
+a 240 s excerpt).
+
+**What differs, and the version.** Each convolutional layer normalises each
+channel over everything it is given (instance normalisation), so a single
+pass needs every layer's activations of the whole recording at once; doing
+it exactly a chunk at a time would cost about six passes of the network.
+Over ten minutes, version 2 measures those statistics over a sample of ten
+minutes of the recording (blocks of 64 frames spread evenly, each with the
+10 frames either side a frame's features can see) and then makes the
+features a chunk at a time with them. Its outputs can differ from a single
+pass, so it is version 2 (ADR 0074), a new key: version 1's entries are not
+read as version 2's. Normalising each ten-minute window by itself instead
+was measured and rejected: features 20-26% off and 94-98% of the time
+labelled alike. On a 240 s excerpt with the sample a third of it, 99.8% of
+the time is labelled alike (17%: 96.9%); version 1 itself labels 97.2% of
+the same passage alike when 12 s are cut from the end of the file, and 95.2%
+when they are cut from its start, so the sample's error is within how much
+the file's own extent already moves Jiang's labels. The agreement on whole
+long recordings is to be measured by a run queued after the live backfill.
+
+**Reservation.** `memory_gb` 2.0 and `memory_gb_per_hour` 0.8 (from the
+sizes held per hour, about 0.6 GB; to be replaced by the measured peak).
+With it a 93-minute recording reserves 3.2 GB, so three or four copies fit
+on the laptop beside the reserve, and Jiang could return to the fast tier
+(projected usable about 50 minutes on the shadow, against about 22 with it
+in the background).

@@ -197,10 +197,11 @@ SHIPPED = {
     "beats-beatthis": {"version": "1",
                        "code": "sha256:68c308ce04c2874d4f73399fe44491f667de4387e4e5e8760425b8f8ac1abab0",
                        "outside": {}},
-    # chords-jiang stays 1 when it pins its repository's code: a clean checkout
-    # of the pinned commit, which made every entry, makes the same bits.
-    "chords-jiang": {"version": "1",
-                     "code": "sha256:09b73beb0609bb1b62263370b8b2482c6ee79596131bddcfff021a738f81dc3c",
+    # chords-jiang pins its repository's code: a clean checkout of the pinned
+    # commit makes the same bits. 2 bounds its memory: over ten minutes, its
+    # convolutional layers are normalised by a sample's statistics.
+    "chords-jiang": {"version": "2",
+                     "code": "sha256:7a4760737d313db4842e8aa9e62fcbbe8baf8dc77bb4b7f6149ded975698aa4f",
                      "outside": {}},
     "chords-chordino": {"version": "1",
                         "code": "sha256:e404cea891963fd123d5d865c8f58ece5191bb5d0ab729aaf3d87de4426881ba",
