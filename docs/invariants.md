@@ -132,9 +132,11 @@ and each disclosure is recorded with the policy revision that allowed it.
 
 **INV-26. A limit binds until its author lifts it.** The strictest sensitivity
 claim on an object caps its disclosure, and a limit set by a person the content
-records is lifted only by that person. The operator may go past it only for one
-named destination, no further out than service, with a recorded reason.
-([ADR 0018](decisions/0018-people-in-the-archive.md))
+records, or a person who deposited it, is lifted only by that person. The
+operator may go past it only for one named destination, no further out than
+service, with a recorded reason.
+([ADR 0018](decisions/0018-people-in-the-archive.md),
+[ADR 0096](decisions/0096-origin-of-recordings.md))
 
 ## This repository
 

@@ -1,7 +1,11 @@
 # 0088. Bandmates read their circle and assert their own claims
 
 Status: accepted (operator, 2026-10-18); notes added 2026-10-19 (withheld
-counts, and from which specification the supersession rule applies)
+counts, and from which specification the supersession rule applies);
+amended 2026-10-19 by [ADR 0092](0092-internet-exposure.md),
+[ADR 0093](0093-audiences.md), and [ADR 0094](0094-peoples-writes.md)
+(internet members, audiences recorded in the archive, members' own writes
+and limits; accepted by the operator, 2026-10-19)
 
 Only the operator can reach the relay. ADR 0056 maps each allowed tailnet
 login to the person it acts as, refuses every draft that names anyone else,
@@ -407,3 +411,33 @@ claims Door admits.
   database; whose consent is needed must be a fact a person asserted, not
   whatever a source printed.
 - **The role decides commits by URL.** Rejected by ADR 0060 and still wrong.
+
+## Amendment, 2026-10-19: internet members, audiences, and members' writes
+
+Made on the acceptance of ADRs 0092, 0093, and 0094, which give the reasons
+and the rules. The text above is left as it was accepted; where it
+disagrees with this section, this section holds.
+
+- **Audiences replace the configured circle**
+  ([ADR 0093](0093-audiences.md)). A relay serves several named
+  audiences, each a destination of class circle whose membership is an
+  operator transition (`archive.transition/audience`) in the archive, not
+  relay configuration. Member, capacity, readable set, and withheld keep
+  their meanings, per audience; a caller in several audiences reads the
+  union. The relay stops reading the configured `circle` at the
+  specification release that installs the audience contract.
+- **Capacity depends on the ingress** ([ADR 0092](0092-internet-exposure.md)).
+  Over the tailnet the operator is never a member and reads everything, as
+  above, and tailnet logins bind only the operator; members come in over the
+  internet. The operator may be listed in an audience, and over the internet
+  the operator's login is a member, reading the union of the audiences that
+  list the operator's person, plus the operator's own records whose pins are
+  readable there. Listing never discloses the operator's records.
+- **What a member may send is a recorded grant**
+  ([ADR 0094](0094-peoples-writes.md)). The member contracts are grouped
+  into the abilities `annotate`, `cut`, and `admit`, granted per person by
+  operator transitions (`archive.transition/write_grant`), with `annotate`
+  and `cut` on by default. A member may now assert their own
+  `archive.claim/sensitivity` limit on content that records them (or that
+  they deposited, [ADR 0096](0096-origin-of-recordings.md)), which this
+  record above did not allow.

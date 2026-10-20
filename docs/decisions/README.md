@@ -21,7 +21,7 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0004](0004-deletion.md) | Deletion: retire and destroy |
 | [0005](0005-claims-review-and-authority.md) | Claims, review, and two kinds of authority |
 | [0006](0006-enrichment.md) | Enrichment derives without mutating, and stays reproducible |
-| [0007](0007-policy.md) | Policy declares desired state |
+| [0007](0007-policy.md) | Policy declares desired state (amended 2026-10-19 by 0105: the snapshot desire) |
 | [0008](0008-plan-and-apply.md) | Plan, then apply; history stays quiet |
 | [0009](0009-copies-and-custody.md) | Copies, custody, and storage |
 | [0010](0010-publication.md) | Publication: destinations, approval, and rights |
@@ -32,13 +32,13 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0015](0015-porting-from-v2.md) | Porting from the V2 spike by translation |
 | [0016](0016-disclosure.md) | Disclosure: content leaving the operator's custody |
 | [0017](0017-licensing.md) | Licensing: copyleft code, public-domain contracts |
-| [0018](0018-people-in-the-archive.md) | People in the archive who are not its operator |
+| [0018](0018-people-in-the-archive.md) | People in the archive who are not its operator (amended 2026-10-19 by 0096: depositors' limits) |
 | [0019](0019-publication-approval-is-a-transition.md) | Publication approval is a transition claim |
 | [0020](0020-archive-on-disk-layout.md) | The archive on-disk layout |
 | [0021](0021-portable-identifiers.md) | Portable archive and object identifiers |
 | [0022](0022-normative-record-envelope.md) | The normative record envelope |
 | [0023](0023-admission-and-staging.md) | Admission uses metadata proposals and git-annex staging |
-| [0024](0024-retire-and-destroy-records.md) | Retire and destroy records keep decisions, not execution state |
+| [0024](0024-retire-and-destroy-records.md) | Retire and destroy records keep decisions, not execution state (note 2026-10-19: lineage and containment dependents, 0098 and 0101) |
 | [0025](0025-versioned-json-ld-contexts.md) | JSON-LD contexts are local and versioned with their contracts |
 | [0026](0026-initialization-and-identity-allocation.md) | Initialization bootstraps one archive and one operator |
 | [0027](0027-core-payloads-and-installed-contracts.md) | Core payloads are closed; kind payloads use installed contracts |
@@ -70,7 +70,7 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0053](0053-fanned-out-record-and-content-paths.md) | Layout archive/2 fans out record and content paths |
 | [0054](0054-door-service-for-applications.md) | A long-running Door service for applications |
 | [0055](0055-incremental-world-refresh.md) | World refreshes incrementally |
-| [0056](0056-tailnet-relay.md) | A tailnet relay for the operator's browser |
+| [0056](0056-tailnet-relay.md) | A tailnet relay for the operator's browser (amended 2026-10-19 by 0092: an internet listener) |
 | [0057](0057-specification-contract-catalogs.md) | Each specification version lists its contracts |
 | [0058](0058-door-refusal-codes.md) | Door's refusals carry stable codes |
 | [0059](0059-world-read-contract.md) | World publishes a versioned read contract |
@@ -99,26 +99,26 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0082](0082-views-and-current.md) | Named views: the first current rule, correction overlay, differences, and chord names over the relay |
 | [0083](0083-form-and-work-meter.md) | Form is a claim, and a Work can have meter without a recording |
 | [0084](0084-lead-sheets.md) | A lead sheet is a claim that pins the parts it chose |
-| [0085](0085-documents-lyrics-rights.md) | Documents arrive through the relay; lyrics are timed by reference; sensitivity and rights are claims (amended 2026-10-19: syllables and their notes; Door checks an approval beyond the circle, World's `may_publish`) |
+| [0085](0085-documents-lyrics-rights.md) | Documents arrive through the relay; lyrics are timed by reference; sensitivity and rights are claims (amended 2026-10-19: syllables and their notes; Door checks an approval beyond the circle, World's `may_publish`; by 0092: the "circle" setting writes `GREEN`) |
 | [0086](0086-notes-and-melody.md) | Note events per part, and melody at two levels (amended 2026-10-19: articulation, written rhythm, the bass line) |
 | [0087](0087-tracklists-and-correspondence.md) | Releases list their tracks; artists, releases and recordings correspond to MusicBrainz and Discogs |
-| [0088](0088-bandmates.md) | Bandmates read their circle and assert their own claims |
+| [0088](0088-bandmates.md) | Bandmates read their circle and assert their own claims (amended 2026-10-19 by 0092, 0093 and 0094: internet members, audiences, members' writes) |
 | [0089](0089-practice-audio-and-exports.md) | Practice audio from the stems, transposition, and exports that are views until shared |
 | [0090](0090-extractor-runs-travel-through-spool.md) | An extractor run travels through Spool, and its files come back as result attachments |
 | [0091](0091-talk-needs-level.md) | Talk needs level, and a studio preset never says talk (amends 0066's presets) |
-| [0092](0092-internet-exposure.md) | Internet exposure through Cloudflare Access; internet logins are members (proposed) |
-| [0093](0093-audiences.md) | A relay has several named audiences (proposed) |
-| [0094](0094-peoples-writes.md) | People's writes: grants are transitions, and members set their own limits (proposed) |
-| [0095](0095-participation.md) | Participation is a contribution at session scope, and only the operator counts it (proposed) |
-| [0096](0096-origin-of-recordings.md) | Recordings and Artifacts have an origin (proposed) |
-| [0097](0097-rights-by-use.md) | Rights say which use they permit, and a clearance permits one use (proposed) |
-| [0098](0098-content-lineage.md) | Content lineage: an Artifact can say what it was made from (proposed) |
-| [0099](0099-samples.md) | A sample is a selection with a stem, a recipe and kinds, rendered on demand (proposed) |
-| [0100](0100-packs-and-collections.md) | Sample packs are releases, libraries are collections, and source paths are kept (proposed) |
-| [0101](0101-daw-projects.md) | A DAW project is an Entity with snapshots, its audio, and lineage to its bounces (proposed) |
-| [0102](0102-retrieval-index.md) | World keeps a second disposable store for facets, embeddings and text search (proposed) |
-| [0103](0103-voice-capture.md) | Voice notes arrive from phones, browsers and recorders, each its own Artifact (proposed) |
-| [0104](0104-transcription-and-speakers.md) | Transcripts come from local ASR runs, and speaker spans name consenting people (proposed) |
-| [0105](0105-notebook.md) | Notes are snapshotted as documents, and their links to the archive are claims (proposed) |
-| [0106](0106-set-lists-and-clocks.md) | A set list is a claim of intent, and a clock asserts its own meter (proposed) |
-| [0107](0107-multi-device-and-live.md) | Many devices capture one moment, MIDI is a source, and live responses wait on the node (proposed) |
+| [0092](0092-internet-exposure.md) | Internet exposure through Cloudflare Access; internet logins are members |
+| [0093](0093-audiences.md) | A relay has several named audiences |
+| [0094](0094-peoples-writes.md) | People's writes: grants are transitions, and members set their own limits |
+| [0095](0095-participation.md) | Participation is a contribution at session scope, and only the operator counts it |
+| [0096](0096-origin-of-recordings.md) | Recordings and Artifacts have an origin |
+| [0097](0097-rights-by-use.md) | Rights say which use they permit, and a clearance permits one use |
+| [0098](0098-content-lineage.md) | Content lineage: an Artifact can say what it was made from |
+| [0099](0099-samples.md) | A sample is a selection with a stem, a recipe and kinds, rendered on demand |
+| [0100](0100-packs-and-collections.md) | Sample packs are releases, libraries are collections, and source paths are kept |
+| [0101](0101-daw-projects.md) | A DAW project is an Entity with snapshots, its audio, and lineage to its bounces |
+| [0102](0102-retrieval-index.md) | World keeps a second disposable store for facets, embeddings and text search |
+| [0103](0103-voice-capture.md) | Voice notes arrive from phones, browsers and recorders, each its own Artifact |
+| [0104](0104-transcription-and-speakers.md) | Transcripts come from local ASR runs, and speaker spans name consenting people |
+| [0105](0105-notebook.md) | Notes are snapshotted as documents, and their links to the archive are claims |
+| [0106](0106-set-lists-and-clocks.md) | A set list is a claim of intent, and a clock asserts its own meter |
+| [0107](0107-multi-device-and-live.md) | Many devices capture one moment, MIDI is a source, and live responses wait on the node |

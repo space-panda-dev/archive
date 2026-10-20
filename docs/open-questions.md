@@ -48,12 +48,6 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
 - Should Door refuse new `work_match` version 1 claims, which pin no run, now
   that version 2 exists ([ADR 0067](decisions/0067-matches-and-alignments-pin-runs.md))?
   Version 1 stays installed for the records that cite it.
-- A `session_parts` claim does not say which recorder source it lists (the
-  Zoom H4essential's `TrLR` or `TrMic`); a client recomputes it from the
-  claim's name. Should a later contract version record the source, and the
-  primary one, in the claim
-  ([ADR 0070](decisions/0070-capture-import.md))?
-  ([ADR 0107](decisions/0107-multi-device-and-live.md), proposed, would answer this.)
 - How does an existing archive migrate to a specification version that is not
   additive? (Additive releases are adopted by a transition,
   [ADR 0068](decisions/0068-specification-upgrade.md).)
@@ -103,17 +97,20 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
   covers the `release` and `recording` Entity kinds of
   [ADR 0078](decisions/0078-contributions.md), which take MusicBrainz's
   meaning and no LRM class yet.
-- What origin values mark the operator's own work across media (a recording, a
-  book, a photograph) ([ADR 0010](decisions/0010-publication.md))? A musical
-  Work's origin, co-written Works included, is [ADR 0088](decisions/0088-bandmates.md)'s `work_origin`;
-  recordings and other media have none. ([ADR 0096](decisions/0096-origin-of-recordings.md), proposed, would answer
-  this for recordings and Artifacts.)
+- What origin marks the operator's own work in a physical item (a book, a
+  photograph) or another Entity that is neither a Work nor a recording
+  ([ADR 0010](decisions/0010-publication.md))? A musical Work's origin is
+  [ADR 0088](decisions/0088-bandmates.md)'s `work_origin`, and an Artifact's
+  or a recording's is [ADR 0096](decisions/0096-origin-of-recordings.md)'s
+  origin claim; nothing else has one.
 - Does a disclosure to the circle need a policy revision before the policy
   language exists? [ADR 0088](decisions/0088-bandmates.md) records it as a publication approval, which S-32
   ties to a policy revision.
 - How are jurisdiction-specific rights terms computed, and from what facts?
-- Does the collection need archival arrangement (collection, series, item, as in
-  DACS)? Not at single-operator scale yet.
+- Do the archive's holdings need archival arrangement (collection, series,
+  item, as in DACS)? Not at single-operator scale yet. (A `collection` Entity,
+  [ADR 0100](decisions/0100-packs-and-collections.md), is a set a person
+  gathered, not an arrangement.)
 
 ## Door
 
@@ -149,8 +146,10 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
   content (verbatim transcripts, thumbnails, fingerprints, embeddings)? Storage
   deletion and privacy deletion differ: keeping a transcript after deleting a
   WAV suits the first and may defeat the second. Destroy does not answer this.
-  ([ADR 0102](decisions/0102-retrieval-index.md), proposed, would answer this
-  for the retrieval index's own copies: embeddings and machine facets.)
+  [ADR 0102](decisions/0102-retrieval-index.md) answers it only for the
+  retrieval index's own copies (embeddings and machine facets last at most
+  one index generation); the bank's copies and evidence such as transcripts
+  stay open.
 - What form does a recorded reclaim verdict take, and how is the verification
   state it snapshots represented?
 - How does an operator declare, ahead of time, what happens to an archive
@@ -163,8 +162,9 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
   the operator holding it in custody on their behalf, with the person
   recorded on its origin claim (as depositor, or as `captured_by` when they
   recorded it) and, where the content records them, their own limits
-  binding ([ADR 0018](decisions/0018-people-in-the-archive.md)).
-  ([ADR 0093](decisions/0093-audiences.md), proposed, keeps this open.)
+  binding ([ADR 0018](decisions/0018-people-in-the-archive.md),
+  [ADR 0096](decisions/0096-origin-of-recordings.md)).
+  [ADR 0093](decisions/0093-audiences.md) keeps this open.
 - Door refuses a proposal written under a specification context the archive
   does not hold, and refuses a committed record written under a context only
   a later commit added. A committed record under a context the archive never
@@ -223,13 +223,12 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
   `performance_work` link counts, including one a person judged `rejected` or
   `withdrawn` ([ADR 0067](decisions/0067-matches-and-alignments-pin-runs.md)
   names no rule).
-- How does the archive record whether corpus audio is the operator's own
-  recording or a commercial release? The V2 system suggested release matches
-  at a looser distance (about 0.11, on the exact scale); until an origin is
-  recorded, every corpus entry is judged alike, at 0.118 on the quarter-rate
-  scale and 0.08 on the exact one
-  ([ADR 0071](decisions/0071-essentia-cover-similarity.md)). ([ADR 0096](decisions/0096-origin-of-recordings.md),
-  proposed, would answer this.)
+- Does release audio hold up at the V2 system's looser exact-path distance
+  (0.11)? [ADR 0096](decisions/0096-origin-of-recordings.md) records origin
+  and tells release audio from the rest, but keeps every corpus entry at 0.08
+  on the exact scale (and 0.118 on the quarter-rate one) until
+  [ADR 0071](decisions/0071-essentia-cover-similarity.md)'s check against the
+  shadow's accepted performances includes release audio.
 - Do the window matcher's thresholds hold outside the recordings that chose
   them? The hit limit (0.20), the quarter-rate suggestion distance (0.118),
   and the near-tie margin (0.02) were chosen on one calibration workset of
@@ -296,32 +295,35 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
 - Should a contribution say more than MusicBrainz can, such as a part within
   an instrument (second trombone) or a doubling? Today that survives only in
   the credit text.
-- How does a person's sensitivity limit "the rehearsals I play in"
-  ([ADR 0018](decisions/0018-people-in-the-archive.md)) relate to
-  contributions? Channel and span credits could select that content; whether
-  they may, and who asserts them, is undecided.
 
-- How does a person's sensitivity claim select the content it covers ("the
-  rehearsals I play in") rather than naming objects one by one
-  ([ADR 0018](decisions/0018-people-in-the-archive.md))?
-- May a bandmate with a relay login assert their own sensitivity limit, at
-  least one that only narrows what is shown? [ADR 0088](decisions/0088-bandmates.md) keeps sensitivity claims
-  the operator's to send, so the operator records a bandmate's limit with
-  them as its author. ([ADR 0094](decisions/0094-peoples-writes.md), proposed, would answer this.)
+- Can one sensitivity claim cover content recorded later ("every rehearsal I
+  play in", [ADR 0018](decisions/0018-people-in-the-archive.md)) rather than
+  naming its subjects? [ADR 0094](decisions/0094-peoples-writes.md) and
+  [ADR 0095](decisions/0095-participation.md) settle which subjects a person
+  may limit because the content records them (a session their participation
+  names, its parts, and what their credits are about), but each limit still
+  names its subjects.
+- What meets R5.3's condition for a speaker span
+  ([ADR 0104](decisions/0104-transcription-and-speakers.md))? A speaker span
+  selects content for the named person's limits under the condition that the
+  claim was asserted or affirmed by the operator or arrived in the same
+  admission as the content. Speaker spans are machine claims that never
+  arrive with their content, so a span would select only once the operator
+  affirms it (the claim or the span). Recommended: accept that literally; a
+  person named but not yet affirmed can still limit the content through
+  their own participation or part credit.
 - Is [ADR 0085](decisions/0085-documents-lyrics-rights.md)'s rights permit table right: `InC` held by the operator permits
   distribution, `NoC-US` distribution, `NoC-NC` open, everything else (and no
   rights claim) service, and the strictest claim wins whoever asserted it?
   It governs only sharing beyond the circle: the operator decided the
   circle is private, so no rights statement limits it.
+  [ADR 0097](decisions/0097-rights-by-use.md) keeps it as each use's default
+  and lets a pinned licence widen a use.
 - Can a person opt in to signing their limits with their own key, so the
   operator can record a limit but not forge its withdrawal? Spool grants
   already hold the SSH public key of each friend who shares compute, and
   OpenSSH can sign with it (`ssh-keygen -Y sign`).
 
-- What records where an admitted stem or practice render came from: its
-  mix, separator, and settings? [ADR 0079](decisions/0079-machine-harmony-claims.md) admits a chosen stem as an Artifact
-  whose digest its bank citations name, and [ADR 0089](decisions/0089-practice-audio-and-exports.md) a chosen render the same
-  way, but no claim states the link. ([ADR 0098](decisions/0098-content-lineage.md), proposed, would answer this.)
 - How are parts of untimed claims judged or marked: a Work's untimed meter or
   form, a Work-level melody, a key over sections ([ADR 0081](decisions/0081-judgments-and-annotations.md))? They can be judged
   only whole, and a mark on a Work needs a chord sequence to range over.
@@ -380,7 +382,8 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
 
 - Which vocabularies beyond the first musical Work and MusicBrainz
   correspondence does World need? ADRs 0041 and 0042 settle only the first
-  slice. ([ADR 0105](decisions/0105-notebook.md), proposed, would answer this for Wikidata.)
+  slice, and [ADR 0105](decisions/0105-notebook.md) adds Wikidata to
+  catalogue correspondence.
 - How is evidence for a specific external response admitted and pinned before
   a World candidate based on that response is promoted? Manual assertions do
   not require an external response (ADR 0042).
@@ -441,10 +444,10 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
     directory: how does destroying content find the exports that render
     revisions citing it?
   - Practice audio ([ADR 0089](decisions/0089-practice-audio-and-exports.md)): should the import chain separate every
-    recording, is a lossy practice copy needed for phones, should the relay
-    cut excerpts, and does the client's live mix or a server render serve
-    better (D11.5 leaves that to testing)? ([ADR 0099](decisions/0099-samples.md),
-    proposed, would answer this for cut excerpts: sample renders.)
+    recording, is a lossy practice copy needed for phones, and does the
+    client's live mix or a server render serve better (D11.5 leaves that to
+    testing)? ([ADR 0099](decisions/0099-samples.md) settles excerpts cut by
+    the relay as sample renders.)
   - Should decoded audio at another rate (44.1 kHz for a separator) be a
     shared feature, so that extractors off the `frames` grid stop decoding
     again, at about 1.3 GB per four mono hours at 22,050 Hz?

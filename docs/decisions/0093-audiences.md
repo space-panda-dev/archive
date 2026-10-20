@@ -1,6 +1,7 @@
 # 0093. A relay has several named audiences
 
-Status: proposed (wave 1, drafted 2026-10-19; open questions settled 2026-10-19)
+Status: accepted (operator, 2026-10-19); proposed in wave 1 and its open
+questions settled the same day
 
 [ADR 0088](0088-bandmates.md) gives a relay one circle: a destination of
 class circle, named in the relay's configuration, with a list of members and
@@ -297,7 +298,7 @@ A later implementation would change:
   no change. They govern beyond the circle, and an audience is inside it.
 - A specification release: the `audience` contract and the transition
   dispatch entry. Also `docs/vocabulary.md` (the circle entry) and ADR 0088,
-  which this record would amend (membership in the archive; the operator may
+  which this record amends (membership in the archive; the operator may
   be listed, for the internet ingress only).
 
 ## Settled by the operator (2026-10-19)

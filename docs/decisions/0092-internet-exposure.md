@@ -1,6 +1,7 @@
 # 0092. Internet exposure through Cloudflare Access; internet logins are members
 
-Status: proposed (wave 1, drafted 2026-10-19; open questions settled 2026-10-19)
+Status: accepted (operator, 2026-10-19); proposed in wave 1 and its open
+questions settled the same day
 
 The relay reaches people only over the operator's tailnet
 ([ADR 0056](0056-tailnet-relay.md)). `tailscale serve` terminates HTTPS,
@@ -284,7 +285,7 @@ maps the application's "circle" setting to `AMBER`, whose furthest class is
 circle; Cloudflare is service, and INV-26 lets only a limit's author lift a
 limit, so as ADR 0085 stands everything set to "circle" is withheld from
 every internet member. When this record is accepted, ADR 0085 is amended
-(ADR 0085 itself is not edited by this proposal):
+(made on acceptance, 2026-10-19, as an amendment section in ADR 0085):
 
 - its table's "circle" row becomes `GREEN` (furthest class service: the
   circle and its processors), and `AMBER` is no longer offered as an

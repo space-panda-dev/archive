@@ -107,6 +107,50 @@ scratch copy.
   The calibrations already done (the detector's held-out sessions, the window
   matcher's report, the melody metrics) are early instances to fold in.
 
+## People, samples, and rehearsals (ADRs 0092-0107)
+
+The operator accepted ADRs 0092 to 0107 on 2026-10-19 as decisions only:
+none of their contracts, routes, or commands is built, and each installs
+with its implementation in a later specification release.
+
+- **Implementation order** (operator, 2026-10-19): (1) lineage, origin, and
+  rights by use ([ADR 0098](decisions/0098-content-lineage.md),
+  [ADR 0096](decisions/0096-origin-of-recordings.md),
+  [ADR 0097](decisions/0097-rights-by-use.md)); (2) selection version 3,
+  sample renders, packs, and the index, giving the operator a sample app on
+  the tailnet ([ADR 0099](decisions/0099-samples.md),
+  [ADR 0100](decisions/0100-packs-and-collections.md),
+  [ADR 0102](decisions/0102-retrieval-index.md)); (3) audiences, grants,
+  participation, and Cloudflare, so friends get in
+  ([ADR 0093](decisions/0093-audiences.md),
+  [ADR 0094](decisions/0094-peoples-writes.md),
+  [ADR 0095](decisions/0095-participation.md),
+  [ADR 0092](decisions/0092-internet-exposure.md)); (4) voice capture, ASR,
+  and the notebook ([ADR 0103](decisions/0103-voice-capture.md),
+  [ADR 0104](decisions/0104-transcription-and-speakers.md),
+  [ADR 0105](decisions/0105-notebook.md)); (5) live
+  ([ADR 0106](decisions/0106-set-lists-and-clocks.md),
+  [ADR 0107](decisions/0107-multi-device-and-live.md)). DAW projects
+  ([ADR 0101](decisions/0101-daw-projects.md)) are not placed in the order.
+- **Notification and watch spike.** A self-hosted push service on the
+  tailnet with action buttons, and web push from a home-screen web app,
+  first; whether actions and voice replies work on the watch is unverified.
+  The destination is a native phone and watch companion app, which is also
+  the phone and tablet microphone node (background recording).
+- **Ableton Link licence check.** The rehearsal node is tempo master and
+  syncs software and devices by Ableton Link (hardware by MIDI clock). Check
+  Link's licence against AGPL before any of it enters this repository; until
+  then Link stays in the node application.
+- **Sample identification spike.** Locally, on a public or test corpus
+  first, with no third-party uploads; friends' tracks with known samples once
+  their custody is in place. Its output is machine-proposed lineage claims
+  ([ADR 0098](decisions/0098-content-lineage.md)).
+- **Embedding-model spike.** Choose the timbre extractor's model for the
+  index's embeddings ([ADR 0102](decisions/0102-retrieval-index.md)) from two
+  or three candidates whose weights' licence is verified to permit
+  redistribution, judged by the operator listening to the neighbours of
+  twenty library sounds.
+
 ## Operations
 
 - Deploy Spool 0.0.4 to both machines, add the GPU-stems grant, and give

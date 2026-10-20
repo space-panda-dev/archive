@@ -2,6 +2,8 @@
 
 Status: accepted (operator, 2026-10-18); amended 2026-10-19 (syllables,
 their notes, and forced alignment; the check beyond the circle; both
+accepted by the operator, 2026-10-19); amended 2026-10-19 by
+[ADR 0092](0092-internet-exposure.md) (the "circle" setting writes `GREEN`;
 accepted by the operator, 2026-10-19)
 
 A lead sheet joins chords, meter, form, melody, and lyrics. Specification
@@ -715,3 +717,22 @@ built, which must call `may_publish` and must not send when it says no.
 - **Refusing version 1 approvals from 0.0.10 on.** The circle and the
   fixture use them, and reading them as circle-at-most closes the gap
   without breaking either.
+
+## Amendment, 2026-10-19: the "circle" setting writes GREEN
+
+Made on the acceptance of [ADR 0092](0092-internet-exposure.md), which
+gives the reasons. Members now reach the relay over the internet through
+Cloudflare, a processor of class service, and an `AMBER` limit's furthest
+class is circle, so as decided above everything set to "circle" would be
+withheld from every internet member. The text above is left as it was
+accepted; where it disagrees with this section, this section holds.
+
+- The settings table's "circle" row becomes `GREEN` (furthest class
+  service: the circle and its processors). `AMBER` is no longer offered as
+  an application setting, though it stays admissible.
+- From this amendment on, the "circle" setting writes `GREEN`. Claims
+  already written stay as they are: an existing `AMBER` limit stays
+  tailnet-only until its author relabels it; members may relabel their own
+  ([ADR 0094](0094-peoples-writes.md)), and the operator the operator's.
+- Applications show an `AMBER` claim as "circle (tailnet only)".
+- Cloudflare is never treated as circle to get around a limit.

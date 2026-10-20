@@ -1,6 +1,7 @@
 # 0095. Participation is a contribution at session scope, and only the operator counts it
 
-Status: proposed (wave 1, drafted 2026-10-19; open questions settled 2026-10-19)
+Status: accepted (operator, 2026-10-19); proposed in wave 1 and its open
+questions settled the same day
 
 Friends and bandmates are getting logins of their own ([ADRs 0092](0092-internet-exposure.md) to [0094](0094-peoples-writes.md)),
 and three applications will read World: the rehearsal review app, the

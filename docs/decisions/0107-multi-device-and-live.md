@@ -1,6 +1,7 @@
 # 0107. Many devices capture one moment, MIDI is a source, and live responses wait on the node
 
-Status: proposed (wave 2, drafted 2026-10-19; open questions settled 2026-10-19)
+Status: accepted (operator, 2026-10-19); proposed in wave 2 and its open
+questions settled the same day
 
 ## Context
 

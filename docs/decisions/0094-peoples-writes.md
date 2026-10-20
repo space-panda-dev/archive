@@ -1,6 +1,7 @@
 # 0094. People's writes: grants are transitions, and members set their own limits
 
-Status: proposed (wave 1, drafted 2026-10-19; open questions settled 2026-10-19)
+Status: accepted (operator, 2026-10-19); proposed in wave 1 and its open
+questions settled the same day
 
 [ADR 0088](0088-bandmates.md) lets a bandmate with a relay login assert
 claims in their own name. What they may send is one fixed list,

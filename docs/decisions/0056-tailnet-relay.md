@@ -1,6 +1,8 @@
 # 0056. A tailnet relay for the operator's browser
 
-Status: accepted; media routes added by [ADR 0069](0069-derived-media.md)
+Status: accepted; media routes added by [ADR 0069](0069-derived-media.md);
+amended 2026-10-19 by [ADR 0092](0092-internet-exposure.md) (an internet
+listener beside the tailnet one; accepted by the operator, 2026-10-19)
 
 The rehearsal review application runs in a browser on the operator's iPad and
 phone. Door's service listens only on a private Unix socket (ADR 0054), and
@@ -99,3 +101,13 @@ both Door's service and World and belongs inside neither.
   change, and the reader is the operator, whose own data it is.
 - **Commits against the shadow.** The shadow would stop being a faithful
   migration of V2, and its report would no longer be comparable.
+
+## Amendment, 2026-10-19: an internet listener
+
+Made on the acceptance of [ADR 0092](0092-internet-exposure.md), which
+gives the reasons and the rules. The relay gains a second listener for
+requests that come through Cloudflare Access, each carrying a verified
+token whose email configuration binds to a person; those logins are
+members, never the operator's capacity, and the internet is served only
+while a recorded processor route to Cloudflare holds. The tailnet listener
+and its rules are unchanged, and tailnet logins bind only the operator.

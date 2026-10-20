@@ -1,6 +1,7 @@
 # 0102. World keeps a second disposable store for facets, embeddings and text search
 
-Status: proposed (wave 2, drafted 2026-10-19; open questions settled 2026-10-19)
+Status: accepted (operator, 2026-10-19); proposed in wave 2 and its open
+questions settled the same day
 
 The sample app is a browser over thousands of short sounds: cuts from the
 review app, songbook songs, and libraries of kicks and snares

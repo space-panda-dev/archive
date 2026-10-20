@@ -1,6 +1,7 @@
 # 0104. Transcripts come from local ASR runs, and speaker spans name consenting people
 
-Status: proposed (wave 2, drafted 2026-10-19; open questions settled 2026-10-19)
+Status: accepted (operator, 2026-10-19); proposed in wave 2 and its open
+questions settled the same day
 
 Talk is half of what a rehearsal holds that the music does not: "take it
 from the bridge", "that was the one", a count, an argument about the ending.
@@ -474,3 +475,6 @@ operator's affirmation is what makes a span select; see Still open 1.
    participation or a part credit they assert themselves (R4.3, R5.2), so
    nothing is lost, and the operator's affirmation keeps a machine's guess
    from selecting.
+
+   The operator accepted this record with the question still open; it is
+   kept in the [open questions](../open-questions.md#claims-and-provenance).

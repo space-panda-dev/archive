@@ -1,6 +1,7 @@
 # 0099. A sample is a selection with a stem, a recipe and kinds, rendered on demand
 
-Status: proposed (wave 2, drafted 2026-10-19; open questions settled 2026-10-19)
+Status: accepted (operator, 2026-10-19); proposed in wave 2 and its open
+questions settled the same day
 
 The rehearsal review app is gaining a sample cutter, and a sample app will
 browse what it cuts beside songbook songs and organised libraries of kicks

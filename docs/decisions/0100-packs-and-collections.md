@@ -1,6 +1,7 @@
 # 0100. Sample packs are releases, libraries are collections, and source paths are kept
 
-Status: proposed (wave 2, drafted 2026-10-19; open questions settled 2026-10-19)
+Status: accepted (operator, 2026-10-19); proposed in wave 2 and its open
+questions settled the same day
 
 The sample app browses three kinds of organised audio beside the cuts made
 in the review app: commercial sample packs, personal libraries (the

@@ -1,6 +1,7 @@
 # 0101. A DAW project is an Entity with snapshots, its audio, and lineage to its bounces
 
-Status: proposed (wave 2, drafted 2026-10-19; open questions settled 2026-10-19)
+Status: accepted (operator, 2026-10-19); proposed in wave 2 and its open
+questions settled the same day
 
 A song is often finished in a digital audio workstation (DAW): a project
 folder holding the DAW's own project file, the takes recorded into it, the

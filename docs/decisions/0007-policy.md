@@ -1,6 +1,8 @@
 # 0007. Policy declares desired state
 
-Status: accepted
+Status: accepted; amended 2026-10-19 by [ADR 0105](0105-notebook.md) (a
+fifth kind of desire, the snapshot desire; accepted by the operator,
+2026-10-19)
 
 The archive needs one place where the operator says what should be true (how
 many copies, which enrichments, what gets published) without writing code, and
@@ -72,3 +74,19 @@ policy revisions itself in Haskell and never evaluates policy.
 - **A bespoke evaluator.** It would mean writing a query engine.
 - **Retention as something apply carries out.** Deciding what goes is a
   person's act.
+
+## Amendment, 2026-10-19: the snapshot desire
+
+Made on the acceptance of [ADR 0105](0105-notebook.md), which gives the
+reasons. The text above is left as it was accepted; where it disagrees
+with this section, this section holds.
+
+Policy's desires gain a fifth kind beside placement, derivation, review
+requirements, and publication: the **snapshot desire**, which outside
+sources (first, notebooks) are admitted, and how often. Its cadence is a
+standing desire that plan reads; the time of the last run is operational
+state, never a record; the folder a source maps to is configuration
+(mechanism), never policy. It adds no verb: apply carries it out through
+`capture notebook` and Door's *admit*, and a run that finds nothing new
+writes nothing (quiet history). Until the policy language exists, a timer
+runs the command.

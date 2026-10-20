@@ -1,6 +1,7 @@
 # 0097. Rights say which use they permit, and a clearance permits one use
 
-Status: proposed (wave 1, drafted 2026-10-19; open questions settled 2026-10-19)
+Status: accepted (operator, 2026-10-19); proposed in wave 1 and its open
+questions settled the same day
 
 A rights claim ([ADR 0085](0085-documents-lyrics-rights.md)) gives its
 subject one furthest class. The permit table turns the RightsStatements.org

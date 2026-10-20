@@ -1,6 +1,7 @@
 # 0098. Content lineage: an Artifact can say what it was made from
 
-Status: proposed (wave 1, drafted 2026-10-19; open questions settled 2026-10-19)
+Status: accepted (operator, 2026-10-19); proposed in wave 1 and its open
+questions settled the same day
 
 A sample cut from a rehearsal, a bounce built from three such samples, a
 stem admitted because someone sent it, a practice render kept as evidence:

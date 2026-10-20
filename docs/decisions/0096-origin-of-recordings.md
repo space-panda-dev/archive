@@ -1,6 +1,7 @@
 # 0096. Recordings and Artifacts have an origin
 
-Status: proposed (wave 1, drafted 2026-10-19; open questions settled 2026-10-19)
+Status: accepted (operator, 2026-10-19); proposed in wave 1 and its open
+questions settled the same day
 
 [ADR 0010](0010-publication.md) says the `origin` claim decides whether
 something is the operator's own work, which publishes once approved, or
@@ -256,8 +257,8 @@ claim, or when the claim arrived in the same admission as the content
 (R5.3): a member who names themselves depositor of content already in the
 archive gains no limit from it until the operator affirms the claim. A friend's
 bought albums do not record them, so this needs INV-26 and ADR 0018 to say
-so. When this record is accepted, they are amended as follows (neither is
-edited by this proposal). [ADR 0094](0094-peoples-writes.md) applies the
+so. When this record is accepted, they are amended as follows (both
+amended on acceptance, 2026-10-19). [ADR 0094](0094-peoples-writes.md) applies the
 rule at the relay: its records-them test admits a member's limit on content
 whose head origin claim names them as depositor, was asserted or affirmed by
 the operator or arrived in the same admission as the content, and has not

@@ -58,7 +58,7 @@ takes back a stalled lease and is unrelated to a reclaim verdict.
 ## Three meanings of "archive"
 
 - **Archive**, capitalised: the system and its contract.
-- **an archive**: an actual collection of archival data on disk. It lives outside
+- **an archive**: an actual body of archival data on disk. It lives outside
   this repository.
 - **this repository**: the source code and specification. It never holds
   personal archival data.
@@ -135,9 +135,11 @@ bank under the extractor contract. (Proposed:
 
 ([ADR 0004](decisions/0004-deletion.md))
 
-**Retire**: take an object out of the collection; its records stay.
+**Retire**: take an object out of the archive's holdings; its records stay.
 **Destroy**: remove content from the archive's custody and from every copy it
-controls. **External survivor**: a known copy the archive cannot remove.
+controls. Its **dependents** are the content made from it (the outputs of its
+lineage claims) and the snapshot packs that hold or rebuild it; each needs a
+recorded disposition ([ADR 0024](decisions/0024-retire-and-destroy-records.md), [ADR 0098](decisions/0098-content-lineage.md), [ADR 0101](decisions/0101-daw-projects.md)). **External survivor**: a known copy the archive cannot remove.
 **Information erasure**: removing what derived evidence reveals about destroyed
 content; not yet designed. **Expunge**: erase a record and its history; rare and
 manual.
@@ -152,7 +154,8 @@ provider account.
 **Managed copy**: a copy git-annex controls. **Observed copy**: an outside copy
 the archive can verify but not control. **Projection**: the same bytes seen
 again, such as a symlink. **Source**: where content came from before admission,
-such as a recorder card.
+such as a recorder card. A capture **source** is a different word: one
+device's stream of files within a session ([ADR 0070](decisions/0070-capture-import.md), [ADR 0107](decisions/0107-multi-device-and-live.md)).
 
 **Reclaim verdict**: the archive's statement that a source is safe to clear.
 
@@ -173,9 +176,12 @@ how exposed a destination is: private, circle, service, open, or
 distribution.
 **Sensitivity**: a claim a person makes about an object, in Traffic Light
 Protocol labels (RED, AMBER, GREEN, CLEAR). An application's three settings
-are three of them: operator (RED), circle (AMBER), and published (CLEAR).
-**Reach**: how far an object may be shown or shared, computed from the
-sensitivity and rights of everything it pins; a view, never stored.
+are three of them: operator (RED), circle (GREEN, the circle and its
+processors, since [ADR 0092](decisions/0092-internet-exposure.md); earlier claims' AMBER is shown as "circle
+(tailnet only)"), and published (CLEAR).
+**Reach**: how far an object may be shown or shared, for each use, computed
+from the sensitivity and rights of everything it pins or was made from; a
+view, never stored.
 **May publish**: a view saying whether a publication approval still
 permits publication on a given day, and what blocks it if not.
 **Personal-use licence**: a rights statement that a subject was licensed to
@@ -184,24 +190,58 @@ and what pins it, within the circle. No rights statement limits the circle,
 which is private.
 ([ADR 0085](decisions/0085-documents-lyrics-rights.md))
 
-**Circle (of a relay)**: the relay's destination of class circle, reached by
-its **members**, each a bandmate's login bound to their own person. A
-caller's **capacity** is `operator` or `member`. The **readable set** is
-what a member may read: what an approval to the circle covers, what that
-pins, and members' own records over readable things; a record kept from a
-caller is **withheld**, and an answer counts what it withheld. **Work
-origin**: a claim whether a Work is the operator's own, co-written, or
+**Use** (of a right): `listen` (hear or see it, without a copy to keep),
+`derive` (make new work from it), or `redistribute` (pass copies on); a rights
+claim may give each use its own furthest class. **Clearance**: one person's or
+organisation's permission for one use of one subject, in one Work or
+recording, for one destination class, such as a label clearing one sample in
+one recording. ([ADR 0097](decisions/0097-rights-by-use.md))
+
+**Ingress**: which way a request reached the relay, `tailnet` or `internet`;
+only the tailnet can carry operator capacity. **Processor route**: a
+transition recording, before anything is sent, that a destination is reached
+through a processor (Cloudflare, for the internet ingress); the relay serves
+the internet only while one holds. ([ADR 0092](decisions/0092-internet-exposure.md))
+
+**Audience** (of a relay): a destination of class circle whose **members**
+the archive records, each a person the operator named; who is in it is an
+operator transition. It replaces the earlier "circle (of a relay)" configured
+on the relay; *the circle* still names the exposure class. A caller's
+**capacity** is `operator` or `member`; over the internet even the operator's
+login is a member of the audiences that list it. The **readable set** is what
+a member may read in one audience: what an approval to it covers, what that
+pins, and members' own records over readable things; a caller in several
+audiences reads the union. A record kept from a caller is **withheld**, and
+an answer counts what it withheld. ([ADR 0088](decisions/0088-bandmates.md), [ADR 0093](decisions/0093-audiences.md))
+**Work origin**: a claim whether a Work is the operator's own, co-written, or
 others', naming its **writers**. **Sharing consent**: a co-writer's own
 claim approving or refusing one destination for exact revisions. The
 **sharing gate** lets a co-written Work's content beyond the band only with
 every co-writer's consent. ([ADR 0088](decisions/0088-bandmates.md))
 
-**Origin**: where content came from (own capture, commercial release, ...).
+**Write grant**: an operator transition saying what one person may propose,
+over which audiences, by **ability**: `annotate` (claims and judgments about
+readable things), `cut` (selections and their lineage), or `admit` (staging
+new content). A person's **effective grant** is their latest grant per
+ability and audience, a view; where none names them, the **default** allows
+`annotate` and `cut` and denies `admit`. A grant permits proposing and never
+adds weight to a claim. A member may set their own sensitivity limit on
+content that records them or that they deposited. ([ADR 0094](decisions/0094-peoples-writes.md))
+
+**Origin**: where content came from and whose it is: a claim about an
+Artifact or a recording with one value of a closed set (`own_capture`,
+`participant_capture`, `commercial_release`, `sample_pack`,
+`broadcast_or_web`, `generated`, `unknown`). Its **depositor** is the person
+whose library the archive took the content from: custody, not authorship;
+their limits bind as a recorded person's do. ([ADR 0096](decisions/0096-origin-of-recordings.md))
 **Rights**: what may legally be done with it, recorded with terms and dates.
 
 ## Collections and meaning
 
-**Physical item**: a thing in the collection whose bytes the archive cannot
+**The archive's holdings**: everything an archive has admitted. Older records
+call this "the collection"; *collection* now names an Entity kind (below).
+
+**Physical item**: a thing in the archive's holdings whose bytes the archive cannot
 keep, such as a record, a book, or a notebook. It is admitted and retired like a
 library holding. ([ADR 0013](decisions/0013-physical-collections.md))
 
@@ -248,7 +288,8 @@ modulation**: an explicit link between adjacent bars saying which note value
 before lasts as long as which after, so that the tempo changes by their
 ratio. **Regrouping**: a link between adjacent bars where every note value
 keeps its length and the felt pulse moves (quarter to dotted quarter, the
-eighth unchanged). **Tempo** is derived from bars and beats, never stored.
+eighth unchanged). **Tempo** is derived from bars and beats, never stored; a
+set list's target tempo is a stated intention, not a tempo ([ADR 0106](decisions/0106-set-lists-and-clocks.md)).
 
 **Document**: an outside source's admitted bytes (a transcription file, a
 saved chart) that a claim pins to say where its readings came from. A
@@ -318,6 +359,9 @@ for a named person; its **tiers** rank evidence for that question only. A
 **difference** is a computed place where a part and the mix, two parts, or
 two tools hear differently: never a conflict.
 ([ADR 0082](decisions/0082-views-and-current.md))
+An **asserter tier** ranks a claim by who asserted it relative to its subject
+(operator, participant, other member, machine), inside a named rule that uses
+it; never stored. ([ADR 0095](decisions/0095-participation.md))
 
 ## Lead sheets and practice
 
@@ -369,15 +413,109 @@ matches only **locates** it. A claim nothing refines is **finest**. Refining
 never contradicts: no credit asserts absence.
 **Band membership**: a claim that a person was a member of a band (an
 organisation), with instruments and partial from and to dates.
+**Session scope**: a contribution about a whole `recording_session`.
+**Participation**: a contribution at session scope naming a person who took
+part. A **participant** is a person whose participation the operator asserted
+or affirmed, computed per session and never stored; a **suggested
+participant** is one a band membership places in the band on the session's
+date, offered to the operator and never counted. ([ADR 0095](decisions/0095-participation.md))
 
 **Tracklist**: a release's **media** and their **tracks**, in order, each
 track a recording. **Recording audio**: a claim tying a recording Entity to
 archived audio, whole or in part. **Catalogue correspondence**: a claim that
 an artist, release, or recording is the same as, close to, or (for a
 MusicBrainz release group or a Discogs master) narrower than an entry in an
-outside catalogue. **Credits per track**: the view of which credits apply to
+outside catalogue (version 2 adds Wikidata and a Work subject,
+[ADR 0105](decisions/0105-notebook.md)). **Credits per track**: the view of which credits apply to
 one recording, including those of its release.
 ([ADR 0087](decisions/0087-tracklists-and-correspondence.md))
+
+## Lineage and samples
+
+**Lineage claim**: a claim that one output Artifact was made from exact
+inputs (Artifacts or selections), optionally by a machine's run; reach and
+destroy follow it. A **lineage span** says where part of an input landed in
+the output, with the **transforms** done to it from a closed list; the word
+*placement* stays a managed copy's. ([ADR 0098](decisions/0098-content-lineage.md))
+
+**Sample**: a selection, or a whole Artifact such as a library one-shot,
+viewed as something to play or reuse; a view, not a new kind of record. It is
+not an audio sample (one value at a sample rate), which keeps the plain word
+in sample positions and code. A selection's **signal** is the stem or channel
+it cut, and its **recipe** says, precisely enough to render, what is done to
+the cut; a lineage claim with a recipe reads as its source. A **sample
+render** is the file a recipe makes, regenerable and never evidence until
+chosen or sent, named by the **sample key** of its **sample request**.
+**Sample form** (`one_shot`, `loop`, `break`, `phrase`, `texture`, `fx`),
+**sample sound** (instruments, or the asserter's word), and **sample tag**
+(one free word per claim) are claims that classify a sample; none is ranked.
+([ADR 0099](decisions/0099-samples.md))
+
+## Libraries, projects, and notebooks
+
+**Collection**: an Entity of kind `collection`, a set of items of any media
+as a person gathered it (a friend's crate, a sampler's card), neither a
+release nor a session. Its members are asserted by **membership claims**,
+each optionally with a **slot** (a pad or bank position); a sample pack is a
+release. A **source-path claim** keeps the path a file was found at, as
+history, never as a location. A **bank grammar** reads one sampler's card
+layout. ([ADR 0100](decisions/0100-packs-and-collections.md))
+
+**DAW project**: an Entity of kind `daw_project`, one production across its
+saves. A **project snapshot** is a claim that a **snapshot pack** (a
+deterministic pack of the project folder, whole, or slim without its audio)
+is a kept state of the project, and which of its members are which audio and
+MIDI Artifacts. **Snapshot** as a noun means only this. A **bounce** is an
+Artifact whose lineage names a snapshot pack. ([ADR 0101](decisions/0101-daw-projects.md))
+
+**Notebook**: a collection whose members are **pages**, each a document
+Artifact with a source path, revised as the file changes; *page* avoids
+*note*, which means note events. Snapshotting a notebook is an operation, not
+a noun: `capture notebook` admits the pages that changed. A **notebook link**
+is a claim that a page, at a locator, is about an archive object; a **page
+link** is the view of links between pages. ([ADR 0105](decisions/0105-notebook.md))
+
+## Search
+
+**Index**: World's second store, disposable, built from a World generation
+and the feature bank for filtering, similarity, and text search over
+**units** (a selection, an audio Artifact, a transcript segment, or a
+notebook page). Door, policy, and transitions never read it. A **facet** is
+one named value of a unit with the revisions it depends on; an **embedding**
+is a vector measured from content so that similar sounds lie near each other,
+a bank series never served; an **index generation** fixes which World
+generation and bank entries one build read. ([ADR 0102](decisions/0102-retrieval-index.md))
+
+## Voice and rehearsal
+
+**Voice note**: a claim that a recording, or a span of one, is a spoken note,
+and by which route it arrived (`voice_memos`, `browser`, `shared_file`, or
+`within_recording`); it is never forced into a session. A **voice-source
+reader** reads what a source application states about one file.
+([ADR 0103](decisions/0103-voice-capture.md)) **Capture start**: a claim of when a file's recording began,
+which may be unknown; an Artifact cannot say it. ([ADR 0107](decisions/0107-multi-device-and-live.md))
+
+**Voice consent**: a person's own claim whether the archive may recognise
+their voice, and from which audio; only they assert or withdraw it. A
+**speaker span** says who is speaking over some samples, naming only a person
+whose consent is live, or an **unknown speaker** numbered within one claim. A
+**voiceprint** is the embedding of one person's voice that recognition
+compares with; regenerable, never served. ([ADR 0104](decisions/0104-transcription-and-speakers.md))
+
+**Set list**: a person's claim of what they intended a session to hold, in
+**entries**, each a Work with targets such as a **target tempo**; evidence of
+intent, compared with what was played by a view. A **clock** is a non-person
+agent (a `process` Entity) that kept time at a session, such as a metronome
+or a MIDI clock, and asserts its own meter claim. A matcher run's **prior** is
+the set list it used to widen its candidates. ([ADR 0106](decisions/0106-set-lists-and-clocks.md))
+
+**MIDI stream**: a claim giving a MIDI file a sample timeline and bounds,
+beside `audio_stream`. **Rehearsal node**: a client program, like the review
+app, that records at a rehearsal and holds the operator's **live responses**
+(ordinary claim drafts) in an **outbox** of **response groups** anchored to a
+recording not yet admitted; the importer flushes it. A **practice take** is an
+Artifact with a capture origin and lineage to what it was played over.
+([ADR 0107](decisions/0107-multi-device-and-live.md))
 
 ## Naming discipline
 
@@ -394,6 +532,11 @@ When an established concept is meant, use its established word:
 | plan / apply | sweep, orchestrator, scheduler, controller |
 | assessment | decision, approval, ruling (for the record) |
 | this repository | the archive |
+| the archive's holdings | the collection |
+| audience (a relay's group of people) | circle (that is the exposure class) |
+| lineage span | placement (that is a managed copy's) |
+| page (of a notebook) | note (that is a note event) |
+| project snapshot | snapshot, for anything else (snapshotting is an operation) |
 
 The reverse also holds: do not file unrelated work under an existing word just
 to avoid a new directory.

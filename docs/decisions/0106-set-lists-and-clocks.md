@@ -1,6 +1,7 @@
 # 0106. A set list is a claim of intent, and a clock asserts its own meter
 
-Status: proposed (wave 2, drafted 2026-10-19; open questions settled 2026-10-19)
+Status: accepted (operator, 2026-10-19); proposed in wave 2 and its open
+questions settled the same day
 
 Two things a band brings into a rehearsal say what was meant to happen, and
 nothing in an archive can hold either.

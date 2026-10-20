@@ -1,6 +1,7 @@
 # 0105. Notes are snapshotted as documents, and their links to the archive are claims
 
-Status: proposed (wave 2, drafted 2026-10-19; open questions settled 2026-10-19)
+Status: accepted (operator, 2026-10-19); proposed in wave 2 and its open
+questions settled the same day
 
 The operator keeps notes in two notebooks outside the archive: an Obsidian
 vault (a folder of Markdown files) and a folder of Org files. Notes say
@@ -167,8 +168,8 @@ often. Its cadence is a standing desire that plan reads; the time of the
 last run is operational state, never a record; the folder a source maps to
 is configuration (mechanism), never policy. The amendment adds no verb:
 apply carries the desire out through `capture notebook` and Door's *admit*.
-This record does not edit ADR 0007; the amendment is made with its
-acceptance.
+The amendment was made in ADR 0007 on this record's acceptance
+(2026-10-19).
 
 ### `archive.claim/notebook_link` version 1
 

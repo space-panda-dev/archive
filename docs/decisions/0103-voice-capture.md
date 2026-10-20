@@ -1,6 +1,7 @@
 # 0103. Voice notes arrive from phones, browsers and recorders, each its own Artifact
 
-Status: proposed (wave 2, drafted 2026-10-19; open questions settled 2026-10-19)
+Status: accepted (operator, 2026-10-19); proposed in wave 2 and its open
+questions settled the same day
 
 The operator talks to the archive more than they write to it: an idea for a
 bridge sung into a phone on a walk, "the second chorus dragged" said into the
