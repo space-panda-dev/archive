@@ -1,6 +1,6 @@
 # 0107. Many devices capture one moment, MIDI is a source, and live responses wait on the node
 
-Status: proposed (wave 2, drafted 2026-10-19)
+Status: proposed (wave 2, drafted 2026-10-19; open questions settled 2026-10-19)
 
 ## Context
 
@@ -75,6 +75,11 @@ W2.14); this record states them as given.
 Set lists and a clock's tempo map are [ADR 0106](0106-set-lists-and-clocks.md)'s;
 voice notes are [ADR 0103](0103-voice-capture.md)'s.
 
+The operator settled this record's open questions on 2026-10-19 (round 6
+answers R6.3, R6.5, R6.9, R6.10, R6.13, R6.15 and R6.17; R6.16 settles the
+rest as recommended). The decision below states the settled choices; the
+list at the end records them.
+
 ## Decision
 
 ### One moment: every device is a source of one session
@@ -94,9 +99,58 @@ of that existing session, beside the Artifacts, in the same content-bearing
 batch. No new Entity is made, and the session keeps its identity, its name
 and its primary source (the source whose first part named it, ADR 0070). An
 import without `--into` behaves as today. The importer may report sessions
-whose capture times overlap the new files, as a hint; it never proposes the
-join itself, because file clocks on phones and recorders are wrong often
-enough that a wrong join would silently merge two evenings.
+whose capture starts (below) overlap the new files, as a hint; it never
+proposes the join itself, because file clocks on phones and recorders are
+wrong often enough that a wrong join would silently merge two evenings.
+
+**Files already admitted join by a parts-only path (R6.17).** A Voice Memos
+file imported as a voice note (ADR 0103), or any Artifact already in the
+archive, is skipped by `capture import` as known content, so `--into` alone
+cannot make it a source. `capture parts --into <session object id>
+--source <label> <artifact id>…` proposes one `session_parts` version 2
+claim of that session listing those existing Artifact revisions in the
+order given (recording order), with `{"grammar": "named", "token":
+"<label>"}` as its source, in a batch that carries no content. It reads the
+archive through `archive export` and admits through `door admit`, in
+operator capacity, like the importer. Any `voice_note` claim about such a
+file stays; the operator rejects it when the file is not a note (ADR 0103).
+
+**`archive.claim/capture_start` version 1: when a file's recording
+started (R6.15).** One claim contract says when an Artifact's capture
+began, for every reader that needs it: ADR 0095's session date, the
+importer's join hint above, and ADR 0103's voice notes, whose own claim
+carries no time. It pins exactly one `subject`, an Artifact revision of
+audio or MIDI. Payload:
+
+```json
+{"started": "2026-10-12T19:41:07+01:00", "clock": "zoned", "basis": "grammar"}
+```
+
+- `started` (optional): when recording started, by the device's clock,
+  RFC 3339. A claim without it says the source was read and states no start:
+  the capture start is recorded as unknown, never replaced by Door's `at`
+  (P-5).
+- `clock` (required with `started`): `zoned` when the source stated an
+  offset, which `started` then carries; `local` when it did not, and
+  `started` then has no offset and means the device's wall clock, as a
+  recorder grammar's clock does (`grammar.Recognised`).
+- `basis` (required): where the time came from: `grammar` (a recorder
+  grammar or voice-source reader read it from names or metadata), `header`
+  (the file's own header), `client` (the recording client's clock, such as
+  a browser's), or `person` (someone's statement).
+
+Door's profile rules: `clock` appears exactly when `started` does, and a
+`local` time carries no offset; the envelope `agent` is a person, or
+software for a time a tool read from the source (an `x-archive-agent` rule,
+as for `work_origin`). `capture import`, `capture voice` and the node
+grammar propose one for each Artifact they admit, asserted by the importer's
+Package URL; a browser client sends one with its recording, asserted by the
+caller. Capture starts coexist (INV-7): a person who knows the phone's clock
+was an hour out asserts another, and each reader names the rule by which it
+chooses one. ADR 0095's `session_participants` view, given no `on`, reads
+the capture start of the session's primary source's first part; with
+several, or none with `started`, it suggests nothing and says why. Joining
+still never happens automatically.
 
 **`archive.claim/session_parts` version 2** is version 1 plus a required
 `source` payload object, `{"grammar": "<grammar name>", "token": "<source
@@ -110,8 +164,10 @@ from its release on; version 1 claims stay valid.
 placement only as free text, and the free-text claim about a recording is
 [ADR 0081](0081-judgments-and-annotations.md)'s `span_annotation` of kind
 `note`. A placement note is one, asserted by a person over the whole stream
-of the source's first part ("tablet on the piano lid, facing the drums").
-Nothing parses it.
+of the source's first part ("tablet on the piano lid, facing the drums"),
+because placement is per device. Nothing parses it. A session-level note is
+added only if one is needed for something that is not placement
+(Settled 6).
 
 **Both the mixer multitrack and the handheld recorder are captured.** They
 are separate failure domains (two devices, two power supplies, two cards),
@@ -121,8 +177,9 @@ device loses tracks, never the excerpt.
 
 **Interim phone and tablet mics.** Each device runs Voice Memos; its files
 reach the Mac by the synced folder ADR 0103 imports from. ADR 0103 imports a
-voice note as its own Artifact, never forced into a session; a file becomes
-a session source only by `capture import --into`. A device the operator has
+voice note as its own Artifact, never forced into a session; such a file
+becomes a session source only by the parts-only path above, at the
+operator's choice. A device the operator has
 marked as their own in the importer's configuration gives `own_capture`
 ([ADR 0096](0096-origin-of-recordings.md), R4.10); a bandmate's phone file is
 admitted under the `admit` ability with `participant_capture` naming them.
@@ -216,7 +273,8 @@ alignment, `pitch` and `velocity` from the note messages, `part` the track's
 name or `midi channel <n>`, `unpitched` for channel 10. Its `run` lists the
 MIDI Artifact, its `midi_stream` claim and the alignment revision in `used`,
 so the claim names its evidence without a new reference role. No `cents`:
-MIDI states steps, and a pitch bend is not read in this version. Chords are
+MIDI states steps, and a pitch bend is not read in this version; `cents`
+from bends come only with a pinned tuning, in a later version (Settled 7). Chords are
 then read from those notes as ADR 0079 reads chords from any notes claim.
 A session with MIDI and no audio yields no notes claim, since ADR 0086 counts
 audio samples. A clock's tempo map is ADR 0106's meter claim.
@@ -250,8 +308,11 @@ node's parts or pins one: a **cut** (the selection), a **title**
 (`selection_title`), a **kind** (`selection_kind`), a **Work link**
 (`song_occurrence` version 2 and `performance_work` version 3, pinning a
 Work Entity revision the node read from World before the rehearsal, or a
-new `musical_work` Entity in the same group, ADR 0048), or a **mark**
-(`span_annotation` on the node's part and stream). A gesture at a point in
+new `musical_work` Entity in the same group, ADR 0048), a **mark**
+(`span_annotation` on the node's part and stream), or a **set-list edit**
+(a revision of a set list the operator asserted, ADR 0106, pinning the
+group's selection in its `during` role, so the edit is anchored the same way
+as every other response; R6.3). A gesture at a point in
 time becomes a span chosen by the node (wave 3's choice, such as the last
 ten seconds); a draft without a span is not possible. Each draft's `agent`
 is the operator's person; its `by` is the node software's Package URL
@@ -289,13 +350,22 @@ disagree both stand (INV-7).
 
 A take a person keeps is admitted as an Artifact with, in the same batch:
 
-- an `archive.claim/origin` claim: `own_capture` asserted by the operator,
-  or `participant_capture` naming the member who played, asserted by them;
+- an `archive.claim/origin` claim: `own_capture` asserted by the operator
+  over the tailnet, or `participant_capture` naming the member who played,
+  asserted by them. Over the internet the operator's login is member
+  capacity (W1.3) and may not assert `own_capture` (ADR 0096, R4.4), so the
+  operator's take arrives with origin `unknown` (which only narrows), and
+  the practice app queues an `own_capture` claim the operator sends later
+  over the tailnet; W1.3 and R4.4 are unchanged (R6.13);
 - an ADR 0098 lineage claim whose `output` is the take and whose `input` is
   the recording whose practice render was playing (or the selection looped),
   with lineage spans placing the loop's `from` in that recording at the
   take's `to`, and the render's speed and pitch as `stretch` and `pitch`
-  transforms.
+  transforms. When a practice render was playing, the input's `inputs`
+  entry is `{"practice": <practice request>}`, ADR 0089's request whose
+  `content` is that input's digest, so the lineage names the exact mix of
+  stems and gains the take was played over; ADR 0098 is amended to allow
+  that entry (R6.5).
 
 The take's reach is therefore capped by the recording it was played over,
 whether or not the render is audible in it: lineage only narrows. Nothing
@@ -306,14 +376,17 @@ explicit capture origin (`own_capture` or `participant_capture`) and a
 lineage claim not set aside by the operator whose input is a recording or a
 selection. Subject: a recording, a Work (through the occurrence chain to
 recordings, ADR 0044), or a person (`captured_by`, or the operator for
-`own_capture`). Answer: each take, the inputs and spans it was played over,
-and its origin.
+`own_capture`). Answer: each take, the inputs, practice mixes and spans it
+was played over, and its origin. A take whose only origin is still
+`unknown` is listed once its capture origin is admitted.
 
 ### World and the relay
 
 - **Projection.** World projects `session_parts` version 2's `source`,
-  `midi_stream` as it projects `audio_stream`, and nothing new for live
-  responses or takes, which are existing claims.
+  `midi_stream` as it projects `audio_stream`, `capture_start` as
+  `arch:capture_started` (an `xsd:dateTime` when `zoned`, a string when
+  `local`) with `arch:capture_clock` and `arch:capture_basis`, and nothing
+  new for live responses or takes, which are existing claims.
 - **Views.** `VIEWS` gains `aligned_spans`, `talk_input`, and
   `practice_takes`; each is regenerable and reads only admitted records.
 - **Relay.** It serves the three views and every track's media as today. It
@@ -327,11 +400,15 @@ and its origin.
 |---|---|---|
 | a session joined (`session_parts`), a `recording_session` | the operator | never: Entities and parts stay the operator's |
 | `capture_alignment`, `midi_stream`, MIDI notes | machine runs, operator's tools | never: machine provenance |
-| a placement note, a title, a kind, a mark, `performance_work` | yes | `annotate` |
+| a placement note, a title, a kind, a mark, `performance_work`, a set-list edit | yes | `annotate` |
 | a cut (`audio_selection`), a take's lineage | yes | `cut` |
-| a `song_occurrence` (a Work link) | yes | not in `MEMBER_CONTRACTS` today (Open, 4) |
-| a phone file, a recording, a kept take | importer, or ADR 0103's route | `admit`, with its origin in the same proposal |
-| origin `own_capture` | the operator only | never (ADR 0096, R4.4) |
+| a `song_occurrence` version 2 (a Work link) | yes | `annotate` (R6.10, Settled 4) |
+| a `capture_start` about a readable Artifact | yes | `annotate` |
+| a phone file, a recording, a kept take | importer, or ADR 0103's route | `admit`, with its origin and capture start in the same proposal |
+| origin `own_capture` | the operator only | never (ADR 0096, R4.4); sent later over the tailnet (R6.13) |
+
+These rows are part of the one ADR 0094 amendment that lists every wave-2
+ability addition (R6.10).
 
 ### What wave 3 needs from these contracts
 
@@ -339,15 +416,16 @@ The node writes files its grammar names, an outbox of response groups with
 the three placeholders, and, for its own audio and MIDI, a `shared_clock`
 alignment. It reads Works and the set list from World before a rehearsal, to
 pin. Phones and tablets as nodes over the internet act in member capacity:
-`cut` and `annotate` for responses, `admit` for their recording, and the
-answers to Open 4 and 5. Watch notifications, live song guess and hints are
+`cut` and `annotate` for responses (Work links included, R6.10), `admit`
+for their recording, which arrives with origin `unknown` and gets the
+operator's `own_capture` later over the tailnet (R6.13). Watch notifications, live song guess and hints are
 advice and need no contract.
 
 ## Consequences
 
 - One rehearsal is one session however many devices heard it, and a cut
-  names every track once. The cost is a manual `--into` per extra device
-  until capture time is evidence (Open, 1).
+  names every track once. The cost is a manual `--into` (or `capture parts`)
+  per extra device: capture start is now evidence, but it only hints.
 - A span found on any source can be found on all, with an error bound, and
   the transcription tool reads talk from the mic that hears it.
 - Silent mixer channels with identical bytes are one Artifact; Door refuses
@@ -360,8 +438,8 @@ advice and need no contract.
 - A kept take reaches no further than what it was played over.
 - Selection version 2 may pin only `capture_alignment` version 1 (S-15's
   multi-source rule), while the aligner proposes version 2, which pins a
-  run; until a selection version accepts version 2 (Open, 3), selections do
-  not pin the alignments they rely on.
+  run; ADR 0099's selection version 3 accepts version 2 pins (R6.9), so
+  selections pin the alignments they rely on from that release.
 - No invariant changes.
 
 ## Alternatives considered
@@ -384,6 +462,12 @@ advice and need no contract.
 
 ## New nouns
 
+- **Capture start** (`archive.claim/capture_start`). (1) It says when a
+  file's recording began, which an Artifact cannot say (D-8) and which the
+  session date, the join hint and voice notes all need. (2) No verb; an
+  importer or a person asserts it. (3) It lets P-5 hold by giving an
+  unknown start a place to be unknown. (4) A claim contract. (5) No; facts
+  are claims. (6) A claim contract, one for every reader (R6.15).
 - **MIDI stream** (`archive.claim/midi_stream`). (1) It gives a MIDI file a
   sample timeline and checkable bounds, which nothing else does. (2) No
   verb; a probe asserts it. (3) It lets S-15's integer spans and ADR 0048's
@@ -417,52 +501,46 @@ advice and need no contract.
 ## Touch points
 
 - `capture/capture.py`: `group` and `import_directory` (`--into`), `plan`
-  (`session_parts` version 2, `source`), `chain` (the outbox flush after the
-  stream probe), `main`.
+  (`session_parts` version 2, `source`; a `capture_start` per Artifact),
+  `chain` (the outbox flush after the stream probe), `main` (the `parts`
+  subcommand).
 - `capture/grammar.py`: `GRAMMARS` gains a node grammar, a mixer multitrack
   grammar, and a MIDI recorder grammar (new classes beside `ZoomH4E`).
 - `capture/outbox.py` (new): reading entries and resolving placeholders.
 - `enrich/probe.py`: `probe` gains the MIDI timeline for `midi_stream`.
 - `enrich/align.py` (new) and `enrich/midi_notes.py` (new).
 - `world/world.py`: `_project_review_claim` (`session_parts` version 2,
-  `midi_stream`).
+  `midi_stream`, `capture_start`).
+- `world/participation.py` (new, ADR 0095): the session date read from
+  capture starts.
 - `world/views.py` or `world/record_views.py`: `VIEWS` gains the three
   views; `world/judgments.py` `standing` is read by `aligned_spans`.
-- `spec/archive-spec.md` and `spec/contracts/`: `session_parts` version 2
-  and `midi_stream` version 1 with their profile rules;
+- `spec/archive-spec.md` and `spec/contracts/`: `session_parts` version 2,
+  `midi_stream` version 1 and `capture_start` version 1 with their profile
+  rules;
   `docs/vocabulary.md`: *MIDI stream*, *rehearsal node*, *outbox*, *live
   response*, *practice take*, and the two senses of *source*.
 
-## Open for the operator
+## Settled by the operator (2026-10-19)
 
-1. **Capture start as evidence.** ADR 0095 expects a session date claim
-   "alongside wave 2's capture work", and joining devices needs capture
-   times. *Recommend:* a machine claim of an Artifact's capture start (from
-   the grammar or the file's header, `unknown` when absent), read by the
-   session date and by the importer's join hint; still no automatic join.
-2. **The exact practice mix in lineage.** ADR 0098's inputs are Artifacts,
-   selections and single stem citations; a practice render (several stems
-   at chosen gains) cannot be named, so W2.14's "lineage to the practice
-   mix" lands on the whole recording. *Recommend:* before ADR 0098's
-   contract is installed, let an `inputs` entry be `{"practice": <practice
-   request>}` (ADR 0089's request, its `content` the input's digest), as
-   `recipe` already allows.
-3. **Selections and alignment version 2.** Selection version 2 may pin only
-   alignment version 1. *Recommend:* [ADR 0099](0099-samples.md)'s selection version 3 accepts
-   alignment version 2 pins.
-4. **Work links from member capacity.** `song_occurrence` is not under
-   `annotate`, so a phone node over the internet cannot link a rendition to
-   a Work. *Recommend:* add `song_occurrence` version 2 to `annotate`.
-5. **A kept take admitted over the internet.** The operator's internet login
-   is member capacity and may not assert `own_capture` (ADR 0096, R4.4), so
-   W2.14 cannot be met in one proposal there. *Recommend:* admit the take
-   with its lineage and origin `unknown` (ADR 0096 requires an origin in a
-   member's admission; `unknown` only narrows), and have
-   the practice app queue an `own_capture` claim for the operator to send
-   over the tailnet; do not loosen R4.4.
-6. **Placement note target.** A span annotation sits on one source's
-   recording, not the session. *Recommend:* keep it there (placement is per
-   device); add a session-level note only if one is needed for something
-   that is not placement.
-7. **MIDI pitch bend.** *Recommend:* ignore it in the first proposer; add
-   `cents` from bends only with a pinned tuning, in a later version.
+1. **Capture start as evidence.** One `capture_start` claim, read by the
+   session date, the join hint and voice notes; ADR 0103's `voice_note`
+   drops its own time fields; still no automatic join (R6.15).
+2. **The exact practice mix in lineage.** ADR 0098 is amended with an
+   `inputs` entry `{"practice": <practice request>}` (R6.5).
+3. **Selections and alignment version 2.** ADR 0099's selection version 3
+   accepts alignment version 2 pins (R6.9).
+4. **Work links from member capacity.** `song_occurrence` version 2 is
+   under `annotate`, in the one ADR 0094 amendment (R6.10).
+5. **A kept take admitted over the internet.** It arrives with origin
+   `unknown`; the operator asserts `own_capture` later over the tailnet; W1.3
+   and R4.4 unchanged (R6.13).
+6. **Placement note target.** On the source's recording; a session-level
+   note only for something that is not placement (R6.16).
+7. **MIDI pitch bend.** Ignored by the first proposer; `cents` from bends
+   only with a pinned tuning, later (R6.16).
+8. **Set-list edits from the node.** A response group, anchored by the
+   group's selection like every response (R6.3).
+9. **Admitted files as session parts.** A parts-only path, `capture parts
+   --into`, lists already-admitted Artifacts as a source of a session
+   (R6.17).

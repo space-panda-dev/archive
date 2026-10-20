@@ -46,8 +46,9 @@ this record states it as given.
   it.
 
 The operator settled this record's open questions on 2026-10-19: R4.11
-settles each as its drafter recommended. The decision below states the
-settled choices; the list at the end records them.
+settles each as its drafter recommended. Wave 2 amended it the same day,
+before installation (round 6 answers R6.6 and R6.12). The decision below
+states the settled choices; the list at the end records them.
 
 ## Decision
 
@@ -58,7 +59,7 @@ A **use** is one of `listen`, `derive`, or `redistribute`:
 | Use | Means | Exercised by |
 |---|---|---|
 | `listen` | an audience may hear or see the subject, without a copy to keep | a named view, a streamed listening copy, practice audio played in a page |
-| `derive` | the subject may be an input to a new Artifact that reaches the class | a lineage source (ADR 0098) of whatever is shared |
+| `derive` | the subject may be an input to a new Artifact that reaches the class | a lineage source (ADR 0098) of whatever is shared, when the lineage has no recipe |
 | `redistribute` | an audience may receive copies of the subject as is | a download, a published file, a sample pack passed on |
 
 The specification ships the uses as a small SKOS scheme beside the rights
@@ -83,9 +84,13 @@ lets that use reach:
 }
 ```
 
-with references as version 1: the pack as `subject`, the publisher as
-`holder`, the operator as `licensee` only when the statement is
-`personal-use-licence`, and the licence as `document`.
+with references as version 1: as `subject`, the pack's `release` and its
+files, up to 999 files per claim beside the release, so a large pack is
+several claims ([ADR 0100](0100-packs-and-collections.md)'s importer writes
+them); the publisher as `holder`; the operator as `licensee` only when the
+statement is `personal-use-licence`; and the licence as `document`. The
+files are named because, under ADR 0085's rule, a rights claim on the
+release alone leaves every file at service (R6.12).
 
 - **A use the claim does not name takes the statement's class**, by ADR
   0085's permit table, unchanged. So the sample pack above listens no
@@ -196,7 +201,13 @@ Pins keep the exercised use, never `derive`, because a pin is not a claim
 that one thing was made from another (R4.11). A later record may name which
 pins are derivations (a transcription's recording). Lineage is: for
 every source an output's lineage reaches (ADR 0098 walks it backward), the
-use read is `derive`, whatever the use exercised on the output.
+use read is `derive`, whatever the use exercised on the output, except
+through a lineage claim with a `recipe` (`bank`, `practice` or `sample`).
+Such an output is its source in another form, as ADR 0089 treats a stem, so
+the source is read as the source itself, with the use exercised on the
+output (R6.6): a pack's one-shot rendered as a sample and handed over as a
+file is `redistribute` on the pack's file, and a derive-yes,
+redistribute-no licence does not let it pass.
 
 **What the relay and applications exercise.** Inside the circle nothing
 changes: rights never limit it, and every audience is circle class
@@ -226,9 +237,11 @@ class *c*:
 1. sensitivity of the closure allows *c*, unchanged;
 2. every rights subject in the closure permits *u* at *c*, by the strictest
    head rights claim about it, except a subject reached only through a
-   lineage edge, which step 3 reads;
+   lineage edge without a recipe, which step 3 reads; a subject reached
+   through a lineage claim with a recipe is read here, at *u* (R6.6);
 3. every rights subject among the lineage sources of the covered object
-   (ADR 0098) permits `derive` at *c*;
+   (ADR 0098) reached through lineage without a recipe permits `derive` at
+   *c*;
 4. a subject blocked in step 2 or 3 is lifted when a head clearance by the
    active operator names it as `subject`, has the use that step read
    (*u* or `derive`), has class *c*, is in force on the day, and has as
@@ -352,7 +365,8 @@ subject, in one Work or recording, for one destination class.
   clearances by subject), `reach`, `may_show` (a `use` argument); a new
   `check_clearance`.
 - `world/circle.py`: `beyond_circle` (the approval's use, lineage sources at
-  `derive`, clearance lifting), `may_publish`, `works_touched` (reused for a
+  `derive` except through a recipe, which keeps the exercised use, clearance
+  lifting), `may_publish`, `works_touched` (reused for a
   clearance's `in`); `MEMBER_CONTRACTS` stays without rights and clearance.
 - `world/record_views.py`: `reach`, `may_publish`, and `readable_set` views
   (a `use` parameter; a destination beyond the circle reads `listen`).
@@ -373,7 +387,7 @@ subject, in one Work or recording, for one destination class.
 
 ## Settled by the operator (2026-10-19)
 
-All by R4.11, as recommended.
+Items 1 to 9 by R4.11, as recommended; items 10 and 11 by round 6.
 
 1. **Widening `uses` only with a licence document.** Yes; narrowing needs
    nothing.
@@ -390,3 +404,8 @@ All by R4.11, as recommended.
 8. **Does `sample_pack` origin imply rights?** No; the importer proposes a
    rights claim for the operator to admit.
 9. **Is a clearance's `jurisdiction` read?** Recorded, not computed.
+10. **A recipe reads as the source (from wave 2).** Lineage with a `bank`,
+    `practice` or `sample` recipe is read as the source itself with the
+    exercised use; `derive` stays for lineage without a recipe (R6.6).
+11. **A pack's rights subjects (from wave 2).** The release plus up to 999
+    of its files per claim, not "the pack" alone (R6.12).

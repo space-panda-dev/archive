@@ -1,6 +1,6 @@
 # 0102. World keeps a second disposable store for facets, embeddings and text search
 
-Status: proposed (wave 2, drafted 2026-10-19)
+Status: proposed (wave 2, drafted 2026-10-19; open questions settled 2026-10-19)
 
 The sample app is a browser over thousands of short sounds: cuts from the
 review app, songbook songs, and libraries of kicks and snares
@@ -45,6 +45,10 @@ turns into a contract); this record states it as given.
 - **W2.9 Transcript text search** lives in the same disposable index store
   as W2.6 (World's SPARQL has no full-text search).
 
+The operator settled this record's open questions on 2026-10-19 (round 6
+answers R6.2 and R6.4; R6.16 settles the rest as recommended). The decision
+below states the settled choices; the list at the end records them.
+
 ## Decision
 
 ### What the index is
@@ -60,7 +64,7 @@ ordinary claim under its own contract (ADR 0011's promotion).
 It holds three kinds of row, each about one **unit**: an `audio_selection`
 Claim object (a cut or sample, any installed version), or an Artifact whose
 content is audio (a library one-shot, a recording), or a transcript
-segment (below).
+segment, or a notebook page ([ADR 0105](0105-notebook.md)) (below).
 
 - **Facets**: one named value about a unit, with the revisions it depends on.
   Machine facets are ADR 0099's `archive.view/sample_facets` answers for
@@ -74,7 +78,7 @@ segment (below).
   | `bpm` | the view's `bpm` | number |
   | `key` | the view's `key` | tonic and mode |
   | `duration` | the view's `length`, in seconds | seconds |
-  | `loudness` | the view's `loudness` | as the view states it |
+  | `loudness` | the view's `loudness`: `frames` `rms_db` over the spans plus the recipe's gains, never integrated LUFS (R6.2) | decibels |
   | `form` | W2.1 form claims (ADR 0099) | a concept of the local scheme |
   | `sound` | W2.1 sound claims (ADR 0099) | a MusicBrainz instrument ID |
   | `tag` | W2.1 free-tag claims (ADR 0099) | text, filter only |
@@ -89,15 +93,22 @@ segment (below).
 - **Embeddings**: one timbre vector per unit, from a new extractor (below),
   for "sounds like this". Vectors never leave the index: no answer carries
   one, and the relay serves no route that returns one.
-- **Search text**: the text of each transcript segment (a line of a
-  transcript document, placed on its recording by the run's `timed_lyrics`
-  claim) as ADR 0104's `transcript` view joins it, with the span of the
-  recording it covers, in a full-text table.
+- **Search text**, in one full-text table, from two sources now:
+  - each transcript segment (a line of a transcript document, placed on its
+    recording by the run's `timed_lyrics` claim) as ADR 0104's
+    `transcript` view joins it, with the span of the recording it covers;
+  - each notebook page's head revision (ADR 0105), as text with its lines
+    counted as `document_lines` counts them (ADR 0085), so a hit names a
+    line (R6.4).
+
+  Titles and span annotations are later additions, each a separate text
+  source under the same dependency rule (Settled 5).
 
 **Every row carries its dependencies.** A row names the revisions it was
-made from: the unit's revision (the selection's Claim revision, or the
-Artifact revision whose content was measured) and, for a claim-derived
-facet or a transcript segment, that claim or document revision too. A row
+made from: the unit's revision (the selection's Claim revision, the
+Artifact revision whose content was measured, or the page revision whose
+text was read) and, for a claim-derived facet or a transcript segment, that
+claim or document revision too. A row
 may be answered to a caller only when every revision it names is in the
 caller's readable set (below).
 
@@ -108,7 +119,14 @@ a series of embedding rows on its own grid (a model window, about one
 second) for any audio content. It runs by request through Spool like every
 extractor (ADR 0090); the index never runs an extractor, it only reads
 entries that exist. A unit's embedding is the mean of the series' rows over
-its spans, L2-normalised; a whole short Artifact uses every row. The
+its spans, L2-normalised; a whole short Artifact uses every row. Index
+version 1 embeds only selections and Artifacts up to 30 seconds long: a
+mean over an hour-long rehearsal means nothing, and windowed search inside
+long recordings is an addition once the size is measured (Settled 3). Which
+model is chosen by a short spike over two or three candidates whose
+weights' licence is verified to permit redistribution, judged by the
+operator listening to the neighbours of twenty library sounds (Settled 2).
+The
 manifest pins the model files by digest (ADR 0074's amendment) and states
 the weights' licence, which must permit redistribution (W2.6). A
 transform recipe in a selection (ADR 0099) is not applied to the
@@ -147,16 +165,16 @@ name is never reused, which is what the relay's cache needs.
   refresh that saw the destroy. The bank's own copies remain ADR 0073's
   gap ([open](../open-questions.md#interfaces-and-tooling)). This answers
   the erasure question for the index's copies only; transcript text that is
-  evidence stays evidence, and whether it stays searchable is the open
-  question's to answer.
+  evidence stays evidence, and the index follows whatever disposition the
+  information-erasure question gives it (Settled 8).
 
 **Engine.** SQLite through Python's standard `sqlite3`: plain tables for
 facets, an FTS5 table for search text (`unicode61`, diacritics removed, no
 stemming, since transcripts are not all in one language), and embeddings as
 little-endian `f32` blobs, searched by exact cosine distance over the
 allowed rows in the query worker. At ten thousand units of 512 dimensions
-that is 20 MB and a few milliseconds; an approximate index is a later
-decision when a measurement needs one. No new service, no vector database
+that is 20 MB and a few milliseconds; an approximate index comes only when
+a measured search over the real library exceeds 100 ms (Settled 1). No new service, no vector database
 (docs/boundaries.md, "Left out on purpose").
 
 **Description.** `world/index/<N>/index.json` publishes, per index version,
@@ -177,7 +195,7 @@ that ranked them.
 ```json
 {
   "index": 1,
-  "units": ["selection", "artifact"],
+  "units": ["selection", "artifact", "page"],
   "like": {"id": "urn:uuid:…(a readable unit)", "revision_id": "sha256:…"},
   "text": ["bridge", "half time"],
   "facets": {
@@ -205,7 +223,9 @@ that ranked them.
   as `unindexed`, not refused.
 - `claims`: `unrejected` (the default) lets a claim-derived facet row match
   unless the active operator's standing on it is `rejected`; `any` lets
-  every row match. Machine facets always match.
+  every row match. Machine facets always match. `unrejected` stays the
+  default until ADR 0099 or a later record gives form and sound a current
+  rule, and that rule is the default then (Settled 6).
 - `limit` (1 to `max_rows`) and `after` (an opaque cursor from the previous
   answer) page through one ordering. The question is "the first `limit` hits
   in this order", so an answer of `limit` hits with a cursor is complete for
@@ -231,6 +251,9 @@ The answer, inside ADR 0060's envelope:
   "withheld": 412
 }
 ```
+
+A page hit's `text` names the page revision and a `line` in place of a
+recording span.
 
 **Filtering happens before ranking (W2.7).** The relay gives the query
 worker the caller's readable set from the selected World generation
@@ -268,7 +291,9 @@ None of [ADR 0094](0094-peoples-writes.md)'s abilities applies: searching is
 reading, bounded by the readable set like every read. A member who finds a
 loop and cuts from it uses `cut`, and one who tags it uses `annotate`, as
 today. Searching by a sound that is not in the archive (uploading an example)
-would need staged content and is not offered; see Open for the operator.
+is not offered now; when wanted, it is only for callers with `admit`,
+through staging, with the example discarded after the answer unless
+admitted (Settled 7).
 
 ### Fingerprinting is later
 
@@ -279,7 +304,8 @@ the index may later hold its codes for lookup under the rules above.
 ## Consequences
 
 - The sample app filters by tempo, key, length, loudness, form and sound,
-  ranks by timbre, and searches transcripts, in one request each, for the
+  ranks by timbre, and searches transcripts and notebook pages, in one
+  request each, for the
   operator and for every member over what their audiences read.
 - A member learns nothing about undisclosed items from search: not their
   facets, not whether they match, not how many of them match. They learn the
@@ -289,7 +315,7 @@ the index may later hold its codes for lookup under the rules above.
 - A cut becomes findable by timbre only after a `timbre` run for its content
   and the next `world index`; until then it counts as `unindexed`.
 - World's store root grows by the index: about 2 KB a unit for embeddings,
-  plus transcript text. Each refresh adds an index build proportional to
+  plus transcript and page text. Each refresh adds an index build proportional to
   what was added.
 - The bank becomes an input of a World read for the first time. A lost bank
   empties the index's machine facets and embeddings until extractors run
@@ -343,7 +369,7 @@ INV-4's word for regenerable state.
   being deletable at any time. (4) It is ADR 0055's generation applied to the
   second store. (5) No. (6) A detail.
 - **Unit** (of the index) is a word for "what one hit names": a selection
-  object, an audio Artifact, or a transcript segment. It is a field value,
+  object, an audio Artifact, a transcript segment, or a notebook page. It is a field value,
   not a concept.
 
 ## Touch points
@@ -371,37 +397,28 @@ INV-4's word for regenerable state.
   `index_unavailable`; `relay/openapi.json` gains the route.
 - `docs/state-model.md` (the index in the regenerable list and World's
   loss row), `docs/boundaries.md` (the relay paragraph), `world/README.md`.
-- ADR 0099's W2.2 view rule, which the build calls rather than repeats.
+- ADR 0099's W2.2 view rule, which the build calls rather than repeats;
+  ADR 0105's page revisions, read through `world/documents.py`'s
+  `document_lines`.
 
-## Open for the operator
+## Settled by the operator (2026-10-19)
 
-1. **The engine.** SQLite with FTS5 and exact vector search is proposed;
-   the alternative is an embedded vector library. *Recommend:* SQLite and
-   exact search now; an approximate index only when a measured search over
-   the real library exceeds 100 ms.
-2. **The model.** W2.6 asks for one permissive timbre model, not which.
-   *Recommend:* a short spike over two or three candidates whose weights'
-   licence is verified to permit redistribution, judged by the operator
-   listening to the neighbours of twenty library sounds.
-3. **Long recordings.** A mean embedding of an hour-long rehearsal means
-   nothing. *Recommend:* embed only selections and Artifacts up to 30
-   seconds in index version 1; windowed search inside long recordings
-   ("where in our rehearsals does this snare sound") is an addition after
-   the size is measured.
-4. **What `withheld` counts.** INV-24 asks that a withheld result be said;
-   W2.7 asks that nothing hidden be revealed. *Recommend:* the
-   request-independent count above; a per-request count is refused for good.
-5. **Which text is searched.** W2.9 names transcripts. *Recommend:* add
-   titles, span annotations and notebook pages
-   ([ADR 0105](0105-notebook.md), proposed) as further text sources in later
-   additions under the same dependency rule, each a separate index source.
-6. **Claimed facets by default.** No current rule exists yet for form and
-   sound claims. *Recommend:* `unrejected` as the default until ADR 0099 or
-   a later record gives a current rule, then the current rule.
-7. **Search by an uploaded example.** *Recommend:* not now; when wanted,
-   only for callers with `admit`, through staging, with the example
-   discarded after the answer unless admitted.
-8. **Destroyed content's transcripts.** The index drops its own copies of
-   destroyed content but keeps searching an admitted transcript of it.
-   *Recommend:* leave that to the information-erasure question; the index
-   follows whatever disposition the transcript is given.
+1. **The engine.** SQLite with FTS5 and exact vector search; an approximate
+   index only when a measured search exceeds 100 ms (R6.16).
+2. **The model.** A short spike over two or three candidates with verified
+   redistributable weights, judged by the operator by ear (R6.16).
+3. **Long recordings.** Index version 1 embeds only selections and
+   Artifacts up to 30 seconds; windowed search later (R6.16).
+4. **What `withheld` counts.** The request-independent count; a
+   per-request count is refused for good (R6.16).
+5. **Which text is searched.** Notebook page text enters now, beside
+   transcripts (R6.4); titles and span annotations are later additions,
+   each a separate source (R6.16).
+6. **Claimed facets by default.** `unrejected` until a current rule exists,
+   then that rule (R6.16).
+7. **Search by an uploaded example.** Not now; later only with `admit`,
+   through staging, discarded unless admitted (R6.16).
+8. **Destroyed content's transcripts.** Left to the information-erasure
+   question; the index follows the transcript's disposition (R6.16).
+9. **The loudness facet.** ADR 0099's `frames` `rms_db` plus the recipe's
+   gains; integrated LUFS is unreliable on short one-shots (R6.2).

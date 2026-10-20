@@ -1,6 +1,6 @@
 # 0104. Transcripts come from local ASR runs, and speaker spans name consenting people
 
-Status: proposed (wave 2, drafted 2026-10-19)
+Status: proposed (wave 2, drafted 2026-10-19; open questions settled 2026-10-19)
 
 Talk is half of what a rehearsal holds that the music does not: "take it
 from the bridge", "that was the one", a count, an argument about the ending.
@@ -48,6 +48,10 @@ earlier settled decisions and W2.8); this record states them as given.
 - **W2.9** Transcript text search lives in ADR 0102's disposable index
   store; this record says only what the index reads.
 
+The operator settled this record's open questions on 2026-10-19 (round 6
+answer R6.11; R6.16 settles the rest as recommended). The decision below
+states the settled choices; the list at the end records them.
+
 ## Decision
 
 ### Transcripts: an ASR extractor, and ADR 0085's batch
@@ -86,7 +90,7 @@ batch, admitted together (ADR 0064):
 
 The amendment's "never from ASR text" is read as a rule about lyric
 documents: the run's own `timed_lyrics` places the run's own words, which
-the original decision provides (Open 1). A transcript of a song stays a
+the original decision provides (Settled 1). A transcript of a song stays a
 transcript; it becomes lyrics only by a person's `kinds` or Work timing, and
 a lyric document is still aligned by forced alignment, never copied from
 ASR output.
@@ -96,7 +100,7 @@ request, like every extractor; policy says which content wants it
 ("transcribe accepted rehearsal audio", the design principle's own example;
 "transcribe voice notes"), and configuration says which model on which
 machine. Version 1 transcribes the whole content; a view filters lines by
-`talk` spans where an application wants talk only (Open 11). Reach needs
+`talk` spans where an application wants talk only (Settled 11). Reach needs
 nothing new: the transcript reaches no further than the recording it is
 `derived_from` (ADR 0085), and both lineage and `document_source` make it a
 destroy dependent of that recording (ADR 0098).
@@ -111,7 +115,7 @@ dispatch such an extractor through Spool to any worker but the operator's
 own (`remote.traveling`), since a circle spool would carry the model's work
 to someone else's machine, and the repository never names, fetches, or pins
 its weights. Its runs and claims are like any other's: the run's software
-and parameters say which model made them (Open 8).
+and parameters say which model made them (Settled 8).
 
 **Hosted ASR is a processor, not built.** Sending audio to a hosted model
 would be a disclosure to a service destination that policy grants, recorded
@@ -128,7 +132,7 @@ one recording), and `embedding` (a float series, one speaker-embedding
 vector per row). Like `asr-whisper` it needs no feature and runs in its own
 environment with pinned weights; if no embedding model with shippable
 weights and training data is found, it lives in the operator-local catalog
-(Open 8).
+(Settled 8).
 
 **A voiceprint is the `voice/embedding` rows of an enrollment sample, over
 that sample's spans** (W2.8): a bank feature, regenerable from the
@@ -153,7 +157,7 @@ keep it biometric data held for one purpose:
 Speaker runs stay on the operator's machines: `voice` and the speaker
 proposer are never dispatched to a spool that anyone else can lease from,
 even a circle one, because the job's payload would carry enrollment audio to
-that machine (Open 7).
+that machine; ASR may go to the operator's own workers only (Settled 7).
 
 ### `archive.claim/voice_consent` version 1
 
@@ -201,7 +205,7 @@ operator over the tailnet. Unlike a co-writer's sharing consent
 person's behalf, and no operator tool has a command to. Door can check the
 agent but not the login, because capacity is not recorded on records
 (ADR 0092); the rest is the operator's honesty, as ADR 0018 already says of
-limits (Open 2).
+limits (Settled 2).
 
 **No grant gates it** ([ADR 0094](0094-peoples-writes.md)): like a member's
 own limit or a withdrawn judgment of their own claim, it is the person's own
@@ -277,8 +281,23 @@ or by span, and every judgment is kept and shown. For the views below, a
 span naming a person is **set aside** while the active operator's standing
 on it is `rejected` (W2.8), or while the named person's own standing on it
 is `rejected`: "that is not me" only narrows what the archive says about
-them, so like their limit it needs no grant (Open 3). Anyone else's
+them, so like their limit it needs no grant (Settled 3). Anyone else's
 rejection sets nothing aside.
+
+**Only machines assert speaker spans** in version 1 (W2.8): a person who
+wants to say "Ana said this" writes a span annotation `note`
+([ADR 0081](0081-judgments-and-annotations.md)) (Settled 12). A view may
+suggest a session's participants from speaker spans, but no participation
+claim is proposed from them (ADR 0095) (Settled 10).
+
+**A span naming a person selects for their own limits (R6.11).** ADR 0094's
+records-them test gains a clause, for limits only: the `source` Artifact of
+a head speaker spans claim with a span naming the caller, not set aside,
+records the caller, under R5.3's condition (the operator asserted or
+affirmed the claim, or it arrived in the same admission as the content). A
+limit only narrows (INV-26); being named in talk makes nobody a participant.
+A machine claim never arrives with its content, so in practice the
+operator's affirmation is what makes a span select; see Still open 1.
 
 ### World and the relay
 
@@ -292,7 +311,7 @@ rejection sets nothing aside.
   that person's consent is live at the snapshot and the span is not set
   aside; otherwise the span is shown as "unknown speaker". A withdrawn
   person's earlier spans stay admitted and are shown unnamed, never dropped
-  (Open 4).
+  (Settled 4).
 - **`archive.view/transcript` version 1**: a transcript's lines and words
   joined from the document only for a viewer who may read it, as
   `lyric_view` joins lyrics, each line with the speaker the `speakers` view
@@ -305,9 +324,11 @@ rejection sets nothing aside.
   view and returns object IDs that the relay filters by the caller's
   readable set (W2.7); speaker names come from the `speakers` view, filtered
   the same way.
-- **Relay.** It accepts voice consents only from the person they name;
-  accepts judgments of speaker spans under `annotate`, and a named person's
-  rejection of a span naming them without one; serves speaker spans and
+- **Relay.** It accepts voice consents only from the person they name,
+  ungated; accepts judgments of speaker spans under `annotate`, and a named
+  person's rejection of a span naming them without one (both ungated acts
+  join ADR 0094's list of writes no grant gates, in its one wave-2
+  amendment, R6.10); serves speaker spans and
   transcripts within reach, as everything; and serves no `voice` output.
 
 ## Consequences
@@ -321,7 +342,7 @@ rejection sets nothing aside.
   it measured, consenting or not. They are local, regenerable, never served,
   never indexed, and never compared across recordings except to a live
   voiceprint; deleting them loses nothing but the time to remeasure
-  (Open 6).
+  (Settled 6).
 - A speaker spans claim records which consent each name relied on, so a
   later reader can tell a name from a withdrawn consent from a live one.
 - Two new contracts, three views, two extractors, two proposers, and one
@@ -341,7 +362,8 @@ rejection sets nothing aside.
   role, and contributions carry no consent rule.
 - **Asserting a participation from speaker spans.** ADR 0095 allows a
   machine participation; talking at a session is not playing in it, and a
-  view can suggest participants from speaker spans without a claim (Open 10).
+  view can suggest participants from speaker spans without a claim
+  (Settled 10).
 - **Voiceprints as admitted evidence.** They would be biometric data in
   every copy and backup, kept forever (INV-1). As bank features they are
   regenerable and delete with the bank.
@@ -400,7 +422,9 @@ rejection sets nothing aside.
 - `world/judgments.py`: `standing`, read for the operator and the named
   person.
 - `world/circle.py`: `MEMBER_CONTRACTS` and `check_member_draft` (voice
-  consent own-only and ungated; a named person's rejection ungated).
+  consent own-only and ungated; a named person's rejection ungated);
+  `world/grants.py` (new, ADR 0094): the records-them test's speaker-span
+  clause (R6.11).
 - `world/exports.py`: `practice_refusal` refuses every `voice` output.
 - `world/record_views.py` and `world/views.py`: `VIEWS` gains `speakers`,
   `transcript`, `voice_consent`; `world/contract_graphs.py` and
@@ -413,40 +437,40 @@ rejection sets nothing aside.
   release; `docs/vocabulary.md`: *voice consent*, *speaker span*,
   *voiceprint*.
 
-## Open for the operator
+## Settled by the operator (2026-10-19)
 
-1. **ADR 0085's "never from ASR text".** Read it as governing lyric
-   documents only, so an ASR run's `timed_lyrics` over its own transcript
-   (method `asr`) stands as the original decision says? Recommended: yes.
-2. **"Made through their login" cannot be proven by a record.** Door checks
-   only that the agent is the person; the relay refuses every other route,
-   and no operator tool writes one. Accept that honesty limit, as ADR 0018
-   does for limits? Recommended: yes.
-3. **Who may set a name aside.** The operator's rejection (W2.8) and the
-   named person's own, without a grant? Recommended: both; anyone else's is
-   shown only.
-4. **After a withdrawal.** Earlier speaker spans stay admitted and are shown
-   unnamed; nothing is retired; erasing the name from history stays the
-   information-erasure question. Recommended: as stated.
-5. **Unknown voices numbered within one claim.** Allow "unknown speaker 2"
-   local to a claim, never linked across recordings? Recommended: yes.
-6. **Embedding rows of non-consenting voices in the bank.** Keep them
-   (local, regenerable, never served or indexed), so a later consent can be
-   matched without remeasuring? Recommended: keep.
-7. **Speaker runs never leave the operator's machines,** even to a circle
-   spool. Recommended: yes; ASR may go to the operator's own workers only.
-8. **The operator-local catalog** (a configured directory, licence stated
-   in `requires`, never dispatched beyond the operator's workers) as the
-   mechanism for weights that may not ship? Recommended: yes, with no
-   manifest version change.
-9. **Does a speaker span select content for the named person's limits?**
-   ADR 0094's records-them test lists participation, contributions and
-   deposits; a span naming them, not set aside, would add a way to narrow
-   only. Recommended: yes, amending ADR 0094's test.
-10. **Machine participation from speaker spans** (ADR 0095 allows it).
-    Recommended: no claim; a view may suggest participants.
-11. **Whole recordings or talk spans only.** Recommended: transcribe whole
-    content; filter by `talk` in views; policy chooses which content.
-12. **Can a person assert speaker spans?** W2.8 says machine claims.
-    Recommended: not in version 1; a span annotation `note` covers "Ana
-    said this".
+1. **ADR 0085's "never from ASR text".** It governs lyric documents only; an
+   ASR run's `timed_lyrics` over its own transcript stands (R6.16).
+2. **"Made through their login" cannot be proven by a record.** Accepted as
+   an honesty limit, as ADR 0018 does for limits (R6.16).
+3. **Who may set a name aside.** The operator and the named person, without
+   a grant; anyone else's rejection is shown only (R6.16).
+4. **After a withdrawal.** Earlier spans stay admitted and are shown
+   unnamed; erasure stays the information-erasure question (R6.16).
+5. **Unknown voices numbered within one claim.** Yes, never linked across
+   recordings (R6.16).
+6. **Embedding rows of non-consenting voices.** Kept in the bank: local,
+   regenerable, never served or indexed (R6.16).
+7. **Speaker runs stay on the operator's machines,** even from a circle
+   spool; ASR goes to the operator's own workers only (R6.16).
+8. **The operator-local catalog** for weights that may not ship, with no
+   manifest version change (R6.16).
+9. **A speaker span selects content for the named person's limits.** Yes,
+   amending ADR 0094's test, under R5.3's condition (R6.11).
+10. **Machine participation from speaker spans.** No claim; a view may
+    suggest participants (R6.16).
+11. **Whole recordings or talk spans only.** Whole content, filtered by
+    `talk` in views; policy chooses which content (R6.16).
+12. **Can a person assert speaker spans?** Not in version 1; a span
+    annotation `note` covers it (R6.16).
+
+## Still open
+
+1. **What meets R5.3's condition for a speaker span.** Speaker spans are
+   machine claims and never arrive in the same admission as their content,
+   so under R6.11's condition a span selects only once the operator affirms
+   the claim (or the span). *Recommend:* accept that literally; a person who
+   is named but not yet affirmed can still limit the content through their
+   participation or a part credit they assert themselves (R4.3, R5.2), so
+   nothing is lost, and the operator's affirmation keeps a machine's guess
+   from selecting.

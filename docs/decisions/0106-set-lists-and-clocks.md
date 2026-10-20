@@ -1,6 +1,6 @@
 # 0106. A set list is a claim of intent, and a clock asserts its own meter
 
-Status: proposed (wave 2, drafted 2026-10-19)
+Status: proposed (wave 2, drafted 2026-10-19; open questions settled 2026-10-19)
 
 Two things a band brings into a rehearsal say what was meant to happen, and
 nothing in an archive can hold either.
@@ -48,6 +48,10 @@ record states them as given.
 - **W2.13 Live responses are ordinary claims** asserted by the operator,
   written `by` the node software, and anchored to the node's recording.
 
+The operator settled this record's open questions on 2026-10-19 (round 6
+answer R6.3; R6.16 settles the rest as recommended). The decision below
+states the settled choices; the list at the end records them.
+
 ## Decision
 
 ### `archive.claim/set_list` version 1
@@ -62,9 +66,16 @@ revision:
   A set list written before the rehearsal has none, because the session
   Entity's identity comes from its first part's content (ADR 0048) and does
   not exist yet; the revision made after the session is admitted pins it
-  (Open 1);
+  (Settled 1);
 - 1 to 200 `work` references, distinct `musical_work` Entity revisions;
-- 0 to 32 `singer` references, distinct `person` Entity revisions.
+- 0 to 32 `singer` references, distinct `person` Entity revisions;
+- at most one `during`, an `archive.claim/audio_selection` Claim revision
+  (version 2, or ADR 0099's version 3 once installed) whose track spans the
+  rehearsal node's parts: on a revision made live at a rehearsal, where in
+  the node's recording the edit was made. It is how
+  [ADR 0107](0107-multi-device-and-live.md) anchors every live response,
+  so a set-list edit is anchored like a cut or a title; there is no
+  `anchor` role and no `anchor_sample` field (R6.3).
 
 Its payload:
 
@@ -106,16 +117,19 @@ set list is a new object. An edit, before the rehearsal or live during it, is
 a revision of the same object, which keeps its agent: a bandmate who would
 play it differently asserts a set list of their own, and the two stand side
 by side (INV-7). Revisions are compared before writing, so a resend of an
-unchanged list writes nothing. When a live edit happened is the node's
-anchor, not the envelope's `at`, which is Door's commit time (Open 2).
+unchanged list writes nothing. When a live edit happened is its `during`
+selection's span in the node's recording, mapped onto the session's other
+sources by capture alignment (ADR 0107's `aligned_spans`), not the
+envelope's `at`, which is Door's commit time (Settled 2).
 
 **Door rules** (a specification release adds them with the bundle): the
 envelope `agent` is a `person` Entity (`x-archive-agent`); a revision keeps
 its agent (`x-archive-supersession`); reference targets by kind (`kinds`,
 ADR 0048); distinct `work` and distinct `singer` references
 (`x-archive-ordered-distinct-refs`); entry and singer positions within their
-roles (`x-archive-ref-index`); the decimal pattern and ranges; a key reading
-by ADR 0080's rules. One rule is new: every reference in a role is named by
+roles (`x-archive-ref-index`); a `during` target that is an installed
+selection version; the decimal pattern and ranges; a key reading by
+ADR 0080's rules. One rule is new: every reference in a role is named by
 some position the path reaches. It is `x-archive-ref-index` with
 `covering: true`, a keyword extension Door does not yet evaluate.
 
@@ -124,9 +138,13 @@ claim about readable things, so it falls under `annotate`: a member may
 assert one naming themselves as agent, and the relay's existing rule that
 every pin be readable applies to the session, the Works and the singers.
 The live edits the rehearsal node sends are the operator's, `by` the node
-software (W2.13); how they travel is ADR 0107's. Because a revision keeps
-its agent, the operator can revise live only a set list the operator
-asserted.
+software (W2.13); they travel as a response group of the node's outbox,
+pinning the group's selection as `during`, and are flushed after the node's
+recording is admitted (ADR 0107, R6.3). Because a revision keeps its agent
+(only its agent may revise it, Settled 3), the operator can revise live only
+a set list the operator asserted. The set list under `annotate` is part of
+the one ADR 0094 amendment that lists every wave-2 ability addition
+(R6.10).
 
 ### A clock asserts its own meter
 
@@ -207,7 +225,7 @@ pins the recording's session:
   steps 3 and 5) beyond their caps. The corpus, the distances, the hit,
   suggestion and near-tie limits are unchanged, so a prior can make a
   planned song be compared, never make a weaker match be suggested, and an
-  unplanned song is found as before (Open 4);
+  unplanned song is found as before (Settled 4);
 - a prior run proposes no claim an earlier run already made for the same
   window and Work.
 
@@ -221,7 +239,8 @@ is wave 3's, and live guesses are never admitted.
   with `arch:intended_for` its session, each entry a resource of its own
   (`arch:SetListEntry`) with `arch:position`, `arch:entry_work`,
   `arch:target_bpm`, `arch:target_beat`, its key reading projected as a key
-  claim's reading is (ADR 0080), and `arch:sung_by`. A clock's meter claim is
+  claim's reading is (ADR 0080), and `arch:sung_by`; a `during` selection
+  as `arch:edited_during`. A clock's meter claim is
   projected as any meter claim, its agent an `arch:ProcessAgent`
   ([ADR 0029](0029-core-context-and-bootstrap-contract.md)).
 - **`archive.view/set_list_played` version 1.** Its question is "what did
@@ -265,7 +284,8 @@ is wave 3's, and live guesses are never admitted.
 - A target tempo is stored where tempo was never stored before. It is a
   stated intention, not a reading of audio, so ADR 0077's rule (tempo
   derived from bars and beats) still holds for every meter claim; the
-  vocabulary entry would say so (Open 6).
+  vocabulary keeps "tempo is never stored" for meter claims and adds that a
+  target tempo is a stated intention, not a tempo of audio (Settled 6).
 - No invariant changes. INV-7 holds because two set lists, and a clock's
   layer beside a tracker's, coexist; INV-5 because a matcher without a prior
   writes as before.
@@ -351,31 +371,24 @@ is wave 3's, and live guesses are never admitted.
   includes a click channel or a MIDI clock (with ADR 0107's MIDI source).
 - `spec/archive-spec.md`: the set list bundle and the covering
   `x-archive-ref-index` rule; `docs/vocabulary.md`: *set list*, *set list
-  entry*, *target tempo*, *clock*, *prior*, and the tempo line (Open 6).
+  entry*, *target tempo*, *clock*, *prior*, and the tempo line (Settled 6).
+- ADR 0107's outbox: set-list edits as a response group (R6.3).
 
-## Open for the operator
+## Settled by the operator (2026-10-19)
 
-1. **A set list before its session exists.** The session Entity's identity
-   comes from its first part, so a plan cannot pin it in advance.
-   Recommended: `session` is optional; the plan is a set list with no
-   session, and the first revision after the session is admitted pins it.
-2. **When a live edit happened.** The envelope `at` is Door's commit time,
-   and live edits arrive after the rehearsal. Recommended: a live revision
-   carries an anchor in the node's recording, added in version 1 so wave 3
-   needs no new version. ADR 0107 anchors every live response by drafting or
-   pinning an `audio_selection` over the node's parts, with no `anchor` role
-   or `anchor_sample` field, and its outbox lists no set-list edit; whether a
-   set list pins such a selection or the node's part with a sample position
-   is not settled by either draft and is left to the operator.
-3. **Who may revise a set list.** Recommended: only its agent; another
-   person's plan is their own set list, side by side.
-4. **What a prior may do.** Recommended: only widen candidates
-   (`candidate_works`), never narrow the corpus or loosen a limit.
-5. **The view's tolerance.** Recommended: 3% by default, a view parameter,
-   and every meter claim listed rather than one chosen.
-6. **The vocabulary's "tempo is never stored".** Recommended: keep it for
-   meter claims and add that a set list's target tempo is a stated intention,
-   not a tempo of audio.
-7. **One clock Entity per device or per session.** Recommended: per device
-   or program, reused across sessions, so its claims can be compared over
-   time.
+1. **A set list before its session exists.** `session` is optional; the
+   first revision after the session is admitted pins it (R6.16).
+2. **When a live edit happened.** A live revision pins an
+   `audio_selection` over the node's parts in its `during` role, as ADR 0107
+   anchors every response; set-list edits join ADR 0107's outbox response
+   groups; no `anchor` role or `anchor_sample` (R6.3).
+3. **Who may revise a set list.** Only its agent; another person's plan is
+   their own set list (R6.16).
+4. **What a prior may do.** Only widen candidates (`candidate_works`)
+   (R6.16).
+5. **The view's tolerance.** 3% by default, a view parameter; every meter
+   claim listed (R6.16).
+6. **The vocabulary's "tempo is never stored".** Kept for meter claims; a
+   target tempo is a stated intention (R6.16).
+7. **One clock Entity per device or per session.** Per device or program,
+   reused across sessions (R6.16).

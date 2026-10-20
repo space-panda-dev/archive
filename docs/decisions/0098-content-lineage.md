@@ -57,8 +57,10 @@ W1.14); this record states it as given.
   survivor.
 
 The operator settled this record's open questions on 2026-10-19 (round 4
-answer R4.6; R4.11 settles the rest as recommended). The decision below
-states the settled choices; the list at the end records them.
+answer R4.6; R4.11 settles the rest as recommended), and amended it the same
+day from wave 2 (round 6 answers R6.5, R6.6 and R6.17), before the contract
+is installed. The decision below states the settled choices; the list at the
+end records them.
 
 ## Decision
 
@@ -104,13 +106,21 @@ Its payload, every field optional:
 ```
 
 - `inputs`, when present, has exactly one entry per `input` reference, in
-  the same order. An entry is `{}` (the input itself) or `{"stem": …}`: the
-  named `file` output of the bank entry, in exactly ADR 0079's citation
-  shape, whose recording is that `input`, which must then be an Artifact.
-  The stem is the recording ([ADR 0075](0075-stems-as-content.md),
-  ADR 0089), so the pin is what reach and destroy follow; the citation says
-  which signal was used. A stem that was itself admitted is cited as its
-  own Artifact instead.
+  the same order. An entry is `{}` (the input itself), `{"stem": …}`, or
+  `{"practice": …}`:
+  - `{"stem": …}`: the named `file` output of the bank entry, in exactly
+    ADR 0079's citation shape, whose recording is that `input`, which must
+    then be an Artifact. The stem is the recording
+    ([ADR 0075](0075-stems-as-content.md), ADR 0089), so the pin is what
+    reach and destroy follow; the citation says which signal was used. A
+    stem that was itself admitted is cited as its own Artifact instead;
+  - `{"practice": <practice request>}`: the exact practice mix of that
+    input (several stems at chosen gains, shifted and stretched), as
+    ADR 0089's request, whose `content` is that input's digest and whose key
+    World recomputes with `practice_key`; the `input` must be an Artifact.
+    It names the mix a kept practice take was played over
+    ([ADR 0107](0107-multi-device-and-live.md), W2.14), which a stem
+    citation cannot (R6.5).
 - `spans` are the decision's placements, called **lineage spans** here
   (see New nouns): 0 to 10,000 of them, each naming an `input` by its index
   and at least one of `from` (where in the input) and `to` (where in the
@@ -140,7 +150,11 @@ Its payload, every field optional:
   digest, and its key names the separator and settings, ADR 0073), or
   `{"practice": <practice request>}` when the output is a practice render of
   the single input recording (ADR 0089's request, whose `content` is that
-  input's digest and whose key World recomputes with `practice_key`). An
+  input's digest and whose key World recomputes with `practice_key`), or
+  `{"sample": <sample request>}` when the output is a sample render of the
+  single input, an `audio_selection` revision ([ADR 0099](0099-samples.md)'s
+  request, whose key Door recomputes with ADR 0099's `sample_key` and whose
+  pieces' contents are that selection's for some track) (R6.5). An
   admitted export has its own claim (below) and never a recipe here.
 
 **Door rules** (a specification release adds them with the bundle): one
@@ -148,11 +162,13 @@ Its payload, every field optional:
 the output's content digest (Door refuses only this self-lineage; longer
 cycles are tolerated, below, R4.11); an `input` target that is an Artifact or an
 installed selection version; `inputs` the same length as the `input`
-references, with a stem only on an Artifact input; every span's `input` in
+references, with a stem or a practice entry only on an Artifact input;
+every span's `input` in
 range and at least one of `from` and `to`, with `0 <= start_sample <
 end_sample` and a positive rate; transforms from the closed set with their
 ranges; a `bank` recipe's digest equal to the output's, with exactly one
-input. The agent is any person, or a tool's Package URL with a `run`.
+input; a `sample` recipe with exactly one input, a selection, whose key and
+contents match as above. The agent is any person, or a tool's Package URL with a `run`.
 
 **Who may assert it.** Lineage only narrows reach, so a member whose login
 has the cut grant ([ADR 0094](0094-peoples-writes.md)) may assert it over
@@ -198,11 +214,17 @@ Door's `Archive.Door.Reach` index gains the same edge, so a publication
 approval beyond the circle is refused by the same rule Door already shares
 with `beyond_circle` (ADR 0085's amendment).
 
-**Rights through a lineage edge ask for derivative use.** Where [ADR 0097](0097-rights-by-use.md)
-lets a rights claim say what use it permits, a source reached through a
-lineage edge is read for use in a derivative, and the beyond-circle check
-reads a clearance for that use (ADR 0097); a
-source reached through any other pin is read as today. Until ADR 0097's
+**Rights through a lineage edge ask for derivative use, unless the lineage
+is a recipe.** Where [ADR 0097](0097-rights-by-use.md) lets a rights claim
+say what use it permits, a source reached through a lineage edge is read for
+use in a derivative, and the beyond-circle check reads a clearance for that
+use (ADR 0097). A lineage claim with a `recipe` (`bank`, `practice` or
+`sample`) is different: its output is its source in another form, as a stem
+is the recording (ADR 0089), so each source it reaches is read as the source
+itself, with the use exercised on the output (R6.6). A pack's one-shot
+rendered as a sample and offered as a download is `redistribute` on the
+pack's file, not `derive`. A source reached through any other pin is read as
+today. Until ADR 0097's
 contracts are installed, every source is read as today, which is never
 wider.
 
@@ -268,6 +290,11 @@ recorded. Door refuses a missing, extra, or doubled disposition.
 - **Cost.** Door already replays the committed history; it builds one index
   from input object to lineage outputs in that pass, so a destroy checks its
   dependents in time linear in the lineage claims.
+- **One computation with containment.** [ADR 0101](0101-daw-projects.md)'s
+  containment dependents (the snapshot packs whose project snapshot claim
+  pins an Artifact with content D) are part of this same computation: one
+  index, one set of dispositions under the same rules, and the same batch
+  recursion (R6.17).
 
 A disposition is a decision, not an erasure: `dependent_source_gone` keeps
 the sample and records that its source is gone. What erasing information
@@ -374,7 +401,11 @@ derived from destroyed content means stays
 - `world/judgments.py`: `standing`, read by the pin map for the operator.
 - `world/harmony.py`: `check_stem_citation`, reused for `inputs[].stem`.
 - `world/exports.py`: `check_practice_request` and `practice_key`, for a
-  `practice` recipe; `check_export`, unchanged, read by the pin map.
+  `practice` recipe or input entry; ADR 0099's `check_sample_request` and
+  `sample_key`, for a `sample` recipe; `check_export`, unchanged, read by the
+  pin map.
+- `world/circle.py` and `door/src/Archive/Door/Reach.hs`: a recipe lineage
+  edge carries the exercised use, not `derive` (R6.6).
 - `world/circle.py`: `MEMBER_CONTRACTS` and `check_member_draft` (lineage
   under the cut grant; a member's rejection of lineage refused),
   `readable_set` and `beyond_circle` (unchanged, through the Reacher).
@@ -415,3 +446,12 @@ derived from destroyed content means stays
    strictest reach (R4.11).
 9. **Replacing D-9's blanket refusal.** Accepted: lineage dependents replace
    it (R4.6).
+10. **Sample and practice entries (from wave 2).** `recipe` gains
+    `{"sample": <sample request>}` (ADR 0099), and an `inputs` entry may be
+    `{"practice": <practice request>}`, naming the exact mix (ADR 0107)
+    (R6.5).
+11. **A recipe reads as the source (from wave 2).** Lineage with a `bank`,
+    `practice` or `sample` recipe is read as the source itself, with the
+    exercised use; `derive` stays for lineage without a recipe (R6.6).
+12. **One destroy computation (from wave 2).** ADR 0101's containment
+    dependents and lineage dependents are one computation (R6.17).

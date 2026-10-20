@@ -60,8 +60,10 @@ W1.7); this record states them as given.
 
 The operator settled this record's open questions on 2026-10-19 (round 4
 answers R4.2, R4.3, R4.5, R4.7 and R4.8; R4.11 settles the rest as
-recommended; round 5 answer R5.2 settles the last). The decision below states
-the settled choices; the list at the end records them.
+recommended; round 5 answer R5.2 settles the last). Wave 2 amended it the
+same day, before installation (round 6 answers R6.10 and R6.11). The
+decision below states the settled choices; the list at the end records
+them.
 
 ## Decision
 
@@ -175,6 +177,23 @@ member capacity allows: no transition, no operator-only contract.
 | `cut` | allowed | `archive.claim/audio_selection` version 2, pinning readable Artifact revisions, with the caller as its envelope `agent` (W1.6); and [ADR 0098](0098-content-lineage.md)'s lineage claim, which W1.12 gives to anyone with a cut grant |
 | `admit` | denied | Artifacts whose content the relay staged for the caller, with the claims that describe them in the same batch: a document source (ADR 0085) and [ADR 0096](0096-origin-of-recordings.md)'s origin claim |
 
+**Wave 2's additions (R6.10).** The proposed wave-2 records (ADRs 0099 to
+0107) add contracts to these abilities. This one amendment lists every
+addition, so the ability of each contract is stated in one place; each
+record's own table agrees with it.
+
+| Ability | Gains |
+|---|---|
+| `annotate` | [ADR 0099](0099-samples.md)'s `sample_form`, `sample_sound` and `sample_tag` version 1, and the versions of `selection_kind`, `selection_title`, `artist_credit`, `song_occurrence` and `performance_work` that accept selection version 3; [ADR 0103](0103-voice-capture.md)'s `voice_note` version 1 about a readable Artifact or selection; [ADR 0105](0105-notebook.md)'s `notebook_link` version 1; [ADR 0106](0106-set-lists-and-clocks.md)'s `set_list` version 1, with the caller as agent; [ADR 0107](0107-multi-device-and-live.md)'s `capture_start` version 1 about a readable Artifact, and `song_occurrence` version 2, so a member can link a rendition to a Work |
+| `cut` | ADR 0099's `audio_selection` version 3 beside version 2, and the lineage of a render the caller chose |
+| `admit` | a chosen sample render staged by ADR 0099's stage route; with staged content in the same batch, [ADR 0100](0100-packs-and-collections.md)'s `source_path` version 1, ADR 0103's `voice_note` version 1 and ADR 0107's `capture_start` version 1; a bounce ([ADR 0101](0101-daw-projects.md)) or a kept practice take (ADR 0107) as audio with its origin |
+
+Everything else wave 2 adds stays the operator's or a machine's: Entities
+(including `collection` and `daw_project`), membership claims, project
+snapshots, `session_parts`, capture alignments, `midi_stream`, a clock's
+meter claim, speaker spans, catalogue correspondence version 2, and rights.
+Two wave-2 writes join the list of what no grant gates, below.
+
 **What no grant gates.** Some writes are a person's own say, not a
 permission, and a `deny` cannot take them away:
 
@@ -183,7 +202,9 @@ permission, and a `deny` cannot take them away:
   allows the operator's sharing of their own work;
 - a `withdrawn` judgment of the member's own claim
   ([ADR 0081](0081-judgments-and-annotations.md)), so a member whose
-  `annotate` was turned off can still take back what they said.
+  `annotate` was turned off can still take back what they said;
+- a person's own voice consent ([ADR 0104](0104-transcription-and-speakers.md)),
+  and their `rejected` judgment of a speaker span naming them (R6.10).
 
 Everything ADR 0088 kept the operator's stays so: every transition, rights,
 work origin, Entities, machine provenance, correspondence, and capture
@@ -281,13 +302,21 @@ member assert `archive.claim/sensitivity`":
     ([ADR 0096](0096-origin-of-recordings.md)) that names the caller in the
     `depositor` role, which the operator asserted or affirmed, or which
     arrived in the same admission as that content, and which the operator
-    has not rejected (R4.8, R5.3); or
+    has not rejected (R4.8, R5.3);
+  - content the caller recorded: the subject of a head origin claim that
+    names the caller in `captured_by`, under the same condition as a
+    depositor's (R5.3), so a member can limit their own voice note
+    ([ADR 0103](0103-voice-capture.md)) (R6.11);
+  - content the caller is heard speaking in: the `source` of a head speaker
+    spans claim ([ADR 0104](0104-transcription-and-speakers.md)) with a
+    span naming the caller that is not set aside, under the same condition
+    (R6.11); or
   - a subject of one of the caller's own head sensitivity claims, so that a
     limit the operator entered on their behalf can always be revised by
     them.
 
   A subject that fails the test is refused `not_granted` with the reason.
-  The test is for limits only (R4.3, R5.2). A member's own participation,
+  The test is for limits only (R4.3, R5.2, R6.11). A member's own participation,
   or their own credit on a recording, span or channel, selects what they may
   limit, because a limit only narrows (INV-26); it does not make them a
   participant or a credited contributor, which still needs the operator's
@@ -449,7 +478,9 @@ Verified on 2026-10-19 to exist; a later implementation would change:
   on for own limits and admitted content).
 - `world/grants.py` (new): effective grants, defaults, records-them test
   (operator-counted or self-asserted participation and part credits; a
-  depositor from an operator-counted or same-admission origin claim).
+  depositor or `captured_by` from an operator-counted or same-admission
+  origin claim; a speaker span under the same condition), and the wave-2
+  ability table (R6.10).
 - `world/views.py`: `check_request` and `catalogue` gain
   `archive.view/write_grants` and `archive.view/person_limits`.
 - `world/documents.py`: `check_stage_request` (members with `admit`),
@@ -500,3 +531,9 @@ Verified on 2026-10-19 to exist; a later implementation would change:
     participation, for limits only: a person's own `recording`, `span` or
     `channel` contribution naming themselves selects that part for their
     limit, and the operator can reject it (R5.2).
+12. **Wave 2's ability additions (from wave 2).** One amendment lists every
+    contract ADRs 0099 to 0107 add to `annotate`, `cut` and `admit`, and
+    the two ungated speaker writes (R6.10).
+13. **`captured_by` and speaker spans select for limits (from wave 2).** An
+    origin's `captured_by` and a speaker span naming the person select
+    content for that person's own limits, under R5.3's condition (R6.11).

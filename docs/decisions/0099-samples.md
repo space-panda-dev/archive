@@ -1,6 +1,6 @@
 # 0099. A sample is a selection with a stem, a recipe and kinds, rendered on demand
 
-Status: proposed (wave 2, drafted 2026-10-19)
+Status: proposed (wave 2, drafted 2026-10-19; open questions settled 2026-10-19)
 
 The rehearsal review app is gaining a sample cutter, and a sample app will
 browse what it cuts beside songbook songs and organised libraries of kicks
@@ -44,6 +44,10 @@ this record states them as given.
   person's statement ("4 bars at 92") uses the existing meter-layer and key
   claims over the selection. No new field.
 
+The operator settled this record's open questions on 2026-10-19 (round 6
+answers R6.2, R6.5, R6.6 and R6.9; R6.16 settles the rest as recommended). The
+decision below states the settled choices; the list at the end records them.
+
 Packs, collections and source paths (W2.3, W2.4) are
 [ADR 0100](0100-packs-and-collections.md)'s; the similarity index that
 reads this record's facets (W2.6, W2.7) is
@@ -57,9 +61,10 @@ reads this record's facets (W2.6, W2.7) is
 Its references and every version 2 rule are unchanged (tracks of ordered
 `pieces`, one `piece` reference per span in track-then-span order, distinct
 content across tracks, optional `alignment` pins), plus optional `stream`
-references (below). Whether version 3's `alignment` pins may also name
-`capture_alignment` version 2, which ADR 0107's aligner proposes, is that
-record's Open 3; this draft keeps version 2's rule. Its payload:
+references (below). Version 3's `alignment` pins may name
+`capture_alignment` version 1 or version 2, the version
+[ADR 0107](0107-multi-device-and-live.md)'s aligner proposes (R6.9). Its
+payload:
 
 ```json
 {
@@ -126,7 +131,7 @@ record's Open 3; this draft keeps version 2's rule. Its payload:
   so canonical JSON, and the render key below, has one spelling.
 - **Kinds are claims about the selection, not payload fields** (below), as
   ADR 0048 made every selection fact its own contract ("one contract per
-  fact"). See Open 1.
+  fact"). See Settled 1.
 
 **One object for both cutters.** After the release that installs version 3,
 the review app and the sample cutter both write version 3; a version 3
@@ -134,8 +139,8 @@ with no signal and no recipe means what a version 2 means. A version 2
 selection stays valid and is a sample with neither. **Identity** follows
 ADR 0044: correcting a sample's bounds, signal or recipe while keeping the
 same intended sound is a revision of the same object; a variant kept
-beside it (the same hit an octave down, on its own pad) is a new object
-(Open 7).
+beside it (the same hit an octave down, on its own pad) is a new object;
+the cutter asks which when both are plausible (Settled 7).
 
 **Door rules** (a specification release adds them with the bundle): the
 version 2 rules; per span, at most one of `stem` (ADR 0079's closed shape)
@@ -154,7 +159,7 @@ citation stays true when the file is gone (ADR 0079).
 Three claim contracts, each with exactly one `subject`: an
 `archive.claim/audio_selection` version 2 or 3 Claim revision, or an
 Artifact revision when the whole file is the sample (a one-shot from a
-library, Open 2); at most one `run` (a machine proposer's, ADR 0064); and
+library, Settled 2); at most one `run` (a machine proposer's, ADR 0064); and
 0 to 8 `derived_from` Claim revisions ([ADR 0079](0079-machine-harmony-claims.md)'s
 role), such as the source-path claim a path proposer read (ADR 0100).
 
@@ -204,7 +209,8 @@ revision and track (default the first) or one Artifact:
   [ADR 0089](0089-practice-audio-and-exports.md)'s `transpose_key`, and a
   remainder of cents reported beside it, never rounded into the key;
 - `loudness`: from `frames` `rms_db` over the spans, plus the recipe's
-  gains;
+  gains, in decibels; never integrated LUFS, which is unreliable on short
+  one-shots (R6.2). ADR 0102's `loudness` facet is this value;
 - for a span with a `stem`, the features of that stem, which the bank keys
   and files as it does any stem's (ADR 0075); for a `channel`, none until an
   extractor measures single channels;
@@ -218,7 +224,7 @@ value. "4 bars at 92" is a person's meter layers claim whose four bars lie
 over the selection's samples on the source's timeline, with the tempo
 derived from bar times as ADR 0077 derives it; a key is a key regions
 claim. Both count the **source's** samples, before the recipe; the view
-applies the recipe to report what the render sounds like (Open 9). A claim
+applies the recipe to report what the render sounds like (Settled 9). A claim
 about an admitted render pins the render's own Artifact instead.
 
 Nothing here is stored: no field, no claim, no index of its own. ADR 0102's
@@ -300,22 +306,29 @@ outside the relay. Then, and only then, its exact bytes are admitted:
    relay's staging repository for the caller and answers as
    `/documents/stage` does. The operator may always call it; a member needs
    an effective `admit` grant ([ADR 0094](0094-peoples-writes.md)), since
-   it adds an Artifact (Open 5).
+   it adds an Artifact (Settled 5).
 2. One admission carries, atomically: the selection version 3 if it is not
    yet admitted; the render's Artifact; and its
    [ADR 0098](0098-content-lineage.md) lineage claim, asserted by the
    caller, with the selection revision as its one `input`, `complete:
    true`, one lineage span from the selection's samples to the whole output
    with the recipe copied as its `transforms`, and `recipe: {"sample": <the
-   sample request>}`, a third recipe form beside `bank` and `practice`
-   (Open 3). Door recomputes the key from the request and checks that its
+   sample request>}`, the third recipe form, which ADR 0098 lists beside
+   `bank` and `practice` (R6.5). Door recomputes the key from the request and checks that its
    pieces' contents are the selection's for some track.
 3. A send then follows ADR 0089's order: admit, record the disclosure
    (ADR 0016), and only then let the bytes leave; beyond the circle, with a
    publication approval naming its use (ADR 0097).
 
 The lineage claim caps the render's reach at its sources' (ADR 0098), and a
-destroy of a source lists the render as a dependent. The operator's
+destroy of a source lists the render as a dependent. **Rights read the
+sources with the render's own use.** A lineage claim with a `bank`,
+`practice` or `sample` recipe is read as the source itself (ADR 0097 and
+ADR 0098, as amended by R6.6), as ADR 0089 treats a stem: offering a render
+as a download exercises `redistribute` on every source, not `derive`. So a
+pack's one-shot rendered with no recipe, or any recipe, is passed on only
+where the pack permits redistribution; `derive` stays the reading for
+lineage without a recipe (a bounce, a song). The operator's
 complete lineage gives the render its sources' origin
 ([ADR 0096](0096-origin-of-recordings.md)); a member's leaves it unknown.
 
@@ -324,12 +337,13 @@ complete lineage gives the render its sources' origin
 | Write | Ability |
 |---|---|
 | a selection version 3, and the lineage of a chosen render | `cut` (version 3 joins version 2 in `MEMBER_CONTRACTS` under `cut`) |
-| `sample_form`, `sample_sound`, `sample_tag`; meter and key claims over a sample | `annotate` |
+| `sample_form`, `sample_sound`, `sample_tag`; meter and key claims over a sample; the cascade's new versions of `selection_kind`, `selection_title`, `artist_credit`, `song_occurrence` and `performance_work` | `annotate` |
 | a chosen render's Artifact, through the stage route | `admit` |
 | hearing a render, reading the views | none: reach decides |
 
 A machine proposer (a path reader, a classifier) sends kinds with its run
-through operator tools, never through the relay.
+through operator tools, never through the relay. These rows are part of the
+one ADR 0094 amendment that lists every wave-2 ability addition (R6.10).
 
 ### World
 
@@ -343,7 +357,7 @@ through operator tools, never through the relay.
   read: by default every head selection with a signal, a recipe, or a kind
   claim, and every Artifact with a kind claim, and every selection or
   Artifact that is a member of a collection (ADR 0100), with `all` adding
-  every other selection (Open 8). It filters by form, instrument, tag, collection
+  every other selection (Settled 8). It filters by form, instrument, tag, collection
   (ADR 0100) and facet ranges, and answers each row's kinds as listed claims
   and its facets from `sample_facets`. Its readable set is the caller's
   (ADR 0093).
@@ -364,9 +378,10 @@ through operator tools, never through the relay.
   keeps the sample and its file can be made again.
 - Version 3 brings a version cascade: `selection_kind`, `selection_title`,
   `artist_credit` and `song_occurrence` pin version 2 selections only
-  (D-13), so a release that installs version 3 also installs versions of
+  (D-13), so the release that installs version 3 also installs versions of
   them that accept version 2 or 3, and a `performance_work` version that
-  accepts the new occurrence (Open 6).
+  accepts the new occurrence, and switches the review app to version 3 at
+  that release; one release carries the whole cascade (R6.9, Settled 6).
 - Tempo and key appear for samples cut from analysed recordings and their
   stems; a library file shows them once the import runs the extractors
   (ADR 0100). One-shots have no tempo, by rule.
@@ -436,8 +451,8 @@ through operator tools, never through the relay.
 6. Contracts, not subsystems.
 
 None of these is a new kind of Entity. Wave 2's new Entity kinds are
-`collection` (ADR 0100, W2.3) and, if the operator accepts it, `daw_project`
-(ADR 0101, its Open 1).
+`collection` (ADR 0100, W2.3) and `daw_project` (ADR 0101), which the
+operator accepted as the second (R6.7).
 
 ## Touch points
 
@@ -472,52 +487,44 @@ Verified on 2026-10-19 to exist, unless marked new:
   `x-archive-span-signals` and `x-archive-recipe`.
 - A specification release under `spec/`: selection version 3, the three
   kind contracts, the `arch:sample-form` scheme, the selection-fact cascade,
-  lineage's `sample` recipe; `docs/vocabulary.md` on acceptance.
+  selection version 3's acceptance of alignment version 2, lineage's
+  `sample` recipe and the recipe-as-source reading of ADR 0097 (R6.6);
+  `docs/vocabulary.md` on acceptance.
+- `world/documents.py` and `door/src/Archive/Door/Reach.hs`: a lineage edge
+  with a recipe carries the exercised use (ADR 0097, R6.6).
 
-## Open for the operator
+## Settled by the operator (2026-10-19)
 
-1. **Kinds in the selection or beside it?** The settled decision lists
-   "sample kinds" in selection version 3, and W2.4 speaks of "form and sound
-   claims" a machine proposes "beside people's", which payload fields cannot
-   do. *Recommend:* kinds are claims about the selection, as drafted; the
-   selection carries signal and recipe only.
-2. **May a kind claim's subject be a whole Artifact?** Otherwise importing
-   a library mints one machine-made selection per file, and ADR 0044 meant a
-   selection to be accepted audio. *Recommend:* yes, as drafted; ADR 0100
-   decides what its import proposes.
-3. **Lineage's `sample` recipe amends ADR 0098** (proposed, wave 1), whose
-   recipe is closed to `bank` and `practice`. *Recommend:* add `sample` to
-   lineage version 1 before it is installed, with Door recomputing the key.
-4. **Which use does an admitted render read on its sources?** ADR 0097 reads
-   `derive` through every lineage edge. A render of a pack's one-shot with
-   no recipe is the one-shot redistributed as is, and would pass a pack's
-   derive-yes, redistribute-no licence. This contradicts ADR 0097's intent
-   and is not worked around here. *Recommend:* amend ADRs 0097 and 0098 so
-   a lineage claim with a `bank`, `practice` or `sample` recipe is read as
-   the source itself, with the exercised use, as ADR 0089 treats a stem;
-   `derive` stays for lineage without a recipe (a bounce, a song).
-5. **`admit` or `cut` for a chosen render?** ADR 0094 puts every Artifact
-   under `admit`, default off. *Recommend:* keep `admit`; the selection
-   already keeps a member's sample, so they lose nothing without it.
-6. **The version cascade.** Selection facts, occurrences and
-   `performance_work` need versions that accept version 3. *Recommend:*
-   install them in the same release, each accepting version 2 or 3, and
-   switch the review app to version 3 at that release.
-7. **Recipe changes and identity.** *Recommend:* ADR 0044's rule, as
-   drafted: a revision for the same intended sound, a new object for a kept
-   variant; the cutter asks which when both are plausible.
-8. **Which selections the samples view lists by default.** *Recommend:*
-   those with a signal, a recipe or a kind claim, or in a collection
-   (ADR 0100), with `all` for every selection.
-9. **Meter and key over a transformed sample.** *Recommend:* claims count
-   the source's samples before the recipe, and the view applies it; a claim
-   about the sounding result pins an admitted render.
-10. **Finding renders at destroy.** Renders filed by key join the existing
-    question about exports. *Recommend:* the destroy's cleanup reads each
-    `request.json` for the destroyed content, the same step that exports
-    need.
-11. **Tags beyond samples.** A notebook or recording may want free tags too.
-    *Recommend:* keep `sample_tag` scoped to samples now; a general tag
-    contract is a later decision if a second consumer appears.
-12. **Render length cap.** *Recommend:* configurable `sample_max_seconds`,
-    default 600; longer passages are practice renders.
+1. **Kinds in the selection or beside it?** Beside it: kinds are claims
+   about the selection, which carries signal and recipe only (R6.16).
+2. **May a kind claim's subject be a whole Artifact?** Yes; ADR 0100
+   decides what its import proposes (R6.16).
+3. **Lineage's `sample` recipe.** ADR 0098 is amended before installation
+   with a `{"sample": …}` recipe; Door recomputes the key (R6.5).
+4. **Which use an admitted render reads on its sources.** Lineage with a
+   `bank`, `practice` or `sample` recipe reads as the source itself, with
+   the exercised use; `derive` stays for lineage without a recipe; ADRs 0097
+   and 0098 are amended (R6.6).
+5. **`admit` or `cut` for a chosen render.** `admit`; the selection already
+   keeps a member's sample (R6.16).
+6. **The version cascade.** One release installs selection version 3, the
+   fact versions accepting version 2 or 3 and the new `performance_work`,
+   and switches the review app; selection version 3 also accepts
+   `capture_alignment` version 2 (R6.9).
+7. **Recipe changes and identity.** ADR 0044's rule: a revision for the same
+   intended sound, a new object for a kept variant; the cutter asks when
+   both are plausible (R6.16).
+8. **What the samples view lists by default.** Selections with a signal, a
+   recipe or a kind claim, or in a collection; `all` for every selection
+   (R6.16).
+9. **Meter and key over a transformed sample.** Claims count the source's
+   samples before the recipe and the view applies it; a claim about the
+   sounding result pins an admitted render (R6.16).
+10. **Finding renders at destroy.** The destroy's cleanup reads each
+    `request.json` for the destroyed content, the step exports need (R6.16).
+11. **Tags beyond samples.** `sample_tag` stays scoped to samples; a general
+    tag contract waits for a second consumer (R6.16).
+12. **Render length cap.** Configurable `sample_max_seconds`, default 600
+    (R6.16).
+13. **The loudness facet.** `frames` `rms_db` plus the recipe's gains, never
+    integrated LUFS (R6.2).

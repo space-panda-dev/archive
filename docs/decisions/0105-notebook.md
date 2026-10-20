@@ -1,6 +1,6 @@
 # 0105. Notes are snapshotted as documents, and their links to the archive are claims
 
-Status: proposed (wave 2, drafted 2026-10-19)
+Status: proposed (wave 2, drafted 2026-10-19; open questions settled 2026-10-19)
 
 The operator keeps notes in two notebooks outside the archive: an Obsidian
 vault (a folder of Markdown files) and a folder of Org files. Notes say
@@ -43,6 +43,11 @@ states them as given.
   policy (daily by default), with quiet history: only changed notes make
   revisions.
 
+The operator settled this record's open questions on 2026-10-19 (round 6
+answers R6.1, R6.4, R6.14 and R6.17; R6.16 settles the rest as
+recommended). The decision below states the settled choices; the list at the
+end records them.
+
 ## Decision
 
 The word *notes* already names note events on a recording
@@ -56,11 +61,11 @@ folder it lives in a **notebook**.
 **The notebook.** Each notebook is an Entity of kind `collection`
 ([ADR 0100](0100-packs-and-collections.md), W2.3), created once by the
 operator with a label ("Field notebook"). No new kind: a notebook is a
-personal library of pages, as a sample library is of samples. ADR 0100
-defines a collection as a set of audio with Artifacts and selections as
-members, so this use widens it; that conflict is the operator's (ADR 0100,
-Open 10). Where its
-folder is on disk is configuration, never a record (S-9).
+personal library of pages, as a sample library is of samples, and ADR 0100's
+collection holds items of any media (R6.1). Its pages are its members, given
+only by ADR 0100's membership claims, which the snapshot command proposes
+(R6.1). Where its folder is on disk is configuration, never a record
+(S-9).
 
 **The page.** Each page is one Artifact object. Its first snapshot is the
 object's first revision; each later snapshot whose bytes differ is a new
@@ -81,18 +86,24 @@ one batch:
    revision: `media_type` `text/markdown` for a `.md` page or `text/plain`
    for a `.org` page (Org has no type on ADR 0085's list, and plain text is
    what it is), `filename` the file's base name, `retrieved_at` the
-   snapshot instant, no `kinds` (below, Open 6);
+   snapshot instant, no `kinds` (Settled 6);
 3. when the page is new or has moved, the **source-path claim** of
-   ADR 0100 (W2.4), pinning the page
-   revision and the notebook Entity, with the page's path relative to the
-   notebook's folder (`Rehearsals/2026-10-14.md`). The path is evidence of
-   where the page lived, never its identity.
+   ADR 0100 (W2.4), pinning the page revision and, as `within`, the
+   notebook Entity, with the page's path relative to the notebook's folder
+   (`Rehearsals/2026-10-14.md`). The path is evidence of where the page
+   lived, never its identity, and never what makes it a member;
+4. when the page is new, its **membership** in the notebook: ADR 0100's
+   `archive.claim/collection_members`, revising the notebook's latest
+   membership claim to add the page while it lists fewer than 1,000
+   members, or a new membership claim when it is full (R6.1).
 
-The page Artifact and its document source name the active operator as
-`agent` (it is the operator's own writing) and the snapshot command's
+The page Artifact, its document source, its source-path claim and its
+membership name the active operator as `agent` (it is the operator's own writing) and the snapshot command's
 Package URL as `by`. No origin claim ([ADR 0096](0096-origin-of-recordings.md))
 is proposed: origin is about recordings and audio content, and a page with
-none is unknown origin beyond the circle, which is never wider (Open 5).
+none is unknown origin beyond the circle, which is never wider; origin is
+decided when publishing a page beyond the circle is first wanted
+(Settled 5).
 
 ### Snapshots: a schedule in policy, quiet history
 
@@ -122,8 +133,12 @@ notebook kept on another machine reaches it as a synced folder or through
    changed too; the identifier finds the object, as `corresponding` finds
    an Entity by its external URI, and never becomes the object's identity
    (S-9). A move with changed text and no identifier is a new page.
-5. **Removals** are recorded as Open 2 settles; until then a page deleted
-   from the folder stays in the archive, unchanged, with its last path.
+5. **Removals.** A page deleted from the folder is recorded by revising
+   the membership claim that listed it, without it, at that snapshot,
+   ADR 0100's rule for removing a member (R6.1, Settled 2). So "deleted"
+   and "unchanged" no longer look alike. The page stays in the archive with
+   its history and last path, and is never retired, which is the
+   operator's act of taking something out of the archive.
 
 Between two snapshots a page may change many times; only its state at each
 snapshot is kept. That is the cost of a daily cadence, and the reason the
@@ -139,10 +154,21 @@ into a standing desire for that notebook with its cadence; apply runs
 time of the last run is operational state, like a routine verification
 result ([ADR 0008](0008-plan-and-apply.md)): policy cannot read it from the
 records, because quiet history leaves no record of a run that found
-nothing, and does not need to, because running early changes nothing. ADR
-0007 does not list snapshotting an outside source among policy's desires,
-so this needs its amendment (Open 1). Until the policy language exists
-([open](../open-questions.md#policy)), a timer runs the command daily.
+nothing, and does not need to, because running early changes nothing. Until
+the policy language exists ([open](../open-questions.md#policy)), a timer
+runs the command daily.
+
+**The planned amendment of ADR 0007 (R6.14).** ADR 0007 lists policy's
+desires as placement, derivation, review requirements and publication, and
+admitting an outside folder on a cadence is none of them. When this record
+is accepted, ADR 0007 is amended to add a fifth kind, the **snapshot
+desire**: which outside sources (in wave 2, notebooks) are admitted, and how
+often. Its cadence is a standing desire that plan reads; the time of the
+last run is operational state, never a record; the folder a source maps to
+is configuration (mechanism), never policy. The amendment adds no verb:
+apply carries the desire out through `capture notebook` and Door's *admit*.
+This record does not edit ADR 0007; the amendment is made with its
+acceptance.
 
 ### `archive.claim/notebook_link` version 1
 
@@ -191,7 +217,10 @@ claims.
   a claim about readable things, so the relay adds it to the member
   contracts under that grant and its rule that every pin be readable
   applies. `cut` and `admit` do not apply; a member cannot snapshot a
-  notebook (Open 4).
+  notebook in wave 2, and a friend with `admit` deposits Markdown as
+  ordinary documents, without revisions or a notebook (Settled 4). The
+  notebook link under `annotate` is part of the one ADR 0094 amendment that
+  lists every wave-2 ability addition (R6.10).
 - **A machine.** A link reader, run as an enrichment over each new page
   revision ([ADR 0006](0006-enrichment.md)), proposes a link for every
   archive object the text names explicitly: an object ID (`urn:uuid:…`)
@@ -201,12 +230,13 @@ claims.
   object to the same target exists, by anyone, so a link the app asserted
   and wrote into the text is not doubled, and a later revision that keeps
   the reference proposes nothing (INV-5). Titles that merely match a Work
-  are candidates the app offers, not claims (Open 3).
+  are candidates the app offers, not claims (Settled 3).
 
 **Judging it.** A notebook link is judged with
 `archive.assessment/judgment` like any claim; disagreement stands side by
 side (INV-7). When a later revision drops a reference the reader proposed,
-the reader withdraws its own link (Open 7); a person's link stands until
+the reader asserts `withdrawn` on its own link, which stays visible with
+its history (INV-7) (Settled 7); a person's link stands until
 they withdraw it.
 
 ### Wikidata joins catalogue correspondence (W2.10)
@@ -277,11 +307,10 @@ technique) stay outside links in the view.
   object: the pages that link to a recording, Work, session, collection or
   sample, which is what the review app, the songbook and the sample app
   show as "in the notebook".
-- **Search.** W2.9 names transcripts only; page text (head revisions
-  only) enters the retrieval index's full-text search
-  ([ADR 0102](0102-retrieval-index.md)) when that record adds it as a
-  further text source, as its Open 5 recommends. Results are filtered by the caller's readable set before they leave the relay
-  (W2.7).
+- **Search.** Page text (head revisions only) is a text source of the
+  retrieval index's full-text search ([ADR 0102](0102-retrieval-index.md))
+  from the start, beside transcripts (R6.4). Results are filtered by the
+  caller's readable set before they leave the relay (W2.7).
 - **Relay.** Page bytes are served by `GET /documents/{digest}`, which
   already serves any Artifact a `document_source` describes, under
   `may_show`. A page reaches a member only through a publication approval
@@ -311,8 +340,10 @@ technique) stay outside links in the view.
 - **Page link** (the view of links between pages). (1) It answers which
   pages a page links to and from. (2) No verb; World computes it.
   (3) None. (4) It is a view in World. (5) No; regenerable. (6) A view.
-- **Snapshot** is an operation, not a noun: `capture notebook` admitting
-  changed pages through Door's *admit*.
+- **Snapshotting** is an operation, not a noun: `capture notebook`
+  admitting changed pages through Door's *admit*. *Snapshot* as a noun is
+  only [ADR 0101](0101-daw-projects.md)'s project snapshot; the vocabulary
+  reconciles the two uses when these records are accepted (R6.17).
 
 ## Consequences
 
@@ -331,8 +362,11 @@ technique) stay outside links in the view.
 - A first snapshot of a large vault admits two or three records per page;
   the command sends them in batches. Afterwards only changed pages cost
   anything.
-- Pages are text and contain no audio; an attachment in a vault (an image,
-  a PDF, a voice memo) is not a page and is out of scope (Open 8).
+- Pages are text and contain no audio; an attachment in a vault is not a
+  page. Images and PDFs may later be snapshotted as ordinary documents with
+  source paths; audio enters only through voice capture
+  ([ADR 0103](0103-voice-capture.md)), never through the notebook command
+  (Settled 8).
 - No invariant changes. INV-5 holds because unchanged pages write nothing;
   INV-10 holds because sitelinks and parsed page links stay in World, and
   what is kept is promoted as a claim.
@@ -356,12 +390,19 @@ technique) stay outside links in the view.
 - **A Wikipedia article URL as `external`.** One item has an article per
   language, so one Entity would gather many equal mappings; the item is
   the concept.
-- **A new Entity kind `notebook`.** W2.3 makes `collection` the one new
-  noun, and a notebook is a collection.
+- **A new Entity kind `notebook`.** A notebook is a set someone keeps,
+  which `collection` already is, widened to any media (R6.1).
+- **Membership by source paths' `within`.** It would make a second way to be
+  a member beside membership claims, and a removal would need a field the
+  source-path claim does not have; membership claims already record
+  additions and removals as revisions (R6.1).
 
 ## Touch points
 
-- `capture/notebook.py` (new): the `capture notebook` command, using
+- `world/collections.py` (new, ADR 0100): `members`, read for a notebook's
+  pages.
+- `capture/notebook.py` (new): the `capture notebook` command (membership
+  revisions for new and removed pages), using
   `enrich/adapter.py` to read the archive and stage content as
   `capture/capture.py` does; `capture/README.md`.
 - `world/notebook.py` (new): `check_notebook_link`, the page-link parser
@@ -386,40 +427,33 @@ technique) stay outside links in the view.
   unchanged; the bundles' profile rules carry the role counts and kinds.
 - `spec/archive-spec.md`: a new D-section for the notebook link and
   catalogue correspondence version 2 (beside D-18's version 1);
-  `docs/vocabulary.md`: *notebook link*, *page*, *notebook*, *page link*;
-  policy's desire kinds (Open 1).
+  `docs/vocabulary.md`: *notebook link*, *page*, *notebook*, *page link*,
+  and *snapshot* reconciled with ADR 0101 (R6.17).
+- `docs/decisions/0007-policy.md`: the snapshot desire, amended on
+  acceptance (R6.14).
 
-## Open for the operator
+## Settled by the operator (2026-10-19)
 
-1. **Policy gains a snapshot desire.** ADR 0007 lists policy's desires as
-   placement, derivation, review requirements and publication; a schedule
-   for admitting an outside folder is none of them, so W2.11 needs ADR 0007
-   amended to add one. Recommended: amend it, with the cadence a standing
-   desire and the last-run time operational state, as above.
-2. **Recording a removal.** A page deleted from the folder writes nothing
-   today, so "deleted" and "unchanged" look alike. Recommended: the command
-   supersedes the page's source-path claim with one saying the file left
-   the notebook at that snapshot; ADR 0100's version 1 has no field that
-   says so, so this needs a field or a later version of that contract; never a
-   retire, which is the operator's act of taking something out of the
-   archive.
-3. **Machine links from titles.** Recommended: in wave 2 the link reader
-   proposes only explicit archive references; Work-title and alias matches
-   stay candidates in the notebook app until a person keeps one.
-4. **Members' notebooks.** Recommended: snapshots stay the operator's in
-   wave 2; a friend with `admit` deposits Markdown as ordinary documents,
-   without revisions or a notebook.
-5. **Origin of pages.** Recommended: none for now; decide when publishing a
-   page beyond the circle is first wanted (then the operator's own pages
-   would want an own-work origin, which ADR 0096 defines for recordings
-   only).
-6. **A document kind for pages.** `kinds` has no value for a notebook page
-   (`notes` means liner notes). Recommended: leave `kinds` absent; the
-   source-path claim's notebook says what the document is.
-7. **A dropped reference.** Recommended: the reader asserts `withdrawn` on
-   its own link when a later revision no longer names the target; the link
-   stays visible with its history (INV-7).
-8. **Vault attachments.** Recommended: images and PDFs in a notebook may be
-   snapshotted later as ordinary documents with source paths; audio enters
-   only through voice capture ([ADR 0103](0103-voice-capture.md)), never
-   through the notebook command.
+1. **Policy gains a snapshot desire.** ADR 0007 is to be amended on
+   acceptance with a snapshot desire: cadence a standing desire, last-run
+   time operational state (R6.14).
+2. **Recording a removal.** Recorded, never a retire (R6.16), by revising
+   the notebook's membership claim without the page, since membership is
+   always by membership claims (R6.1); no source-path field is needed.
+3. **Machine links from titles.** Only explicit archive references are
+   proposed; title matches stay candidates in the app (R6.16).
+4. **Members' notebooks.** Snapshots stay the operator's in wave 2; a
+   friend with `admit` deposits Markdown as ordinary documents (R6.16).
+5. **Origin of pages.** None for now; decided when publishing a page beyond
+   the circle is first wanted (R6.16).
+6. **A document kind for pages.** `kinds` absent; the notebook says what the
+   document is (R6.16).
+7. **A dropped reference.** The reader withdraws its own link; it stays
+   visible with its history (R6.16).
+8. **Vault attachments.** Images and PDFs later as ordinary documents with
+   source paths; audio only through voice capture (R6.16).
+9. **A notebook is a collection.** `collection` is widened to any media and
+   the snapshot command proposes its membership claims (R6.1).
+10. **Page text in the index.** Now, beside transcripts (R6.4).
+11. **The word "snapshot".** Snapshotting here is an operation; the noun is
+    ADR 0101's; reconciled in the vocabulary on acceptance (R6.17).
