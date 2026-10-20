@@ -154,8 +154,8 @@ command, `rg -n '^##' enrich/README.md`).
 | `enrich/note_builder.py` | 356 | `build`: one note per held pitch from a pitch track and its level (ADR 0086); settings `VOICE`, `BASS`; tests `enrich/test_note_builder.py` |
 | `enrich/probe.py`, `detector.py` | 234, 674 | stream facts (0065), span suggestions (0066; presets and the talk gate, 0091) |
 | `enrich/match.py`, `cover.py`, `windows.py` | 358, 1073, 517 | work matching (0067, 0071, 0072) |
-| `enrich/extract.py` | 756 | feature-bank runner: `main` (`list`, `run`), `run_default`, `run_from` |
-| `enrich/bank.py` | 819 | `Catalog` (326), `Bank` (704): the bank format |
+| `enrich/extract.py` | 786 | feature-bank runner: `main` (`list`, `run`), `run_default`, `run_from`, `probed_over` |
+| `enrich/bank.py` | 897 | `Catalog` (347), `Bank` (745): the bank format; a preference's `probe` (`check_probe`, `Bank.probe_falls_short`) |
 | `enrich/remote.py` | 494 | extractor runs through Spool: `put`, `work`, `collect` (ADR 0090) |
 | `enrich/media.py`, `waveform.py`, `derived.py` | 193, 161, 62 | derived media (ADR 0069) |
 | `enrich/support.py` | 291 | test support: synthetic audio, scratch archives |
@@ -178,7 +178,7 @@ requests, the cost gate; ADR 0112); the build work is step 0 of
 [docs/backlog.md](docs/backlog.md).
 Find: extractors in `enrich/extractors/<id>/extractor.json`; SHIPPED digest
 pins in `enrich/test_bank.py` (`SHIPPED = {`, line 115); byte format in
-[docs/feature-bank.md](docs/feature-bank.md) (444; shipped table at "The
+[docs/feature-bank.md](docs/feature-bank.md) (483; shipped table at "The
 shipped extractors").
 
 ## capture (Python)

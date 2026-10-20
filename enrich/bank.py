@@ -220,8 +220,10 @@ class Extractor:
     def prefers(self) -> list[dict[str, Any]]:
         """The file features this extractor measures by default where the
         content has them, in order, each with the parameters it takes there
-        and the minimums its measure there must reach to be the default."""
-        return [{"parameters": {}, "at_least": {}, **preference} for preference in self.manifest.get("prefers", [])]
+        and the minimums its measure there must reach to be the default,
+        and the probe that may pass it over before it is measured."""
+        return [{"parameters": {}, "at_least": {}, "probe": None, **preference}
+                for preference in self.manifest.get("prefers", [])]
 
     def accepts(self, media_type: str) -> bool:
         kind, _, sub = media_type.partition("/")
@@ -264,6 +266,23 @@ def check_output_declaration(where: str, name: str, declared: Any) -> None:
     _require(not extra, f"{where}: output {name} has unknown fields {sorted(extra)}")
 
 
+PROBE_FIELDS = {"series", "column", "at_or_above", "share_at_least"}
+
+
+def check_probe(probe: Any, where: str) -> None:
+    """A preference's probe: `{"series": "<extractor>/<output>", "column":
+    <n>, "at_or_above": "<decimal>", "share_at_least": "<decimal>"}`, the
+    share of that series' rows whose column is at or above a value, read
+    from another extractor's measure of the preferred feature."""
+    _require(isinstance(probe, dict) and set(probe) == PROBE_FIELDS
+             and isinstance(probe["series"], str) and FEATURE.fullmatch(probe["series"]) is not None
+             and isinstance(probe["column"], int) and not isinstance(probe["column"], bool) and probe["column"] >= 0
+             and all(isinstance(probe[f], str) and DECIMAL.fullmatch(probe[f]) is not None
+                     for f in ("at_or_above", "share_at_least")),
+             f"{where} is {{\"series\": \"<extractor>/<output>\", \"column\": <n>, "
+             f"\"at_or_above\": \"<decimal>\", \"share_at_least\": \"<decimal>\"}}")
+
+
 def check_manifest(manifest: Any, where: str) -> dict[str, Any]:
     """An extractor manifest, refused unless it is exactly the contract's shape."""
     _require(isinstance(manifest, dict), f"{where}: not a JSON object")
@@ -294,7 +313,7 @@ def check_manifest(manifest: Any, where: str) -> dict[str, Any]:
     prefers = manifest.get("prefers", [])
     _require(isinstance(prefers, list), f"{where}: prefers must list preferred inputs")
     for preference in prefers:
-        _require(isinstance(preference, dict) and set(preference) <= {"input", "parameters", "at_least"}
+        _require(isinstance(preference, dict) and set(preference) <= {"input", "parameters", "at_least", "probe"}
                  and isinstance(preference.get("input"), str) and FEATURE.fullmatch(preference["input"]) is not None,
                  f"{where}: each preference is {{\"input\": \"<extractor>/<output>\", \"parameters\": {{...}}, "
                  f"\"at_least\": {{...}}}}")
@@ -305,6 +324,8 @@ def check_manifest(manifest: Any, where: str) -> dict[str, Any]:
         _require(all(isinstance(manifest.get("outputs"), dict)
                      and manifest["outputs"].get(name, {}).get("kind") == "scalar" for name in minimums),
                  f"{where}: at_least for {preference['input']} names only scalar outputs it declares")
+        if "probe" in preference:
+            check_probe(preference["probe"], f"{where}: the probe of {preference['input']}")
         fields = preference.get("parameters", {})
         _require(isinstance(fields, dict), f"{where}: a preference's parameters must be an object")
         check_parameters(fields, f"{where}: parameters preferred for {preference['input']}")
@@ -352,6 +373,26 @@ class Catalog:
                                     f"only a file can be content")
                 if source in self.order([extractor.id]):
                     raise BankError(f"{extractor.id} prefers {preference['input']}, which it makes or needs")
+                if preference["probe"] is not None:
+                    self.check_probe(extractor.id, preference)
+
+    def check_probe(self, extractor_id: str, preference: Mapping[str, Any]) -> None:
+        """A probe reads a series that another extractor here declares, with
+        the column it names. One whose extractor is not here is never present,
+        and the preference is measured as if it had none."""
+        probe = preference["probe"]
+        source, output = FEATURE.fullmatch(probe["series"]).groups()  # type: ignore[union-attr]
+        if source == extractor_id:
+            raise BankError(f"{extractor_id} probes its own {output}; its own measure is what at_least reads")
+        if source not in self.extractors:
+            return
+        declared = self[source].outputs.get(output, {})
+        if declared.get("kind") != "series" or declared.get("dtype") not in _ARRAY_CODES:
+            raise BankError(f"{extractor_id} probes {probe['series']} for {preference['input']}, "
+                            f"which is not a floating-point series")
+        if probe["column"] >= declared["columns"]:
+            raise BankError(f"{extractor_id} probes column {probe['column']} of {probe['series']}, "
+                            f"which has {declared['columns']}")
 
     @classmethod
     def load(cls, directories: Iterable[Path] = (EXTRACTORS,)) -> "Catalog":
@@ -780,18 +821,22 @@ class Bank:
             source = preference["input"].split("/", 1)[0]
             if source not in self.catalog.extractors or self.input_of(content, preference["input"]) is None:
                 continue
-            if preference["at_least"] and self.falls_short(content, preference, extractor_id):
+            if ((preference["at_least"] or preference["probe"] is not None)
+                    and self.falls_short(content, preference, extractor_id)):
                 continue
             return preference["input"]
         return None
 
     def falls_short(self, content: str, preference: Mapping[str, Any], extractor_id: str) -> bool:
         """Whether the measure of a preferred feature is in the bank and one
-        of the scalars its preference names is below the minimum given. A
-        value that is not a number is refused rather than read as either."""
+        of the scalars its preference names is below the minimum given; or,
+        while that measure is not in the bank, whether the preference's
+        probe is and falls short (`probe_falls_short`). The extractor's own
+        measure, once made, decides alone. A value that is not a number is
+        refused rather than read as either."""
         measured = self.entry_from(content, preference["input"], extractor_id)
         if measured is None:
-            return False
+            return self.probe_falls_short(content, preference) is not None
         for name, minimum in preference["at_least"].items():
             value = measured.scalar(name)
             if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value:
@@ -799,6 +844,39 @@ class Bank:
             if Decimal(repr(value)) < Decimal(minimum):
                 return True
         return False
+
+    def probe_falls_short(self, content: str, preference: Mapping[str, Any]) -> Entry | None:
+        """The probe's entry when it is in the bank and falls short, else
+        None: the share of the probed series' rows whose column is at or
+        above `at_or_above`, read from the probing extractor's measure of
+        the preferred feature (`f0-pesto`'s confidence on the vocal stem), is
+        below `share_at_least`. A series of no rows falls short. A probe
+        that is not in the bank says nothing, so the preference is measured.
+        It is read with the standard library, like the rest of the runner."""
+        probe = preference.get("probe")
+        if probe is None:
+            return None
+        source, output = FEATURE.fullmatch(probe["series"]).groups()  # type: ignore[union-attr]
+        if source not in self.catalog.extractors:
+            return None
+        found = self.input_of(content, preference["input"])
+        if found is None:
+            return None
+        entry = self.entry(found[1], source, filed_under=content, feature=preference["input"])
+        if entry is None:
+            return None
+        described = entry.output(output)
+        rows, columns = described["shape"]
+        values = array.array(_ARRAY_CODES[described["dtype"]], (entry.path / described["file"]).read_bytes())
+        if sys.byteorder != "little":
+            values.byteswap()
+        if len(values) != rows * columns:
+            raise BankError(f"{entry.path / described['file']} does not hold its shape {described['shape']}")
+        threshold = float(Decimal(probe["at_or_above"]))
+        reaching = sum(1 for value in values[probe["column"]::columns] if value >= threshold)
+        if rows and Decimal(reaching) / Decimal(rows) >= Decimal(probe["share_at_least"]):
+            return None
+        return entry
 
     def default_entry(self, content: str, extractor_id: str) -> tuple[Entry | None, str | None]:
         """The entry an extractor makes of this content by default, and the

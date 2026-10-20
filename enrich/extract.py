@@ -45,7 +45,11 @@ first of those the bank already holds for the content, as `--from` would,
 after everything else has run; where the bank holds none, it measures the content. A preference may
 set minimums for scalars of its measure (`melody` asks a `voiced_fraction`
 of at least 0.2 on the vocal stem); a measure below one is kept but passed
-over, and the next default input is measured too. A preference never
+over, and the next default input is measured too. A preference may also
+name a probe, a series another extractor measured of the feature (`melody`
+reads `f0-pesto`'s confidence on the vocal stem): while the preference's own
+measure is not in the bank and the probe's is and falls short, the
+preference is passed over unmeasured (`probed_over`). A preference never
 makes the feature, and an extractor run only because another needs it always
 measures the content. `--no-prefer` measures the content regardless.
 `Bank.default_entry` reads back what this made.
@@ -590,10 +594,12 @@ def run_default(catalog: bank.Catalog, root: Path, content: Path, media_type: st
     the bank now holds (`Bank.default_input`), as `run_from` would, or the
     content where it holds none. Where that measure falls short of the
     preference's `at_least`, the target measures its next default input as
-    well (the mix, when its vocal stem is mostly unvoiced). A preferring
-    target's answer says which feature it measured (`input`) and the keys of
-    the measures it passed over (`passed_over`); what was run to measure a
-    feature is under `inputs`."""
+    well (the mix, when its vocal stem is mostly unvoiced). A preference
+    whose probe is in the bank and falls short is passed over before it is
+    measured. A preferring target's answer says which feature it measured
+    (`input`), the keys of the measures it passed over (`passed_over`), and
+    the keys of the probes that passed one over unmeasured (`probed_over`);
+    what was run to measure a feature is under `inputs`."""
     run = Run(catalog, root, content, media_type, digest, programs, parameters, timeout, optional=optional)
     preferring = [t for t in targets if catalog[t].prefers and catalog[t].accepts(media_type)]
     plain = [t for t in targets if t not in preferring]
@@ -632,7 +638,28 @@ def run_default(catalog: bank.Catalog, root: Path, content: Path, media_type: st
             answer["status"] = "ok" if answer["status"] == made["status"] == "ok" else "failed"
     for target, measures in passed_over.items():
         answer["extractors"][target]["passed_over"] = measures
+    if not dry_run:
+        for target in preferring:
+            probed = probed_over(reader, run.content_digest(), target, answer["extractors"][target].get("input"))
+            if probed:
+                answer["extractors"][target]["probed_over"] = probed
     return answer
+
+
+def probed_over(reader: bank.Bank, content: str, target: str, measured: str | None) -> dict[str, str]:
+    """The preferred features passed over, before the one measured, on their
+    probe alone (the target never measured them): each with the key of the
+    probe's entry that decided."""
+    probed: dict[str, str] = {}
+    for preference in reader.catalog[target].prefers:
+        if preference["input"] == measured:
+            break
+        if (preference["probe"] is not None and reader.input_of(content, preference["input"]) is not None
+                and reader.entry_from(content, preference["input"], target) is None):
+            entry = reader.probe_falls_short(content, preference)
+            if entry is not None:
+                probed[preference["input"]] = entry.manifest["key"]
+    return probed
 
 
 def makes_content(extractor: bank.Extractor) -> bool:

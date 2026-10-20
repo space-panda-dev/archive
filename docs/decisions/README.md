@@ -90,7 +90,7 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0073](0073-feature-bank.md) | A feature bank holds regenerable features, keyed by content and method |
 | [0074](0074-extractor-contract.md) | An extractor is any program with a manifest, run by request (amended 2026-10-19, accepted; extended 2026-10-19 by 0108: a streaming mode) |
 | [0075](0075-stems-as-content.md) | Stems are separated outside the archive's environment, and a stem is content to every extractor |
-| [0076](0076-preferred-inputs.md) | An extractor may prefer a file feature of its content as its default input (accepted 2026-10-19, amended: a mostly unvoiced stem falls back) |
+| [0076](0076-preferred-inputs.md) | An extractor may prefer a file feature of its content as its default input (accepted 2026-10-19, amended: a mostly unvoiced stem falls back; proposed: a probe passes a stem over unmeasured) |
 | [0077](0077-chord-stacks-and-meter.md) | Chords are stacks and meter is a timeline, each asserted by someone |
 | [0078](0078-contributions.md) | A contribution names who did what, in which role, to how much of the music |
 | [0079](0079-machine-harmony-claims.md) | Machine harmony becomes claims; stems are cited by bank key |

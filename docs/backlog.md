@@ -199,6 +199,12 @@ scheduler has added it.
   saving in the cost gate; bump `melody`'s version only if its outputs can
   change. Tests in `enrich/test_melody.py` and `enrich/test_bank.py`
   (preferred inputs).
+  Built (branch `bulk/melody`): a preference's `probe` (ADR 0076's second
+  amendment), `f0-pesto`'s confidence on the vocal stem; `melody` stays
+  version 3. Left for the scheduler: run `f0-pesto --from stems/vocals`
+  before `melody`, or the probe is not in the bank and the vocal stem is
+  measured as before. Left for the cost gate: the saving, once `bench-cost`
+  exists.
 
 ## People, samples, and rehearsals (ADRs 0092-0111)
 

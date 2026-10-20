@@ -231,7 +231,31 @@ preference is passed over for the next, or the content (`melody` takes
 `stems/vocals`, then `stems-6s/vocals`, then the mix, passing over a vocal
 stem that voices less than a fifth of its rows, as on an instrumental). A measure passed over is kept; the runner measures the
 next default input too and names what it passed over in `passed_over`.
-`at_least` is not a parameter and changes no key. Without `--from`, the runner runs every other target
+`at_least` is not a parameter and changes no key.
+
+A preference may also name a `probe`, read before the extractor measures
+the feature at all: a series another extractor measured of the same
+feature, a column of it, and the share of its rows that must be at or above
+a value. `melody` probes each vocal stem with `f0-pesto`'s confidence:
+
+```json
+"probe": {"series": "f0-pesto/f0", "column": 1, "at_or_above": "0.5",
+          "share_at_least": "0.03"}
+```
+
+While the extractor's own measure of the feature is not in the bank, and
+the probing extractor's is (`Bank.entry_from(content, feature, "f0-pesto")`)
+and fewer than that share of its rows reach the value, the preference is
+passed over unmeasured, and the runner names the probe's entry under
+`probed_over`. Once the extractor's own measure is in the bank, it alone
+decides, by `at_least`; a probe not in the bank says nothing. The probe
+must name a floating-point series of another extractor, and a column it
+has; one whose extractor is not in the catalog is never present. Like
+`at_least`, it changes no key. A probe saves the measure only where the
+probing extractor ran first: the caller orders it (`f0-pesto --from
+stems/vocals` before `melody`), since the runner never makes a probe.
+
+Without `--from`, the runner runs every other target
 first, then measures each preferring target on its default input as `--from`
 would (the feature's digest is the content, filed under the content's
 directory); a preference never makes the feature, and an extractor run only
@@ -417,7 +441,9 @@ what each changed:
   the gate (`measured_fraction`), prefers the vocal stem where the bank holds
   it, and resolves pitch in 5-cent bins, 2 on that stem. Still 3: it passes
   over a stem voicing less than a fifth of its rows, and takes the 6-stem
-  separator's vocal stem after the 4-stem one's.
+  separator's vocal stem after the 4-stem one's; and again when it passed
+  over, unmeasured, a stem where fewer than 3% of `f0-pesto`'s rows have a
+  confidence of 0.5 or more.
 - `colour` 2 stopped copying the peaks into the bank and checks its
   palette; 3 sets the centroid hue's
   default range to 500 Hz to 4 kHz, which
