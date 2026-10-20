@@ -56,7 +56,8 @@ rehearsal is **the tempo map**. Everything else that keeps time is a
 | The watch click | the node sends the next beats' times and accents ahead; the watch schedules taps against its own clock | no: a late tap changes nothing in the archive |
 
 **Link has no master in its own protocol**: any peer may change the session
-tempo. "The node is tempo master" is therefore the node's policy, not Link's:
+tempo (*unverified*: stated from knowledge of the protocol, not checked
+against Link's documentation for this record). "The node is tempo master" is therefore the node's policy, not Link's:
 when a peer changes the tempo, the node does not follow; it restores the map's
 tempo and shows the attempt to the operator (Open 2). A follower that drifts or
 drops out is a fault of that follower, never a change to the map.
@@ -123,7 +124,8 @@ admitted). The node never follows the band: tempo following is out of scope
 
 ### Where the code lives, and the licence precondition
 
-- **Node application** (separate repository, W3.1): the clock, the click,
+- **Node application** (separate repository, W3.1,
+  [ADR 0109](0109-rehearsal-node.md)): the clock, the click,
   MIDI clock out, the Link peer, the watch feed, and writing the clock track.
   Link is linked here and only here.
 - **Archive** (`enrich/`, `capture/`): reading the clock track from a
@@ -137,8 +139,9 @@ admitted). The node never follows the band: tempo following is out of scope
   any naming or logo conditions. The result is recorded in a decision record
   or in `REUSE.toml`'s annotations. That check has not been done; nothing in
   this record assumes its outcome. Live analysis in `enrich/` that needs a
-  tempo reads the node's state over the node's own interface, never through
-  Link.
+  tempo gets it from the node, never through Link; how the node passes its
+  clock to [ADR 0108](0108-live-analysis.md)'s live runner, whose standard
+  input carries only audio, is not settled.
 
 ## Consequences
 
@@ -211,7 +214,8 @@ admitted). The node never follows the band: tempo following is out of scope
 1. **The licence check: who does it, and when?** Recommended: do it before
    the node application is first published, not only before Link enters the
    archive repository, since the node application will be shared too; record
-   the result as a short decision record.
+   the result as a short decision record. ADR 0109 (Open 7) makes the node
+   repository's own licence depend on it.
 2. **A Link peer changes the tempo.** Recommended: the node restores its own
    tempo at the next beat and shows "tempo change from a peer ignored"; the
    operator can adopt it with one action, which then becomes the map's.
@@ -227,5 +231,5 @@ admitted). The node never follows the band: tempo following is out of scope
    `spec/`: the file is content and the claim is ADR 0106's, so the
    convention binds two programs, not every archive reader.
 6. **Watch click timing.** Recommended: treat the watch tap as unverified
-   until W3.3's spike measures its jitter; the click in the ears stays the
+   until ADR 0109's spikes measure its jitter; the click in the ears stays the
    reference, and nothing about the watch is recorded.

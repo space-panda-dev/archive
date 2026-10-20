@@ -142,7 +142,9 @@ fired. It is a derivation run (ADR 0064) asserting through its process
 agent, and runs only when the operator names its inputs:
 
 - **The MIDI and the map are named, never guessed.** The operator names
-  the MIDI Artifact, optionally its track and channels, and the pad map
+  the MIDI Artifact, optionally its track and channels (in a rehearsal
+  node's MIDI capture, a track after
+  [ADR 0110](0110-shared-clock.md)'s clock track), and the pad map
   revision. Which card was loaded at a rehearsal is not in the MIDI, so a
   wrong guess would put another bank's samples into the recording's
   lineage and narrow its reach for nothing.
@@ -312,7 +314,8 @@ and `spec/contracts/` (the `pad_map` bundle and its profile rules);
    bank grammar's, as collections and membership do (ADR 0100, Settled 2).
 4. **Live pad display at the node.** Recommended: the node may show which
    sample a pad fired as advice, reading the pad map from World before the
-   rehearsal; nothing is written to the outbox from it (ADR 0107: live is
+   rehearsal (an addition to [ADR 0109](0109-rehearsal-node.md)'s read
+   side); nothing is written to the outbox from it (ADR 0107: live is
    advice).
 5. **Skipped notes.** Notes with no known bank or pad are counted but not
    recorded. Recommended: the run's report lists the counts; no claim

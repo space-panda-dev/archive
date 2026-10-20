@@ -26,9 +26,10 @@ What is still open:
 
 The operator decided the following on 2026-10-19 (wave 3 decisions W3.1 and
 W3.3); this record states them as given and takes the node half of W3.1.
-The analysis half (live analysis code in `enrich/`) and W3.2's streaming
-extractor contract, W3.4's clock and W3.5's practice feedback are other
-records' and are cited, not decided, here.
+The analysis half (live analysis code in `enrich/`), W3.2's streaming
+extractor contract and W3.5's practice feedback are
+[ADR 0108](0108-live-analysis.md)'s, and W3.4's clock is
+[ADR 0110](0110-shared-clock.md)'s; they are cited, not decided, here.
 
 - **W3.1.** Live analysis code lives in the archive's `enrich/` (live
   analysis is Enrichment); the rehearsal node is a separate application
@@ -56,7 +57,7 @@ sibling project, not as a concept of Archive.
 | device I/O: the audio interface, MIDI in and out, the click | archival meaning: no claim is a record before Door commits it (INV-2) |
 | its own recording, written as files the node grammar recognises | what a response *means*: drafts take Archive's contracts as they are |
 | the durable outbox of response groups (ADR 0107) | any write during the rehearsal: nothing is proposed live |
-| its UI, and the link to phones and the watch, push included | the analysis code: streaming extractors live in `enrich/` (W3.1, W3.2) |
+| its UI, and the link to phones and the watch, push included | the analysis code: streaming extractors and the live runner live in `enrich/` (ADR 0108) |
 | a cache of the World answers it read before the rehearsal | a second copy of Archive's rules: Door's refusal at flush is the check |
 
 **It proposes only after the rehearsal**, by the paths that exist: its files
@@ -67,16 +68,20 @@ relay gains no route for it in this record.
 
 ### What Archive publishes for the node
 
-The node depends on these and on nothing else of Archive, pinned as the
-review app pins its contracts (`{id, version, digest}`), never by an Archive
-commit:
+The node depends on these and on nothing else of Archive. Contracts and
+formats are pinned as the review app pins its contracts (`{id, version,
+digest}`), never by an Archive commit; the live runner (item 4) runs from a
+checkout of this repository (ADR 0108), and how the node pins that checkout
+is not settled:
 
 1. **The read side.** Before a rehearsal the node reads, through the relay
    over the tailnet in operator capacity, the Work Entity revisions, set
    lists ([ADR 0106](0106-set-lists-and-clocks.md)) and clock Entities it may
    pin, with the projection version it queried (ADR 0059). It keeps them as
    a cache for the evening; during the rehearsal it needs no connection to
-   Archive. A pinned revision that Door later refuses fails only its own
+   Archive. ADR 0108's live song guess also needs Works' reference
+   profiles, and ADR 0111 (Open 4) suggests pad maps; neither is in this
+   list yet, and how the profiles reach the node is not settled. A pinned revision that Door later refuses fails only its own
    group (ADR 0107).
 2. **The outbox format.** ADR 0107's entry shape (a response group of drafts
    in their contracts' shapes, with the `node`, `node_stream` and `outbox`
@@ -89,10 +94,12 @@ commit:
    part from the device clock (`basis` `client`). One grammar serves every
    device that runs the node software, laptop or phone; the device is the
    source token in `session_parts` version 2.
-4. **The streaming extractors** (W3.2), as a program the node runs in a
-   separate process, frames in and events out. The node never imports
-   `enrich/` as a library, so Archive's code and the node's (Ableton Link
-   included, W3.4) stay separate works; the licence check is W3.4's.
+4. **The live runner** (ADR 0108), `enrich/live.py run`, which the node
+   starts as a child process, writing its recorded sample frames to its
+   standard input and reading `archive-live-event/1` lines from its standard
+   output. The node never imports `enrich/` as a library, so Archive's code
+   and the node's (Ableton Link included, ADR 0110) stay separate works; the
+   licence check is ADR 0110's.
 5. **Identity.** Every draft's `agent` is the operator's person and its `by`
    is the node software's Package URL (W2.13); a companion app has its own.
 
@@ -120,7 +127,7 @@ so rather than showing it as taken.
 
 **As a display** the watch shows what the node offers as advice: a song
 guess, a set-list position, a tempo or tuning hint, and the click that
-follows the node (W3.4). All of it is operational and never written to an
+follows the node (ADR 0110). All of it is operational and never written to an
 outbox unless the operator acts on it (ADR 0107, "live is advice").
 
 **As a voice** the watch answers. Two kinds of answer exist:
@@ -172,14 +179,17 @@ node's repository or a sibling of it. It is three things:
   background for a whole rehearsal, on iOS and iPadOS, and recording on the
   watch;
 - **a node** when no laptop is there: the same software, holding its own
-  outbox.
+  outbox. It sends no live hints until it has streaming builds held to ADR
+  0108's replay test (ADR 0108, Open 6).
 
 ## Consequences
 
-- Archive gains no program, route, contract or dependency; the node is
-  replaceable without touching it, and Archive is testable without it.
-- The only artefact Archive adds for the node is the outbox schema, so the
-  node and the importer cannot drift on the one format they share.
+- This record gives Archive no program, route, contract or dependency; the
+  live runner and its event format are ADR 0108's. The node is replaceable
+  without touching Archive, and Archive is testable without it.
+- The only artefact this record adds for the node is the outbox schema, so
+  the node and the importer cannot drift on the format they share for
+  writes.
 - A response survives a dropped notification, a crash of the watch, and a
   lost connection to the node, as long as the originating device keeps
   resending; it is durable only once an outbox holds it.
@@ -276,4 +286,5 @@ application.
    *Recommended:* the companion app's direct link to the node is the main
    path and push the fallback; the spike measures both.
 7. **The node repository's licence.** *Recommended:* AGPL-3.0-or-later, as
-   Archive, subject to W3.4's Ableton Link check.
+   Archive, subject to ADR 0110's Ableton Link check (its Open 1 asks who
+   does it and when).

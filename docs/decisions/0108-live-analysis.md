@@ -160,7 +160,8 @@ archive during the rehearsal, writes no bank entry and keeps no state of its
 own; ADR 0074's line holds: no workflow engine, no scheduler, no retries.
 
 **The node talks to it through a process, not a library.** The node
-application (its own repository, W3.1) starts `enrich/live.py run` as a
+application (its own repository, W3.1,
+[ADR 0109](0109-rehearsal-node.md)) starts `enrich/live.py run` as a
 child for the rehearsal, writes the sample frames it records to its
 standard input, and reads `archive-live-event/1` lines from its standard
 output: each stream event with the extractor, version and parameter digest
@@ -210,7 +211,8 @@ non-commercial or local use never ship (Open 4).
   changes nothing; output worth keeping still enters through Door, and here
   only as a person's claim.
 - ADR 0107: the node's live computation is named (`enrich/live.py`) and its
-  samples are the recording's; outbox and responses are unchanged.
+  samples are the recording's; outbox and responses are unchanged (ADR 0109
+  publishes the outbox format and starts the live runner).
 - ADR 0106: live song ID's prior is a set list, as there; the batch matcher's
   prior rule is unchanged.
 - [Boundaries](../boundaries.md): `enrich/` gains a tool that reads a stream
@@ -297,7 +299,8 @@ non-commercial or local use never ship (Open 4).
 1. **Which extractors stream first, and at what cost?** Recommended:
    `frames` (`hpcp`, `rms_db` exact, for the song guess and level), `rhythm`
    (beats and tempo, provisional) and `f0-pesto` (pitch, for practice
-   feedback). Add each only where the replay test shows its batch outputs
+   feedback; whether its code and weights may be distributed to a browser is
+   unverified). Add each only where the replay test shows its batch outputs
    unchanged, so its digest is recorded rather than its version bumped; a
    `frames` version bump would re-key the whole bank.
 2. **Streaming an extractor that needs features.** `tonal`'s tuning needs
