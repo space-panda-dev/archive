@@ -769,13 +769,13 @@ stand in (made with other software than the record names) is made here.
 **The configuration** is `extract.py`'s file; its optional `backfill`
 object holds `units` (a list of `[extractor]` or `[extractor, feature]`),
 `extractors` (per extractor `threads`, `cores`, `memory_gb`, `cost`,
-`remote_cost`, `route`, `remote_parameters`, `tier`), `expensive_above`,
+`remote_cost`, `route`, `remote_parameters`, `tier`, `transport`), `expensive_above`,
 `fast_above`, `load_factor`, `poll_seconds`, `memory_reserve_gb`,
 `local_when_away_seconds`, `spool_in_flight`, `overflow`,
 `propose_every_seconds` and `rescan_seconds`. The recorded costs default to
 the cost gate's baseline of 2026-10-20 on the x86-64 laptop (CPU-seconds
 per audio-second of one pass; `remote_cost` is the Mac's measured end to
-end 0.277). The
+end 0.223, WavPack, two tasks at once). The
 runner ignores the object.
 
 **Output.** One JSON line per event on standard output (cut at 400
@@ -1074,7 +1074,7 @@ Entries are readable by their owner only: a stem carries the recording.
 ### `remote.py`: the same run on another machine, through Spool
 
 ```sh
-enrich/remote.py put <extractor> --content <file> --bank <dir> --spool "<spool> --dir <spool dir>" [--config <file>]
+enrich/remote.py put <extractor> --content <file> --bank <dir> --spool "<spool> --dir <spool dir>" [--config <file>] [--transport wavpack|flac]
 enrich/remote.py work [--config <file>]          # the Spool capability program, on the worker
 enrich/remote.py collect --bank <dir> --spool "<spool> --dir <spool dir>" [--config <file>]
 ```
@@ -1093,6 +1093,15 @@ because Spool's remote `put` carries no attachments. They need Spool 0.0.4
 with `--max-result-bytes` (a recording-hour's stems are about 1 GB). Only an
 extractor that needs no other feature travels.
 
+The link to the worker is the slowest step, so `--transport` (the
+backfill's `transport` setting, `wavpack` for `stems`) sends the content's
+first audio stream in a lossless encoding instead of its bits, when it
+decodes on this machine to exactly the content's samples
+(`remote.make_transport`): a rehearsal's 32-bit float WAV goes as WavPack at
+about 73% of its size; FLAC holds integer samples only. The answer's
+`transport` says what travelled and why the content did instead. The stems
+coming back are 16-bit FLAC already (about 0.18 MB per audio-second).
+
 On the worker, `work` runs under any Python 3 (it uses only the standard
 library), with a configuration naming the programs as `extract.py`'s does;
 the parameters come from the task. The bank's side names the device:
@@ -1105,7 +1114,7 @@ the parameters come from the task. The bank's side names the device:
 and the worker's Spool configuration offers the capability:
 
 ```json
-{"max_concurrent": 1, "renew_seconds": 30,
+{"max_concurrent": 2, "renew_seconds": 30,
  "env": {"PATH": "<ffmpeg's directory>:/usr/bin:/bin", "HOME": "<home, for the model cache>", "HF_HUB_OFFLINE": "1"},
  "capabilities": {"archive-extractor.stems@1": {
    "exec": "<Demucs's python>", "args": ["<archive>/enrich/remote.py", "work", "--config", "<worker.json>"],
@@ -1114,6 +1123,8 @@ and the worker's Spool configuration offers the capability:
 ```
 
 where `worker.json` is `{"programs": {"demucs-python": "<Demucs's python>"}}`.
+Two at once lets one task's files travel while the other separates; each
+task runs in its own directory, so they share nothing but the GPU.
 `spool work --via "ssh <spool host>" --config <that file> --follow` then
 separates whatever the bank puts. The worker's copy of the extractor must be
 the bank's version; a task it would key otherwise is refused for good.

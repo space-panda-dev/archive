@@ -462,6 +462,22 @@ its one attachment the content, and its payload:
  "input": {"digest": "sha256:...", "media_type": "audio/flac"}}
 ```
 
+The payload may also carry `"transport": {"codec": "wavpack", "digest":
+"sha256:...", "media_type": "audio/x-wavpack"}` (or `flac`, `audio/flac`):
+the attachment is then the content's first audio stream in that lossless
+encoding, not the content's bits, and the input's digest still names the
+content. The requester sends a transport only when it decodes, on the
+requester's ffmpeg, to the content's very samples (both decoded to 64-bit
+float with their rate and channel layout, and the two digests equal), and
+only for an extractor the operator says reads nothing but those samples
+(the backfill's `transport` setting; `stems` by default). A rehearsal's
+32-bit float WAV goes as WavPack at about 73% of its size; FLAC cannot hold
+float samples, so for one it fails the check and the content travels as it
+is. The worker hashes the attachment against the transport's digest and
+runs the extractor on it under the content's digest. A worker older than
+this refuses such a task for good (exit 65), and the backfill makes it
+locally.
+
 A worker computes the key from its own manifest and these parameters and
 refuses the task (exit 65) unless it is the one named. It runs the extractor
 as the runner does, leaves each output's file in `outputs/` named by its

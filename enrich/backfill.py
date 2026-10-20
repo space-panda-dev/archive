@@ -134,13 +134,15 @@ UNITS = (("stems",), ("rhythm",), ("tonal",), ("chords-jiang",), ("chords-chordi
 # costlier pass where a unit runs twice). Under a full backfill the laptop's
 # CPU-seconds come out about `load_factor` (1.15) above it. `remote_cost` is
 # the worker's end to end seconds per audio-second (the Mac, MPS stems, one
-# task at a time with float WAV transfers: 0.277 measured 2026-10-19).
+# task at a time with float WAV transfers: 0.277 measured 2026-10-19; two at
+# once with WavPack transfers off the home network: 0.223, 2026-10-20).
 # chordino's own `threads` parameter is 3 but it uses one core (CPU time =
 # wall time); jiang's is 3 and it uses 1.7; basic-pitch is held to 1 thread
 # and uses 3.4 (CPU 3.2x wall). The parameters are in the key, so the
 # reservation, not the parameter, is fixed here.
 SETTINGS: dict[str, dict[str, Any]] = {
-    "stems": {"threads": 2, "cores": 2, "memory_gb": 3.0, "cost": 1.445, "remote_cost": 0.277},
+    "stems": {"threads": 2, "cores": 2, "memory_gb": 3.0, "cost": 1.445, "remote_cost": 0.223,
+              "transport": "wavpack"},
     "f0-pesto": {"cost": 0.186, "memory_gb": 1.5},
     "chords-jiang": {"cores": 2, "cost": 0.151, "memory_gb": 2.0},
     "notes-basic-pitch": {"cores": 3, "cost": 0.107, "memory_gb": 1.5},
@@ -151,7 +153,10 @@ SETTINGS: dict[str, dict[str, Any]] = {
     "structure": {"cost": 0.003},
 }
 DEFAULT_SETTING = {"threads": 1, "cores": None, "memory_gb": 1.0, "cost": None, "remote_cost": None,
-                   "route": None, "remote_parameters": None, "tier": None}
+                   "route": None, "remote_parameters": None, "tier": None, "transport": None}
+# `transport`: the lossless encoding a routed extractor's content travels in
+# (`remote.TRANSPORTS`), for an extractor that reads only its first audio
+# stream's samples; null sends the content's own bits.
 TIERS = ("fast", "background")
 SCHEDULE = {
     "expensive_above": regions.EXPENSIVE_THRESHOLD,
@@ -273,6 +278,10 @@ def schedule_of(config: dict[str, Any], catalog: bank.Catalog) -> Schedule:
             raise BackfillError(f"backfill extractor {name}: tier is one of {', '.join(TIERS)}, or null")
         if value.get("remote_parameters") is not None and not isinstance(value["remote_parameters"], dict):
             raise BackfillError(f"backfill extractor {name}: remote_parameters is an object of its parameters")
+        if value.get("transport") not in (None, *remote.TRANSPORTS):
+            raise BackfillError(f"backfill extractor {name}: transport is one of {sorted(remote.TRANSPORTS)} or null")
+        if value.get("transport") not in (None, *remote.TRANSPORTS):
+            raise BackfillError(f"backfill extractor {name}: transport is one of {sorted(remote.TRANSPORTS)} or null")
         settings[name] = {**settings.get(name, {}), **value}
     numbers = {**SCHEDULE, **{k: v for k, v in given.items() if k in SCHEDULE}}
     away = numbers["local_when_away_seconds"]
@@ -523,7 +532,7 @@ class Job:
     routed: bool = False
     after: list["Job"] = field(default_factory=list)
     dependents: int = 0
-    status: str = "pending"  # pending, put, running, done, failed, blocked
+    status: str = "pending"  # pending, putting, put, running, done, failed, blocked
     detail: str | None = None
     since: float = 0.0
     cpu_s: float = 0.0
@@ -963,33 +972,36 @@ class Runner:
             return
         for job in chosen:
             job.status = "putting"
-        self.changed.release()
-        try:
-            for job in chosen:
-                self.put_one(job)
-        finally:
-            self.changed.acquire()
+        # Beside the pool: a transport takes about 0.01 s per audio-second to
+        # encode and check, which must not hold back what runs here.
+        threading.Thread(target=lambda: [self.put_one(job) for job in chosen], daemon=True).start()
 
     def put_one(self, job: Job) -> None:
         try:
             answer = remote.put(self.planner.catalog, self.planner.root, self.spool, job.unit.extractor,
                                 job.recording.path, job.recording.media_type
                                 or extract.media_type_of(job.recording.path), job.recording.digest,
-                                remote_parameters(self.planner.parameters, job.unit.extractor, self.schedule))
-        except (remote.RemoteError, bank.BankError, OSError) as exc:
+                                remote_parameters(self.planner.parameters, job.unit.extractor, self.schedule),
+                                transport=self.schedule.setting(job.unit.extractor)["transport"],
+                                ffmpeg=self.planner.programs.get("ffmpeg"))
+        except Exception as exc:  # noqa: BLE001  (the job runs here; the backfill goes on)
             with self.changed:
                 job.routed, job.status = False, "pending"
+                self.changed.notify_all()
             self.note(step="spool put failed; runs here", **job.describe(), error=str(exc)[-600:])
             return
         with self.changed:
             job.detail = answer["task_id"]
             if answer["status"] == "hit":
                 self.end(job, "done")
+                self.changed.notify_all()
                 return
             if not any(j.status == "put" for j in self.jobs):
                 self.last_filed = time.monotonic()  # the worker's clock starts with its first task
             job.status, job.since = "put", time.monotonic()
-        self.note(step="spool put", **job.describe(), status=answer["status"], task=answer["task_id"])
+            self.changed.notify_all()
+        self.note(step="spool put", **job.describe(), status=answer["status"], task=answer["task_id"],
+                  transport=answer.get("transport"))
 
     def collect(self) -> None:
         """Outside the lock: file what the spool holds, and give back to this
