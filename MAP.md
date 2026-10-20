@@ -43,6 +43,8 @@ module is `wf check enrich -- -p test_bank.py` and one test name is
 | `enrich-tests` | `unittest discover -s enrich/tests` (derived media) | 1800 s |
 | `enrich` | `unittest discover -s enrich -p "test_*.py"` (Essentia interpreter) | 3600 s |
 | `capture` | `unittest discover -s capture -p "test_*.py"` (Essentia interpreter) | 1800 s |
+| `bench` | `unittest discover -s enrich/bench` (the bench's own interpreter) | 300 s |
+| `bench-horn` | `python -m enrich.bench check horn-v1`: private data, x86-64 laptop only; fails on a regression | 3600 s |
 | `migration`, `shadow`, `fixture` | `unittest discover -s <dir> -p "test_*.py"` | 1800 s |
 
 Python suites build `door`/`archive` first and set
@@ -163,6 +165,9 @@ Tests: suite `enrich`, `enrich/test_<topic>.py` by command or extractor
 family (`git ls-files 'enrich/test_*'`; `test_bank` 1147, `test_extractors`
 runs all extractors together); suite `enrich-tests` is
 `enrich/tests/test_media.py`.
+The bench (`enrich/bench/`, [README](enrich/bench/README.md)) scores note
+transcribers against private sets outside the repository; suites `bench` and
+`bench-horn`. The `enrich` suite does not discover it (no `__init__.py`).
 Rules: enrichment never changes its inputs (INV-9); every claim carries its
 run and provenance (ADR 0064, [provenance](docs/provenance.md)); an
 extractor's version changes whenever its outputs can (ADR 0074); stems are
