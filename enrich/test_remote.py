@@ -23,6 +23,7 @@ import sys
 import tempfile
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
@@ -30,6 +31,7 @@ from unittest.mock import patch
 import bank
 import extract
 import remote
+import support
 from support import needs_ffmpeg
 from test_stems import chord_with_clicks, fake_python, stems
 
@@ -126,41 +128,43 @@ class FakeSpool:
     def tasks(self) -> list[dict]:
         return [json.loads(p.read_text()) for p in sorted((self.root / "tasks").glob("*.json"))]
 
-    def work(self, config: Path, env: dict[str, str] | None = None,
-             damage: bool = False) -> list[subprocess.CompletedProcess]:
-        runs = []
-        for task in self.tasks():
-            if (self.root / "done" / (task["task_id"] + ".json")).exists():
-                continue
-            directory = Path(tempfile.mkdtemp(prefix="run-", dir=self.root))
-            try:
-                (directory / "attachments").mkdir()
-                for item in task["attachments"]:
-                    shutil.copyfile(self.root / "attachments" / item["sha256"],
-                                    directory / "attachments" / item["sha256"])
-                    if damage:
-                        data = bytearray((directory / "attachments" / item["sha256"]).read_bytes())
-                        data[-100] ^= 1
-                        (directory / "attachments" / item["sha256"]).write_bytes(bytes(data))
-                completed = subprocess.run([sys.executable, str(REMOTE), "work", "--config", str(config)],
-                                           cwd=directory, input=json.dumps(task["payload"]).encode(),
-                                           capture_output=True, env={**os.environ, **(env or {})})
-                runs.append(completed)
-                if completed.returncode != 0:
-                    continue
-                kept = self.root / "results" / task["task_id"]
-                kept.mkdir(parents=True)
-                sent = []
-                for path in sorted((directory / "outputs").iterdir()):
-                    shutil.copyfile(path, kept / path.name)
-                    sent.append({"sha256": path.name, "size": path.stat().st_size})
-                record = {"task_id": task["task_id"], "lease_id": "lease_1", "capability": task["capability"],
-                          "worker": "w", "finished_at": "2026-10-18T00:00:00Z",
-                          "result": json.loads(completed.stdout), "attachments": sent}
-                (self.root / "done" / (task["task_id"] + ".json")).write_text(json.dumps(record))
-            finally:
-                shutil.rmtree(directory, ignore_errors=True)
-        return runs
+    def work(self, config: Path, env: dict[str, str] | None = None, damage: bool = False,
+             concurrent: int = 1) -> list[subprocess.CompletedProcess]:
+        """Each task not yet done, `concurrent` at a time, in task order."""
+        tasks = [t for t in self.tasks() if not (self.root / "done" / (t["task_id"] + ".json")).exists()]
+        with ThreadPoolExecutor(concurrent) as pool:
+            return list(pool.map(lambda task: self.work_one(task, config, env, damage), tasks))
+
+    def work_one(self, task: dict, config: Path, env: dict[str, str] | None,
+                 damage: bool) -> subprocess.CompletedProcess:
+        directory = Path(tempfile.mkdtemp(prefix="run-", dir=self.root))
+        try:
+            (directory / "attachments").mkdir()
+            for item in task["attachments"]:
+                shutil.copyfile(self.root / "attachments" / item["sha256"],
+                                directory / "attachments" / item["sha256"])
+                if damage:
+                    data = bytearray((directory / "attachments" / item["sha256"]).read_bytes())
+                    data[-100] ^= 1
+                    (directory / "attachments" / item["sha256"]).write_bytes(bytes(data))
+            completed = subprocess.run([sys.executable, str(REMOTE), "work", "--config", str(config)],
+                                       cwd=directory, input=json.dumps(task["payload"]).encode(),
+                                       capture_output=True, env={**os.environ, **(env or {})})
+            if completed.returncode != 0:
+                return completed
+            kept = self.root / "results" / task["task_id"]
+            kept.mkdir(parents=True)
+            sent = []
+            for path in sorted((directory / "outputs").iterdir()):
+                shutil.copyfile(path, kept / path.name)
+                sent.append({"sha256": path.name, "size": path.stat().st_size})
+            record = {"task_id": task["task_id"], "lease_id": "lease_1", "capability": task["capability"],
+                      "worker": "w", "finished_at": "2026-10-18T00:00:00Z",
+                      "result": json.loads(completed.stdout), "attachments": sent}
+            (self.root / "done" / (task["task_id"] + ".json")).write_text(json.dumps(record))
+            return completed
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
 
 
 @needs_ffmpeg
@@ -189,6 +193,134 @@ class Keys(unittest.TestCase):
                 if code:
                     self.assertIn("fixed settings but for the device", json.loads(out.getvalue())
                                   ["extractors"]["stems"]["log"])
+
+
+def float_recording(path: Path, seconds: int) -> Path:
+    """A float recorder's file: 48 kHz stereo 32-bit float WAV whose samples
+    are not 16- or 24-bit steps (the chord scaled by 0.37 in float), so FLAC
+    cannot hold them and WavPack can."""
+    support.ffmpeg("-f", "lavfi", "-i", f"sine=frequency=220:sample_rate=48000:duration={seconds}",
+                   "-f", "lavfi", "-i", f"sine=frequency=1000:sample_rate=48000:duration={seconds}:beep_factor=4",
+                   "-filter_complex", "[0][1]amix=inputs=2:normalize=0,aformat=sample_fmts=flt,"
+                   "volume=0.37:precision=float,aformat=sample_fmts=flt:channel_layouts=stereo",
+                   "-c:a", "pcm_f32le", str(path))
+    return path
+
+
+@needs_ffmpeg
+class Transport(unittest.TestCase):
+    """What travels in place of the content decodes to exactly its samples,
+    and the worker makes from it the entry the content makes."""
+
+    def setUp(self) -> None:
+        self.directory = scratch(self)
+        self.audio = float_recording(self.directory / "take.wav", 4)
+        self.digest = bank.file_digest(self.audio)
+        self.config = mps_config(self.directory)
+
+    def put(self, name: str, *extra: str) -> tuple[int, dict, FakeSpool]:
+        (self.directory / name).mkdir(exist_ok=True)
+        spool = FakeSpool(self.directory / name)
+        code, answer = call("put", "stems", "--content", str(self.audio), "--bank", str(self.directory / name / "bank"),
+                            "--spool", spool.command, "--config", str(self.config), *extra)
+        return code, answer, spool
+
+    def test_a_float_recording_travels_as_wavpack_with_its_very_samples(self) -> None:
+        code, answer, spool = self.put("wv", "--transport", "wavpack")
+        self.assertEqual(code, 0, answer)
+        [task] = spool.tasks()
+        carried = task["payload"]["transport"]
+        self.assertEqual((carried["codec"], carried["media_type"]), ("wavpack", "audio/x-wavpack"))
+        self.assertEqual(task["payload"]["input"], {"digest": self.digest, "media_type": "audio/wav"})
+        [attachment] = task["attachments"]
+        self.assertEqual("sha256:" + attachment["sha256"], carried["digest"])
+        sent = spool.root / "attachments" / attachment["sha256"]
+        self.assertLess(sent.stat().st_size, self.audio.stat().st_size)
+        # Bit-exact where the extractor reads: the samples, and the samples
+        # stems decodes to (stereo 44.1 kHz float), are the content's.
+        self.assertEqual(remote.decoded_digest("ffmpeg", sent), remote.decoded_digest("ffmpeg", self.audio))
+        decode = [a.replace("{input}", "{}") for a in stems.parameters()["decode_arguments"]]
+        decoded = [subprocess.run(["ffmpeg", *[a.format(str(f)) if a == "{}" else a for a in decode]],
+                                  capture_output=True, check=True).stdout for f in (sent, self.audio)]
+        self.assertEqual(decoded[0], decoded[1])
+        self.assertEqual(answer["transport"]["codec"], "wavpack")
+        self.assertEqual(remote.check_payload(task["payload"]), task["payload"])
+
+    def test_flac_cannot_hold_float_samples_so_the_content_travels(self) -> None:
+        code, answer, spool = self.put("flac", "--transport", "flac")
+        self.assertEqual(code, 0, answer)
+        self.assertIsNone(answer["transport"]["codec"])
+        self.assertIn("does not decode to the content's samples", answer["transport"]["why"])
+        [task] = spool.tasks()
+        self.assertNotIn("transport", task["payload"])
+        self.assertEqual(task["attachments"], [{"sha256": self.digest.removeprefix("sha256:"),
+                                                "size": self.audio.stat().st_size}])
+
+    def test_a_transported_task_files_the_entry_the_content_makes(self) -> None:
+        entries = {}
+        for name, extra in (("plain", ()), ("wv", ("--transport", "wavpack"))):
+            code, answer, spool = self.put(name, *extra)
+            self.assertEqual(code, 0, answer)
+            [run] = spool.work(worker_config(self.directory))
+            self.assertEqual(run.returncode, 0, run.stderr)
+            code, collected = call("collect", "--bank", str(self.directory / name / "bank"), "--spool",
+                                   spool.command, "--config", str(self.config))
+            self.assertEqual(code, 0, collected)
+            entries[name] = bank.Bank(self.directory / name / "bank", parameters={
+                "stems": {"apply": stems.apply_on("mps")}}).entry(self.digest, "stems").manifest
+        self.assertEqual(entries["wv"]["content"], self.digest)
+        for name in ("key", "content", "outputs", "parameters"):
+            self.assertEqual(entries["wv"][name], entries["plain"][name], name)
+
+    def test_a_worker_hashes_the_transport_and_refuses_other_bits(self) -> None:
+        code, answer, spool = self.put("wv", "--transport", "wavpack")
+        self.assertEqual(code, 0, answer)
+        [run] = spool.work(worker_config(self.directory), damage=True)
+        self.assertEqual(run.returncode, remote.EX_DATAERR, run.stderr)
+        self.assertIn(b"is not the bits its digest names", run.stderr)
+
+    def test_a_malformed_transport_is_refused(self) -> None:
+        payload = {"contract": remote.TASK_CONTRACT, "extractor": {"id": "stems", "version": "1"},
+                   "key": self.digest, "parameters": {}, "input": {"digest": self.digest, "media_type": "audio/wav"}}
+        remote.check_payload(payload)
+        for transport in ({"codec": "zip", "digest": self.digest, "media_type": "audio/x-wavpack"},
+                          {"codec": "wavpack", "digest": self.digest, "media_type": "audio/flac"},
+                          {"codec": "wavpack", "digest": "nope", "media_type": "audio/x-wavpack"},
+                          {"codec": "wavpack", "digest": self.digest}):
+            with self.assertRaises(remote.Refused):
+                remote.check_payload({**payload, "transport": transport})
+
+    def test_video_is_never_transported(self) -> None:
+        self.assertEqual(remote.make_transport("ffmpeg", self.audio, "video/mp4", "wavpack", self.directory),
+                         "video/mp4 is not audio")
+
+
+@needs_ffmpeg
+class Concurrent(unittest.TestCase):
+    """A worker that runs two tasks at once (Spool's `max_concurrent` 2: the
+    GPU separates one while the other's files travel) files each entry as it
+    would one at a time."""
+
+    def test_two_tasks_at_once_each_file_their_own_entry(self) -> None:
+        directory = scratch(self)
+        config = mps_config(directory)
+        spool = FakeSpool(directory)
+        takes = [float_recording(directory / f"take-{n}.wav", 2 + n) for n in (1, 2)]
+        for take in takes:
+            code, answer = call("put", "stems", "--content", str(take), "--bank", str(directory / "bank"),
+                                "--spool", spool.command, "--config", str(config), "--transport", "wavpack")
+            self.assertEqual(code, 0, answer)
+            self.assertEqual(answer["transport"]["codec"], "wavpack")
+        runs = spool.work(worker_config(directory), concurrent=2)
+        self.assertEqual([r.returncode for r in runs], [0, 0], [r.stderr for r in runs])
+        code, answer = call("collect", "--bank", str(directory / "bank"), "--spool", spool.command,
+                            "--config", str(config))
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(sorted(t["status"] for t in answer["tasks"].values()), ["filed", "filed"])
+        reader = bank.Bank(directory / "bank", parameters={"stems": {"apply": stems.apply_on("mps")}})
+        seconds = [reader.entry(bank.file_digest(take), "stems").manifest["outputs"]["seconds"]["value"]
+                   for take in takes]
+        self.assertEqual(seconds, [3, 4])
 
 
 @needs_ffmpeg

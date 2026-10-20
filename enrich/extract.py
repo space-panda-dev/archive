@@ -490,11 +490,17 @@ class Run:
                 "input": self.input(),
                 "needs": needs, "output_dir": str(output_dir)}
 
-    def input(self) -> dict[str, str]:
+    def input(self) -> dict[str, Any]:
         """What an extractor reads: the content, or a region run's cut."""
         if self.region is not None:
             assert self.cut is not None
-            return {"path": str(self.cut[0].resolve()), "digest": self.cut[1], "media_type": CUT_MEDIA_TYPE}
+            # The region and the content it was cut from, for an extractor
+            # whose output over a region depends on what lies around it
+            # (stems: Demucs's segment grid); the others read the cut alone.
+            return {"path": str(self.cut[0].resolve()), "digest": self.cut[1], "media_type": CUT_MEDIA_TYPE,
+                    "region": dict(self.region),
+                    "source": {"path": str(self.content.resolve()), "digest": self.content_digest(),
+                               "media_type": self.media_type}}
         return {"path": str(self.content.resolve()), "digest": self.content_digest(), "media_type": self.media_type}
 
     # -- running one extractor ---------------------------------------------

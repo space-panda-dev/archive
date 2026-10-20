@@ -132,15 +132,42 @@ worker's transfers, one task at a time); `--songs` at the shadow's song
 coverage would reach 0.200 (4.9x). Below the projected 7x and 12.7x
 because stems cost more under load and f0-pesto costs 0.37 core-seconds per
 audio-second over its two passes. Before `--songs` is used on real data:
-region stems disagree with whole stems over the same span (bass SNR
--0.15 dB on a 485 s region; not yet diagnosed), and no reader takes a
-region entry yet (`enrich propose` and the relay read whole entries), so a
-region entry is made and never read. A region that is the whole recording
-is made whole. Next levers by size: the Mac worker's throughput (two tasks
-at once, or FLAC instead of float WAV), f0-pesto on MPS, the layout's
-reserved widths (chordino reserves 3 cores and uses 1, basic-pitch reserves
-1 and uses about 3), then the cost gate's numbers replacing `SETTINGS` and
-`regions.PROFILED_COSTS`.
+region stems disagreed with whole stems over the same span (bass SNR
+-0.15 dB on a 485 s region). Diagnosed and fixed on `fast/integration2`
+(2026-10-20): Demucs lays its segments from the start of what it is
+given, so a cut separated alone is other averages; a region run now
+separates the source over a window on the whole run's grid and keeps the
+region's samples (`stems.aligned`, `context_of`; `extract.py` passes the
+source). Tested with a grid-shaped stand-in model (the region's stems are
+the whole's to one rounding step; the cut alone is not); not yet confirmed
+on real audio with Demucs (expect above 90 dB and bass notes F1 at least
+0.98 over the short recording's 35-520 s), nor in the bench. Readers now
+take region entries (`bank.RegionView`, `enrich propose` per region, the
+relay's region stems by key). A region that is the whole recording
+is made whole. Round 2 (ADR
+0112's amendment): the backfill makes every recording usable first (the
+fast tier, then a proposal) and stems and what measures them in the
+background by priority, requests first; it reports time-to-usable and
+time-to-done, reserves each copy the cores it uses, takes its costs from
+the cost gate's baseline, and never waits for ever for an absent worker.
+Measured on a copy of the whole shadow: usable after about 22 minutes
+with `chords-jiang` in the background tier (with it in the fast tier its
+copies need up to 11.4 GB each on a 93-minute recording and a long one runs
+nearly alone). Left: the background queue idles the laptop because a job
+waiting for cores or memory holds every job behind it, and routed stems are
+offered here only after local work (backfill the queue behind a waiting
+job, by the recorded costs); Jiang over windows, so several copies fit;
+the usable proposal per recording or in parallel (23% of time-to-usable).
+The Mac worker now gets the content as WavPack (73% of the
+float WAV, decoding to its very samples) and can run two tasks at once:
+on the two recordings, 0.223 s per audio-second end to end against 0.305
+the same day for float WAV one at a time, with byte-identical stems. The
+link is now the bound: off the home network the Mac pulls about 4.3 MB/s
+and pushes 3.3, and a task moves 0.28 MB per audio-second in and 0.18 (the
+stems' FLAC) out, so about 0.12 at best there; on the same network as the
+laptop it should reach separation's 0.10 (not measured). The worker's
+Spool configuration (`max_concurrent` 2) and its copy of `enrich/` are
+the operator's to update.
 
 Four pieces can be built at once, each on its own branch. `enrich/bank.py`
 is shared: **gpu** owns `Bank.entry`'s lookup and the manifest check,
@@ -163,12 +190,9 @@ scheduler has added it.
   refused at the start unless a passing equivalence record is in the bank,
   with a worker entry that does not stand in made here; `f0-pesto --from
   stems/vocals` ordered before `melody` so its probe is read. Left:
-  `--follow` (serve `requests/` as they arrive) and removing a request once
-  its entry is made; region jobs on Spool (a task carries no region until
-  triage's task `/2`); the `bench-cost` suite, whose baselines replace both
-  the scheduler's `SETTINGS` costs and `regions.PROFILED_COSTS`, which
-  differ today (f0-pesto per unit against per recording); a first dry run
-  on a copy of the shadow.
+  region jobs on Spool (a task carries no region until
+  triage's task `/2`); declaring the `bench-cost` suite with wf; a first
+  dry run on a copy of the shadow, and a measured time-to-usable there.
   As decided: `enrich/backfill.py` and `enrich/enrich.py backfill`
   (ADR 0112's flags). Plan from the archive (the Artifacts `enrich propose
   --all` finds) and the bank: compute the mode's keys, drop those present
@@ -206,9 +230,17 @@ scheduler has added it.
   branch its own test). Then the Mac worker path end to end: Spool 0.0.4 on
   both machines, the grant, `worker.json` and a real `stems` run on the
   Mac's GPU into a scratch bank, collected and filed; measure the record
-  over the agreed test set. Last, if a small environment with pesto and
-  torch fits the Mac's disk: `f0-pesto` with a `device` parameter (ADR
-  0090 amendment, item 4), its equivalence record, and its speed on MPS.
+  over the agreed test set. `f0-pesto` on MPS was measured (2026-10-20, pesto
+  2.0.1, torchaudio 2.11 and omegaconf added to the Mac's stems environment,
+  under 10 MB): 0.039 s per audio-second a pass on the GPU against 0.12 on
+  the Mac's CPU and 0.19 core-seconds on the laptop; over the two profiled
+  recordings' vocal stems the GPU's track differs from the laptop CPU's by
+  0.002 cents at the 99th percentile with every row's voicing the same (the
+  bass stems again gave no voiced row). Not built: its two passes would add
+  0.078 s per audio-second to the Mac, which is the backfill's bound
+  (0.10 for separation), to save the laptop 0.046 at eight cores, and the
+  `device` parameter rekeys every `f0-pesto` entry (ADR 0090 amendment, item
+  4). Worth it only if the laptop becomes the bound.
 - **triage.** Region keys (`archive-feature-bank-key/2`) and region entries
   in `enrich/bank.py`, with their validator in the same change; `extract.py
   run --region` cutting a pinned FLAC and recording the region and the

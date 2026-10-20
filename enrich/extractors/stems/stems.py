@@ -26,10 +26,27 @@ track, so the chunked result is close to, but not the bits of, one whole-file
 run. With `shifts` 0 Demucs applies no random offset, so a run on one build
 gives the same samples each time.
 
+A region run (ADR 0112) gives the stems of the whole recording over its
+region, not the stems of a cut. Demucs separates overlapping segments
+(7.8 s, a quarter overlapping) laid from the start of what it is given and
+averages them with triangular weights, so every sample of a cut separated
+alone is a different average than the same sample of the whole: on a 485 s
+region of a rehearsal the drums and other stems differed by 21-23 dB and a
+nearly silent bass stem by as much as itself (-0.16 dB), though the cut was
+faithful. Normalising the cut by the whole's mean and deviation changed
+nothing (htdemucs normalises each segment itself), nor did context alone.
+So a region run separates the source over a window that starts on the
+whole run's grid (a chunk start plus whole segment strides, at least one
+segment before the region) and runs past it by a segment, with chunks on the
+whole run's absolute boundaries, and keeps the region's samples: they match
+the whole recording's stems to within float rounding (above 97 dB on every
+stem). The mix levels are the cut's. Where the source's rate cannot place
+that grid exactly, the cut is separated alone, as before.
+
 Invoked by the runner as `<demucs-python> stems.py <request.json>`; the
 settings are fixed but for the device the model runs on (`apply.device`,
-one of DEVICES: a GPU's stems are other bits, so another key), and a request
-naming others is refused. Another separator that differs only in its model
+one of DEVICES: a GPU's stems, or another runtime's, are other bits, so
+another key), and a request naming others is refused. Another separator that differs only in its model
 and its stems (`stems-6s`) runs this program's `main` with its own
 `Separation`.
 """
@@ -38,6 +55,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import platform
 import subprocess
 import sys
@@ -66,13 +84,20 @@ MODEL = {"name": "htdemucs", "demucs": "4.1.0", "repository": "adefossez/HTDemuc
                        "sha256:d9fa14133cfcc034a6758923bb3a8ca9f8dfd0b582134643bbf83f72c17576dd"}}
 APPLY = {"shifts": 0, "split": True, "overlap": "0.25", "segment": None, "device": "cpu",
          "normalise": "chunk mean and standard deviation, as demucs.api.Separator.separate_tensor"}
-# The devices the model may run on. The device is a parameter, so stems made
-# on a GPU are another key beside the CPU's: the same weights give other bits
-# on other hardware. "cpu" is the manifest's; an operator who has Apple's
-# Metal configures {"stems": {"apply": {..., "device": "mps"}}}. Either
-# device's stems stand in for the other's once a passing equivalence record
-# is in the bank (the manifest's `interchangeable`; ADR 0090's amendment).
-DEVICES = ("cpu", "mps")
+# The devices the model may run on, and the PyTorch device each runs on. The
+# device is a parameter, so stems made on a GPU, or by another runtime, are
+# another key beside the CPU's: the same weights give other bits on other
+# hardware. "cpu" is the manifest's: PyTorch's eager CPU kernels. An operator
+# who has Apple's Metal configures {"stems": {"apply": {..., "device":
+# "mps"}}}; "cpu-inductor" runs the network compiled by PyTorch's inductor
+# on the CPU, about a sixth less CPU time on the x86-64 laptop (ADR 0112).
+# Any device's stems stand in for another's once a passing equivalence
+# record of the pair is in the bank (the manifest's `interchangeable`; ADR
+# 0090's amendment). Less chunk overlap is not offered: its stems are not a
+# stem (note F1 0.46 at overlap 0.1, ADR 0112).
+TORCH_DEVICE = {"cpu": "cpu", "mps": "mps", "cpu-inductor": "cpu"}
+DEVICES = tuple(TORCH_DEVICE)
+COMPILED = ("cpu-inductor",)
 
 
 class Separation(NamedTuple):
@@ -127,7 +152,9 @@ def parameters(separation: Separation = HTDEMUCS, device: str = "cpu") -> dict[s
 
 class Model(Protocol):
     """A separator: `separate` takes [channels, samples] float32 and returns
-    [len(sources), channels, samples] float32, in `sources` order."""
+    [len(sources), channels, samples] float32, in `sources` order. A model
+    that splits its input into segments says their length and stride in
+    samples (`segment_samples`, `stride`); one that does not, 0 and 1."""
     sources: list[str]
     samplerate: int
     channels: int
@@ -180,13 +207,23 @@ class Demucs:
             models.append(load_safetensors_model(paths[f"{signature}.safetensors"]))
         self.model = BagOfModels(models, bag.get("weights"), bag.get("segment"))
         self.model.eval()
+        compiled = apply["device"] in COMPILED
+        if compiled:
+            compile_network(torch, self.model.models)
         self.torch, self.apply_model, self.apply = torch, apply_model, apply
         self.sources = list(self.model.sources)
         self.samplerate = int(self.model.samplerate)
+        # demucs.apply.apply_model's split, per model of the bag: segments of
+        # int(rate * segment) samples every int((1 - overlap) * length).
+        lengths = {int(self.samplerate * (apply["segment"] or m.segment)) for m in models}
+        self.segment_samples = max(lengths)
+        self.stride = int((1 - float(apply["overlap"])) * self.segment_samples) if len(lengths) == 1 else 0
         self.channels = int(self.model.audio_channels)
         self.software = [{"name": "demucs", "version": demucs.__version__},
                          {"name": "torch", "version": torch.__version__},
                          {"name": settings["name"], "version": f"{settings['repository']}@{settings['revision']}"}]
+        if compiled:
+            self.software.append({"name": "c++", "version": cxx_version()})
 
     def separate(self, mix: numpy.ndarray) -> numpy.ndarray:
         torch = self.torch
@@ -197,9 +234,125 @@ class Demucs:
             std = reference.std() + 1e-8
             out = self.apply_model(self.model, ((wav - mean) / std)[None], shifts=self.apply["shifts"],
                                    split=self.apply["split"], overlap=float(self.apply["overlap"]),
-                                   segment=self.apply["segment"], device=self.apply["device"], progress=False)
-            out = out * std + mean
+                                   segment=self.apply["segment"], device=TORCH_DEVICE[self.apply["device"]],
+                                   progress=False)
+            # In place: the same arithmetic, so the same bits, without a
+            # second copy of four stems (850 MB for a ten-minute chunk).
+            out.mul_(std).add_(mean)
         return out[0].cpu().numpy()
+
+
+def htdemucs_core(m: Any, mix: Any, mag: Any) -> tuple[Any, Any]:
+    """HTDemucs.forward of demucs 4.1.0 (the pinned version) between the
+    spectrogram and the mask, for one segment of `m.segment` seconds: the
+    frequency branch's output, before masking, and the time branch's. The
+    spectrogram, the mask, and the inverse stay in PyTorch around it, so a
+    runtime that cannot take complex numbers (a compiler, OpenVINO) can run
+    this part, which is nearly all of the work."""
+    import torch
+    x = mag
+    B, C, Fq, T = x.shape
+    mean = x.mean(dim=(1, 2, 3), keepdim=True)
+    std = x.std(dim=(1, 2, 3), keepdim=True)
+    x = (x - mean) / (1e-5 + std)
+    xt = mix
+    meant = xt.mean(dim=(1, 2), keepdim=True)
+    stdt = xt.std(dim=(1, 2), keepdim=True)
+    xt = (xt - meant) / (1e-5 + stdt)
+    saved, saved_t, lengths, lengths_t = [], [], [], []
+    for idx, encode in enumerate(m.encoder):
+        lengths.append(x.shape[-1])
+        inject = None
+        if idx < len(m.tencoder):
+            lengths_t.append(xt.shape[-1])
+            tenc = m.tencoder[idx]
+            xt = tenc(xt)
+            if not tenc.empty:
+                saved_t.append(xt)
+            else:
+                inject = xt
+        x = encode(x, inject)
+        if idx == 0 and m.freq_emb is not None:
+            frs = torch.arange(x.shape[-2], device=x.device)
+            emb = m.freq_emb(frs).t()[None, :, :, None].expand_as(x)
+            x = x + m.freq_emb_scale * emb
+        saved.append(x)
+    if m.crosstransformer:
+        if m.bottom_channels:
+            b, c, f, t = x.shape
+            x = m.channel_upsampler(x.reshape(b, c, f * t)).reshape(b, -1, f, t)
+            xt = m.channel_upsampler_t(xt)
+        x, xt = m.crosstransformer(x, xt)
+        if m.bottom_channels:
+            b, c, f, t = x.shape
+            x = m.channel_downsampler(x.reshape(b, c, f * t)).reshape(b, -1, f, t)
+            xt = m.channel_downsampler_t(xt)
+    for idx, decode in enumerate(m.decoder):
+        x, pre = decode(x, saved.pop(-1), lengths.pop(-1))
+        offset = m.depth - len(m.tdecoder)
+        if idx >= offset:
+            tdec = m.tdecoder[idx - offset]
+            length_t = lengths_t.pop(-1)
+            if tdec.empty:
+                xt, _ = tdec(pre[:, :, 0], None, length_t)
+            else:
+                xt, _ = tdec(xt, saved_t.pop(-1), length_t)
+    S = len(m.sources)
+    x = x.view(B, S, -1, Fq, T) * std[:, None] + mean[:, None]
+    xt = xt.view(B, S, -1, mix.shape[-1]) * stdt[:, None] + meant[:, None]
+    return x, xt
+
+
+def segment_forward(m: Any, core: Any) -> Any:
+    """HTDemucs.forward (eval, its training segment) with `core` in place of
+    the network: the spectrogram, mask, and inverse as Demucs does them."""
+    import torch
+    training_length = int(m.segment * m.samplerate)
+
+    def forward(mix: Any) -> Any:
+        length = mix.shape[-1]
+        if length < training_length:
+            mix = torch.nn.functional.pad(mix, (0, training_length - length))
+        z = m._spec(mix)
+        x, xt = core(mix, m._magnitude(z).to(mix.device))
+        out = m._ispec(m._mask(z, x), training_length) + xt
+        return out[..., :length]
+    return forward
+
+
+def compile_network(torch: Any, models: list[Any]) -> None:
+    """Each model's network (`htdemucs_core`) compiled by PyTorch's inductor
+    for the CPU, one thread's worth of work at a time. Every segment Demucs
+    hands a model is padded to its training length, so one shape is compiled
+    once per process (and found in inductor's cache after the first). The
+    compile itself runs in this process, so it holds the copy's one thread
+    rather than starting a pool of compile workers."""
+    import torch._inductor.config as inductor
+    inductor.compile_threads = 1
+    for model in models:
+        if not hasattr(model, "crosstransformer") or not hasattr(model, "_magnitude"):
+            raise StemsError(f"only HTDemucs can be compiled, not {type(model).__name__}")
+
+        class Network(torch.nn.Module):
+            def __init__(self, m: Any):
+                super().__init__()
+                self.m = m
+
+            def forward(self, mix: Any, mag: Any) -> tuple[Any, Any]:
+                return htdemucs_core(self.m, mix, mag)
+
+        model.forward = segment_forward(model, torch.compile(Network(model).eval(), dynamic=False))
+
+
+def cxx_version() -> str:
+    """The C++ compiler inductor builds with (its code is part of the method)."""
+    import os
+    compiler = os.environ.get("CXX", "g++")
+    try:
+        found = subprocess.run([compiler, "-dumpfullversion"], capture_output=True, text=True, timeout=30)
+    except OSError as exc:
+        raise StemsError(f"cpu-inductor needs a C++ compiler ({compiler}): {exc}") from exc
+    return f"{Path(compiler).name} {found.stdout.strip() or 'unknown'}"
 
 
 def load_model(settings: dict[str, Any], apply: dict[str, Any]) -> Model:
@@ -212,12 +365,14 @@ def load_model(settings: dict[str, Any], apply: dict[str, Any]) -> Model:
 
 # -- decoding, chunking, and joining ----------------------------------------------
 
-def decoded_blocks(path: str, ffmpeg: str = "ffmpeg", block_bytes: int = BLOCK_BYTES) -> Iterator[numpy.ndarray]:
-    """The first audio stream as [channels, n] float32 blocks, in order."""
+def decoded_blocks(path: str, ffmpeg: str = "ffmpeg", block_bytes: int = BLOCK_BYTES,
+                   arguments: list[str] | None = None) -> Iterator[numpy.ndarray]:
+    """The first audio stream as [channels, n] float32 blocks, in order
+    (decoded by `arguments`, when given, in place of `decode_arguments`)."""
     frame_bytes = 4 * CHANNELS
     with tempfile.TemporaryFile() as errors:
         try:
-            process = subprocess.Popen([ffmpeg, *decode_arguments(path)], stdin=subprocess.DEVNULL,
+            process = subprocess.Popen([ffmpeg, *(arguments or decode_arguments(path))], stdin=subprocess.DEVNULL,
                                        stdout=subprocess.PIPE, stderr=errors)
         except OSError as exc:
             raise StemsError(f"ffmpeg could not run: {exc}") from exc
@@ -239,24 +394,29 @@ def decoded_blocks(path: str, ffmpeg: str = "ffmpeg", block_bytes: int = BLOCK_B
                              f"{errors.read().decode('utf-8', 'replace').strip()[:300]}")
 
 
-def windows(blocks: Iterable[numpy.ndarray], chunk: int, overlap: int) -> Iterator[tuple[numpy.ndarray, bool]]:
+def windows(blocks: Iterable[numpy.ndarray], chunk: int, overlap: int,
+            first: int | None = None) -> Iterator[tuple[numpy.ndarray, bool]]:
     """Consecutive windows of `chunk + overlap` samples starting every
     `chunk`, so each overlaps the next by `overlap`; the last holds the rest
     and is marked last. Every window after the first is longer than
     `overlap`, since a window is not last only when more than
-    `chunk + overlap` samples remain."""
-    if chunk < 1 or overlap < 0:
-        raise StemsError("a chunk must be positive and an overlap not negative")
+    `chunk + overlap` samples remain. With `first`, the first window starts
+    `chunk - first` samples into a chunk, so later ones start on the same
+    boundaries as a whole run's."""
+    if chunk < 1 or overlap < 0 or (first is not None and not 0 < first <= chunk):
+        raise StemsError("a chunk must be positive, an overlap not negative, and a first chunk within one")
     pieces: list[numpy.ndarray] = []
     held = 0
+    step = chunk if first is None else first
     for block in blocks:
         pieces.append(block)
         held += block.shape[1]
-        if held > chunk + overlap:
+        if held > step + overlap:
             buffer = numpy.concatenate(pieces, axis=1)  # once per window, not once per block
-            while buffer.shape[1] > chunk + overlap:
-                yield buffer[:, :chunk + overlap], False
-                buffer = buffer[:, chunk:]
+            while buffer.shape[1] > step + overlap:
+                yield buffer[:, :step + overlap], False
+                buffer = buffer[:, step:]
+                step = chunk
             pieces, held = [buffer], buffer.shape[1]
     if held:
         yield numpy.concatenate(pieces, axis=1), True
@@ -417,12 +577,80 @@ def ffmpeg_version(ffmpeg: str = "ffmpeg") -> str:
     return first[2] if len(first) > 2 and first[:2] == ["ffmpeg", "version"] else "unknown"
 
 
+class Context(NamedTuple):
+    """Where a region's stems come from (see the module): `arguments` decode
+    the source over [lo, hi) of its own samples as `decode_arguments` do,
+    whose first `lead` samples at RATE come before the region, and whose
+    first chunk is `first` samples long."""
+    arguments: list[str]
+    lead: int
+    first: int
+
+
+def aligned(region: dict[str, int], model: Model, chunk: int, overlap: int) -> tuple[int, int] | None:
+    """[lo, hi) at RATE: the window a region is separated over, on the whole
+    run's grid, or None when the region's rate cannot place it exactly."""
+    rate, stride, segment = region["rate"], getattr(model, "stride", 1), getattr(model, "segment_samples", 0)
+    step = RATE // math.gcd(RATE, rate)  # RATE samples that are whole samples at `rate`
+    if stride < 1 or (region["start"] * RATE) % rate or stride % step or chunk % step:
+        return None
+    start, end = region["start"] * RATE // rate, -(-region["end"] * RATE // rate)
+    before = max(0, start - segment)
+    base = before // chunk * chunk
+    lo = base + (before - base) // stride * stride
+    hi = end + segment
+    boundary = end // chunk * chunk
+    if boundary and end < boundary + overlap:  # inside a crossfade: past it, as the whole run's next window
+        hi = max(hi, boundary + overlap + segment)
+    return lo, hi
+
+
+def context_of(request_input: dict[str, Any], model: Model, chunk: int, overlap: int) -> Context | None:
+    """How a region run's stems are separated, or None for the input alone."""
+    region, source = request_input.get("region"), request_input.get("source")
+    if region is None or source is None:
+        return None
+    window = aligned(region, model, chunk, overlap)
+    if window is None:
+        return None
+    lo, hi = window
+    rate = region["rate"]
+    arguments = decode_arguments(source["path"])
+    at = arguments.index("-map") + 2  # after the stream map, before the output's channels and rate
+    trim = f"atrim=start_sample={lo * rate // RATE}:end_sample={-(-hi * rate // RATE)},asetpts=PTS-STARTPTS"
+    arguments[at:at] = ["-af", trim]
+    return Context(arguments, region["start"] * RATE // rate - lo, chunk - lo % chunk)
+
+
+def trimmed(blocks: Iterable[numpy.ndarray], lead: int, count: int) -> Iterator[numpy.ndarray]:
+    """[sources, channels, n] blocks without their first `lead` samples,
+    `count` samples in all; a source decoded a sample or two short at the
+    content's end (resampling rounds) is completed with silence."""
+    skipped = kept = 0
+    for block in blocks:
+        if skipped < lead:
+            drop = min(lead - skipped, block.shape[-1])
+            skipped += drop
+            block = block[..., drop:]
+        block = block[..., :count - kept]
+        if block.shape[-1]:
+            kept += block.shape[-1]
+            yield block
+    if 0 < count - kept <= 2 and skipped == lead:
+        yield numpy.zeros(block.shape[:-1] + (count - kept,), dtype=numpy.float32)  # type: ignore[possibly-undefined]
+    elif kept != count:
+        raise StemsError(f"the region's window gave {kept} of the region's {count} samples")
+
+
 def separate(input_path: str, output: Path, model: Model, chunk: int = CHUNK_SECONDS * RATE,
-             overlap: int = CROSSFADE_SECONDS * RATE, stems: tuple[str, ...] = STEMS) -> dict[str, Any]:
+             overlap: int = CROSSFADE_SECONDS * RATE, stems: tuple[str, ...] = STEMS,
+             context: Context | None = None, ffmpeg: str = "ffmpeg") -> dict[str, Any]:
     """Decode, separate, join, measure, and encode `stems`; returns the
     result's outputs. `chunk` and `overlap` are in samples; the parameters
     fix them, and only a test passes others, to join many chunks of a short
-    input."""
+    input. With a `context`, the input is a region's cut, which gives the
+    mix levels and the length, and the stems are separated from the source
+    over the context's window (see the module)."""
     if model.samplerate != RATE or model.channels != CHANNELS:
         raise StemsError(f"the model separates {model.channels} channels at {model.samplerate} Hz, "
                          f"not {CHANNELS} at {RATE}")
@@ -443,14 +671,24 @@ def separate(input_path: str, output: Path, model: Model, chunk: int = CHUNK_SEC
                 mix.add(block[None])
                 yield block
 
-        for window, last in windows(counted(decoded_blocks(input_path)), chunk, overlap):
-            separated = numpy.asarray(model.separate(window))
-            if separated.shape != (len(model.sources), CHANNELS, window.shape[1]):
-                raise StemsError(f"the model returned shape {separated.shape} for "
-                                 f"{window.shape[1]} samples of {CHANNELS} channels")
-            if not numpy.isfinite(separated).all():
-                raise StemsError("the model returned a value that is not finite")
-            for joined in joiner.add(separated.astype(numpy.float32, copy=False), last):
+        def joined_blocks(source: Iterable[numpy.ndarray], first: int | None) -> Iterator[numpy.ndarray]:
+            for window, last in windows(source, chunk, overlap, first):
+                separated = numpy.asarray(model.separate(window))
+                if separated.shape != (len(model.sources), CHANNELS, window.shape[1]):
+                    raise StemsError(f"the model returned shape {separated.shape} for "
+                                     f"{window.shape[1]} samples of {CHANNELS} channels")
+                if not numpy.isfinite(separated).all():
+                    raise StemsError("the model returned a value that is not finite")
+                yield from joiner.add(separated.astype(numpy.float32, copy=False), last)
+
+        if context is None:
+            separated_blocks = joined_blocks(counted(decoded_blocks(input_path, ffmpeg)), None)
+        else:
+            for _ in counted(decoded_blocks(input_path, ffmpeg)):
+                pass
+            separated_blocks = trimmed(joined_blocks(decoded_blocks(input_path, ffmpeg, arguments=context.arguments),
+                                                     context.first), context.lead, mix.samples)
+        for joined in separated_blocks:
                 # A block at a time, so the reordered copy, the float64
                 # squares, and the scaled samples never span a whole window.
                 for start in range(0, joined.shape[-1], MEASURE_BLOCK):
@@ -497,7 +735,8 @@ def main(argv: list[str], separation: Separation = HTDEMUCS) -> int:
                              f"({', '.join(DEVICES)}); the request names others")
         output = Path(request["output_dir"])
         model = load_model(separation.model, apply_on(device))
-        outputs = separate(request["input"]["path"], output, model, stems=separation.stems)
+        context = context_of(request["input"], model, CHUNK_SECONDS * RATE, CROSSFADE_SECONDS * RATE)
+        outputs = separate(request["input"]["path"], output, model, stems=separation.stems, context=context)
         software = [*model.software, {"name": "ffmpeg", "version": ffmpeg_version()},
                     {"name": "numpy", "version": numpy.__version__},
                     {"name": "python", "version": platform.python_version()}]

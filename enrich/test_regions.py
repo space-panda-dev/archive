@@ -153,7 +153,8 @@ class Plans(unittest.TestCase):
     def test_expensive_is_the_measured_cost_above_the_threshold(self) -> None:
         self.assertEqual(sorted(e for e in self.EXTRACTORS if regions.expensive(e)),
                          ["chords-jiang", "f0-pesto", "melody", "notes-basic-pitch", "stems"])
-        self.assertTrue(regions.expensive("rhythm", {"rhythm": 0.05}))
+        self.assertTrue(regions.expensive("rhythm", {"rhythm": 0.06}))
+        self.assertFalse(regions.expensive("chords-chordino"))  # 0.042: the threshold was 0.04 until measured
         self.assertFalse(regions.expensive("stems", {"stems": 0.5}, threshold=1))
 
     def test_each_mode_plans_what_it_should(self) -> None:
@@ -261,6 +262,26 @@ class RegionRuns(unittest.TestCase):
         (fixture.extractors / "a" / "extractor.json").write_text(json.dumps(manifest))
         self.assertEqual(fixture.run("a", "--no-prefer")[0], 0)
         self.assertIsNone(bank.covering(fixture.reader(), fixture.digest, "a", RATE, 7 * RATE, RATE).region)
+
+    def test_a_region_view_reads_whole_entries_first_then_the_regions(self) -> None:
+        fixture = self.fixture()
+        self.assertEqual(fixture.run("b", "--region", f"{4 * RATE}:{9 * RATE}:{RATE}")[0], 0)
+        self.assertEqual(fixture.run("a", "--region", f"{RATE}:{4 * RATE}:{RATE}")[0], 0)
+        reader = fixture.reader()
+        region = {"start": 4 * RATE, "end": 9 * RATE, "rate": RATE}
+        self.assertEqual(bank.regions(reader, fixture.digest),
+                         [{"start": RATE, "end": 4 * RATE, "rate": RATE}, region])
+        view = bank.RegionView(reader, fixture.digest, region)
+        found = view.entry(fixture.digest, "b")
+        self.assertEqual((found.region, found.offset, found.shift(RATE), found.shift(2 * RATE)),
+                         (region, 4.0, 4 * RATE, 8 * RATE))
+        self.assertEqual(view.entry(fixture.digest, "a").region, region)  # its need, over the same region
+        self.assertIsNone(reader.entry(fixture.digest, "b"))  # the plain reader finds only whole entries
+        # Once a whole entry exists the view prefers it.
+        self.assertEqual(fixture.run("a", "--no-prefer")[0], 0)
+        self.assertIsNone(bank.RegionView(fixture.reader(), fixture.digest, region).entry(fixture.digest, "a").region)
+        # Other content is keyed whole, as the runner keys a stem made over a region.
+        self.assertIsNone(view.entry("sha256:" + "ab" * 32, "a"))
 
     def test_a_region_the_content_does_not_hold_is_refused(self) -> None:
         fixture = self.fixture()

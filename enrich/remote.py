@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 import shlex
@@ -93,10 +94,18 @@ def hex_of(digest: str) -> str:
 
 
 def check_payload(payload: Any) -> dict[str, Any]:
-    """A task's payload, as `put` writes it."""
+    """A task's payload, as `put` writes it: `transport`, when present, names
+    the lossless encoding of the content that travels in its place."""
     fields = {"contract", "extractor", "key", "parameters", "input"}
-    if not isinstance(payload, dict) or payload.get("contract") != TASK_CONTRACT or set(payload) != fields:
-        raise Refused(f"the payload must be {TASK_CONTRACT} with exactly {sorted(fields)}")
+    if not isinstance(payload, dict) or payload.get("contract") != TASK_CONTRACT or set(payload) - {
+            "transport"} != fields:
+        raise Refused(f"the payload must be {TASK_CONTRACT} with exactly {sorted(fields)} and perhaps transport")
+    if "transport" in payload:
+        carried = payload["transport"]
+        if not (isinstance(carried, dict) and set(carried) == {"codec", "digest", "media_type"}
+                and carried["codec"] in TRANSPORTS and bank.derived.is_digest(carried["digest"])
+                and carried["media_type"] == TRANSPORTS[carried["codec"]]["media_type"]):
+            raise Refused("the payload's transport must be {codec, digest, media_type} of a known codec")
     extractor, given = payload["extractor"], payload["input"]
     if not (isinstance(extractor, dict) and set(extractor) == {"id", "version"}
             and isinstance(extractor["id"], str) and bank.ID.fullmatch(extractor["id"])
@@ -188,14 +197,95 @@ class Spool:
                                   f"{errors.read().decode('utf-8', 'replace').strip()[-500:]}")
 
 
+# -- the transport -----------------------------------------------------------------
+#
+# What travels may be a lossless re-encoding of the content's first audio
+# stream rather than its bits: a rehearsal's 32-bit float WAV is 0.38 MB per
+# audio-second, its WavPack 0.28, and the link to a worker is the slowest
+# step (round 1 of ADR 0112's backfill). FLAC holds integers only, so a float
+# recording needs WavPack; FLAC serves a 16- or 24-bit one. Either is used
+# only when it decodes, here, to the very samples the content decodes to
+# (`same_samples`); otherwise the content itself travels. A transport serves
+# only an extractor that reads nothing of its input but the first audio
+# stream's samples, which is why the operator names it per extractor.
+
+TRANSPORTS = {
+    "wavpack": {"media_type": "audio/x-wavpack", "arguments": ["-c:a", "wavpack", "-f", "wv"]},
+    "flac": {"media_type": "audio/flac", "arguments": ["-c:a", "flac", "-compression_level", "5", "-f", "flac"]},
+}
+
+
+def ffmpeg_program(ffmpeg: str | None) -> str:
+    found = ffmpeg or shutil.which("ffmpeg")
+    if found is None:
+        raise RemoteError("a transport is encoded with ffmpeg; configure programs.ffmpeg")
+    return found
+
+
+def encode_transport(ffmpeg: str, content: Path, transport: str, target: Path) -> None:
+    """The content's first audio stream, losslessly, without metadata."""
+    arguments = [ffmpeg, "-nostdin", "-hide_banner", "-nostats", "-loglevel", "error", "-i", str(content),
+                 "-map", "0:a:0", "-map_metadata", "-1", "-fflags", "+bitexact", "-flags:a", "+bitexact",
+                 *TRANSPORTS[transport]["arguments"], str(target)]
+    completed = subprocess.run(arguments, capture_output=True)
+    if completed.returncode != 0:
+        raise RemoteError(f"ffmpeg could not encode the {transport} transport: "
+                          f"{completed.stderr.decode('utf-8', 'replace').strip()[-500:]}")
+
+
+def decoded_digest(ffmpeg: str, path: Path) -> str:
+    """The digest of the first audio stream's samples as 64-bit floats, which
+    hold every 32-bit integer and float sample exactly, in a WAV whose header
+    carries the rate and the channel layout."""
+    arguments = [ffmpeg, "-nostdin", "-hide_banner", "-nostats", "-loglevel", "error", "-i", str(path),
+                 "-map", "0:a:0", "-map_metadata", "-1", "-fflags", "+bitexact", "-flags:a", "+bitexact",
+                 "-c:a", "pcm_f64le", "-f", "wav", "-"]
+    digest = hashlib.sha256()
+    with subprocess.Popen(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+        assert process.stdout is not None and process.stderr is not None
+        for block in iter(lambda: process.stdout.read(1 << 20), b""):
+            digest.update(block)
+        errors = process.stderr.read()
+    if process.returncode != 0:
+        raise RemoteError(f"ffmpeg could not decode {path.name}: {errors.decode('utf-8', 'replace').strip()[-500:]}")
+    return "sha256:" + digest.hexdigest()
+
+
+def same_samples(ffmpeg: str, content: Path, transport: Path) -> bool:
+    return decoded_digest(ffmpeg, content) == decoded_digest(ffmpeg, transport)
+
+
+def make_transport(ffmpeg: str | None, content: Path, media_type: str, transport: str,
+                   directory: Path) -> tuple[Path, str] | str:
+    """The transport file in `directory` and its digest, or why the content
+    must travel as it is."""
+    if transport not in TRANSPORTS:
+        raise RemoteError(f"the transport is one of {', '.join(TRANSPORTS)}, not {transport!r}")
+    if not media_type.startswith("audio/"):
+        return f"{media_type} is not audio"
+    program = ffmpeg_program(ffmpeg)
+    target = directory / f"transport.{transport}"
+    encode_transport(program, content, transport, target)
+    if not same_samples(program, content, target):
+        target.unlink()
+        return f"{transport} does not decode to the content's samples"
+    if target.stat().st_size >= content.stat().st_size:
+        target.unlink()
+        return f"{transport} is no smaller than the content"
+    return target, bank.file_digest(target)
+
+
 # -- put -------------------------------------------------------------------------
 
 def put(catalog: bank.Catalog, root: Path, spool: Spool, extractor_id: str, content: Path, media_type: str,
-        digest: str | None, parameters: dict[str, Any], exact: bool = False) -> dict[str, Any]:
+        digest: str | None, parameters: dict[str, Any], exact: bool = False, transport: str | None = None,
+        ffmpeg: str | None = None) -> dict[str, Any]:
     """Put one task for the entry of this extractor and content, unless the
     bank holds it already, or (unless exact) an entry that stands in for it
     (ADR 0090's amendment): a recording separated on one device is never
-    separated again on another."""
+    separated again on another. With `transport`, the content's samples
+    travel in that lossless encoding when it decodes to the same samples
+    (`make_transport`); the answer says which travelled."""
     extractor = traveling(catalog, extractor_id)
     if not extractor.accepts(media_type):
         raise RemoteError(f"{extractor_id} does not accept {media_type}")
@@ -212,19 +302,32 @@ def put(catalog: bank.Catalog, root: Path, spool: Spool, extractor_id: str, cont
     payload = {"contract": TASK_CONTRACT, "extractor": {"id": extractor.id, "version": extractor.version},
                "key": key, "parameters": catalog.parameters(extractor_id, parameters),
                "input": {"digest": actual, "media_type": media_type}}
-    check_payload(payload)
-    task = {"task_id": task_id(key), "capability": extract.spool_capability(extractor), "payload": payload,
-            "attachments": [{"sha256": hex_of(actual), "size": content.stat().st_size}]}
     (root / "tmp").mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix="put-", dir=root / "tmp"))
     try:
+        travels, sent = content, actual
+        if transport is not None:
+            made = make_transport(ffmpeg, content, media_type, transport, staging)
+            if isinstance(made, str):
+                answer["transport"] = {"codec": None, "why": made}
+            else:
+                travels, sent = made
+                payload["transport"] = {"codec": transport, "digest": sent,
+                                        "media_type": TRANSPORTS[transport]["media_type"]}
+                answer["transport"] = {"codec": transport, "bytes": travels.stat().st_size,
+                                       "content_bytes": content.stat().st_size}
+        check_payload(payload)
+        task = {"task_id": task_id(key), "capability": extract.spool_capability(extractor), "payload": payload,
+                "attachments": [{"sha256": hex_of(sent), "size": travels.stat().st_size}]}
         # Spool reads the attachment from <dir>/<hex> and copies it; a link
         # costs nothing where the bank and the content share a file system.
-        source = staging / hex_of(actual)
+        source = staging / hex_of(sent)
         try:
-            os.link(content, source)
+            os.link(travels, source)
         except OSError:
-            shutil.copyfile(content, source)
+            shutil.copyfile(travels, source)
+        if travels != content:
+            travels.unlink()
         staging.chmod(0o755)  # a spool under another account must read it
         lines = spool.lines("put", "--attachments", str(staging), given=bank.canonical(task) + b"\n")
     finally:
@@ -256,15 +359,20 @@ def work(catalog: bank.Catalog, directory: Path, programs: dict[str, str], paylo
     key = catalog.keys(digest, [extractor_id], overrides)[extractor_id]
     if key != payload["key"]:
         raise Refused(f"this worker gives the key {key}, not the task's {payload['key']}")
-    content = directory / "attachments" / hex_of(digest)
+    # The content's own bits, or its samples in the task's transport, which
+    # the requester checked decode to the same samples (`make_transport`).
+    carried = payload.get("transport", {}).get("digest", digest)
+    content = directory / "attachments" / hex_of(carried)
     if not content.is_file():
-        raise Refused(f"the task carries no attachment {hex_of(digest)}")
+        raise Refused(f"the task carries no attachment {hex_of(carried)}")
     # Hashed here, not trusted to Spool: an extractor run on other bits
     # would be filed under this digest. The bits will not change on a retry.
-    if bank.file_digest(content) != digest:
-        raise Refused(f"the attachment {hex_of(digest)} is not the bits its digest names")
+    if bank.file_digest(content) != carried:
+        raise Refused(f"the attachment {hex_of(carried)} is not the bits its digest names")
     root = directory / "bank"
     run = extract.Run(catalog, root, content, media_type, digest, programs, overrides, None, exact=True)
+    # Checked just above: the content's own digest, or the transport's.
+    run.digest_checked = True
     answer = run.execute([extractor_id], 1)
     outcome = answer["extractors"][extractor_id]
     if outcome["status"] != "ran":
@@ -433,6 +541,8 @@ def main(argv: list[str] | None = None) -> int:
     putting.add_argument("--spool", required=True)
     putting.add_argument("--exact", action="store_true",
                          help="put the task unless the configured key's own entry is in the bank")
+    putting.add_argument("--transport", choices=sorted(TRANSPORTS),
+                         help="send the content's samples in this lossless encoding when it decodes to them")
     working = commands.add_parser("work")
     collecting = commands.add_parser("collect")
     collecting.add_argument("--bank", required=True)
@@ -459,7 +569,7 @@ def main(argv: list[str] | None = None) -> int:
             catalog[arguments.extractor]
             answer = put(catalog, root, spool, arguments.extractor, content,
                          arguments.media_type or extract.media_type_of(content), arguments.digest, parameters,
-                         arguments.exact)
+                         arguments.exact, arguments.transport, config.get("programs", {}).get("ffmpeg"))
             ok = True
         else:
             answer = collect(catalog, root, spool)

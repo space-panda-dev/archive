@@ -101,7 +101,12 @@ are never stitched together.
 measured when the content is a preferred input. A request is written to a
 temporary name and linked into place, so asking again finds the same file and
 the first asker's request stands (`bank.ask`); `bank.requests` lists them and
-refuses a damaged or misnamed one rather than skipping it.
+refuses a damaged or misnamed one rather than skipping it. The scheduler
+(`enrich backfill`, ahead of all other work; with `--follow`, as they
+arrive) removes a request once its entry is made, and makes one only when
+the key its own configuration gives is the request's: an asker with other
+parameters would never read what it made, so that request is reported and
+kept.
 
 ## Layout
 
@@ -456,6 +461,22 @@ its one attachment the content, and its payload:
  "parameters": {...every declared parameter, with the operator's values...},
  "input": {"digest": "sha256:...", "media_type": "audio/flac"}}
 ```
+
+The payload may also carry `"transport": {"codec": "wavpack", "digest":
+"sha256:...", "media_type": "audio/x-wavpack"}` (or `flac`, `audio/flac`):
+the attachment is then the content's first audio stream in that lossless
+encoding, not the content's bits, and the input's digest still names the
+content. The requester sends a transport only when it decodes, on the
+requester's ffmpeg, to the content's very samples (both decoded to 64-bit
+float with their rate and channel layout, and the two digests equal), and
+only for an extractor the operator says reads nothing but those samples
+(the backfill's `transport` setting; `stems` by default). A rehearsal's
+32-bit float WAV goes as WavPack at about 73% of its size; FLAC cannot hold
+float samples, so for one it fails the check and the content travels as it
+is. The worker hashes the attachment against the transport's digest and
+runs the extractor on it under the content's digest. A worker older than
+this refuses such a task for good (exit 65), and the backfill makes it
+locally.
 
 A worker computes the key from its own manifest and these parameters and
 refuses the task (exit 65) unless it is the one named. It runs the extractor

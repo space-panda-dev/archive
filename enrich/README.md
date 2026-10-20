@@ -661,7 +661,7 @@ them.
 
 ```sh
 enrich/enrich.py backfill --archive <dir> --bank <root> [--config <file>]
-    [--mode songs|eager|on-demand | --songs | --eager | --on-demand] [--cores <n>] [--memory-gb <n>] [--spool "<spool> --dir <dir>"] [--commit] [--retry-failed]
+    [--mode songs|eager|on-demand | --songs | --eager | --on-demand] [--cores <n>] [--memory-gb <n>] [--spool "<spool> --dir <dir>"] [--commit [--follow [--follow-seconds <s>]]] [--retry-failed]
     [--proposers <name,...>] [--world-store <dir> [--world-python <python>] [--conformance-python <python>]]
     [--log <file>] [--staging <annex>] [--door door] [--archive-command archive]
 ```
@@ -674,6 +674,29 @@ plans, runs the plan, proposes `--all` (dry run, commit, and a rerun that
 must answer `unchanged`), and, with `--world-store`, refreshes World and
 checks its conformance. A dry run probes and proposes with `--dry-run` and
 runs no extractor.
+
+**Usable first** ([ADR 0112's amendment](../docs/decisions/0112-bulk-import-at-scale.md#amendment-2026-10-20-usable-first-the-rest-in-the-background)).
+Each unit is in the **fast tier** (it measures the content itself, prefers
+no feature, needs only fast units, and costs at most `fast_above`, 0.2:
+`rhythm`, `tonal`, `chords-jiang`, `chords-chordino`, `structure`) or the
+**background** (stems and what measures them). The fast tier runs over every
+recording first, then `propose --all` (`usable` event: every recording has
+its chords, beats, key, tuning and sections admitted; with `--world-store`,
+World is refreshed then too); no background job starts before. The
+background goes by recording: song recordings, then the most recently
+admitted, then the rest; a bank request goes ahead of both tiers, with what
+it waits for, and is removed once its entry is made. Background proposals
+run in batches, at most every `propose_every_seconds` (900). `done` carries
+`time_to_usable_s` and `time_to_done_s`; the dry run's projection carries
+`time_to_usable_hours` and `time_to_done_hours`.
+
+**`--follow`** keeps the pool running: new requests every `poll_seconds`,
+new admissions every `rescan_seconds` (600), until SIGTERM or SIGINT or
+`--follow-seconds`. A request is planned only when the key this
+configuration gives it is the request's own (as `bank.ask` computes it);
+otherwise the asker reads with other parameters, and the request is
+reported and kept: the relay's `bank_parameters` must be the configuration's
+`parameters`.
 
 **The plan.** For every Artifact with an audio stream claim whose content
 is here, each unit of the configuration (an extractor on the content, or
@@ -699,7 +722,7 @@ also waits for the probe's measure (`f0-pesto` on the vocal stem), which
 
 **Modes** (`regions.plan`). `eager` makes every unit of every recording,
 whole. `songs` makes the cheap units whole and an expensive unit (recorded
-cost above `expensive_above`, 0.04 seconds per audio-second) over each of
+cost above `expensive_above`, 0.05 CPU-seconds per audio-second) over each of
 the recording's song regions (`regions.regions_for`: song occurrences,
 else selections, else the detector's `music` spans, else `structure/playing`
 read from the bank), one `extract.py run --region` job per region, filing
@@ -716,18 +739,28 @@ when it is over a region: a Spool task carries no region yet.
 
 **The pool.** Each extractor runs in copies of `threads` each (its own
 fixed `threads` parameter where it has one, as `chords-jiang` does), as
-many as the cores hold and bounded by `memory_gb` per copy (`layout`);
-every copy is an `extract.py run` of its own with `OMP_NUM_THREADS` and
-its kin set to its threads. The earliest ready job holds the queue when
-it does not fit, so narrow jobs never starve a wide one; jobs that make
-what others wait for (`stems`) go first.
+many as the cores hold at the cores each copy is reserved (`cores`, what it
+really uses: `chords-chordino` 1 though its `threads` parameter is 3,
+`chords-jiang` 2, `notes-basic-pitch` 3 though held to one thread) and
+bounded by `memory_gb` per copy (`layout`; a job also reserves
+`memory_gb_per_hour` per hour of its audio: `chords-jiang` 6, since a
+93-minute recording holds 11.4 GB); every copy is an `extract.py
+run` of its own with `OMP_NUM_THREADS` and its kin set to its threads. Ready
+jobs go in `Job.priority` order (requests, fast, background; then the
+recording's place; then what others wait for, such as `stems`). The
+earliest ready job holds the queue when it does not fit, so narrow jobs
+never starve a wide one.
 
 **Spool.** With `--spool`, a unit whose extractor is routed there
 (`"route": "spool"`) and needs no other feature is put with `remote.py put`
-and collected every `poll_seconds`; its dependents start once it is filed.
-A task the spool fails for good, or that could not be put, runs here; under
-`eager`, so does one no worker has taken within `local_when_away_seconds`
-(900; never under `songs` or `on-demand`). An extractor's
+at most `spool_in_flight` (2) at a time in the queue's order, and collected
+every `poll_seconds`; its dependents start once it is filed. With
+`overflow` (on by default), free cores here take routed work the worker is
+not holding. A task the spool fails for good, or that could not be put,
+runs here; so does every task with the spool once nothing has been filed
+for `local_when_away_seconds` (songs 1800, eager 900, on-demand 600; no
+mode waits for ever) plus the oldest task's expected time (`remote_cost`
+times its audio), and nothing more is put for that long. An extractor's
 `remote_parameters` are what it is put with (for `stems` on the Mac, its
 `apply` with `device` `mps`): the worker's entries then have another key
 and count here only as stand-ins, so the backfill refuses to start unless
@@ -737,19 +770,25 @@ stand in (made with other software than the record names) is made here.
 
 **The configuration** is `extract.py`'s file; its optional `backfill`
 object holds `units` (a list of `[extractor]` or `[extractor, feature]`),
-`extractors` (per extractor `threads`, `memory_gb`, `cost`, `remote_cost`,
-`route`, `remote_parameters`), `expensive_above`, `parallel_gain`, `poll_seconds`,
-`memory_reserve_gb`, and `local_when_away_seconds`. The recorded costs
-default to the backfill profile of 2026-10-19 on the x86-64 laptop. The
+`extractors` (per extractor `threads`, `cores`, `memory_gb`, `memory_gb_per_hour`, `cost`,
+`remote_cost`, `route`, `remote_parameters`, `tier`, `transport`), `expensive_above`,
+`fast_above`, `load_factor`, `poll_seconds`, `memory_reserve_gb`,
+`local_when_away_seconds`, `spool_in_flight`, `overflow`,
+`propose_every_seconds` and `rescan_seconds`. The recorded costs default to
+the cost gate's baseline of 2026-10-20 on the x86-64 laptop (CPU-seconds
+per audio-second of one pass; `remote_cost` is the Mac's measured end to
+end 0.223, WavPack, two tasks at once). The
 runner ignores the object.
 
 **Output.** One JSON line per event on standard output (cut at 400
 characters) and, whole, appended to `--log`: the plan (jobs by unit, what
 is already made, held, deferred, over regions and requested, and the
 projection: audio hours,
-compute hours here and on workers, projected wall hours and seconds per
-audio-second), each job as it is `ran` or `failed`, and `made` (audio
-seconds made per wall second, CPU seconds per audio second by extractor).
+compute hours here and on workers, time to usable and to done, and seconds
+per audio-second), each job as it is `ran` or `failed` (with its tier),
+`usable` each time the fast tier's proposal has run, requests planned,
+made and removed, and `made` (audio seconds made per wall second, when the
+first background job started, CPU seconds per audio second by extractor).
 The last line is `done`. It exits 0 when nothing failed and 1 otherwise.
 Run it as a low-priority unit ([the shadow runbook](../docs/shadow-runbook.md#filling-the-feature-bank)).
 
@@ -983,7 +1022,7 @@ request for an entry nothing holds yet.
 
 ### A stem is a stem: `equivalence` and `--exact`
 
-`stems` declares `apply.device` `cpu` and `mps` interchangeable
+`stems` declares `apply.device` `cpu`, `mps` and `cpu-inductor` interchangeable
 ([ADR 0090's amendment](../docs/decisions/0090-extractor-runs-travel-through-spool.md#amendment-2026-10-19-a-stem-is-a-stem);
 [format](../docs/feature-bank.md#interchangeable-entries)). Each device's
 stems keep their own key; where the configured device's are missing, the
@@ -1011,6 +1050,22 @@ passed 0.13, so the note builder voices no bass row and there is nothing to
 compare. An
 upgrade of torch or demucs on either side is a reason to measure again:
 lookup honours only a record naming the software the entry was made with.
+
+`cpu-inductor` runs htdemucs's network (`stems.htdemucs_core`, everything
+between the spectrogram and the mask) compiled by PyTorch's inductor on the
+CPU; the spectrogram, mask and inverse stay in eager PyTorch. It needs a C++
+compiler where it runs (`CXX`, else `g++`), whose version its entries record
+as `c++`, and compiles once per process (seconds after the first, from
+inductor's cache). It is the laptop's cheapest way to separate (round 2 of
+[ADR 0112](../docs/decisions/0112-bulk-import-at-scale.md)):
+configure `{"stems": {"apply": {..., "device": "cpu-inductor"}}}` and run
+`equivalence stems --against cpu` (and `--against mps`) so the entries
+already made stand in. `enrich backfill` then gives each
+stems copy one thread and one core (`backfill.DEVICE_SETTINGS`; a
+configured `backfill.extractors.stems` setting still wins). Set
+`TORCHINDUCTOR_CACHE_DIR` to a directory that persists, or every process
+compiles again after the default cache in the temporary directory is emptied.
+
 ### The model extractors' interpreters
 
 Each is a virtual environment of its own, never the archive's. The versions
@@ -1037,7 +1092,7 @@ Entries are readable by their owner only: a stem carries the recording.
 ### `remote.py`: the same run on another machine, through Spool
 
 ```sh
-enrich/remote.py put <extractor> --content <file> --bank <dir> --spool "<spool> --dir <spool dir>" [--config <file>]
+enrich/remote.py put <extractor> --content <file> --bank <dir> --spool "<spool> --dir <spool dir>" [--config <file>] [--transport wavpack|flac]
 enrich/remote.py work [--config <file>]          # the Spool capability program, on the worker
 enrich/remote.py collect --bank <dir> --spool "<spool> --dir <spool dir>" [--config <file>]
 ```
@@ -1056,6 +1111,15 @@ because Spool's remote `put` carries no attachments. They need Spool 0.0.4
 with `--max-result-bytes` (a recording-hour's stems are about 1 GB). Only an
 extractor that needs no other feature travels.
 
+The link to the worker is the slowest step, so `--transport` (the
+backfill's `transport` setting, `wavpack` for `stems`) sends the content's
+first audio stream in a lossless encoding instead of its bits, when it
+decodes on this machine to exactly the content's samples
+(`remote.make_transport`): a rehearsal's 32-bit float WAV goes as WavPack at
+about 73% of its size; FLAC holds integer samples only. The answer's
+`transport` says what travelled and why the content did instead. The stems
+coming back are 16-bit FLAC already (about 0.18 MB per audio-second).
+
 On the worker, `work` runs under any Python 3 (it uses only the standard
 library), with a configuration naming the programs as `extract.py`'s does;
 the parameters come from the task. The bank's side names the device:
@@ -1068,7 +1132,7 @@ the parameters come from the task. The bank's side names the device:
 and the worker's Spool configuration offers the capability:
 
 ```json
-{"max_concurrent": 1, "renew_seconds": 30,
+{"max_concurrent": 2, "renew_seconds": 30,
  "env": {"PATH": "<ffmpeg's directory>:/usr/bin:/bin", "HOME": "<home, for the model cache>", "HF_HUB_OFFLINE": "1"},
  "capabilities": {"archive-extractor.stems@1": {
    "exec": "<Demucs's python>", "args": ["<archive>/enrich/remote.py", "work", "--config", "<worker.json>"],
@@ -1077,6 +1141,8 @@ and the worker's Spool configuration offers the capability:
 ```
 
 where `worker.json` is `{"programs": {"demucs-python": "<Demucs's python>"}}`.
+Two at once lets one task's files travel while the other separates; each
+task runs in its own directory, so they share nothing but the GPU.
 `spool work --via "ssh <spool host>" --config <that file> --follow` then
 separates whatever the bank puts. The worker's copy of the extractor must be
 the bank's version; a task it would key otherwise is refused for good.

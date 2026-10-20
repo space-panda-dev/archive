@@ -62,6 +62,7 @@ class FakePlanner:
 
     def __init__(self, states: dict[tuple[str, Unit], str] | None = None, default: str = TODO):
         self.catalog, self.root, self.parameters = CATALOG, Path("/nonexistent"), {}
+        self.programs: dict[str, str] = {}
         self.states = dict(states or {})
         self.default = default
         self.lock = threading.Lock()
@@ -95,15 +96,35 @@ class SlotsAndThreads(unittest.TestCase):
         sched = schedule((STEMS, RHYTHM, Unit("chords-jiang")))
         self.assertEqual(CATALOG.parameters("chords-jiang", {}).get("threads"), 3)
         got = shape(sched, 8, 32.0)
-        self.assertEqual(got["stems"], {"threads": 2, "memory_gb": 3.0, "copies": 4})
+        self.assertEqual(got["stems"], {"threads": 2, "cores": 2, "memory_gb": 3.0, "copies": 4})
         self.assertEqual(got["rhythm"]["threads"], 1)
         self.assertEqual(got["rhythm"]["copies"], 8)
         self.assertEqual(got["chords-jiang"]["threads"], 3)
-        self.assertEqual(got["chords-jiang"]["copies"], 2)
+        # Its threads parameter is 3 (in its key), but a copy uses 1.7 cores: reserved 2.
+        self.assertEqual((got["chords-jiang"]["cores"], got["chords-jiang"]["copies"]), (2, 4))
         # Configured threads change a copy's width; never wider than the machine.
         wide = backfill.schedule_of({"backfill": {"units": [["stems"]],
                                                   "extractors": {"stems": {"threads": 16}}}}, CATALOG)
         self.assertEqual(backfill.layout(CATALOG, wide, {}, 8, 32.0)["stems"]["threads"], 8)
+
+    def test_a_copy_is_reserved_the_cores_it_uses_not_its_threads(self) -> None:
+        # The cost gate: chordino's threads parameter is 3 and it uses one core (CPU time = wall
+        # time); basic-pitch is held to one thread and uses about three (CPU time 3.4x wall).
+        got = shape(schedule((Unit("chords-chordino"), Unit("notes-basic-pitch", "stems/bass"))), 8, 32.0)
+        self.assertEqual(CATALOG.parameters("chords-chordino", {}).get("threads"), 3)  # anchor: unchanged key
+        self.assertEqual(got["chords-chordino"], {"threads": 3, "cores": 1, "memory_gb": 1.0, "copies": 8})
+        self.assertEqual(got["notes-basic-pitch"], {"threads": 1, "cores": 3, "memory_gb": 1.5, "copies": 2})
+        planned = backfill.plan([recording("a")], schedule((STEMS, Unit("chords-chordino"))), FakePlanner(),
+                                "eager", shape(schedule((STEMS, Unit("chords-chordino"))), 8, 32.0), False)
+        self.assertEqual({j.unit.extractor: j.reserved for j in planned.jobs}, {"stems": 2, "chords-chordino": 1})
+
+    def test_the_costs_are_the_cost_gates_baseline(self) -> None:
+        import regions
+        sched = schedule()
+        for extractor_id in ("stems", "f0-pesto", "chords-jiang", "notes-basic-pitch", "melody", "chords-chordino",
+                             "rhythm", "tonal", "structure"):
+            self.assertEqual(sched.costs()[extractor_id], regions.PROFILED_COSTS[extractor_id], extractor_id)
+        self.assertEqual(sched.costs()["stems"], 1.445)
 
     def test_every_numeric_library_is_held_to_the_threads(self) -> None:
         environment = backfill.thread_environment(2)
@@ -112,15 +133,81 @@ class SlotsAndThreads(unittest.TestCase):
 
     def test_the_configuration_refuses_what_it_does_not_know(self) -> None:
         for given in ({"unknown": 1}, {"units": [["no-such-extractor"]]}, {"units": [["tonal", "rhythm/beats"]]},
-                      {"extractors": {"stems": {"route": "cloud"}}}, {"extractors": {"stems": {"gpu": True}}}):
+                      {"extractors": {"stems": {"route": "cloud"}}}, {"extractors": {"stems": {"gpu": True}}},
+                      {"extractors": {"stems": {"tier": "now"}}}, {"local_when_away_seconds": None},
+                      {"local_when_away_seconds": {"songs": None}}, {"extractors": {"stems": {"transport": "mp3"}}}):
             with self.subTest(given=given), self.assertRaises((backfill.BackfillError, bank.BankError)):
                 backfill.schedule_of({"backfill": given}, CATALOG)
+
+    def test_stems_compiled_for_the_cpu_take_one_core_a_copy(self) -> None:
+        apply = {**CATALOG.parameters("stems")["apply"], "device": "cpu-inductor"}
+        config = {"parameters": {"stems": {"apply": apply}}, "backfill": {"units": [["stems"]]}}
+        compiled = backfill.schedule_of(config, CATALOG)
+        self.assertEqual({k: compiled.setting("stems")[k] for k in ("threads", "cores", "cost")},
+                         backfill.DEVICE_SETTINGS[("stems", "cpu-inductor")])
+        self.assertEqual(backfill.layout(CATALOG, compiled, config["parameters"], 8, 64.0)["stems"]["copies"], 8)
+        self.assertEqual(schedule().setting("stems")["threads"], 2)  # the eager default is unchanged
+        # A configured setting still wins over the device's.
+        config["backfill"]["extractors"] = {"stems": {"threads": 2}}
+        self.assertEqual(backfill.layout(CATALOG, backfill.schedule_of(config, CATALOG), config["parameters"], 8,
+                                         64.0)["stems"]["cores"], 2)
+
+    def test_stems_travel_as_wavpack_unless_configured_otherwise(self) -> None:
+        self.assertEqual(schedule().setting("stems")["transport"], "wavpack")
+        self.assertIsNone(schedule().setting("tonal")["transport"])
+        plain = backfill.schedule_of({"backfill": {"extractors": {"stems": {"transport": None}}}}, CATALOG)
+        self.assertIsNone(plain.setting("stems")["transport"])
 
     def test_expensive_is_the_recorded_cost_above_the_threshold(self) -> None:
         sched = schedule()
         expensive = {e for e in backfill.SETTINGS if sched.expensive(e)}
         self.assertEqual(expensive, {"stems", "f0-pesto", "melody", "chords-jiang", "notes-basic-pitch"})
-        self.assertFalse(schedule(expensive_above=1.0).expensive("stems"))
+        self.assertFalse(schedule(expensive_above=2.0).expensive("stems"))
+
+
+class UsableProposal(unittest.TestCase):
+    """A usable proposal that fails makes nothing usable; the next good one does."""
+
+    def test_a_failed_usable_proposal_is_not_usable_and_the_next_good_one_is(self) -> None:
+        class Steps:
+            failures, calls = 0, []
+
+            def propose(self, label: str) -> None:
+                self.calls.append(label)
+                if len(self.calls) == 1:
+                    self.failures += 1  # `enrich propose` exited 1, as `Steps.run` counts it
+
+        notes: list[dict] = []
+        steps = Steps()
+        args = argparse.Namespace(world_store=None)
+        proposals = backfill.Proposals(steps, args, lambda **e: notes.append(e), time.monotonic(), 0.0, True)
+        proposals.begin("usable")
+        proposals.finish()
+        self.assertEqual([n["step"] for n in notes], ["usable proposal failed"])
+        self.assertIsNone(proposals.usable_s)
+        self.assertFalse(proposals.hold_background())  # the background is not held for ever
+        proposals.tick()  # the next proposal, at the background interval, though no background unit landed
+        proposals.finish()
+        self.assertEqual(steps.calls, ["propose --all (usable)", "propose --all (background batch)"])
+        self.assertEqual([n["step"] for n in notes], ["usable proposal failed", "usable"])
+        self.assertIsNotNone(proposals.usable_s)
+        self.assertFalse(proposals.usable_pending)
+
+    def test_a_usable_proposal_that_cannot_run_is_a_failure_not_usable(self) -> None:
+        class Steps:
+            failures = 0
+
+            def propose(self, label: str) -> None:
+                raise OSError("no such program")
+
+        notes: list[dict] = []
+        steps = Steps()
+        proposals = backfill.Proposals(steps, argparse.Namespace(world_store=None), lambda **e: notes.append(e),
+                                       time.monotonic(), 0.0, True)
+        proposals.begin("usable")
+        proposals.finish()
+        self.assertEqual([n["step"] for n in notes], ["proposal could not run", "usable proposal failed"])
+        self.assertEqual((steps.failures, proposals.usable_s, proposals.usable_pending), (1, None, True))
 
 
 class Plans(unittest.TestCase):
@@ -140,6 +227,19 @@ class Plans(unittest.TestCase):
             self.assertEqual(jobs[(other.object_id, unit)].after, [stems])
         self.assertEqual(jobs[(other.object_id, STRUCTURE)].after, [jobs[(other.object_id, RHYTHM)]])
         self.assertEqual(stems.dependents, 3)
+
+    def test_a_copy_that_grows_with_its_audio_reserves_memory_by_the_hour(self) -> None:
+        jiang = Unit("chords-jiang")
+        self.assertEqual(backfill.SETTINGS["chords-jiang"]["memory_gb_per_hour"], 6.0)
+        long_, short = recording("long", seconds=5400.0), recording("short", seconds=600.0, songs=True)
+        sched = schedule((jiang, RHYTHM))
+        jobs = {(j.recording.object_id, j.unit): j for j in self.plan([long_, short], "eager", sched=sched).jobs}
+        self.assertEqual(jobs[(long_.object_id, jiang)].memory_gb, 2.0 + 6.0 * 1.5)
+        self.assertEqual(jobs[(short.object_id, jiang)].memory_gb, 3.0)
+        self.assertEqual(jobs[(long_.object_id, RHYTHM)].memory_gb, 1.0)  # no hourly term
+        given = schedule((jiang, RHYTHM), extractors={"rhythm": {"memory_gb_per_hour": 2.0}})
+        jobs = {(j.recording.object_id, j.unit): j for j in self.plan([long_], "eager", sched=given).jobs}
+        self.assertEqual(jobs[(long_.object_id, RHYTHM)].memory_gb, 1.0 + 2.0 * 1.5)
 
     def test_songs_defers_expensive_units_and_what_measures_them_where_there_is_no_song(self) -> None:
         song, other = recording("a", songs=True), recording("b")
@@ -177,14 +277,24 @@ class Plans(unittest.TestCase):
         self.assertEqual(routed, {"stems": True, "tonal": False})  # tonal needs frames: it cannot travel
         self.assertFalse(any(j.routed for j in self.plan([rec], "eager", sched=sched).jobs))
 
-    def test_the_projection_counts_the_recorded_costs(self) -> None:
-        rec = recording("a", seconds=3600.0)
+    def test_the_projection_counts_the_recorded_costs_to_usable_and_to_done(self) -> None:
+        recs = [recording(n, seconds=3600.0) for n in "abcdefgh"]
         sched = schedule((STEMS, RHYTHM))
-        planned = self.plan([rec], "eager", sched=sched)
-        got = backfill.projection(planned.jobs, sched)
-        self.assertEqual(got["audio_hours"], 1.0)
-        self.assertAlmostEqual(got["compute_hours_here"], 0.576 + 0.031, places=2)
-        self.assertAlmostEqual(got["projected_wall_hours"], (0.576 + 0.031) / 1.9, places=2)
+        planned = self.plan(recs, "eager", sched=sched)
+        got = backfill.projection(planned.jobs, sched, 8)
+        self.assertEqual(got["audio_hours"], 8.0)
+        load = sched.load_factor
+        self.assertAlmostEqual(got["compute_hours_here"], 8 * (1.445 + 0.032) * load, places=2)
+        # Usable: the fast tier (rhythm) over eight cores; done: then stems over them.
+        self.assertAlmostEqual(got["time_to_usable_hours"], 0.032 * load, places=3)
+        self.assertAlmostEqual(got["time_to_done_hours"], (0.032 + 1.445) * load, places=2)
+        # With the worker taking stems too, the laptop takes what it is not holding: sooner than either alone.
+        for job in planned.jobs:
+            job.routed = job.unit == STEMS
+        both = backfill.projection(planned.jobs, sched, 8)
+        alone = 8 * sched.setting("stems")["remote_cost"]
+        self.assertLess(both["time_to_done_hours"] - both["time_to_usable_hours"], min(alone, 1.445 * load))
+        self.assertGreater(both["time_to_done_hours"], got["time_to_usable_hours"])
 
     def test_songs_makes_expensive_units_over_each_song_region_and_cheap_ones_whole(self) -> None:
         second = Region(44100 * 400, 44100 * 500, 44100)
@@ -247,6 +357,7 @@ class Plans(unittest.TestCase):
                   "extractor": {"id": "rhythm", "version": "0"}},
                  {"key": "sha256:" + "3" * 64, "content": "sha256:" + "f" * 64, "region": None, "feature": None,
                   "extractor": {"id": "rhythm", "version": CATALOG["rhythm"].version}}]
+        asked[0]["key"] = backfill.request_key(FakePlanner(), asked[0])  # the key this configuration makes
         sched = schedule()
         planned = backfill.plan([rec, other], sched, FakePlanner(), "on-demand", shape(sched), False, asked)
         self.assertEqual([(j.unit, j.region, j.requested) for j in planned.jobs],
@@ -260,6 +371,125 @@ class Plans(unittest.TestCase):
         self.assertEqual(planned.jobs[0].unit, STEMS)
         self.assertTrue(planned.jobs[0].requested)
         self.assertEqual(sum(1 for j in planned.jobs if (j.unit, j.region) == (STEMS, SONG)), 1)
+
+
+class Tiers(unittest.TestCase):
+    """ADR 0112, "Usable": the fast tier over every recording first, then the
+    background by priority, a request ahead of both."""
+
+    def test_the_fast_tier_is_what_measures_the_content_itself_cheaply(self) -> None:
+        sched = schedule()
+        fast = {u.name for u in map(lambda i: Unit(*i), backfill.UNITS) if sched.tier(u, CATALOG) == "fast"}
+        self.assertEqual(fast, {"rhythm", "tonal", "chords-jiang", "chords-chordino", "structure"})
+        self.assertEqual(sched.tier(Unit("tonal", "stems/bass"), CATALOG), "background")  # cheap, but a stem
+        self.assertEqual(sched.tier(MELODY, CATALOG), "background")  # it prefers the vocal stem
+        cheaper = schedule(fast_above=0.1)
+        self.assertEqual(cheaper.tier(Unit("chords-jiang"), CATALOG), "background")
+        told = backfill.schedule_of({"backfill": {"extractors": {"chords-jiang": {"tier": "background"}}}}, CATALOG)
+        self.assertEqual(told.tier(Unit("chords-jiang"), CATALOG), "background")
+
+    def test_recordings_are_queued_songs_first_then_the_most_recent(self) -> None:
+        old, new, song, unknown = recording("old"), recording("new"), recording("song", songs=True), recording("u")
+        old.at, new.at, song.at = "2001-01-01T00:00:00Z", "2026-01-01T00:00:00Z", "1999-01-01T00:00:00Z"
+        backfill.prioritise([old, unknown, new, song])
+        self.assertEqual(sorted([old, new, song, unknown], key=lambda r: r.priority), [song, new, old, unknown])
+
+    def run_plan(self, recs, planner, units=(STEMS, RHYTHM, STRUCTURE, BASS_TONAL), cores=2, asked=None,
+                 intake=None, hold=None):
+        sched = schedule(units, poll_seconds=0.01)
+        shaped = shape(sched, cores, 32.0)
+        planned = backfill.plan(recs, sched, planner, "eager", shaped, False, asked)
+        order, lock = [], threading.Lock()
+
+        def run_unit(job: Job):
+            with lock:
+                order.append(("start", job.recording.object_id, job.unit, job.rank))
+            time.sleep(0.01)
+            planner.made(job.recording, job.unit, job.region)
+            with lock:
+                order.append(("end", job.recording.object_id, job.unit, job.rank))
+            return {"status": "ok"}, 0.0
+
+        stops = [False]
+        runner = backfill.Runner(planned.jobs, planner, sched, shaped, cores, 32.0, "eager", lambda **e: None,
+                                 run_unit, intake=intake and (lambda: intake(planned)),
+                                 stop=(lambda: stops[0]) if intake else None, hold_background=hold)
+        if intake:
+            threading.Timer(1.5, lambda: stops.__setitem__(0, True)).start()
+        runner.run()
+        return planned, order
+
+    def test_every_recording_has_its_fast_units_made_before_any_background_job_starts(self) -> None:
+        recs = [recording(n) for n in "abcdef"]
+        planned, order = self.run_plan(recs, FakePlanner())
+        self.assertTrue(all(j.status == "done" for j in planned.jobs))
+        first_background = min(i for i, e in enumerate(order) if e[0] == "start" and e[3] == 2)
+        last_fast = max(i for i, e in enumerate(order) if e[0] == "end" and e[3] == 1)
+        self.assertLess(last_fast, first_background)
+        self.assertEqual({e[1] for e in order[:first_background] if e[2] == RHYTHM}, {r.object_id for r in recs})
+
+    def test_the_background_waits_while_the_fast_tiers_proposal_is_outstanding(self) -> None:
+        released = [False]
+        threading.Timer(0.3, lambda: released.__setitem__(0, True)).start()
+        began = time.monotonic()
+        seen = []
+
+        def hold() -> bool:
+            if not released[0]:
+                return True
+            seen.append(time.monotonic() - began)
+            return False
+
+        planned, order = self.run_plan([recording("a")], FakePlanner(), hold=hold)
+        self.assertTrue(all(j.status == "done" for j in planned.jobs))
+        self.assertGreaterEqual(seen[0], 0.3)
+
+    def test_a_request_goes_ahead_of_the_background_and_of_the_fast_tier(self) -> None:
+        recs = [recording(n) for n in "abcd"]
+        request = {"key": None, "content": recs[3].digest, "region": None, "feature": None,
+                   "extractor": {"id": "stems", "version": CATALOG["stems"].version}}
+        request["key"] = backfill.request_key(FakePlanner(), request)
+        planned, order = self.run_plan(recs, FakePlanner(), asked=[request], cores=2)
+        starts = [e for e in order if e[0] == "start"]
+        self.assertEqual(starts[0][1:3], (recs[3].object_id, STEMS))
+        self.assertEqual([j.requests for j in planned.jobs if j.requested], [[request["key"]]])
+
+    def test_a_request_that_arrives_while_running_jumps_the_background_queue(self) -> None:
+        recs = [recording(n) for n in "abcdef"]
+        planner = FakePlanner()
+        last = recs[-1]
+        asked = []
+
+        def intake(planned):
+            started = [j for j in planned.jobs if j.unit == STEMS and j.status != "pending"]
+            if started and not asked:
+                request = {"key": None, "content": last.digest, "region": None, "feature": "stems/bass",
+                           "extractor": {"id": "tonal", "version": CATALOG["tonal"].version}}
+                request["key"] = backfill.request_key(planner, request)
+                asked.append(request)
+                return planned.planning.request(request, {r.digest: r for r in recs})
+            return []
+
+        planned, order = self.run_plan(recs, planner, intake=intake, cores=2)
+        self.assertTrue(asked)
+        self.assertTrue(all(j.status == "done" for j in planned.jobs), [(j.unit, j.status) for j in planned.jobs])
+        starts = [(e[1], e[2]) for e in order if e[0] == "start" and e[2] == STEMS]
+        # Its stems were promoted ahead of the recordings queued before it.
+        self.assertLess(starts.index((last.object_id, STEMS)), len(recs) - 1)
+        self.assertTrue(any(j.requested and j.unit == BASS_TONAL for j in planned.jobs))
+
+    def test_a_request_whose_key_this_configuration_does_not_make_is_kept_and_not_made(self) -> None:
+        rec = recording("a")
+        request = {"key": "sha256:" + "4" * 64, "content": rec.digest, "region": None, "feature": None,
+                   "extractor": {"id": "rhythm", "version": CATALOG["rhythm"].version}}
+        sched = schedule()
+        planned = backfill.plan([rec], sched, FakePlanner(), "on-demand", shape(sched), False, [request])
+        self.assertEqual(planned.jobs, [])
+        self.assertIn("bank_parameters", planned.unplaced[0][1])
+        made = FakePlanner({(rec.object_id, RHYTHM): DONE})
+        request["key"] = backfill.request_key(made, request)
+        planned = backfill.plan([rec], sched, made, "on-demand", shape(sched), False, [request])
+        self.assertEqual((planned.jobs, planned.answered), ([], [request["key"]]))
 
 
 class Real(unittest.TestCase):
@@ -380,8 +610,9 @@ class Spool(unittest.TestCase):
 
     def go(self, collect, mode="eager"):
         planned = backfill.plan(self.recs, self.sched, self.planner, mode, shape(self.sched), True)
-        put = lambda catalog, root, spool, extractor, content, media_type, digest, parameters: {
-            "status": "put", "task_id": f"task-{digest[7:12]}", "key": "k"}
+        self.put_options: list[dict] = []
+        put = lambda catalog, root, spool, extractor, content, media_type, digest, parameters, **options: (
+            self.put_options.append(options) or {"status": "put", "task_id": f"task-{digest[7:12]}", "key": "k"})
         with patch.object(backfill.remote, "put", put), patch.object(backfill.remote, "collect", collect):
             runner = backfill.Runner(planned.jobs, self.planner, self.sched, shape(self.sched), 8, 32.0, mode,
                                      lambda **e: None, self.run_unit, spool=object())
@@ -397,6 +628,37 @@ class Spool(unittest.TestCase):
         planned = self.go(collect)
         self.assertTrue(all(j.status == "done" for j in planned.jobs))
         self.assertEqual({u for _, u in self.ran}, {BASS_TONAL})  # stems were never run here
+        # Their content travels as WavPack, the stems default, encoded by the configured ffmpeg.
+        self.assertEqual(self.put_options, [{"transport": "wavpack", "ffmpeg": None}] * 2)
+
+    def test_what_runs_here_does_not_wait_for_the_puts(self) -> None:
+        # A put encodes its transport first; rhythm, which needs no stems, runs meanwhile.
+        self.sched = backfill.schedule_of({"backfill": {"units": [["stems"], ["rhythm"]],
+                                                        "extractors": {"stems": {"route": "spool"}},
+                                                        "poll_seconds": 0.01}}, CATALOG)
+        rhythm_ran = threading.Event()
+        planned = backfill.plan(self.recs, self.sched, self.planner, "eager", shape(self.sched), True)
+
+        def put(*arguments, **options):
+            self.assertTrue(rhythm_ran.wait(10), "the pool waited for the put")
+            return {"status": "put", "task_id": f"task-{arguments[6][7:12]}", "key": "k"}
+
+        def collect(catalog, root, spool):
+            for rec in self.recs:
+                self.planner.made(rec, STEMS)
+            return {"status": "ok", "tasks": {}, "failed": {}}
+
+        def run_unit(job: Job):
+            result = self.run_unit(job)
+            if job.unit == RHYTHM:
+                rhythm_ran.set()
+            return result
+
+        with patch.object(backfill.remote, "put", put), patch.object(backfill.remote, "collect", collect):
+            backfill.Runner(planned.jobs, self.planner, self.sched, shape(self.sched), 8, 32.0, "eager",
+                            lambda **e: None, run_unit, spool=object()).run()
+        self.assertTrue(all(j.status == "done" for j in planned.jobs))
+        self.assertEqual({u for _, u in self.ran}, {RHYTHM})
 
     def test_a_task_the_spool_failed_for_good_runs_here(self) -> None:
         def collect(catalog, root, spool):
@@ -410,7 +672,7 @@ class Spool(unittest.TestCase):
     def test_a_put_that_fails_runs_here(self) -> None:
         planned = backfill.plan(self.recs, self.sched, self.planner, "eager", shape(self.sched), True)
 
-        def put(*arguments):
+        def put(*arguments, **options):
             raise backfill.remote.RemoteError("the spool cannot be reached")
 
         with patch.object(backfill.remote, "put", put):
@@ -421,7 +683,8 @@ class Spool(unittest.TestCase):
         self.assertEqual(sum(1 for _, u in self.ran if u == STEMS), 2)
 
     def test_in_eager_mode_a_task_no_worker_takes_runs_here_after_a_while(self) -> None:
-        self.sched.local_when_away_seconds = {"songs": None, "eager": 0.05}
+        self.sched.local_when_away_seconds = {"songs": 1800.0, "eager": 0.05, "on-demand": 600.0}
+        self.sched.settings["stems"]["remote_cost"] = None  # no allowance for the task's own time
         planned = self.go(lambda catalog, root, spool: {"status": "ok", "tasks": {}, "failed": {}})
         self.assertTrue(all(j.status == "done" for j in planned.jobs))
         self.assertEqual(sum(1 for _, u in self.ran if u == STEMS), 2)
@@ -475,7 +738,7 @@ class StandIns(unittest.TestCase):
         self.assertTrue(planned.jobs[0].routed)
         given = []
 
-        def put(catalog, root, spool, extractor, content, media_type, digest, parameters):
+        def put(catalog, root, spool, extractor, content, media_type, digest, parameters, **options):
             given.append(parameters)
             return {"status": "put", "task_id": "task-1", "key": "k"}
 
@@ -667,6 +930,57 @@ class EndToEnd(unittest.TestCase):
         # A narrower span inside the region is covered by it: `bank.covering`.
         inner = Region(44100 * 5, 44100 * 6, 44100)
         self.assertEqual(planner.state(rec, Unit("stems"), inner)[0], DONE)
+
+    def test_every_recording_is_usable_before_any_stem_job_starts_and_a_request_goes_first(self) -> None:
+        # The relay's request for the quiet recording's stems (its bank_parameters are the configuration's).
+        quiet = bank.file_digest(self.quiet)
+        _, key, wrote = bank.ask(bank.Bank(self.bank, bank.Catalog.load(), {}), quiet, "stems", "relay")
+        self.assertTrue(wrote)
+        starts = []
+
+        def run_unit(job: Job):
+            starts.append((job.recording.digest, job.unit.name, job.tier, job.requested))
+            return backfill.run_extract(job, self.bank.resolve(), str(self.config), support.FFMPEG)
+
+        code, events = self.backfill("--commit", run_unit=run_unit)
+        self.assertEqual(code, 0, [e for e in events if e.get("ok") is False or e["step"] == "failed"])
+        self.assertEqual(starts[0], (quiet, "stems", "background", True))  # the request first
+        first_background = min(i for i, s in enumerate(starts) if s[2] == "background" and not s[3])
+        fast = [s for s in starts if s[2] == "fast"]
+        self.assertEqual({s[1] for s in fast}, {"rhythm", "tonal", "chords-jiang", "chords-chordino", "structure"})
+        self.assertEqual({s[0] for s in fast}, {quiet, bank.file_digest(self.wav)})  # every recording
+        self.assertTrue(all(starts.index(s) < first_background for s in fast))
+        # Usable (the fast tier made and proposed through Door) before the first background job started.
+        steps = [e["step"] for e in events]
+        self.assertEqual(self.step(events, "propose --all (usable)")["exit"], 0)
+        usable, made = self.step(events, "usable"), self.step(events, "made")
+        self.assertLessEqual(usable["s"], made["background_started_s"])
+        self.assertLess(steps.index("usable"), steps.index("made"))
+        done = self.step(events, "done")
+        self.assertLessEqual(done["time_to_usable_s"], done["time_to_done_s"])
+        # The request is made, and removed.
+        self.assertIn("request made; removed", steps)
+        self.assertFalse(bank.request_path(self.bank, key).exists())
+        self.assertIsNotNone(bank.Bank(self.bank, bank.Catalog.load(), {}).entry(quiet, "stems"))
+
+    def test_follow_makes_a_request_that_arrives_and_removes_it(self) -> None:
+        self.mode = "--on-demand"
+        code, events = self.backfill("--commit", "--proposers", "")  # probes both; on demand makes nothing
+        self.assertEqual((code, entries(self.bank)), (0, []))
+        mix = bank.file_digest(self.wav)
+        reader = bank.Bank(self.bank, bank.Catalog.load(), {})
+        asked = []
+        timer = threading.Timer(1.0, lambda: asked.append(bank.ask(reader, mix, "rhythm", "relay")))
+        timer.start()
+        self.addCleanup(timer.cancel)
+        code, events = self.backfill("--commit", "--proposers", "", "--follow", "--follow-seconds", "10")
+        self.assertEqual(code, 0, [e for e in events if e["step"] in ("failed", "request not planned")])
+        self.assertTrue(asked)
+        steps = [e["step"] for e in events]
+        self.assertIn("request planned", steps)
+        self.assertIn("request made; removed", steps)
+        self.assertIsNotNone(reader.entry(mix, "rhythm"))
+        self.assertFalse(bank.request_path(self.bank, asked[0][1]).exists())
 
     def test_a_killed_backfill_resumes_and_files_each_entry_once(self) -> None:
         log = self.tmp / "first.jsonl"
