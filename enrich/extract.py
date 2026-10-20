@@ -865,14 +865,16 @@ def main_equivalence(arguments: argparse.Namespace) -> int:
 
 def load_config(path: str | None) -> dict[str, Any]:
     """Configuration: `{"programs": {name: path}, "parameters": {extractor:
-    {field: value}}, "extractors": [directory, ...]}`, all optional."""
+    {field: value}}, "extractors": [directory, ...], "backfill": {...}}`, all
+    optional; `backfill` is `enrich backfill`'s (backfill.py) and the runner
+    ignores it."""
     if path is None:
         return {}
     try:
         config = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise RunError(f"configuration {path} is unreadable: {exc}") from exc
-    if not isinstance(config, dict) or set(config) - {"programs", "parameters", "extractors"}:
+    if not isinstance(config, dict) or set(config) - {"programs", "parameters", "extractors", "backfill"}:
         raise RunError(f"configuration {path} must be an object of programs, parameters, and extractors")
     if not all(isinstance(v, str) for v in config.get("programs", {}).values()):
         raise RunError(f"configuration {path}: each program is a path")

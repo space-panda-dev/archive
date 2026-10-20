@@ -132,7 +132,13 @@ leaves `Bank.entry` alone, and **scheduler** consumes both and merges last.
 never the shadow archive or its bank, and passes the cost gate once
 scheduler has added it.
 
-- **scheduler.** `enrich/backfill.py` and `enrich/enrich.py backfill`
+- **scheduler.** Built over whole content (`enrich backfill`, modes
+  `songs` and `eager`, the pool, Spool fan-out, a dry run by default; [the
+  runbook](shadow-runbook.md#filling-the-feature-bank)). Left: region jobs
+  from triage's `regions_for`, `on-demand` and `--follow` over
+  `requests/`, stand-ins once gpu lands (the planner reads through `Bank`,
+  so they count as made with no change here), and the `bench-cost` suite.
+  As decided: `enrich/backfill.py` and `enrich/enrich.py backfill`
   (ADR 0112's flags). Plan from the archive (the Artifacts `enrich propose
   --all` finds) and the bank: compute the mode's keys, drop those present
   or standing in, order requests, song regions, the rest. Regions come from

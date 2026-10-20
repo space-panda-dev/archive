@@ -162,6 +162,7 @@ command, `rg -n '^##' enrich/README.md`).
 | `enrich/bank.py` | 1003 | `Catalog` (354), `Bank` (774): the bank format; region keys (`key_of`, `check_region`, `Catalog.within`), `covering`, bank requests (`ask`, `requests`) at the end (ADR 0112) |
 | `enrich/regions.py` | 248 | song spans by precedence, `regions_of`, `regions_for`, `expensive`, `plan` per mode (ADR 0112); tests `enrich/test_regions.py` |
 | `enrich/remote.py` | 494 | extractor runs through Spool: `put`, `work`, `collect` (ADR 0090) |
+| `enrich/backfill.py` | 836 | `enrich backfill` (ADR 0112): `plan`, `Planner.state` (reads the bank through `Bank`), `layout`/`copies` (slots and threads), `Runner` (the pool and the Spool fan-out); tests `enrich/test_backfill.py` |
 | `enrich/media.py`, `waveform.py`, `derived.py` | 193, 161, 62 | derived media (ADR 0069) |
 | `enrich/support.py` | 291 | test support: synthetic audio, scratch archives |
 | `enrich/extractors/<id>/` | | `extractor.json` + program; longest: `quality/quality.py` 1317, `tonal/tonal.py` 986, `structure/structure.py` 871, `rhythm/meter.py` 821 |
@@ -184,6 +185,8 @@ Stand-in stems by a measured tolerance (ADR 0090's amendment) are built:
 0112): region entries, bank requests and song regions are built; the rest
 (`enrich backfill`, the cost gate) is step 0 of
 [docs/backlog.md](docs/backlog.md).
+Pitfall: the backfill's job events are `ran`/`failed`; `done` is only its
+last line.
 Find: extractors in `enrich/extractors/<id>/extractor.json`; SHIPPED digest
 pins in `enrich/test_bank.py` (`SHIPPED = {`, line 115); byte format in
 [docs/feature-bank.md](docs/feature-bank.md) (483; shipped table at "The
