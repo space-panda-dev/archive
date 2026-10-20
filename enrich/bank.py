@@ -329,35 +329,13 @@ def with_parameter(parameters: Mapping[str, Any], path: str, value: Any) -> dict
     return copy
 
 
-def has_path(parameters: Mapping[str, Any], path: str) -> bool:
-    """Whether the dotted path is declared in parameters (its value may be null)."""
-    value: Any = parameters
-    for part in path.split("."):
-        if not isinstance(value, dict) or part not in value:
-            return False
-        value = value[part]
-    return True
-
-
-def with_value(declared: Mapping[str, Any], parameters: Mapping[str, Any], value: str) -> dict[str, Any]:
-    """A copy of parameters with the interchangeable parameter set to one of
-    its declared values, and each field that value brings with it (`with`)
-    set too: a named parameter set such as a runtime with its own overlap."""
-    copy = with_parameter(parameters, declared["parameter"], value)
-    for path, setting in declared.get("with", {}).get(value, {}).items():
-        copy = with_parameter(copy, path, setting)
-    return copy
-
-
 def check_interchangeable(declared: Any, manifest: Mapping[str, Any], where: str) -> None:
     """`interchangeable` (ADR 0090's amendment): one parameter, the values of
     it whose entries may stand in for each other once an equivalence record
     passes, the software a record must match, and the downstream agreement
-    that decides it. `with`, when declared, names for every value the other
-    declared parameter fields that value sets (the same fields for each), so
-    one value names a whole parameter set (ADR 0112's CPU runtime)."""
-    _require(isinstance(declared, dict) and set(declared) - {"with"} == {"parameter", "values", "software", "agree"},
-             f"{where}: interchangeable is {{parameter, values, software, agree}}, and optionally with")
+    that decides it."""
+    _require(isinstance(declared, dict) and set(declared) == {"parameter", "values", "software", "agree"},
+             f"{where}: interchangeable is {{parameter, values, software, agree}}")
     path = declared["parameter"]
     _require(isinstance(path, str) and PARAMETER_PATH.fullmatch(path) is not None,
              f"{where}: interchangeable.parameter is a dotted path of the parameters, such as apply.device")
@@ -367,22 +345,6 @@ def check_interchangeable(declared: Any, manifest: Mapping[str, Any], where: str
              f"{where}: interchangeable.values lists at least two distinct names, such as cpu and mps")
     _require(parameter_at(manifest.get("parameters", {}), path) in values,
              f"{where}: the parameter {path} must be declared, with one of {values}")
-    if "with" in declared:
-        brought = declared["with"]
-        parameters = manifest.get("parameters", {})
-        _require(isinstance(brought, dict) and set(brought) == set(values)
-                 and all(isinstance(fields, dict) and fields for fields in brought.values()),
-                 f"{where}: interchangeable.with names, for every value, the fields it sets")
-        paths = set(brought[values[0]])
-        _require(all(set(fields) == paths for fields in brought.values()),
-                 f"{where}: interchangeable.with sets the same fields for every value")
-        _require(all(isinstance(p, str) and PARAMETER_PATH.fullmatch(p) and has_path(parameters, p)
-                     and p != path and not p.startswith(path + ".") and not path.startswith(p + ".")
-                     for p in paths),
-                 f"{where}: interchangeable.with names declared parameter fields other than {path}")
-        mine = parameter_at(parameters, path)
-        _require(mine not in brought or all(parameter_at(parameters, p) == brought[mine][p] for p in paths),
-                 f"{where}: the declared parameters must be what interchangeable.with gives {mine}")
     software = declared["software"]
     _require(isinstance(software, list) and software and len(set(software)) == len(software)
              and all(isinstance(name, str) and 0 < len(name) <= 200 for name in software),
@@ -659,20 +621,16 @@ class Catalog:
         """The parameters whose entries may stand in for the configured
         ones', each with its declared value, in the manifest's order: the
         configured parameters with the interchangeable field set to each
-        other declared value, with the fields that value brings (`with`).
-        None when the extractor declares nothing interchangeable, is
-        configured with a value it does not declare, or is configured with
-        fields other than the ones its value brings."""
+        other declared value. None when the extractor declares nothing
+        interchangeable or is configured with a value it does not declare."""
         declared = self[extractor_id].interchangeable
         if declared is None:
             return []
         configured = self.parameters(extractor_id, overrides)
         if parameter_at(configured, declared["parameter"]) not in declared["values"]:
             return []
-        own = parameter_at(configured, declared["parameter"])
-        if with_value(declared, configured, own) != configured:
-            return []  # configured with fields its value does not bring: nothing stands in
-        return [(value, with_value(declared, configured, value)) for value in declared["values"] if value != own]
+        return [(value, with_parameter(configured, declared["parameter"], value)) for value in declared["values"]
+                if value != parameter_at(configured, declared["parameter"])]
 
 
 # -- results and entries -----------------------------------------------------

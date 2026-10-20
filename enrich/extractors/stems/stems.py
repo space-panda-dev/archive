@@ -66,20 +66,19 @@ MODEL = {"name": "htdemucs", "demucs": "4.1.0", "repository": "adefossez/HTDemuc
                        "sha256:d9fa14133cfcc034a6758923bb3a8ca9f8dfd0b582134643bbf83f72c17576dd"}}
 APPLY = {"shifts": 0, "split": True, "overlap": "0.25", "segment": None, "device": "cpu",
          "normalise": "chunk mean and standard deviation, as demucs.api.Separator.separate_tensor"}
-# The devices the model may run on, each with the other apply settings it
-# brings (the manifest's `interchangeable.with`) and the PyTorch device it
-# runs on. The device is a parameter, so stems made on a GPU, or by another
-# runtime, are another key beside the CPU's: the same weights give other bits
-# on other hardware. "cpu" is the manifest's: PyTorch's eager CPU kernels. An
-# operator who has Apple's Metal configures {"stems": {"apply": {...,
-# "device": "mps"}}}; "cpu-inductor" runs the network compiled by PyTorch's
-# inductor on the CPU, about a sixth less CPU time on the x86-64 laptop (ADR
-# 0112). Any device's stems stand in for another's once a passing
-# equivalence record of the pair is in the bank (the manifest's
-# `interchangeable`; ADR 0090's amendment).
-DEVICES: dict[str, dict[str, Any]] = {"cpu": {"overlap": "0.25"}, "mps": {"overlap": "0.25"},
-                                      "cpu-inductor": {"overlap": "0.25"}}
+# The devices the model may run on, and the PyTorch device each runs on. The
+# device is a parameter, so stems made on a GPU, or by another runtime, are
+# another key beside the CPU's: the same weights give other bits on other
+# hardware. "cpu" is the manifest's: PyTorch's eager CPU kernels. An operator
+# who has Apple's Metal configures {"stems": {"apply": {..., "device":
+# "mps"}}}; "cpu-inductor" runs the network compiled by PyTorch's inductor
+# on the CPU, about a sixth less CPU time on the x86-64 laptop (ADR 0112).
+# Any device's stems stand in for another's once a passing equivalence
+# record of the pair is in the bank (the manifest's `interchangeable`; ADR
+# 0090's amendment). Less chunk overlap is not offered: its stems are not a
+# stem (note F1 0.46 at overlap 0.1, ADR 0112).
 TORCH_DEVICE = {"cpu": "cpu", "mps": "mps", "cpu-inductor": "cpu"}
+DEVICES = tuple(TORCH_DEVICE)
 COMPILED = ("cpu-inductor",)
 
 
@@ -115,14 +114,13 @@ def encode_arguments(path: str) -> list[str]:
 
 
 def apply_on(device: str) -> dict[str, Any]:
-    """Demucs's application settings, on one of DEVICES, with what it brings."""
-    return {**APPLY, **DEVICES[device], "device": device}
+    """Demucs's application settings, on one of DEVICES."""
+    return {**APPLY, "device": device}
 
 
 def parameters(separation: Separation = HTDEMUCS, device: str = "cpu") -> dict[str, Any]:
     """The settings, which the manifest must declare exactly, on the CPU;
-    on another of DEVICES they differ only in `apply.device` and the apply
-    settings that device brings."""
+    on another of DEVICES they differ only in `apply.device`."""
     return {"decoder": "ffmpeg", "decode_arguments": decode_arguments("{input}"), "model": separation.model,
             "apply": apply_on(device), "chunk_seconds": CHUNK_SECONDS, "crossfade_seconds": CROSSFADE_SECONDS,
             "stems": list(separation.stems),
@@ -213,7 +211,9 @@ class Demucs:
                                    split=self.apply["split"], overlap=float(self.apply["overlap"]),
                                    segment=self.apply["segment"], device=TORCH_DEVICE[self.apply["device"]],
                                    progress=False)
-            out = out * std + mean
+            # In place: the same arithmetic, so the same bits, without a
+            # second copy of four stems (850 MB for a ten-minute chunk).
+            out.mul_(std).add_(mean)
         return out[0].cpu().numpy()
 
 
@@ -622,7 +622,7 @@ def main(argv: list[str], separation: Separation = HTDEMUCS) -> int:
         device = next((d for d in DEVICES if request.get("parameters") == parameters(separation, d)), None)
         if device is None:
             raise StemsError(f"{separation.extractor} has fixed settings but for the device "
-                             f"({', '.join(DEVICES)}) and what it brings; the request names others")
+                             f"({', '.join(DEVICES)}); the request names others")
         output = Path(request["output_dir"])
         model = load_model(separation.model, apply_on(device))
         outputs = separate(request["input"]["path"], output, model, stems=separation.stems)

@@ -157,7 +157,7 @@ class Manifest(unittest.TestCase):
         self.assertEqual(scalars, {f"{s}_{m}" for s in stems.STEMS for m in ("rms_db", "peak_db", "clamped")}
                          | {"mix_rms_db", "samples", "seconds"})
 
-    def test_every_device_is_declared_interchangeable_with_what_it_brings(self) -> None:
+    def test_every_device_is_declared_interchangeable(self) -> None:
         catalog = bank.Catalog.load()
         declared = catalog["stems"].interchangeable
         self.assertEqual(declared["values"], list(stems.DEVICES))
@@ -453,7 +453,7 @@ class Separation(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("fixed settings", answer["extractors"]["stems"]["log"])
 
-    def test_each_device_is_run_with_the_settings_it_brings(self) -> None:
+    def test_each_device_is_run_with_its_settings(self) -> None:
         directory = scratch(self)
         audio = chord_with_clicks(directory / "take.flac", 1)
         for device in stems.DEVICES:
