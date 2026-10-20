@@ -2,7 +2,7 @@
 what it holds (ADR 0112; ADR 0090 for the Spool fan-out).
 
     enrich.py backfill --archive <dir> --bank <dir> [--config <file>]
-        [--mode songs|eager | --songs | --eager] [--cores n] [--memory-gb n]
+        [--mode songs|eager|on-demand | --songs | --eager | --on-demand] [--cores n] [--memory-gb n]
         [--spool "<spool> --dir <dir>"] [--commit] [--retry-failed]
         [--proposers a,b,...] [--world-store <dir> [--world-python <python>]
         [--conformance-python <python>]] [--log <file>]
@@ -17,7 +17,10 @@ recorded costs. With `--commit`, in order:
 2. plan: for every Artifact with an audio stream claim, the units of the
    configuration (an extractor on the content, or on a file feature of it
    with `--from`) whose entries the bank lacks, read through `bank.Bank` as
-   every reader reads them; the bank is the ledger, and nothing else is kept;
+   every reader reads them (an entry made on another device counts once a
+   passing equivalence record lets it stand in, ADR 0090's amendment); and
+   every bank request (`requests/`, ADR 0112), first; the bank is the
+   ledger, and nothing else is kept;
 3. run them: many recordings at once, each extractor in copies of one or two
    threads (`layout`), as many as the cores and memory allow; a unit routed
    to Spool (`"route": "spool"`, first `stems`) is put with `remote.py put`
@@ -28,11 +31,22 @@ recorded costs. With `--commit`, in order:
    unchanged);
 5. with `--world-store`, an incremental World refresh and conformance.
 
-Modes (ADR 0112). `eager`: every unit over every recording. `songs` (the
-default): an expensive unit (recorded cost above `expensive_above` seconds
-per audio-second) runs eagerly only on recordings with a song occurrence;
-on the rest it is left for on demand, as is whatever measures its output.
-Until region entries land, a recording with a song is made whole.
+Modes (ADR 0112; `regions.plan` decides). `eager`: every unit over every
+recording, whole. `songs` (the default): a cheap unit runs whole; an
+expensive unit (recorded cost above `expensive_above` seconds per
+audio-second) runs over the recording's song regions (`regions.regions_for`:
+song occurrences, else selections, else the detector's `music` spans, else
+`structure/playing` from the bank; widened, snapped and merged) as region
+entries, and where there are none it is left for on demand; a unit on a
+file feature follows that feature's maker (whole where it is made whole).
+`on-demand`: only the bank requests. Requests are served in every mode.
+A unit routed to Spool runs whole only: a task carries no region yet.
+
+With `remote_parameters` on a routed extractor (`stems` with
+`apply.device` `mps` on the Mac), the worker's entries have another key and
+count here as stand-ins; the backfill refuses to start unless the bank holds
+a passing equivalence record for that pair, and runs here any recording
+whose worker entry does not stand in (other software than the record's).
 
 Resumable: each entry is the runner's own (lock, check, rename), so a
 killed backfill loses at most the runs in flight, and a rerun plans only
@@ -68,21 +82,24 @@ from typing import Any, Callable
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import adapter  # noqa: E402
 import bank  # noqa: E402
 import extract  # noqa: E402
+import regions  # noqa: E402
 import remote  # noqa: E402
+from regions import Region  # noqa: E402
 
 STREAM = "archive.claim/audio_stream"
-OCCURRENCE = "archive.claim/song_occurrence"
-SELECTION = "archive.claim/audio_selection"
-MODES = ("songs", "eager")
+MODES = regions.MODES  # songs, eager, on-demand
 # rehearsal-010b's set; not timed-lyrics, which answers not_yet.
 PROPOSERS = "chords-jiang,chords-chordino,beats,bass,key,tuning,notes,bass-line,sections"
 
 # What the 0.0.10 backfill made of every recording: an extractor on the
 # content, or (a second element) on a file feature of it.
+# f0-pesto's measure of the vocal stem comes before melody, whose probe reads
+# it (ADR 0076's second amendment); `unit_order` keeps that for any configuration.
 UNITS = (("stems",), ("rhythm",), ("tonal",), ("chords-jiang",), ("chords-chordino",), ("structure",),
-         ("melody",), ("tonal", "stems/bass"), ("f0-pesto", "stems/vocals"), ("f0-pesto", "stems/bass"),
+         ("f0-pesto", "stems/vocals"), ("melody",), ("tonal", "stems/bass"), ("f0-pesto", "stems/bass"),
          ("notes-basic-pitch", "stems/bass"))
 
 # Per extractor: threads per copy, memory per copy, and the recorded cost in
@@ -101,9 +118,10 @@ SETTINGS: dict[str, dict[str, Any]] = {
     "tonal": {"cost": 0.022},
     "structure": {"cost": 0.001},
 }
-DEFAULT_SETTING = {"threads": 1, "memory_gb": 1.0, "cost": None, "remote_cost": None, "route": None}
-SCHEDULE = {"expensive_above": 0.04, "parallel_gain": 1.9, "poll_seconds": 30.0, "memory_reserve_gb": 2.0,
-            "local_when_away_seconds": {"songs": None, "eager": 900}}
+DEFAULT_SETTING = {"threads": 1, "memory_gb": 1.0, "cost": None, "remote_cost": None, "route": None,
+                   "remote_parameters": None}
+SCHEDULE = {"expensive_above": regions.EXPENSIVE_THRESHOLD, "parallel_gain": 1.9, "poll_seconds": 30.0,
+            "memory_reserve_gb": 2.0, "local_when_away_seconds": {"songs": None, "eager": 900, "on-demand": None}}
 THREAD_VARIABLES = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS",
                     "VECLIB_MAXIMUM_THREADS", "NUMBA_NUM_THREADS")
 
@@ -141,9 +159,12 @@ class Schedule:
     def setting(self, extractor_id: str) -> dict[str, Any]:
         return {**DEFAULT_SETTING, **self.settings.get(extractor_id, {})}
 
+    def costs(self) -> dict[str, float]:
+        """The recorded cost of each extractor that has one."""
+        return {name: float(value["cost"]) for name, value in self.settings.items() if value.get("cost") is not None}
+
     def expensive(self, extractor_id: str) -> bool:
-        cost = self.setting(extractor_id)["cost"]
-        return cost is not None and cost > self.expensive_above
+        return regions.expensive(extractor_id, self.costs(), self.expensive_above)
 
 
 def schedule_of(config: dict[str, Any], catalog: bank.Catalog) -> Schedule:
@@ -175,6 +196,8 @@ def schedule_of(config: dict[str, Any], catalog: bank.Catalog) -> Schedule:
             raise BackfillError(f"backfill extractor {name}: only {sorted(DEFAULT_SETTING)}")
         if value.get("route") not in (None, "spool"):
             raise BackfillError(f"backfill extractor {name}: route is \"spool\" or null")
+        if value.get("remote_parameters") is not None and not isinstance(value["remote_parameters"], dict):
+            raise BackfillError(f"backfill extractor {name}: remote_parameters is an object of its parameters")
         settings[name] = {**settings.get(name, {}), **value}
     numbers = {**SCHEDULE, **{k: v for k, v in given.items() if k in SCHEDULE}}
     away = numbers["local_when_away_seconds"]
@@ -235,8 +258,10 @@ class Recording:
     digest: str
     path: Path
     seconds: float | None  # from the audio_stream claim; None while unprobed
-    songs: bool
+    songs: bool  # whether it has song regions (`regions.regions_for`)
     media_type: str | None = None
+    regions: list[Region] = field(default_factory=list)
+    span_source: str = "none"  # which source its song spans came from
 
 
 def heads(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -246,20 +271,6 @@ def heads(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
 
 def cites(record: dict[str, Any], contract: str) -> bool:
     return any(c.get("id") == contract for c in record.get("contracts", []))
-
-
-def song_artifacts(current: dict[str, dict[str, Any]]) -> set[str]:
-    """The Artifacts a current song occurrence's selection takes a piece of."""
-    found: set[str] = set()
-    for record in current.values():
-        if record["shape"] != "claim" or not cites(record, OCCURRENCE):
-            continue
-        for ref in record.get("refs", []):
-            selection = current.get(ref["id"]) if ref.get("role") == "selection" else None
-            if selection is None:
-                continue
-            found.update(r["id"] for r in selection.get("refs", []) if r.get("role") == "piece")
-    return found
 
 
 def content_path(archive: Path, digest: str) -> Path:
@@ -280,15 +291,37 @@ def recordings_of(records: list[dict[str, Any]], archive: Path, unprobed: set[st
                     rate, count = payload.get("sample_rate"), payload.get("sample_count")
                     seconds[ref["id"]] = count / rate if isinstance(rate, int) and isinstance(count, int) \
                         and rate > 0 else None
-    songs = song_artifacts(current)
     found = []
     for record in current.values():
         if record["shape"] != "artifact" or not (record["object_id"] in seconds or record["object_id"] in unprobed):
             continue
         digest = record["payload"]["content"]["digest"]
         found.append(Recording(record["object_id"], digest, content_path(archive, digest),
-                               seconds.get(record["object_id"]), record["object_id"] in songs))
+                               seconds.get(record["object_id"]), False))
     return found
+
+
+def find_regions(recordings: list[Recording], export: dict[str, Any], archive: Path, reader: bank.Bank,
+                 note: Callable[..., None]) -> None:
+    """Each recording's song regions by `regions.regions_for`'s precedence,
+    with `structure/playing` from the bank as the last source. A recording
+    the export cannot place (no audio stream claim yet: a dry run before
+    its probe) has none, and says why."""
+    records = adapter.ArchiveReader.from_export(archive, export)
+    for recording in recordings:
+        artifact = records.heads.get(recording.object_id)
+        try:
+            playing = None
+            structure = reader.entry(recording.digest, "structure") if "structure" in reader.catalog.extractors \
+                else None
+            if structure is not None and "playing" in structure.manifest["outputs"]:
+                playing = structure.items("playing")
+            found = regions.regions_for(records, artifact, playing)
+        except (regions.RegionError, bank.BankError, KeyError, TypeError) as exc:
+            note(step="no song regions", recording=recording.object_id, error=str(exc)[-300:])
+            continue
+        recording.regions, recording.span_source = found["regions"], found["source"]
+        recording.songs = bool(found["regions"])
 
 
 # -- what a unit still needs ---------------------------------------------------------
@@ -299,7 +332,9 @@ DONE, TODO, WAITING, FAILED, SKIPPED, UNCONFIGURED, DAMAGED = (
 
 class Planner:
     """Reads the bank as every reader does (`bank.Bank`), so what it counts
-    as made is what a reader would find."""
+    as made is what a reader would find: an entry another device made
+    counts once a passing equivalence record lets it stand in (ADR 0090's
+    amendment), and a region entry counts over its region (ADR 0112)."""
 
     def __init__(self, catalog: bank.Catalog, root: Path, parameters: dict[str, Any], programs: dict[str, str],
                  retry_failed: bool = False):
@@ -307,9 +342,17 @@ class Planner:
         self.reader = bank.Bank(root, catalog, parameters)
         self.retry_failed = retry_failed
 
-    def state(self, recording: Recording, unit: Unit) -> tuple[str, str | None]:
+    def view(self, recording: Recording, region: Region | None) -> bank.Bank:
+        """The reader that keys this recording over the region, or whole."""
+        if region is None:
+            return self.reader
+        return bank.Bank(self.root, self.catalog.within(recording.digest, region.as_json()), self.parameters)
+
+    def state(self, recording: Recording, unit: Unit, region: Region | None = None) -> tuple[str, str | None]:
         """Done, to do, waiting for its input feature, failed before, not
-        applicable, not configured here, or damaged; with a detail."""
+        applicable, not configured here, or damaged; with a detail. Over a
+        region, the whole entry, or a region entry of a wider region,
+        counts as done (`bank.covering`)."""
         extractor = self.catalog[unit.extractor]
         order = self.catalog.order([unit.extractor])
         for extractor_id in order:
@@ -318,21 +361,28 @@ class Planner:
                 return UNCONFIGURED, f"${{{missing}}} is not configured"
         if recording.media_type and unit.source is None and not extractor.accepts(recording.media_type):
             return SKIPPED, f"does not accept {recording.media_type}"
+        reader = self.view(recording, region)
         try:
+            if region is not None and unit.source is None and not extractor.prefers:
+                if bank.covering(self.reader, recording.digest, unit.extractor, region.start, region.end,
+                                 region.rate) is not None:
+                    return DONE, None
+            elif region is not None and self.state(recording, unit)[0] == DONE:
+                return DONE, None
             feature = unit.source
             if feature is None and extractor.prefers:
-                feature = self.reader.default_input(recording.digest, unit.extractor)
+                feature = reader.default_input(recording.digest, unit.extractor)
             if feature is None:
-                if self.reader.entry(recording.digest, unit.extractor) is not None:
+                if reader.entry(recording.digest, unit.extractor) is not None:
                     return DONE, None
-                keys = self.catalog.keys(recording.digest, order, self.parameters)
+                keys = reader.catalog.keys(recording.digest, order, self.parameters)
             else:
-                found = self.reader.input_of(recording.digest, feature)
+                found = reader.input_of(recording.digest, feature)
                 if found is None:
-                    return WAITING, f"{feature} is not in the bank"
-                if self.reader.entry_from(recording.digest, feature, unit.extractor) is not None:
+                    return WAITING, f"{feature} is not in the bank" + (" over this region" if region else "")
+                if reader.entry_from(recording.digest, feature, unit.extractor) is not None:
                     return DONE, None
-                keys = self.catalog.keys(found[1], order, self.catalog.overrides_for(feature, self.parameters))
+                keys = reader.catalog.keys(found[1], order, self.catalog.overrides_for(feature, self.parameters))
         except bank.BankError as exc:
             return DAMAGED, str(exc)
         if not self.retry_failed:
@@ -340,6 +390,27 @@ class Planner:
                 if bank.failure_path(self.root, recording.digest, extractor_id, keys[extractor_id]).exists():
                     return FAILED, f"{extractor_id} failed before (see its failure record; --retry-failed)"
         return TODO, None
+
+
+def probe_units(catalog: bank.Catalog, unit: Unit) -> list[Unit]:
+    """The units whose measures a unit's preferences probe (ADR 0076's
+    second amendment): melody's probe reads f0-pesto's measure of the vocal
+    stem, so that measure is made first, or the probe saves nothing."""
+    if unit.source is not None:
+        return []
+    return [Unit(p["probe"]["series"].split("/", 1)[0], p["input"])
+            for p in catalog[unit.extractor].prefers if p.get("probe")]
+
+
+def unit_order(units: list[Unit], catalog: bank.Catalog) -> list[Unit]:
+    """The units, each probe's unit moved ahead of the first unit that probes with it."""
+    ordered = list(units)
+    for unit in list(ordered):
+        for probe in probe_units(catalog, unit):
+            if probe in ordered and ordered.index(probe) > ordered.index(unit):
+                ordered.remove(probe)
+                ordered.insert(ordered.index(unit), probe)
+    return ordered
 
 
 # -- the plan ------------------------------------------------------------------------
@@ -359,10 +430,19 @@ class Job:
     since: float = 0.0
     cpu_s: float = 0.0
     wall_s: float = 0.0
+    region: Region | None = None  # made over this region of the recording, or whole
+    requested: bool = False  # asked for by a bank request
+
+    @property
+    def seconds(self) -> float | None:
+        """The audio this job measures: its region, or the whole recording."""
+        if self.region is not None:
+            return (self.region.end - self.region.start) / self.region.rate
+        return self.recording.seconds
 
     def describe(self) -> dict[str, Any]:
         return {"recording": self.recording.object_id, "content": self.recording.digest[7:19],
-                "unit": self.unit.name}
+                "unit": self.unit.name, **({"region": self.region.as_json()} if self.region else {})}
 
 
 @dataclass
@@ -371,58 +451,117 @@ class Plan:
     deferred: list[tuple[Recording, Unit, str]]
     settled: dict[str, int]  # done, skipped, failed_before, ... counts
     held: list[tuple[Recording, Unit, str, str | None]]  # failed before, unconfigured, damaged, blocked
+    unplaced: list[tuple[str, str]] = field(default_factory=list)  # a request's key, and why it is not planned
 
 
 def plan(recordings: list[Recording], schedule: Schedule, planner: Planner, mode: str,
-         shape: dict[str, dict[str, Any]], spool: bool) -> Plan:
-    """The jobs the mode asks for that the bank lacks, song recordings first;
-    each waits for the job in this plan that makes the feature it measures
-    (or, for an extractor that prefers one, the feature it would prefer)."""
+         shape: dict[str, dict[str, Any]], spool: bool,
+         asked: list[dict[str, Any]] | None = None) -> Plan:
+    """The jobs the mode asks for that the bank lacks, and the bank requests
+    (`asked`) in every mode, first; then song recordings first in `songs`
+    mode. What each extractor is made over is `regions.plan`'s: whole, a
+    recording's song regions, or nothing until asked for. A unit on a file
+    feature goes where that feature's maker goes (whole where it is already
+    made whole). Each job waits for the job in this plan that makes the
+    feature it measures, the feature it would prefer, or the measure its
+    preference probes, over the same region."""
     if mode not in MODES:
         raise BackfillError(f"mode is one of {', '.join(MODES)}, not {mode!r}")
-    ordered = sorted(recordings, key=lambda r: (not r.songs,)) if mode == "songs" else list(recordings)
+    units = unit_order(schedule.units, planner.catalog)
+    known = {u.extractor for u in units} | {u.producer for u in units if u.producer}
+    costs = schedule.costs()
     jobs: list[Job] = []
     deferred: list[tuple[Recording, Unit, str]] = []
     held: list[tuple[Recording, Unit, str, str | None]] = []
+    unplaced: list[tuple[str, str]] = []
     settled: dict[str, int] = {}
+    planned: dict[tuple[str, Unit, Region | None], Job] = {}
+    seen: set[tuple[str, Unit, Region | None]] = set()
+
+    def want(recording: Recording, unit: Unit, region: Region | None, requested: bool = False,
+             state: tuple[str, str | None] | None = None) -> Job | None:
+        mark = (recording.object_id, unit, region)
+        if mark in planned:
+            return planned[mark]
+        if mark in seen:
+            return None
+        seen.add(mark)
+        status, detail = state or planner.state(recording, unit, region)
+        if status in (DONE, SKIPPED):
+            settled[status] = settled.get(status, 0) + 1
+            return None
+        if status in (FAILED, UNCONFIGURED, DAMAGED):
+            held.append((recording, unit, status, detail))
+            return None
+        catalog = planner.catalog
+        after: list[Job] = []
+        if unit.producer is not None:
+            if status == WAITING and requested:
+                # A request for a measure of a feature asks for the feature too.
+                made = want(recording, Unit(unit.producer), region, True)
+                after += [made] if made is not None else []
+            else:
+                after += [planned[k] for k in [(recording.object_id, Unit(unit.producer), region)] if k in planned]
+        else:
+            producers = [p["input"].split("/", 1)[0] for p in catalog[unit.extractor].prefers] \
+                + catalog.upstream(unit.extractor)
+            after += [planned[k] for k in [(recording.object_id, Unit(p), region) for p in producers]
+                      if k in planned]
+            after += [planned[k] for k in [(recording.object_id, probe, region)
+                                           for probe in probe_units(catalog, unit)] if k in planned]
+        if status == WAITING and not after:
+            held.append((recording, unit, "blocked", detail))
+            return None
+        setting = schedule.setting(unit.extractor)
+        job = Job(recording, unit, len(jobs), threads=shape[unit.extractor]["threads"],
+                  memory_gb=shape[unit.extractor]["memory_gb"], after=after, region=region, requested=requested,
+                  # a Spool task carries no region yet (ADR 0112): a region job runs here
+                  routed=bool(spool and setting["route"] == "spool" and unit.source is None and region is None
+                              and not catalog[unit.extractor].needs))
+        for producer in after:
+            producer.dependents += 1
+        planned[mark] = job
+        jobs.append(job)
+        return job
+
+    by_digest = {r.digest: r for r in recordings}
+    for request in asked or []:
+        recording = by_digest.get(request["content"])
+        installed = planner.catalog.extractors.get(request["extractor"]["id"])
+        if recording is None:
+            unplaced.append((request["key"], "its content is not a recording here"))
+        elif installed is None or installed.version != request["extractor"]["version"]:
+            unplaced.append((request["key"], f"asks for {request['extractor']['id']} "
+                                             f"{request['extractor']['version']}, which is not installed"))
+        else:
+            want(recording, Unit(installed.id, request["feature"]),
+                 None if request["region"] is None else Region(**request["region"]), True)
+
+    ordered = sorted(recordings, key=lambda r: (not r.songs,)) if mode == "songs" else list(recordings)
     for recording in ordered:
-        planned: dict[str, Job] = {}  # extractor -> its job on the content
-        put_off: set[str] = set()
-        for unit in schedule.units:
-            state, detail = planner.state(recording, unit)
-            # What it measures, or would prefer to; and, on the content, what it needs.
-            producers = [unit.producer] if unit.producer else [
-                p["input"].split("/", 1)[0] for p in planner.catalog[unit.extractor].prefers
-            ] + planner.catalog.upstream(unit.extractor)
-            if state in (DONE, SKIPPED):
-                settled[state] = settled.get(state, 0) + 1
+        choice = regions.plan(mode, known, recording.regions, costs, schedule.expensive_above)
+        for unit in units:
+            whole = planner.state(recording, unit)
+            if whole[0] in (DONE, SKIPPED, UNCONFIGURED, DAMAGED):
+                want(recording, unit, None, state=whole)
                 continue
-            if mode == "songs" and schedule.expensive(unit.extractor) and not recording.songs:
-                deferred.append((recording, unit, "expensive, and the recording has no song: on demand"))
-                if unit.source is None:
-                    put_off.add(unit.extractor)
+            over = choice[unit.extractor]
+            if unit.producer is not None and over is not None:
+                # Where its feature is made: whole once made whole, else as its maker is made.
+                over = "whole" if whole[0] != WAITING else choice[unit.producer]
+            if over is None:
+                why = ("on-demand mode: made when asked" if mode == "on-demand"
+                       else "expensive, and the recording has no song regions: on demand"
+                       if choice[unit.extractor] is None
+                       else f"measures {unit.source}, which is left for on demand")
+                deferred.append((recording, unit, why))
                 continue
-            if state == WAITING and any(p in put_off for p in producers):
-                deferred.append((recording, unit, f"measures {unit.source}, which is left for on demand"))
-                continue
-            if state in (FAILED, UNCONFIGURED, DAMAGED):
-                held.append((recording, unit, state, detail))
-                continue
-            after = [planned[p] for p in producers if p in planned]
-            if state == WAITING and not after:
-                held.append((recording, unit, "blocked", detail))
-                continue
-            setting = schedule.setting(unit.extractor)
-            job = Job(recording, unit, len(jobs), threads=shape[unit.extractor]["threads"],
-                      memory_gb=shape[unit.extractor]["memory_gb"], after=after,
-                      routed=bool(spool and setting["route"] == "spool" and unit.source is None
-                                  and not planner.catalog[unit.extractor].needs))
-            for producer in after:
-                producer.dependents += 1
-            if unit.source is None:
-                planned[unit.extractor] = job
-            jobs.append(job)
-    return Plan(jobs, deferred, settled, held)
+            if over == "whole":
+                want(recording, unit, None, state=whole)
+            else:
+                for region in over:
+                    want(recording, unit, region)
+    return Plan(jobs, deferred, settled, held, unplaced)
 
 
 def projection(jobs: list[Job], schedule: Schedule) -> dict[str, Any]:
@@ -433,8 +572,8 @@ def projection(jobs: list[Job], schedule: Schedule) -> dict[str, Any]:
     unknown_length = 0
     recordings: dict[str, float | None] = {}
     for job in jobs:
-        seconds = job.recording.seconds
-        recordings[job.recording.object_id] = seconds
+        seconds = job.seconds
+        recordings[job.recording.object_id] = job.recording.seconds
         setting = schedule.setting(job.unit.extractor)
         if seconds is None:
             continue
@@ -459,11 +598,14 @@ def projection(jobs: list[Job], schedule: Schedule) -> dict[str, Any]:
 
 # -- running the plan ----------------------------------------------------------------
 
-def run_extract(job: Job, root: Path, config: str | None) -> tuple[dict[str, Any], float]:
+def run_extract(job: Job, root: Path, config: str | None, ffmpeg: str | None = None
+                ) -> tuple[dict[str, Any], float]:
     """`extract.py run` of one unit in a process of its own, held to the
     job's threads; its answer and the CPU seconds it and its children took."""
     command = [sys.executable, str(HERE / "extract.py"), "run", job.unit.extractor,
                *(["--from", job.unit.source] if job.unit.source else []),
+               *(["--region", f"{job.region.start}:{job.region.end}:{job.region.rate}"] if job.region else []),
+               *(["--program", f"ffmpeg={ffmpeg}"] if job.region and ffmpeg else []),
                "--content", str(job.recording.path), "--digest", job.recording.digest,
                "--bank", str(root), "--jobs", "1", *(["--config", config] if config else [])]
     environment = {**os.environ, **thread_environment(job.threads)}
@@ -490,6 +632,47 @@ def first_error(answer: dict[str, Any]) -> str | None:
         if outcome.get("status") in ("failed", "blocked"):
             return f"{name}: {outcome.get('error') or outcome.get('reason')}"[-600:]
     return None
+
+
+def remote_parameters(parameters: dict[str, Any], extractor_id: str, schedule: Schedule) -> dict[str, Any]:
+    """The parameters a unit routed to Spool is put with: the configured
+    ones, with its `remote_parameters` (the Mac's `apply` with device mps)."""
+    given = schedule.setting(extractor_id)["remote_parameters"]
+    if not given:
+        return parameters
+    return {**parameters, extractor_id: {**parameters.get(extractor_id, {}), **given}}
+
+
+def check_remote(catalog: bank.Catalog, root: Path, parameters: dict[str, Any], schedule: Schedule) -> None:
+    """A unit put with other parameters than the configured ones makes
+    entries under another key, which count here only as stand-ins (ADR
+    0090's amendment). So the other parameters must differ only in the
+    extractor's interchangeable parameter, and the bank must hold a passing
+    equivalence record for the pair; otherwise every routed recording would
+    be made twice, once on the worker and once here. Refused before anything
+    runs."""
+    for unit in schedule.units:
+        setting = schedule.setting(unit.extractor)
+        if setting["remote_parameters"] is None or unit.source is not None:
+            continue
+        if setting["route"] != "spool":
+            raise BackfillError(f"backfill extractor {unit.extractor}: remote_parameters needs route \"spool\"")
+        extractor = catalog[unit.extractor]
+        configured = catalog.parameters(unit.extractor, parameters)
+        other = catalog.parameters(unit.extractor, remote_parameters(parameters, unit.extractor, schedule))
+        if other == configured:
+            continue
+        if other not in [alternative for _, alternative in catalog.alternatives(unit.extractor, parameters)]:
+            raise BackfillError(f"{unit.extractor}'s remote_parameters differ from its configured parameters in "
+                                f"more than its interchangeable parameter, so what a worker makes could never "
+                                f"stand in here")
+        directory = bank.equivalence_directory(root, extractor.id,
+                                               bank.pair_digest(extractor.id, extractor.version, configured, other))
+        if not any(record["pass"] for record in bank.read_equivalences(directory)):
+            value = bank.parameter_at(other, extractor.interchangeable["parameter"])
+            raise BackfillError(f"{unit.extractor} is routed with {extractor.interchangeable['parameter']} {value}, "
+                                f"but the bank holds no passing equivalence record for that pair; measure one "
+                                f"first (extract.py equivalence {unit.extractor} --against {value} ...)")
 
 
 class Runner:
@@ -519,7 +702,7 @@ class Runner:
                 answer = remote.put(self.planner.catalog, self.planner.root, self.spool, job.unit.extractor,
                                     job.recording.path, job.recording.media_type
                                     or extract.media_type_of(job.recording.path), job.recording.digest,
-                                    self.planner.parameters)
+                                    remote_parameters(self.planner.parameters, job.unit.extractor, self.schedule))
             except (remote.RemoteError, bank.BankError, OSError) as exc:
                 job.routed = False
                 self.note(step="spool put failed; runs here", **job.describe(), error=str(exc)[-600:])
@@ -551,12 +734,25 @@ class Runner:
                 continue
             task = job.detail
             refused = (answer.get("tasks") or {}).get(task, {}).get("status") == "refused"
-            if task in (answer.get("failed") or {}) or refused:
+            if self.made_elsewhere(job):
+                job.status, job.routed = "pending", False
+                self.note(step="made on the worker, but it does not stand in here; runs here", **job.describe(),
+                          task=task, detail="no passing equivalence record names the software it was made with")
+            elif task in (answer.get("failed") or {}) or refused:
                 job.status, job.routed = "pending", False
                 self.note(step="the spool gave the task up; runs here", **job.describe(), task=task)
             elif away is not None and time.monotonic() - job.since > away:
                 job.status, job.routed = "pending", False
                 self.note(step="no worker took the task in time; runs here too", **job.describe(), task=task)
+
+    def made_elsewhere(self, job: Job) -> bool:
+        """Whether the worker's entry, under the parameters it was put with,
+        is in the bank although it does not count here."""
+        parameters = remote_parameters(self.planner.parameters, job.unit.extractor, self.schedule)
+        if parameters is self.planner.parameters:
+            return False
+        exact = bank.Bank(self.planner.root, self.planner.catalog, parameters, exact=True)
+        return exact.entry(job.recording.digest, job.unit.extractor) is not None
 
     # -- the pool --
 
@@ -577,7 +773,7 @@ class Runner:
             answer, cpu = self.run_unit(job)
         except Exception as exc:  # noqa: BLE001  (the job fails; the backfill goes on)
             answer, cpu = {"status": "failed", "detail": f"{type(exc).__name__}: {exc}"}, 0.0
-        state = self.planner.state(job.recording, job.unit)[0] if answer.get("status") == "ok" else None
+        state = self.planner.state(job.recording, job.unit, job.region)[0] if answer.get("status") == "ok" else None
         with self.changed:
             job.wall_s, job.cpu_s = time.monotonic() - job.since, cpu
             if state == DONE:
@@ -655,6 +851,7 @@ def add_arguments(command: argparse.ArgumentParser) -> None:
     modes.add_argument("--mode", choices=MODES, default="songs")
     modes.add_argument("--songs", dest="mode", action="store_const", const="songs")
     modes.add_argument("--eager", dest="mode", action="store_const", const="eager")
+    modes.add_argument("--on-demand", dest="mode", action="store_const", const="on-demand")
     command.add_argument("--cores", type=int, help="cores to use (default: all)")
     command.add_argument("--memory-gb", type=float, help="memory to use (default: the machine's, less a reserve)")
     command.add_argument("--spool", help="the command that reaches a spool, for units routed to it")
@@ -703,7 +900,7 @@ class Steps:
                            *(["--config", a.config] if a.config else []), *extra, ok=(0, 3))
 
 
-def export_records(args: argparse.Namespace, env: dict[str, str] | None) -> list[dict[str, Any]]:
+def export_of(args: argparse.Namespace, env: dict[str, str] | None) -> dict[str, Any]:
     done = subprocess.run([args.archive_command, "export"], cwd=args.archive, capture_output=True, text=True,
                           env=env)
     try:
@@ -712,7 +909,7 @@ def export_records(args: argparse.Namespace, env: dict[str, str] | None) -> list
         answer = None
     if done.returncode != 0 or not isinstance(answer, dict) or answer.get("status") != "ok":
         raise BackfillError(f"archive export failed: {done.stdout[-500:]} {done.stderr[-500:]}")
-    return answer["records"]
+    return answer
 
 
 def main(args: argparse.Namespace, env: dict[str, str] | None = None,
@@ -731,12 +928,14 @@ def main(args: argparse.Namespace, env: dict[str, str] | None = None,
     parameters = config.get("parameters", {})
     catalog.check_overrides(parameters, f"configuration {args.config}")
     schedule = schedule_of(config, catalog)
+    root = Path(args.bank).resolve()
+    if args.spool:
+        check_remote(catalog, root, parameters, schedule)
     programs = {"python": sys.executable, "sh": "/bin/sh", **config.get("programs", {})}
     cores = args.cores or os.cpu_count() or 1
     memory_gb = args.memory_gb or max(1.0, machine_memory_gb() - schedule.memory_reserve_gb)
     if cores < 1 or memory_gb <= 0:
         raise BackfillError("--cores and --memory-gb must be positive")
-    root = Path(args.bank).resolve()
     spool = remote.Spool(args.spool) if args.spool else None
     commit = args.commit
     steps = Steps(args, note)
@@ -756,7 +955,8 @@ def main(args: argparse.Namespace, env: dict[str, str] | None = None,
         steps.enrich(f"probe {artifact}", "probe", "--artifact", artifact, *([] if commit else ["--dry-run"]),
                      ok=(0, 3))
 
-    recordings = recordings_of(export_records(args, env), Path(args.archive), set(unprobed))
+    export = export_of(args, env)
+    recordings = recordings_of(export["records"], Path(args.archive), set(unprobed))
     present = []
     for recording in recordings:
         try:
@@ -765,15 +965,23 @@ def main(args: argparse.Namespace, env: dict[str, str] | None = None,
         except (OSError, extract.RunError) as exc:
             note(step="content not here; left out", recording=recording.object_id, error=str(exc)[-300:])
     planner = Planner(catalog, root, parameters, programs, args.retry_failed)
+    find_regions(present, export, Path(args.archive), planner.reader, note)
     shape = layout(catalog, schedule, parameters, cores, memory_gb)
-    planned = plan(present, schedule, planner, args.mode, shape, spool is not None)
+    # Requests are read in every mode; a damaged one stops the backfill (bank.requests refuses it).
+    asked = bank.requests(root)
+    planned = plan(present, schedule, planner, args.mode, shape, spool is not None, asked)
+    sources: dict[str, int] = {}
+    for recording in present:
+        sources[recording.span_source] = sources.get(recording.span_source, 0) + 1
     note(step="recordings", count=len(recordings), here=len(present),
-         with_songs=sum(1 for r in present if r.songs))
+         with_songs=sum(1 for r in present if r.songs), song_spans_from=sources, requests=len(asked))
     note(step="layout", extractors=shape)
     by_unit: dict[str, int] = {}
     for job in planned.jobs:
         by_unit[job.unit.name] = by_unit.get(job.unit.name, 0) + 1
     note(step="plan", jobs=len(planned.jobs), by_unit=by_unit, routed=sum(1 for j in planned.jobs if j.routed),
+         regions=sum(1 for j in planned.jobs if j.region is not None),
+         requested=sum(1 for j in planned.jobs if j.requested), unplaced=len(planned.unplaced),
          already=planned.settled, deferred=len(planned.deferred), held=len(planned.held),
          projection=projection(planned.jobs, schedule))
     for recording in present:
@@ -782,7 +990,10 @@ def main(args: argparse.Namespace, env: dict[str, str] | None = None,
         if units or later or not commit:
             note(step="recording", recording=recording.object_id, content=recording.digest[7:19],
                  seconds=None if recording.seconds is None else round(recording.seconds),
-                 songs=recording.songs, runs=units, on_demand=later or None)
+                 songs=recording.songs, span_source=recording.span_source,
+                 regions=[r.as_json() for r in recording.regions] or None, runs=units, on_demand=later or None)
+    for key, why in planned.unplaced:
+        note(step="request not planned", key=key, detail=why)
     for recording, unit, state, detail in planned.held:
         note(step="held", recording=recording.object_id, content=recording.digest[7:19], unit=unit.name,
              state=state, detail=detail)
@@ -790,22 +1001,22 @@ def main(args: argparse.Namespace, env: dict[str, str] | None = None,
     failures = sum(1 for _, _, state, _ in planned.held if state in (DAMAGED,))
     if commit and planned.jobs:
         runner = Runner(planned.jobs, planner, schedule, shape, cores, memory_gb, args.mode, note,
-                        run_unit or (lambda job: run_extract(job, root, args.config)), spool, args.config)
+                        run_unit or (lambda job: run_extract(job, root, args.config, args.ffmpeg)), spool, args.config)
         made_from = time.monotonic()
         runner.run()
         wall = time.monotonic() - made_from
         failures += sum(1 for j in planned.jobs if j.status in ("failed", "blocked"))
-        complete = {j.recording.object_id: j.recording.seconds for j in planned.jobs}
+        complete = {j.recording.object_id: j.recording.seconds for j in planned.jobs}  # recordings all of whose jobs ran
         for job in planned.jobs:
             if job.status != "done":
                 complete.pop(job.recording.object_id, None)
         audio = sum(s for s in complete.values() if s)
         cost: dict[str, dict[str, float]] = {}
         for job in planned.jobs:
-            if job.status == "done" and not job.routed and job.recording.seconds:
+            if job.status == "done" and not job.routed and job.seconds:
                 item = cost.setdefault(job.unit.extractor, {"cpu_s": 0.0, "audio_s": 0.0})
                 item["cpu_s"] += job.cpu_s
-                item["audio_s"] += job.recording.seconds
+                item["audio_s"] += job.seconds
         note(step="made", wall_s=round(wall, 1), recordings_complete=len(complete),
              audio_seconds_per_wall_second=round(audio / wall, 3) if wall > 0 else None,
              cpu_seconds_per_audio_second={k: round(v["cpu_s"] / v["audio_s"], 4) for k, v in cost.items()})

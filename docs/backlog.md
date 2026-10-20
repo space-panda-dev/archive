@@ -118,7 +118,8 @@ scratch copy.
 
 Decided 2026-10-19 ([ADR 0112](decisions/0112-bulk-import-at-scale.md) and
 [ADR 0090's amendment](decisions/0090-extractor-runs-travel-through-spool.md#amendment-2026-10-19-a-stem-is-a-stem));
-nothing below is built. Measured: the backfill costs about 0.98 s of laptop
+the four pieces are built and merged together on `bulk/integration`
+(2026-10-19), each item saying what is left. Measured: the backfill costs about 0.98 s of laptop
 compute per audio-second; parallel copies and the Mac's GPU project 7.0x,
 with song regions 12.7x. Each record's "For the operator to confirm" list
 gives the proposed thresholds; build to them, and change them only on the
@@ -132,12 +133,25 @@ leaves `Bank.entry` alone, and **scheduler** consumes both and merges last.
 never the shadow archive or its bank, and passes the cost gate once
 scheduler has added it.
 
-- **scheduler.** Built over whole content (`enrich backfill`, modes
-  `songs` and `eager`, the pool, Spool fan-out, a dry run by default; [the
-  runbook](shadow-runbook.md#filling-the-feature-bank)). Left: region jobs
-  from triage's `regions_for`, `on-demand` and `--follow` over
-  `requests/`, stand-ins once gpu lands (the planner reads through `Bank`,
-  so they count as made with no change here), and the `bench-cost` suite.
+- **scheduler.** Built (`enrich backfill`, the pool, Spool fan-out, a dry
+  run by default; [the runbook](shadow-runbook.md#filling-the-feature-bank)),
+  and joined to the other three on `bulk/integration`: modes `songs`,
+  `eager` and `on-demand` from `regions.plan`, with the expensive units of
+  `songs` run over each recording's `regions_for` song regions as region
+  entries (`structure/playing` from the bank as the last source); bank
+  requests planned first in every mode, a request for a measure of a stem
+  planning the stem over its region too; stand-ins counted as made (the
+  planner reads through `Bank`), and a routed extractor's
+  `remote_parameters` (`stems` on the Mac with `apply.device` `mps`)
+  refused at the start unless a passing equivalence record is in the bank,
+  with a worker entry that does not stand in made here; `f0-pesto --from
+  stems/vocals` ordered before `melody` so its probe is read. Left:
+  `--follow` (serve `requests/` as they arrive) and removing a request once
+  its entry is made; region jobs on Spool (a task carries no region until
+  triage's task `/2`); the `bench-cost` suite, whose baselines replace both
+  the scheduler's `SETTINGS` costs and `regions.PROFILED_COSTS`, which
+  differ today (f0-pesto per unit against per recording); a first dry run
+  on a copy of the shadow.
   As decided: `enrich/backfill.py` and `enrich/enrich.py backfill`
   (ADR 0112's flags). Plan from the archive (the Artifacts `enrich propose
   --all` finds) and the bank: compute the mode's keys, drop those present
@@ -218,9 +232,8 @@ scheduler has added it.
   (preferred inputs).
   Built (branch `bulk/melody`): a preference's `probe` (ADR 0076's second
   amendment), `f0-pesto`'s confidence on the vocal stem; `melody` stays
-  version 3. Left for the scheduler: run `f0-pesto --from stems/vocals`
-  before `melody`, or the probe is not in the bank and the vocal stem is
-  measured as before. Left for the cost gate: the saving, once `bench-cost`
+  version 3. The scheduler runs `f0-pesto --from stems/vocals` before
+  `melody` (`backfill.unit_order`). Left for the cost gate: the saving, once `bench-cost`
   exists.
 
 ## People, samples, and rehearsals (ADRs 0092-0111)

@@ -438,11 +438,25 @@ scratch bank is covered by the standing approval.
    journalctl --user -u archive-backfill -f      # the log's last line is "done"
    ```
 
-   `--songs` (the default) makes the expensive extractors only for
-   recordings with a song; `--eager` makes everything. The configuration's
-   `backfill` object routes `stems` to the spool (`"extractors": {"stems":
-   {"route": "spool"}}`) and sets threads per extractor; the workers
-   leasing from it are started as ADR 0090 describes.
+   `--songs` (the default) makes the expensive extractors over each
+   recording's song regions and leaves them for on demand where it has
+   none; `--eager` makes everything whole; `--on-demand` makes only the bank
+   requests, which every mode serves first. The configuration's `backfill`
+   object routes `stems` to the spool and sets threads per extractor; the
+   workers leasing from it are started as ADR 0090 describes. To separate
+   on the Mac's GPU, route it with the Mac's parameters,
+
+   ```json
+   {"backfill": {"extractors": {"stems": {"route": "spool", "remote_parameters": {"apply": {
+     "shifts": 0, "split": true, "overlap": "0.25", "segment": null, "device": "mps",
+     "normalise": "chunk mean and standard deviation, as demucs.api.Separator.separate_tensor"}}}}}}
+   ```
+
+   and copy the passing equivalence record for `cpu` and `mps` into the
+   bank's `equivalence/` first (or measure it there with `extract.py
+   equivalence stems --against mps`): without it the backfill refuses to
+   start, since every recording would be separated twice. Region jobs run
+   here: a Spool task carries no region yet.
 3. **Stopping is safe.** `systemctl --user stop archive-backfill` stops every
    run in the unit; a rerun plans only what is missing, and tasks left on the
    spool are collected by the rerun. What failed is recorded beside its entry

@@ -660,8 +660,8 @@ them.
 ## `enrich backfill`
 
 ```sh
-enrich/enrich.py backfill --archive <dir> --bank <root> [--config <file>] [--mode songs|eager | --songs | --eager]
-    [--cores <n>] [--memory-gb <n>] [--spool "<spool> --dir <dir>"] [--commit] [--retry-failed]
+enrich/enrich.py backfill --archive <dir> --bank <root> [--config <file>]
+    [--mode songs|eager|on-demand | --songs | --eager | --on-demand] [--cores <n>] [--memory-gb <n>] [--spool "<spool> --dir <dir>"] [--commit] [--retry-failed]
     [--proposers <name,...>] [--world-store <dir> [--world-python <python>] [--conformance-python <python>]]
     [--log <file>] [--staging <annex>] [--door door] [--archive-command archive]
 ```
@@ -679,20 +679,36 @@ runs no extractor.
 is here, each unit of the configuration (an extractor on the content, or
 `--from` a file feature of it; by default the 0.0.10 set: `stems`,
 `rhythm`, `tonal`, `chords-jiang`, `chords-chordino`, `structure`,
-`melody`, then `tonal` on `stems/bass`, `f0-pesto` on both stems and
-`notes-basic-pitch` on `stems/bass`) that the bank lacks, read through
-`bank.Bank` as every reader reads it. The bank is the ledger: a rerun over
-an unchanged archive and bank plans nothing. A unit that failed before (its
+`f0-pesto` on `stems/vocals`, `melody`, then `tonal` on `stems/bass`,
+`f0-pesto` on `stems/bass` and `notes-basic-pitch` on `stems/bass`) that
+the bank lacks, read through `bank.Bank` as every reader reads it, so an
+entry made on another device counts once a passing equivalence record lets
+it stand in ([a stem is a stem](#a-stem-is-a-stem-equivalence-and---exact)).
+The bank is the ledger: a rerun over an unchanged archive and bank plans
+nothing. Bank requests (`requests/`, [regions and requests](../docs/feature-bank.md#regions-and-requests))
+are planned first, in every mode; a request for a measure of a stem plans
+the stem over the same region too, and one for content that is not a
+recording here, or for an extractor version not installed, is reported and
+left. A unit that failed before (its
 failure record is beside the entry) is held until `--retry-failed`; one
 whose program is not configured here is held and said to be. What
 measures a feature, or prefers one (`melody`), waits for the job that makes
-it.
+it over the same region; a unit whose preference has a probe (`melody`)
+also waits for the probe's measure (`f0-pesto` on the vocal stem), which
+`unit_order` places first.
 
-**Modes.** `eager` makes every unit of every recording. `songs` makes an
-expensive unit (recorded cost above `expensive_above`, 0.04 seconds per
-audio-second) only on recordings a song occurrence's selection takes a
-piece of, and leaves it and what measures its output for on demand on the
-rest; until region entries land, a recording with a song is made whole.
+**Modes** (`regions.plan`). `eager` makes every unit of every recording,
+whole. `songs` makes the cheap units whole and an expensive unit (recorded
+cost above `expensive_above`, 0.04 seconds per audio-second) over each of
+the recording's song regions (`regions.regions_for`: song occurrences,
+else selections, else the detector's `music` spans, else `structure/playing`
+read from the bank), one `extract.py run --region` job per region, filing
+region entries; a recording with no song regions leaves it for on demand.
+A unit on a file feature goes where that feature is made: whole once the
+stems are made whole, else over the regions they are made over. A region,
+or any span inside one already made, counts as made (`bank.covering`).
+`on-demand` makes only what is requested. A unit routed to Spool runs here
+when it is over a region: a Spool task carries no region yet.
 
 **The pool.** Each extractor runs in copies of `threads` each (its own
 fixed `threads` parameter where it has one, as `chords-jiang` does), as
@@ -707,19 +723,26 @@ what others wait for (`stems`) go first.
 and collected every `poll_seconds`; its dependents start once it is filed.
 A task the spool fails for good, or that could not be put, runs here; under
 `eager`, so does one no worker has taken within `local_when_away_seconds`
-(900; never under `songs`).
+(900; never under `songs` or `on-demand`). An extractor's
+`remote_parameters` are what it is put with (for `stems` on the Mac, its
+`apply` with `device` `mps`): the worker's entries then have another key
+and count here only as stand-ins, so the backfill refuses to start unless
+they differ only in the interchangeable parameter and the bank holds a
+passing equivalence record for the pair; a worker entry that still does not
+stand in (made with other software than the record names) is made here.
 
 **The configuration** is `extract.py`'s file; its optional `backfill`
 object holds `units` (a list of `[extractor]` or `[extractor, feature]`),
 `extractors` (per extractor `threads`, `memory_gb`, `cost`, `remote_cost`,
-`route`), `expensive_above`, `parallel_gain`, `poll_seconds`,
+`route`, `remote_parameters`), `expensive_above`, `parallel_gain`, `poll_seconds`,
 `memory_reserve_gb`, and `local_when_away_seconds`. The recorded costs
 default to the backfill profile of 2026-10-19 on the x86-64 laptop. The
 runner ignores the object.
 
 **Output.** One JSON line per event on standard output (cut at 400
 characters) and, whole, appended to `--log`: the plan (jobs by unit, what
-is already made, held, and deferred, and the projection: audio hours,
+is already made, held, deferred, over regions and requested, and the
+projection: audio hours,
 compute hours here and on workers, projected wall hours and seconds per
 audio-second), each job as it is `ran` or `failed`, and `made` (audio
 seconds made per wall second, CPU seconds per audio second by extractor).

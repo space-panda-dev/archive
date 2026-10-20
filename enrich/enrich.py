@@ -10,7 +10,7 @@
                  [--staging <annex>] [--dry-run | --regenerate]
     enrich propose --archive <dir> (--artifact <object id> [--stream <claim id>] | --all)
                    [--proposers <name,...>] [--bank <root>] [--config <file>] [--staging <annex>] [--dry-run]
-    enrich backfill --archive <dir> --bank <root> [--config <file>] [--mode songs|eager] [--cores <n>]
+    enrich backfill --archive <dir> --bank <root> [--config <file>] [--mode songs|eager|on-demand] [--cores <n>]
                     [--spool <command>] [--commit] [--retry-failed] [--world-store <dir>] [--log <file>]
 
 `backfill` (backfill.py, ADR 0112) probes, fills the feature bank, and

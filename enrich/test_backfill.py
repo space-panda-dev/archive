@@ -24,6 +24,7 @@ import backfill
 import bank
 import support
 from backfill import DONE, FAILED, TODO, WAITING, Job, Recording, Unit
+from regions import Region
 from support import needs_door
 from test_cover import needs_essentia
 
@@ -31,6 +32,8 @@ HERE = Path(__file__).resolve().parent
 CATALOG = bank.Catalog.load()
 STEMS, MELODY, RHYTHM, STRUCTURE = Unit("stems"), Unit("melody"), Unit("rhythm"), Unit("structure")
 BASS_TONAL, BASS_F0 = Unit("tonal", "stems/bass"), Unit("f0-pesto", "stems/bass")
+VOCAL_F0 = Unit("f0-pesto", "stems/vocals")
+SONG = Region(44100 * 60, 44100 * 240, 44100)
 
 
 def scratch(test: unittest.TestCase) -> Path:
@@ -39,9 +42,12 @@ def scratch(test: unittest.TestCase) -> Path:
     return directory
 
 
-def recording(name: str, songs: bool = False, seconds: float = 600.0) -> Recording:
+def recording(name: str, songs: bool = False, seconds: float = 600.0, regions: list | None = None) -> Recording:
+    """A recording; one with songs has one song region (`SONG`) unless given others."""
     digest = "sha256:" + (name.encode().hex() * 64)[:64]
-    return Recording(f"urn:uuid:{name}", digest, Path("/nonexistent") / name, seconds, songs, "audio/wav")
+    found = list(regions if regions is not None else [SONG] if songs else [])
+    return Recording(f"urn:uuid:{name}", digest, Path("/nonexistent") / name, seconds, bool(found), "audio/wav",
+                     found)
 
 
 def schedule(units: tuple[Unit, ...] = (STEMS, RHYTHM, STRUCTURE, MELODY, BASS_TONAL, BASS_F0),
@@ -60,16 +66,17 @@ class FakePlanner:
         self.default = default
         self.lock = threading.Lock()
 
-    def state(self, rec: Recording, unit: Unit) -> tuple[str, str | None]:
+    def state(self, rec: Recording, unit: Unit, region: Region | None = None) -> tuple[str, str | None]:
         with self.lock:
-            found = self.states.get((rec.object_id, unit))
+            found = self.states.get((rec.object_id, unit) if region is None else (rec.object_id, unit, region))
             if found is None:
-                found = WAITING if unit.source and self.states.get((rec.object_id, STEMS)) != DONE else self.default
+                stems = self.states.get((rec.object_id, STEMS) if region is None else (rec.object_id, STEMS, region))
+                found = WAITING if unit.source and stems != DONE else self.default
             return found, None
 
-    def made(self, rec: Recording, unit: Unit) -> None:
+    def made(self, rec: Recording, unit: Unit, region: Region | None = None) -> None:
         with self.lock:
-            self.states[(rec.object_id, unit)] = DONE
+            self.states[(rec.object_id, unit) if region is None else (rec.object_id, unit, region)] = DONE
 
 
 def shape(sched: backfill.Schedule, cores: int = 8, memory: float = 32.0) -> dict:
@@ -179,6 +186,68 @@ class Plans(unittest.TestCase):
         self.assertAlmostEqual(got["compute_hours_here"], 0.576 + 0.031, places=2)
         self.assertAlmostEqual(got["projected_wall_hours"], (0.576 + 0.031) / 1.9, places=2)
 
+    def test_songs_makes_expensive_units_over_each_song_region_and_cheap_ones_whole(self) -> None:
+        second = Region(44100 * 400, 44100 * 500, 44100)
+        song = recording("a", regions=[SONG, second])
+        self.assertNotEqual(SONG, second)  # anchor: two regions, so two jobs each
+        planned = self.plan([song], "songs")
+        made = {}
+        for job in planned.jobs:
+            made.setdefault(job.unit, []).append(job.region)
+        for unit in (STEMS, MELODY, BASS_TONAL, BASS_F0):  # expensive, or measuring what is made over regions
+            self.assertEqual(made[unit], [SONG, second], unit)
+        self.assertEqual(made[RHYTHM], [None])
+        self.assertEqual(made[STRUCTURE], [None])
+        jobs = {(j.unit, j.region): j for j in planned.jobs}
+        self.assertEqual(jobs[(BASS_F0, second)].after, [jobs[(STEMS, second)]])  # the same region's stems
+        self.assertFalse(any(j.routed for j in planned.jobs if j.region))
+        self.assertEqual(planned.jobs[0].seconds, 180.0)  # a region job measures its region
+
+    def test_eager_makes_everything_whole_even_with_song_regions(self) -> None:
+        planned = self.plan([recording("a", songs=True)], "eager")
+        self.assertEqual({j.region for j in planned.jobs}, {None})
+
+    def test_melody_waits_for_the_measure_its_probe_reads_whatever_the_configured_order(self) -> None:
+        rec = recording("a")
+        sched = schedule((STEMS, MELODY, VOCAL_F0))
+        self.assertEqual(backfill.unit_order(sched.units, CATALOG), [STEMS, VOCAL_F0, MELODY])
+        planned = self.plan([rec], "eager", sched=sched)
+        jobs = {j.unit: j for j in planned.jobs}
+        self.assertEqual(set(jobs[MELODY].after), {jobs[STEMS], jobs[VOCAL_F0]})
+        self.assertEqual(backfill.UNITS.index(("f0-pesto", "stems/vocals")) < backfill.UNITS.index(("melody",)),
+                         True)
+
+    def test_a_cheap_unit_on_stems_made_whole_runs_whole_and_an_expensive_one_waits_for_a_song(self) -> None:
+        song = recording("a", songs=True)
+        planner = FakePlanner({(song.object_id, STEMS): DONE})
+        planned = self.plan([song], "songs", planner)
+        made = {(j.unit, j.region) for j in planned.jobs}
+        self.assertIn((BASS_TONAL, None), made)
+        self.assertIn((BASS_F0, None), made)  # a song recording: its stems are whole, so measured whole
+
+    def test_on_demand_plans_only_requests_and_a_request_asks_for_the_feature_it_measures(self) -> None:
+        rec, other = recording("a"), recording("b")
+        f0 = CATALOG["f0-pesto"]
+        asked = [{"key": "sha256:" + "1" * 64, "content": rec.digest, "region": SONG.as_json(),
+                  "feature": "stems/vocals", "extractor": {"id": "f0-pesto", "version": f0.version}},
+                 {"key": "sha256:" + "2" * 64, "content": other.digest, "region": None, "feature": None,
+                  "extractor": {"id": "rhythm", "version": "0"}},
+                 {"key": "sha256:" + "3" * 64, "content": "sha256:" + "f" * 64, "region": None, "feature": None,
+                  "extractor": {"id": "rhythm", "version": CATALOG["rhythm"].version}}]
+        sched = schedule()
+        planned = backfill.plan([rec, other], sched, FakePlanner(), "on-demand", shape(sched), False, asked)
+        self.assertEqual([(j.unit, j.region, j.requested) for j in planned.jobs],
+                         [(STEMS, SONG, True), (VOCAL_F0, SONG, True)])
+        self.assertEqual(planned.jobs[1].after, [planned.jobs[0]])
+        self.assertEqual([k[-1] for k, _ in planned.unplaced], ["2", "3"])
+        self.assertTrue(all("on-demand" in why for _, _, why in planned.deferred))
+        # In songs mode the request is served first, and not planned twice.
+        song = recording("a", songs=True)
+        planned = backfill.plan([song], sched, FakePlanner(), "songs", shape(sched), False, asked[:1])
+        self.assertEqual(planned.jobs[0].unit, STEMS)
+        self.assertTrue(planned.jobs[0].requested)
+        self.assertEqual(sum(1 for j in planned.jobs if (j.unit, j.region) == (STEMS, SONG)), 1)
+
 
 class Real(unittest.TestCase):
     """The planner over a real bank directory: what failed is not retried."""
@@ -230,7 +299,7 @@ class Pool(unittest.TestCase):
             time.sleep(0.02)
             with lock:
                 busy[0] -= job.threads
-            planner.made(job.recording, job.unit)
+            planner.made(job.recording, job.unit, job.region)
             return {"status": "ok"}, 0.0
 
         recs = [recording(n) for n in "abcd"]
@@ -249,7 +318,7 @@ class Pool(unittest.TestCase):
         def run_unit(job: Job):
             if job.unit == STEMS:
                 return {"status": "failed", "detail": "no stems today"}, 0.0
-            planner.made(job.recording, job.unit)
+            planner.made(job.recording, job.unit, job.region)
             return {"status": "ok"}, 0.0
 
         planned, notes = self.run_plan([recording("a")], run_unit, planner)
@@ -271,7 +340,7 @@ class Pool(unittest.TestCase):
         def run_unit(job: Job):
             if job.recording.object_id.endswith("a"):
                 raise OSError("disk")
-            planner.made(job.recording, job.unit)
+            planner.made(job.recording, job.unit, job.region)
             return {"status": "ok"}, 0.0
 
         planned, _ = self.run_plan([recording("a"), recording("b")], run_unit, planner,
@@ -293,7 +362,7 @@ class Spool(unittest.TestCase):
 
     def run_unit(self, job: Job):
         self.ran.append((job.recording.object_id, job.unit))
-        self.planner.made(job.recording, job.unit)
+        self.planner.made(job.recording, job.unit, job.region)
         return {"status": "ok"}, 0.0
 
     def go(self, collect, mode="eager"):
@@ -345,6 +414,80 @@ class Spool(unittest.TestCase):
         self.assertEqual(sum(1 for _, u in self.ran if u == STEMS), 2)
 
 
+class StandIns(unittest.TestCase):
+    """ADR 0090's amendment through the scheduler: an entry made on another
+    device counts as made once a passing record lets it stand in, a routed
+    extractor put with the other device needs that record before anything
+    runs, and a worker's entry that does not stand in is made here."""
+
+    def setUp(self) -> None:
+        from test_equivalence import Fixture
+        self.f = Fixture(self)
+        self.catalog = self.f.catalog()
+        self.rec = Recording("urn:uuid:take", self.f.digest, self.f.content, 10.0, False, "audio/wav")
+        self.cpu = {"sep": {"apply": {"device": "cpu", "shifts": 0}}}
+        self.planner = backfill.Planner(self.catalog, self.f.bank, self.cpu, {"python": sys.executable})
+
+    def sched(self, remote: dict | None = None) -> backfill.Schedule:
+        setting = {"route": "spool", **({"remote_parameters": remote} if remote is not None else {})}
+        return backfill.schedule_of({"backfill": {"units": [["sep"]], "extractors": {"sep": setting},
+                                                  "poll_seconds": 0.01}}, self.catalog)
+
+    def test_the_other_devices_entry_counts_as_made_only_with_a_passing_record(self) -> None:
+        self.assertEqual(self.f.run("sep", "--config", str(self.f.config("gpu")))[0], 0)
+        self.assertIsNotNone(self.f.entry_of("gpu"))  # anchor: the gpu entry is there, the cpu one is not
+        self.assertIsNone(self.f.entry_of("cpu"))
+        self.assertEqual(self.planner.state(self.rec, Unit("sep"))[0], TODO)
+        self.assertEqual(self.f.measure()[0], 0)
+        self.f.drop("cpu")
+        self.assertEqual(self.planner.state(self.rec, Unit("sep"))[0], DONE)
+
+    def test_routing_with_the_other_device_needs_a_passing_record_first(self) -> None:
+        gpu = {"apply": {"device": "gpu", "shifts": 0}}
+        with self.assertRaisesRegex(backfill.BackfillError, "no passing equivalence record"):
+            backfill.check_remote(self.catalog, self.f.bank, self.cpu, self.sched(gpu))
+        with self.assertRaisesRegex(backfill.BackfillError, "more than its interchangeable parameter"):
+            backfill.check_remote(self.catalog, self.f.bank, self.cpu,
+                                  self.sched({"apply": {"device": "gpu", "shifts": 1}}))
+        backfill.check_remote(self.catalog, self.f.bank, self.cpu, self.sched())  # the same device needs nothing
+        self.assertEqual(self.f.measure()[0], 0)
+        backfill.check_remote(self.catalog, self.f.bank, self.cpu, self.sched(gpu))
+        self.assertEqual(backfill.remote_parameters(self.cpu, "sep", self.sched(gpu)), {"sep": gpu})
+
+    def test_a_worker_entry_that_does_not_stand_in_is_made_here(self) -> None:
+        gpu = {"apply": {"device": "gpu", "shifts": 0}}
+        sched = self.sched(gpu)
+        shape = backfill.layout(self.catalog, sched, self.cpu, 4, 8.0)
+        planned = backfill.plan([self.rec], sched, self.planner, "eager", shape, True)
+        self.assertTrue(planned.jobs[0].routed)
+        given = []
+
+        def put(catalog, root, spool, extractor, content, media_type, digest, parameters):
+            given.append(parameters)
+            return {"status": "put", "task_id": "task-1", "key": "k"}
+
+        def collect(catalog, root, spool):
+            # The worker's gpu entry arrives; no record names its software.
+            self.assertEqual(self.f.run("sep", "--config", str(self.f.config("gpu")))[0], 0)
+            return {"status": "ok", "tasks": {}, "failed": {}}
+
+        ran = []
+
+        def run_unit(job):
+            ran.append(job.unit)
+            return {"status": "ok"}, 0.0 if self.f.run("sep", "--exact")[0] == 0 else 1.0
+
+        notes = []
+        with patch.object(backfill.remote, "put", put), patch.object(backfill.remote, "collect", collect):
+            runner = backfill.Runner(planned.jobs, self.planner, sched, shape, 4, 8.0, "songs",
+                                     lambda **e: notes.append(e), run_unit, spool=object())
+            runner.run()
+        self.assertEqual(given, [{"sep": gpu}])
+        self.assertEqual(ran, [Unit("sep")])
+        self.assertEqual(planned.jobs[0].status, "done")
+        self.assertIn("made on the worker, but it does not stand in here; runs here", [e["step"] for e in notes])
+
+
 # -- end to end --------------------------------------------------------------------
 
 def stand_in_config(directory: Path, units: list[list[str]] | None = None) -> Path:
@@ -384,12 +527,13 @@ class EndToEnd(unittest.TestCase):
         self.bank = self.tmp / "bank"
         self.config = stand_in_config(self.tmp)
         self.env = {k: v for k, v in support.environment().items() if k != "ARCHIVE_FEATURE_BANK"}
+        self.mode = "--eager"
 
     def arguments(self, *extra: str) -> list[str]:
         return ["backfill", "--archive", str(self.root), "--bank", str(self.bank), "--config", str(self.config),
                 "--door", support.DOOR, "--archive-command", support.ARCHIVE, "--ffmpeg", support.FFMPEG,
                 "--ffprobe", support.FFPROBE, "--staging", str(self.tmp / "staging"), "--cores", "4",
-                "--memory-gb", "8", "--eager", *extra]
+                "--memory-gb", "8", self.mode, *extra]
 
     def backfill(self, *extra: str, run_unit=None) -> tuple[int, list[dict]]:
         import enrich
@@ -435,6 +579,9 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(self.step(events, "unprobed audio or video Artifacts")["count"], 2)
         plan = self.step(events, "plan")
         self.assertEqual(plan["jobs"], 22)
+        # Unprobed in a dry run: no stream claim yet, so no song regions, said rather than guessed.
+        self.assertEqual(self.step(events, "recordings")["song_spans_from"], {"none": 2})
+        self.assertEqual(sum(1 for e in events if e["step"] == "no song regions"), 2)
         self.assertEqual(plan["projection"]["recordings_of_unknown_length"], 2)
         self.assertNotIn("propose --all (commit)", [e["step"] for e in events])
 
@@ -458,6 +605,55 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(self.step(again, "plan")["jobs"], 0)
         self.assertEqual(self.step(again, "unprobed audio or video Artifacts")["count"], 0)
         self.assertEqual(entries(self.bank), made)
+
+        # Songs mode over the filled bank: every recording is probed, so each has its song
+        # regions read (structure/playing from the bank is the only source here), and what
+        # was made whole stands for every region, so nothing is planned.
+        self.mode = "--songs"
+        code, songs = self.backfill(run_unit=bomb)
+        self.assertEqual(code, 0, songs)
+        recordings = self.step(songs, "recordings")
+        self.assertEqual(sum(recordings["song_spans_from"].values()), 2)
+        self.assertLessEqual(set(recordings["song_spans_from"]), {"playing", "none"})
+        self.assertNotIn("no song regions", [e["step"] for e in songs])
+        self.assertEqual(self.step(songs, "plan")["jobs"], 0)
+
+    def test_songs_mode_makes_region_entries_through_the_real_runner_and_a_rerun_makes_nothing(self) -> None:
+        # The chain the backfill drives: plan -> `extract.py run --region` -> region entries -> the
+        # planner reading them as made. Stems, f0 on its vocals (the probe), melody over one region.
+        units = [["stems"], ["f0-pesto", "stems/vocals"], ["melody"], ["rhythm"]]
+        config = stand_in_config(self.tmp, units)
+        catalog = bank.Catalog.load()
+        loaded = json.loads(config.read_text())
+        sched = backfill.schedule_of(loaded, catalog)
+        programs = {"python": sys.executable, "sh": "/bin/sh", "ffmpeg": support.FFMPEG, **loaded["programs"]}
+        region = Region(44100 * 4, 44100 * 12, 44100)
+        rec = Recording("urn:uuid:mix", bank.file_digest(self.wav), self.wav, 32.0, True, "audio/wav", [region])
+        planner = backfill.Planner(catalog, self.bank, {}, programs)
+        shaped = backfill.layout(catalog, sched, {}, 4, 8.0)
+        planned = backfill.plan([rec], sched, planner, "songs", shaped, False)
+        self.assertEqual(sorted((j.unit.name, j.region) for j in planned.jobs),
+                         [("f0-pesto --from stems/vocals", region), ("melody", region), ("rhythm", None),
+                          ("stems", region)])
+        notes = []
+        with patch.dict(os.environ, self.env, clear=True):
+            runner = backfill.Runner(planned.jobs, planner, sched, shaped, 4, 8.0, "songs",
+                                     lambda **e: notes.append(e),
+                                     lambda job: backfill.run_extract(job, self.bank, str(config), support.FFMPEG))
+            runner.run()
+        self.assertEqual([j.status for j in planned.jobs], ["done"] * 4, [e for e in notes if e.get("error")])
+        made = [json.loads((p / "entry.json").read_text()) for p in entries(self.bank)]
+        regional = {m["extractor"]["id"] for m in made if m.get("region") == region.as_json()}
+        self.assertIn("stems", regional)  # f0, and melody on the vocal stem, measure a stem: content of its own
+        self.assertNotIn("stems", {m["extractor"]["id"] for m in made if "region" not in m})  # never made whole
+        for unit in (Unit("stems"), Unit("f0-pesto", "stems/vocals"), MELODY):
+            self.assertEqual(planner.state(rec, unit, region)[0], DONE, unit)
+            self.assertEqual(planner.state(rec, unit)[0] == DONE, False, unit)  # anchor: not done whole
+        again = backfill.plan([rec], sched, planner, "songs", shaped, False)
+        self.assertEqual(again.jobs, [])
+        # A narrower span inside the region is covered by it: `bank.covering`.
+        inner = Region(44100 * 5, 44100 * 6, 44100)
+        self.assertEqual(planner.state(rec, Unit("stems"), inner)[0], DONE)
 
     def test_a_killed_backfill_resumes_and_files_each_entry_once(self) -> None:
         log = self.tmp / "first.jsonl"
