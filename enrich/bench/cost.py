@@ -23,7 +23,18 @@ baseline is `baselines/cost/backfill.json`, and the gate fails when
   plus `UNIT_SLACK` (0.02 s per audio-second). Two runs on the same
   machine moved one cheap unit (rhythm, 0.032) by 2.2x and the sum by 10%,
   so the per-unit bound only catches what the sum would hide: a cheap unit
-  that grows several times over.
+  that grows several times over; or
+- time-to-usable regresses by more than `TOTAL_BOUND`: the fast tier's sum
+  (ADR 0112, "usable": the units every recording waits for before it is
+  usable), gated on its own so a fast unit that grows cannot hide behind
+  a cheaper `stems`.
+
+Each unit carries its backfill tier, and the result carries the two
+headline numbers per audio-second as the backfill projects them on this
+machine alone: `time_to_usable_per_audio_s` (the fast tier's CPU seconds
+times the load factor, over the cores) and `time_to_done_per_audio_s` (every
+unit's, likewise). A baseline recorded before tiers is compared by the
+result's tiers.
 
 CPU seconds, not wall seconds, are gated: the machine's other load moves the
 wall far more than the CPU time. A result is compared only with a baseline
@@ -113,7 +124,13 @@ def plan(config_path: Path, cores: int) -> list[dict[str, Any]]:
         raise BenchError(f"cost: {exc}") from exc
     order = backfill.unit_order(list(schedule.units), catalog)
     return [{"unit": u.name, "extractor": u.extractor, "source": u.source,
-             "threads": shape[u.extractor]["threads"]} for u in order]
+             "threads": shape[u.extractor]["threads"], "tier": schedule.tier(u, catalog),
+             "load_factor": schedule.load_factor} for u in order]
+
+
+def fast_sum(rows: list[dict[str, Any]], tiers: dict[str, str]) -> float:
+    """The fast tier's CPU seconds per audio-second, by `tiers` (unit to tier)."""
+    return sum(r["cpu_per_audio_s"] for r in rows if tiers.get(r["unit"]) == "fast")
 
 
 def run_unit(python: Path, config: Path, clip: Path, digest: str, bank: Path, unit: dict[str, Any]
@@ -161,16 +178,21 @@ def measure(root: Path, cores: int | None = None, runner: Runner = run_unit, log
             if not isinstance(answer, dict) or answer.get("status") != "ok":
                 detail = answer.get("detail") if isinstance(answer, dict) else answer
                 raise BenchError(f"cost: {unit['unit']} failed: {str(detail)[-600:]}")
-            row = {**unit, "cpu_s": round(cpu, 2), "wall_s": round(wall, 2),
+            row = {**{k: v for k, v in unit.items() if k != "load_factor"}, "cpu_s": round(cpu, 2), "wall_s": round(wall, 2),
                    "cpu_per_audio_s": round(cpu / seconds, 4), "status": answer.get("status")}
             rows.append(row)
             log(f"  {unit['unit']:<38} {unit['threads']} thr  {cpu:7.1f} cpu s  {wall:7.1f} s  "
                 f"{row['cpu_per_audio_s']:.4f} per audio s")
     total = sum(r["cpu_per_audio_s"] for r in rows)
+    fast = fast_sum(rows, {r["unit"]: r["tier"] for r in rows})
+    load = units[0]["load_factor"] if units else 1.0
     return {"contract": CONTRACT, "clip_sha256": digest[7:], "audio_seconds": round(seconds, 3),
             "machine": platform.machine(), "cores": cores,
             "finished": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "units": rows, "total_cpu_per_audio_s": round(total, 4),
+            "fast_cpu_per_audio_s": round(fast, 4), "load_factor": load,
+            "time_to_usable_per_audio_s": round(fast * load / cores, 4),
+            "time_to_done_per_audio_s": round(total * load / cores, 4),
             "bounds": {"total": TOTAL_BOUND, "unit": UNIT_BOUND, "unit_slack": UNIT_SLACK}}
 
 
@@ -188,6 +210,11 @@ def compare(result: dict[str, Any], baseline: dict[str, Any]) -> list[str]:
     total, base_total = result["total_cpu_per_audio_s"], baseline["total_cpu_per_audio_s"]
     if total > base_total * (1 + TOTAL_BOUND):
         failures.append(f"total {total:.4f} s per audio-second, up from {base_total:.4f} "
+                        f"(bound +{TOTAL_BOUND:.0%})")
+    tiers = {r["unit"]: r.get("tier") for r in result["units"]}
+    fast, base_fast = fast_sum(result["units"], tiers), fast_sum(baseline["units"], tiers)
+    if base_fast and fast > base_fast * (1 + TOTAL_BOUND):
+        failures.append(f"time-to-usable: the fast tier {fast:.4f} s per audio-second, up from {base_fast:.4f} "
                         f"(bound +{TOTAL_BOUND:.0%})")
     for name, base in then.items():
         value, limit = now[name]["cpu_per_audio_s"], base["cpu_per_audio_s"] * (1 + UNIT_BOUND) + UNIT_SLACK
@@ -214,6 +241,9 @@ def check(root: Path, record_baseline: bool = False, runner: Runner = run_unit, 
     result = measure(root, runner=runner, log=log)
     log(f"  total {result['total_cpu_per_audio_s']:.4f} CPU s per audio-second "
         f"({result['audio_seconds']:.0f} s clip, {result['cores']} cores)")
+    log(f"  fast tier {result['fast_cpu_per_audio_s']:.4f} CPU s per audio-second: time-to-usable "
+        f"{result['time_to_usable_per_audio_s']:.4f} s, time-to-done {result['time_to_done_per_audio_s']:.4f} s "
+        f"per audio-second on this machine alone")
     log(f"  result {write(root, result)}")
     if record_baseline:
         log(f"  baseline {write(root, result, baseline=True)}")

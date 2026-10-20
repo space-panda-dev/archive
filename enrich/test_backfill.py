@@ -183,6 +183,19 @@ class Plans(unittest.TestCase):
         self.assertEqual(jobs[(other.object_id, STRUCTURE)].after, [jobs[(other.object_id, RHYTHM)]])
         self.assertEqual(stems.dependents, 3)
 
+    def test_a_copy_that_grows_with_its_audio_reserves_memory_by_the_hour(self) -> None:
+        jiang = Unit("chords-jiang")
+        self.assertEqual(backfill.SETTINGS["chords-jiang"]["memory_gb_per_hour"], 6.0)
+        long_, short = recording("long", seconds=5400.0), recording("short", seconds=600.0, songs=True)
+        sched = schedule((jiang, RHYTHM))
+        jobs = {(j.recording.object_id, j.unit): j for j in self.plan([long_, short], "eager", sched=sched).jobs}
+        self.assertEqual(jobs[(long_.object_id, jiang)].memory_gb, 2.0 + 6.0 * 1.5)
+        self.assertEqual(jobs[(short.object_id, jiang)].memory_gb, 3.0)
+        self.assertEqual(jobs[(long_.object_id, RHYTHM)].memory_gb, 1.0)  # no hourly term
+        given = schedule((jiang, RHYTHM), extractors={"rhythm": {"memory_gb_per_hour": 2.0}})
+        jobs = {(j.recording.object_id, j.unit): j for j in self.plan([long_], "eager", sched=given).jobs}
+        self.assertEqual(jobs[(long_.object_id, RHYTHM)].memory_gb, 1.0 + 2.0 * 1.5)
+
     def test_songs_defers_expensive_units_and_what_measures_them_where_there_is_no_song(self) -> None:
         song, other = recording("a", songs=True), recording("b")
         planned = self.plan([other, song], "songs")

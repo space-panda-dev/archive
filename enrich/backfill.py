@@ -144,7 +144,10 @@ SETTINGS: dict[str, dict[str, Any]] = {
     "stems": {"threads": 2, "cores": 2, "memory_gb": 3.0, "cost": 1.445, "remote_cost": 0.223,
               "transport": "wavpack"},
     "f0-pesto": {"cost": 0.186, "memory_gb": 1.5},
-    "chords-jiang": {"cores": 2, "cost": 0.151, "memory_gb": 2.0},
+    # Jiang holds the whole recording's features: on the whole shadow its
+    # copies peaked at 11.4 GB resident on a 93-minute recording (round 2,
+    # 2026-10-20), and four 2 GB reservations sent the laptop into swap.
+    "chords-jiang": {"cores": 2, "cost": 0.151, "memory_gb": 2.0, "memory_gb_per_hour": 6.0},
     "notes-basic-pitch": {"cores": 3, "cost": 0.107, "memory_gb": 1.5},
     "melody": {"cost": 0.076},
     "chords-chordino": {"cores": 1, "cost": 0.042},
@@ -152,7 +155,10 @@ SETTINGS: dict[str, dict[str, Any]] = {
     "tonal": {"cost": 0.028},
     "structure": {"cost": 0.003},
 }
-DEFAULT_SETTING = {"threads": 1, "cores": None, "memory_gb": 1.0, "cost": None, "remote_cost": None,
+# `memory_gb_per_hour`: what a copy holds beyond `memory_gb` per hour of the
+# audio it measures (the recording, or its region), reserved per job.
+DEFAULT_SETTING = {"threads": 1, "cores": None, "memory_gb": 1.0, "memory_gb_per_hour": 0.0,
+                   "cost": None, "remote_cost": None,
                    "route": None, "remote_parameters": None, "tier": None, "transport": None}
 # `transport`: the lossless encoding a routed extractor's content travels in
 # (`remote.TRANSPORTS`), for an extractor that reads only its first audio
@@ -677,6 +683,8 @@ class Planning:
                   # a Spool task carries no region yet (ADR 0112): a region job runs here
                   routed=bool(self.spool and setting["route"] == "spool" and unit.source is None
                               and region is None and not catalog[unit.extractor].needs))
+        if setting["memory_gb_per_hour"] and job.seconds:
+            job.memory_gb = round(job.memory_gb + float(setting["memory_gb_per_hour"]) * job.seconds / 3600, 2)
         if job.tier == "fast" and any(a.tier == "background" for a in after):
             job.tier = "background"  # it waits for background work, so it cannot be part of the fast pass
         for producer in after:

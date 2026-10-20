@@ -498,6 +498,37 @@ class CostGate(unittest.TestCase):
         self.assertEqual(self.check(runner=self.runner({**base, "structure": 0.02})), 0)     # within the slack
         self.assertEqual(self.check(runner=self.runner({**base, "stems": 0.3})), 0)          # faster passes
 
+    def test_time_to_usable_is_the_fast_tiers_sum_gated_on_its_own(self) -> None:
+        sys.path.insert(0, str(self.gate.ENRICH))
+        import backfill
+        base = {"stems": 1.5, "rhythm": 0.03, "tonal": 0.03, "chords-jiang": 0.15, "structure": 0.003}
+        self.assertEqual(self.check("--record-baseline", runner=self.runner(base)), 0)
+        baseline = json.loads(self.gate.baseline_path(self.root).read_text())
+        tiers = {r["unit"]: r["tier"] for r in baseline["units"]}
+        self.assertEqual(tiers["stems"], "background")
+        self.assertEqual(tiers["chords-jiang"], "fast")
+        fast = sum(r["cpu_per_audio_s"] for r in baseline["units"] if r["tier"] == "fast")
+        self.assertAlmostEqual(baseline["fast_cpu_per_audio_s"], fast, places=3)
+        load = backfill.SCHEDULE["load_factor"]
+        self.assertAlmostEqual(baseline["time_to_usable_per_audio_s"], fast * load / baseline["cores"], places=3)
+        self.assertAlmostEqual(baseline["time_to_done_per_audio_s"],
+                               baseline["total_cpu_per_audio_s"] * load / baseline["cores"], places=3)
+        # Jiang's chords up 50%: within its unit bound and the total's (stems dominate), not time-to-usable's.
+        self.assertEqual(self.check(runner=self.runner({**base, "chords-jiang": 0.225})), 1)
+        self.assertEqual(self.check(runner=self.runner({**base, "chords-jiang": 0.17})), 0)
+
+    def test_a_baseline_recorded_before_tiers_is_compared_by_the_results_tiers(self) -> None:
+        base = {"stems": 1.5, "chords-jiang": 0.15, "rhythm": 0.01, "tonal": 0.01, "chords-chordino": 0.01,
+                "structure": 0.001}
+        self.assertEqual(self.check("--record-baseline", runner=self.runner(base)), 0)
+        path = self.gate.baseline_path(self.root)
+        old = json.loads(path.read_text())
+        for row in old["units"]:
+            del row["tier"]
+        path.write_text(json.dumps(old))
+        self.assertEqual(self.check(runner=self.runner({**base, "chords-jiang": 0.225})), 1)
+        self.assertEqual(self.check(runner=self.runner(base)), 0)
+
     def test_what_cannot_be_compared_or_run_cannot_happen(self) -> None:
         self.assertEqual(self.check(runner=self.runner({})), 2)                              # no baseline
         self.assertEqual(self.check("--record-baseline", runner=self.runner({})), 0)

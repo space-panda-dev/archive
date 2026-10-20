@@ -68,6 +68,14 @@ by 2x between runs on the same machine, so only the sum is gated finely); `--rec
 as the baseline. CPU time is gated, not wall time, because other load on
 the machine moves the wall far more. A baseline of another clip, machine
 architecture or core count, or other units, cannot be compared (exit 2).
+Each unit carries its backfill tier, and the result carries the two
+headline numbers of ADR 0112 per audio-second on this machine alone:
+`time_to_usable_per_audio_s` (the fast tier's CPU seconds times the
+backfill's load factor, over the cores) and `time_to_done_per_audio_s`
+(every unit's). Time-to-usable is gated on its own: the run fails when the
+fast tier's sum rises by more than 20%, so a fast unit that grows cannot
+hide behind `stems`. A baseline recorded before tiers is compared by the
+result's tiers.
 The root's `config.json` names it:
 
 ```json
