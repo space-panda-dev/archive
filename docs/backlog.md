@@ -285,6 +285,24 @@ scheduler has added it.
   `melody` (`backfill.unit_order`). Left for the cost gate: the saving, once `bench-cost`
   exists.
 
+- **Open: one backbone pass, many heads.** The goal behind step 0 is that
+  backfilling 10,000 hours eagerly is achievable on hardware the archive's
+  owner holds, with rented GPUs or a custodian's service only as an opt-in.
+  The fast tier and on-demand filling bring "usable" forward but leave
+  "done" at months (2026-10-20: about 66 to 89 days at 10,000 h). One
+  candidate for an order-of-magnitude gain: a pretrained audio foundation
+  model makes one pass per recording, and small heads trained on its
+  embeddings do chords, key, beats and sections, replacing several
+  extractors' passes; the same embeddings could serve the retrieval index
+  ([ADR 0102](decisions/0102-retrieval-index.md)), so search and analysis
+  share the pass. Separation cannot be a head (it outputs audio), so stems
+  stay their own cost. Spike on the experiment floor before any decision:
+  check each candidate backbone's licence (non-commercial weights run
+  operator-local only and never ship), compute embeddings on the bench
+  clips, train linear heads, and score them with the bench against today's
+  extractors on accuracy and core-seconds per audio-second, including the
+  backbone pass itself.
+
 ## People, samples, and rehearsals (ADRs 0092-0111)
 
 The operator accepted ADRs 0092 to 0111 on 2026-10-19 as decisions only:
