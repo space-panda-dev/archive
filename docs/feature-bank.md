@@ -62,6 +62,47 @@ every feature the extractor's manifest needs, so the keys are computed
 upstream first. The test `test_a_key_is_the_digest_of_its_canonical_description`
 in [`enrich/test_bank.py`](../enrich/test_bank.py) writes one key out in full.
 
+**A region entry's key** ([ADR 0112](decisions/0112-bulk-import-at-scale.md))
+is the same description under `"contract": "archive-feature-bank-key/2"`
+with one more member, `"region": {"start", "end", "rate"}`: `[start, end)`
+in samples at the content's stream rate, integers with `0 <= start < end`.
+Its `needs` are the keys of the same region's entries. A whole-content key is
+always `/1`, so no key made before regions existed changes. The test
+`test_a_region_key_is_the_digest_of_its_canonical_description` in
+[`enrich/test_regions.py`](../enrich/test_regions.py) writes one out.
+
+## Regions and requests
+
+**A region entry** is made by `extract.py run --region <start>:<end>:<rate>`:
+the runner cuts the region from the content's first audio stream to FLAC
+with pinned ffmpeg arguments (`extract.cut_arguments`: trimmed by sample,
+bit-exact, no metadata), refuses a cut whose STREAMINFO is not exactly
+`end - start` samples at `rate`, and runs each extractor over the cut. Its
+`entry.json` is `archive-feature-bank-entry/2`: `/1`'s fields, `media_type`
+the cut's (`audio/flac`), `region`, and `cut`, the cut's digest. It is filed
+under the content's directory like any entry, so deleting the content deletes
+it. Outputs are on the cut's timeline; a reader adds `start / rate` seconds
+(`Entry.offset`). A stem made over a region is content of its own and is
+measured whole. A reader takes the whole-content entry when there is one,
+else a region entry whose region contains the span it needs and whose key
+the installed extractor gives that region (`bank.covering`); region entries
+are never stitched together.
+
+**A bank request** asks the scheduler for one key nothing holds yet. It is
+`<root>/requests/<key hex>.json`, operational and deletable:
+
+```json
+{"contract": "archive-feature-bank-request/1", "key": "sha256:<hex>",
+ "content": "sha256:<hex>", "extractor": {"id": "stems", "version": "1"},
+ "region": null, "feature": null, "asked_by": "relay"}
+```
+
+`region` is null for the whole content; `feature` names the file feature
+measured when the content is a preferred input. A request is written to a
+temporary name and linked into place, so asking again finds the same file and
+the first asker's request stands (`bank.ask`); `bank.requests` lists them and
+refuses a damaged or misnamed one rather than skipping it.
+
 ## Layout
 
 ```
@@ -69,6 +110,8 @@ in [`enrich/test_bank.py`](../enrich/test_bank.py) writes one key out in full.
 <root>/sha256/<ab>/<cd>/<hex>/bank/<extractor id>/<key hex>/<output files>
 <root>/sha256/<ab>/<cd>/<hex>/bank/<extractor id>/<key hex>.failed.json
 <root>/sha256/<ab>/<cd>/<hex>/bank/<extractor id>/<key hex>.lock
+<root>/equivalence/<extractor id>/<pair hex>/<record hex>.json
+<root>/requests/<key hex>.json
 <root>/tmp/
 ```
 
@@ -196,8 +239,9 @@ audio, and `n` decoded samples make `ceil(n / 2048) + 1` rows.
 ```
 
 `contract`, `id`, `version`, `command`, `accepts`, and `outputs` are
-required; `description`, `requires`, `needs`, `prefers`, and `parameters` may
-be given; nothing else is allowed. `version` matches
+required; `description`, `requires`, `needs`, `prefers`, `parameters`, and
+`interchangeable` ([below](#interchangeable-entries)) may be given; nothing
+else is allowed. `version` matches
 `[A-Za-z0-9][A-Za-z0-9.]{0,39}`, so that `archive-extractor.<id>@<version>`
 is a Spool capability. Output names match `[a-z][a-z0-9_]{0,62}`.
 A series declares `dtype`, `columns`, and optionally `grid`; a file declares
@@ -231,7 +275,31 @@ preference is passed over for the next, or the content (`melody` takes
 `stems/vocals`, then `stems-6s/vocals`, then the mix, passing over a vocal
 stem that voices less than a fifth of its rows, as on an instrumental). A measure passed over is kept; the runner measures the
 next default input too and names what it passed over in `passed_over`.
-`at_least` is not a parameter and changes no key. Without `--from`, the runner runs every other target
+`at_least` is not a parameter and changes no key.
+
+A preference may also name a `probe`, read before the extractor measures
+the feature at all: a series another extractor measured of the same
+feature, a column of it, and the share of its rows that must be at or above
+a value. `melody` probes each vocal stem with `f0-pesto`'s confidence:
+
+```json
+"probe": {"series": "f0-pesto/f0", "column": 1, "at_or_above": "0.5",
+          "share_at_least": "0.03"}
+```
+
+While the extractor's own measure of the feature is not in the bank, and
+the probing extractor's is (`Bank.entry_from(content, feature, "f0-pesto")`)
+and fewer than that share of its rows reach the value, the preference is
+passed over unmeasured, and the runner names the probe's entry under
+`probed_over`. Once the extractor's own measure is in the bank, it alone
+decides, by `at_least`; a probe not in the bank says nothing. The probe
+must name a floating-point series of another extractor, and a column it
+has; one whose extractor is not in the catalog is never present. Like
+`at_least`, it changes no key. A probe saves the measure only where the
+probing extractor ran first: the caller orders it (`f0-pesto --from
+stems/vocals` before `melody`), since the runner never makes a probe.
+
+Without `--from`, the runner runs every other target
 first, then measures each preferring target on its default input as `--from`
 would (the feature's digest is the content, filed under the content's
 directory); a preference never makes the feature, and an extractor run only
@@ -249,6 +317,83 @@ content's directory, an extractor that prefers a feature with parameters
 without being told which feature it reads. A preferred feature must be a
 `file` output of an extractor in the catalog, not one the extractor makes or
 needs; one that no extractor in the catalog declares is never present.
+
+### Interchangeable entries
+
+`interchangeable` ([ADR 0090's amendment](decisions/0090-extractor-runs-travel-through-spool.md#amendment-2026-10-19-a-stem-is-a-stem))
+names one parameter, by dotted path, whose declared values make entries
+that may stand in for each other: a stem is a stem, whichever device made
+it. Declaring it changes no output, so it is not a new version.
+
+```json
+"interchangeable": {
+ "parameter": "apply.device", "values": ["cpu", "mps"],
+ "software": ["demucs", "torch"],
+ "agree": [{"measure": "note-f1", "outputs": ["vocals", "bass"], "at_least": "0.98"},
+           {"measure": "f0-cents-p99", "outputs": ["vocals"], "at_most": "5"},
+           {"measure": "voicing-agreement", "outputs": ["vocals"], "at_least": "0.99"}]}
+```
+
+The parameter must be declared, with one of `values`. `software` names the
+libraries a record must match. Each of `agree` names a downstream measure,
+the file outputs it compares, and one threshold in decimal text:
+`note-f1` (`notes-basic-pitch` over each side's file: same MIDI pitch,
+onsets within 50 ms, closest first, one pair a note), `f0-cents-p99` (the
+99th percentile of the absolute `f0-pesto` pitch difference over rows the
+note builder voices in both; the bass's settings for `bass`, the voice's
+otherwise) and `voicing-agreement` (the share of rows voiced in either that
+both voice). An extractor that declares it needs nothing.
+
+**Lookup.** The configured parameters' entry answers first. Where it is
+absent, each other declared value's entry, in the manifest's order, answers
+when the bank holds a passing **equivalence record** for the pair whose side
+for that value names the same `software` versions as the entry
+(`Bank.entry`; `Bank.candidates` gives every entry that answers, best
+first). Without such a record lookup is exactly the configured key. A measure of a
+file feature is found over whichever answering entry it was made over, the
+best first (`Bank.entry_from`, `Bank.measured_over`), and the runner measures
+the file of the first answering entry already measured, so nothing is
+measured twice. The runner and `remote.py put` count an entry that stands in
+as made (`hit`, with `stands_in_for` the configured key); `--exact` asks for
+the configured key alone. A record that cannot be read, or whose `pass` its
+own values do not give, is refused, never read as absent.
+
+**The record** (`archive-feature-bank-equivalence/1`, regenerable,
+INV-4) is written by `extract.py equivalence <extractor> --against <value>
+--content <input>...`, which makes or finds both sides' entries of each input
+(`--exact`), runs each measure's extractor over each side's files, and files:
+
+```json
+{"contract": "archive-feature-bank-equivalence/1",
+ "extractor": {"id": "stems", "version": "1"}, "parameter": "apply.device",
+ "sides": [{"value": "cpu", "parameters": "sha256:...", "software": [{"name": "demucs", "version": "4.1.0"}, ...]},
+           {"value": "mps", "parameters": "sha256:...", "software": [...]}],
+ "agree": [...as declared...],
+ "inputs": [{"content": "sha256:...", "entries": ["sha256:<cpu key>", "sha256:<mps key>"],
+             "measured": [{"measure": "note-f1", "output": "vocals", "value": 1.0,
+                           "detail": {"notes": [64, 64], "matched": 64, "entries": [...]}}, ...],
+             "evidence": {"vocals": {"samples": 5292000, "max_abs_steps": 1, "snr_db": 91.3}, ...}}],
+ "pass": true, "made_at": "2026-10-19T00:00:00Z"}
+```
+
+`parameters` is the digest of each side's canonical parameters; `software`
+is the named libraries of that side's entries, which must be the same over
+every input. A value is `null` where there is nothing to compare (no
+confident pitch on a stem). Each measure of each output is decided over
+every input that measured it: `note-f1` pooled over all their notes
+(`2 * matched / (notes of both sides)`, from each detail's `matched` and
+`notes`), `voicing-agreement` over all their voiced rows (`agreeing` /
+`voiced_in_either`), `f0-cents-p99` by the worst input. A record passes when
+every measure of every output it names is measured on at least one input and
+its decided value is within the threshold; pooling keeps one borderline note
+of a short clip (16 notes against 17) from deciding alone, and each input's
+own value stays in the record. `evidence` (the largest sample difference in 16-bit
+steps and the signal-to-difference ratio of each audio output) decides
+nothing. `<pair hex>` is the digest of
+`{"contract": "archive-feature-bank-equivalence/1", "extractor", "version",
+"parameters": [the two parameter digests, sorted]}`, and `<record hex>` the
+digest of the sides' parameters and software, so a record for the same
+software replaces the last and one for other software sits beside it.
 
 ## The request
 
@@ -417,7 +562,9 @@ what each changed:
   the gate (`measured_fraction`), prefers the vocal stem where the bank holds
   it, and resolves pitch in 5-cent bins, 2 on that stem. Still 3: it passes
   over a stem voicing less than a fifth of its rows, and takes the 6-stem
-  separator's vocal stem after the 4-stem one's.
+  separator's vocal stem after the 4-stem one's; and again when it passed
+  over, unmeasured, a stem where fewer than 3% of `f0-pesto`'s rows have a
+  confidence of 0.5 or more.
 - `colour` 2 stopped copying the peaks into the bank and checks its
   palette; 3 sets the centroid hue's
   default range to 500 Hz to 4 kHz, which

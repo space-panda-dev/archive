@@ -130,6 +130,17 @@ program in any language, with a manifest, that *extracts* features into the
 bank under the extractor contract. (Proposed:
 [ADR 0073](decisions/0073-feature-bank.md),
 [ADR 0074](decisions/0074-extractor-contract.md).)
+**Region entry**: a bank entry over `[start, end)` of its content (a song
+span, widened), keyed by the region as well; a whole-content entry covers
+every region. A **bank request** asks the bank for one key a reader found
+missing; the **scheduler** (`enrich backfill`) makes requests good and fills
+the bank by a mode (`songs`, `eager`, `on-demand`). An **equivalence
+record** is the measured agreement that lets one entry **stand in** for
+another made with other interchangeable parameters, such as a GPU's stems
+for a CPU's; an **expensive** extractor is one whose recorded cost is above
+the threshold. All are regenerable bank state.
+([ADR 0112](decisions/0112-bulk-import-at-scale.md), [ADR 0090's
+amendment](decisions/0090-extractor-runs-travel-through-spool.md).)
 **Streaming mode**: an extractor run over an unbounded stream of audio
 instead of one content, under the same manifest, id and version; a way to
 *extract*, never writing the bank. Its "frames" are audio sample frames (one

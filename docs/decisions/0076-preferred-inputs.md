@@ -2,7 +2,8 @@
 
 Status: accepted (operator, 2026-10-19); proposed 2026-10-18, amended before
 acceptance (a mostly unvoiced preferred stem falls back to the mix; bass is
-its own category)
+its own category); a second amendment of 2026-10-19, a probe before the
+measure, is proposed for the operator to confirm
 
 The melody of a band recording is the sung line, and the sung line is in the
 vocal stem. Measured on the mix, MELODIA follows whichever line is most
@@ -182,3 +183,77 @@ one album, and a quieter sung track would need the minimum checked again.
   that depended on another input would change what its key means.
 - **A new `melody` version.** No output changes, so it would only re-key
   every melody entry.
+
+## Amendment, 2026-10-19: a probe passes a stem over before it is measured
+
+Status: proposed with the build of ADR 0112's step 0 (the `melody` item in
+[docs/backlog.md](../backlog.md)); for the operator to confirm.
+
+The backfill profile found `melody` running twice on every rehearsal it
+measured: the vocal stem's measure fell short of its `at_least`, so the mix
+was measured as well, and the first pass was spent only to learn that. A
+rehearsal with nobody singing has a vocal stem of bleed, and `f0-pesto`,
+which the backfill already runs on that stem for the vocal line, says so.
+
+**A preference may name a `probe`: a column of a floating-point series that
+another extractor measured of the preferred feature, a value, and the share
+of rows that must reach it.** While the extractor's own measure of the
+feature is not in the bank, and the probe's is and falls short, the
+preference is passed over unmeasured; the runner names the probe's entry
+under `probed_over`. Once the extractor's own measure is in the bank, it
+alone decides, by `at_least`, so every bank that holds it answers as
+before; a probe that is not in the bank says nothing. `Bank.default_input`
+decides it, so the runner and every reader still agree. `melody` declares,
+on both vocal stems,
+
+```json
+"probe": {"series": "f0-pesto/f0", "column": 1, "at_or_above": "0.5",
+          "share_at_least": "0.03"}
+```
+
+Like `at_least`, a probe changes no key and no entry's bits, only which
+entry is a recording's default, so `melody` stays version 3. The runner
+never makes a probe: it saves the measure only where the caller ran
+`f0-pesto --from stems/vocals` first, which the backfill's scheduler is to
+do.
+
+### Evidence for the second amendment
+
+Twenty recordings have both a version 3 vocal-stem melody and `f0-pesto`'s
+measure of the same stem: the album's eighteen tracks (`f0-pesto` version
+1, whose confidence column version 2 left as it was) and the profile's two
+rehearsals.
+
+| | recordings | vocal stem voiced (`voiced_fraction`) | rows with confidence ≥ 0.5 |
+|---|---|---|---|
+| falls short | 5 | 0.027 to 0.174 | 0.000 to 0.024 |
+| reaches | 15 | 0.328 to 0.695 | 0.118 to 0.685 |
+
+A share of 0.03 sits above every stem that fell short and a quarter of the
+lowest that reached, so on these recordings the probe passes over exactly
+the stems `at_least` passes over. On copies of the profile's banks (x86-64
+laptop, 4 threads), `extract.py run melody` with the probe ran once, on the
+mix, and made the same entry as before, key and output digests alike:
+
+| recording | before (vocal stem, then mix) | with the probe (mix) | saved |
+|---|---|---|---|
+| 2715 s rehearsal | 209 s | 159 s | 50 s (24%) |
+| 554 s rehearsal | 62 s | 42 s | 20 s (32%) |
+
+About 0.02 s per audio-second, some 2% of the backfill's compute where
+nobody sings. A recording whose vocal stem reaches the minimum is measured
+exactly as before, and the mix pass never ran there.
+
+### Alternatives considered in the second amendment
+
+- **`melody`'s own `measured_fraction` as a bound.** Voiced rows are a
+  subset of measured rows, so it would be exact, but the two rehearsals'
+  stems measured 0.22 and 0.28 of their rows: it never fires.
+- **`f0-pesto`'s `loud_db`.** The two groups also part by level, but a
+  quiet singer recorded low would be passed over; the confidence reads the
+  voice itself.
+- **A new scalar from `f0-pesto`.** It would need version 3 of `f0-pesto`
+  and re-key every one of its entries, more compute than it saves.
+- **Running the probe in the runner when it is missing.** `f0-pesto` costs
+  more than the melody pass it would save; it pays only because it is run
+  anyway.

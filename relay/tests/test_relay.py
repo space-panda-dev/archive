@@ -449,6 +449,8 @@ class ConfigChecks(unittest.TestCase):
     def test_a_valid_configuration_loads(self) -> None:
         self.assertEqual((self.load().callers, self.load().role), ({LOGIN: AGENT}, "shadow"))
         self.assertEqual(self.load(role="scratch", writes="commit").writes, "commit")
+        self.assertFalse(self.load().bank_scheduler)
+        self.assertTrue(self.load(bank_root="/b", bank_scheduler=True).bank_scheduler)
 
     def test_refusals(self) -> None:
         for name, changes in {
@@ -467,6 +469,8 @@ class ConfigChecks(unittest.TestCase):
             "a circle with no members": {"circle": {"destination": "band", "members": []}},
             "an unknown practice feature": {"bank_root": "/b", "practice_features": ["stems/levels"]},
             "practice features without a bank": {"practice_features": ["stems/bass"]},
+            "a scheduler without a bank": {"bank_scheduler": True},
+            "a scheduler that is not a flag": {"bank_root": "/b", "bank_scheduler": "yes"},
             "a renderer named by a relative path": {"renderers": {"practice": {"version": "1",
                                                                               "command": ["render"]}}},
             "an exporter without a version": {"exporters": {"lead-sheet": {"command": ["/bin/true"]}}},

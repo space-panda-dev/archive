@@ -25,6 +25,7 @@ here writes a record: Door decides every revision.
 | [`media.py`](media.py), [`waveform.py`](waveform.py), [`derived.py`](derived.py) | Derived media, a standalone tool that never touches an archive; the waveform peaks' format and decode; and the layout ([ADR 0069](../docs/decisions/0069-derived-media.md)) |
 | [`requirements.txt`](requirements.txt) | The libraries: numpy (detector, matchers, derived media) and scipy (numpy matcher) |
 | [`requirements-match.txt`](requirements-match.txt) | The window matcher's interpreter: Essentia, numpy, and scipy for CPython 3.14, pinned by hash |
+| [`bench/`](bench/README.md) | The bench: regression sets for note transcription, scored outside the repository on private data; proposes nothing |
 | `support.py`, `test_*.py`, `tests/` | Synthetic audio, scratch archives built through Door, and the tests |
 
 The adapter and the probe use only Python's standard library; the detector
@@ -656,6 +657,102 @@ proposer fails the command once the proposers before it have finished: what
 they made is kept, and stderr's `{"status": "failed", "detail", ...}` lists
 them.
 
+## `enrich backfill`
+
+```sh
+enrich/enrich.py backfill --archive <dir> --bank <root> [--config <file>]
+    [--mode songs|eager|on-demand | --songs | --eager | --on-demand] [--cores <n>] [--memory-gb <n>] [--spool "<spool> --dir <dir>"] [--commit] [--retry-failed]
+    [--proposers <name,...>] [--world-store <dir> [--world-python <python>] [--conformance-python <python>]]
+    [--log <file>] [--staging <annex>] [--door door] [--archive-command archive]
+```
+
+Fills the feature bank for every recording and proposes what it holds
+([ADR 0112](../docs/decisions/0112-bulk-import-at-scale.md); the code is
+`backfill.py`). It is a dry run unless `--commit`. With `--commit` it
+probes the audio and video Artifacts `propose --all` lists as unprobed,
+plans, runs the plan, proposes `--all` (dry run, commit, and a rerun that
+must answer `unchanged`), and, with `--world-store`, refreshes World and
+checks its conformance. A dry run probes and proposes with `--dry-run` and
+runs no extractor.
+
+**The plan.** For every Artifact with an audio stream claim whose content
+is here, each unit of the configuration (an extractor on the content, or
+`--from` a file feature of it; by default the 0.0.10 set: `stems`,
+`rhythm`, `tonal`, `chords-jiang`, `chords-chordino`, `structure`,
+`f0-pesto` on `stems/vocals`, `melody`, then `tonal` on `stems/bass`,
+`f0-pesto` on `stems/bass` and `notes-basic-pitch` on `stems/bass`) that
+the bank lacks, read through `bank.Bank` as every reader reads it, so an
+entry made on another device counts once a passing equivalence record lets
+it stand in ([a stem is a stem](#a-stem-is-a-stem-equivalence-and---exact)).
+The bank is the ledger: a rerun over an unchanged archive and bank plans
+nothing. Bank requests (`requests/`, [regions and requests](../docs/feature-bank.md#regions-and-requests))
+are planned first, in every mode; a request for a measure of a stem plans
+the stem over the same region too, and one for content that is not a
+recording here, or for an extractor version not installed, is reported and
+left. A unit that failed before (its
+failure record is beside the entry) is held until `--retry-failed`; one
+whose program is not configured here is held and said to be. What
+measures a feature, or prefers one (`melody`), waits for the job that makes
+it over the same region; a unit whose preference has a probe (`melody`)
+also waits for the probe's measure (`f0-pesto` on the vocal stem), which
+`unit_order` places first.
+
+**Modes** (`regions.plan`). `eager` makes every unit of every recording,
+whole. `songs` makes the cheap units whole and an expensive unit (recorded
+cost above `expensive_above`, 0.04 seconds per audio-second) over each of
+the recording's song regions (`regions.regions_for`: song occurrences,
+else selections, else the detector's `music` spans, else `structure/playing`
+read from the bank), one `extract.py run --region` job per region, filing
+region entries; one region that is the whole recording (a recording
+selected end to end) is made whole instead, so readers of whole entries
+find it and a routed unit may go to its worker; a recording with no song
+regions leaves it for on demand. No reader takes a region entry yet
+(`enrich propose` and the relay read whole entries).
+A unit on a file feature goes where that feature is made: whole once the
+stems are made whole, else over the regions they are made over. A region,
+or any span inside one already made, counts as made (`bank.covering`).
+`on-demand` makes only what is requested. A unit routed to Spool runs here
+when it is over a region: a Spool task carries no region yet.
+
+**The pool.** Each extractor runs in copies of `threads` each (its own
+fixed `threads` parameter where it has one, as `chords-jiang` does), as
+many as the cores hold and bounded by `memory_gb` per copy (`layout`);
+every copy is an `extract.py run` of its own with `OMP_NUM_THREADS` and
+its kin set to its threads. The earliest ready job holds the queue when
+it does not fit, so narrow jobs never starve a wide one; jobs that make
+what others wait for (`stems`) go first.
+
+**Spool.** With `--spool`, a unit whose extractor is routed there
+(`"route": "spool"`) and needs no other feature is put with `remote.py put`
+and collected every `poll_seconds`; its dependents start once it is filed.
+A task the spool fails for good, or that could not be put, runs here; under
+`eager`, so does one no worker has taken within `local_when_away_seconds`
+(900; never under `songs` or `on-demand`). An extractor's
+`remote_parameters` are what it is put with (for `stems` on the Mac, its
+`apply` with `device` `mps`): the worker's entries then have another key
+and count here only as stand-ins, so the backfill refuses to start unless
+they differ only in the interchangeable parameter and the bank holds a
+passing equivalence record for the pair; a worker entry that still does not
+stand in (made with other software than the record names) is made here.
+
+**The configuration** is `extract.py`'s file; its optional `backfill`
+object holds `units` (a list of `[extractor]` or `[extractor, feature]`),
+`extractors` (per extractor `threads`, `memory_gb`, `cost`, `remote_cost`,
+`route`, `remote_parameters`), `expensive_above`, `parallel_gain`, `poll_seconds`,
+`memory_reserve_gb`, and `local_when_away_seconds`. The recorded costs
+default to the backfill profile of 2026-10-19 on the x86-64 laptop. The
+runner ignores the object.
+
+**Output.** One JSON line per event on standard output (cut at 400
+characters) and, whole, appended to `--log`: the plan (jobs by unit, what
+is already made, held, deferred, over regions and requested, and the
+projection: audio hours,
+compute hours here and on workers, projected wall hours and seconds per
+audio-second), each job as it is `ran` or `failed`, and `made` (audio
+seconds made per wall second, CPU seconds per audio second by extractor).
+The last line is `done`. It exits 0 when nothing failed and 1 otherwise.
+Run it as a low-priority unit ([the shadow runbook](../docs/shadow-runbook.md#filling-the-feature-bank)).
+
 ## The adapter interface
 
 A new tool (a detector, a matcher) uses the adapter like this:
@@ -801,7 +898,9 @@ to stderr and exits 1. It needs `ffmpeg` and `ffprobe` (`--ffmpeg` and
 enrich/extract.py list
 enrich/extract.py run <extractor|all> --content <file> --bank <dir> [--digest sha256:<hex>] [--jobs n]
                   [--media-type <type>] [--from <extractor>/<output>] [--config <file>] [--program name=path]...
-                  [--extractors <dir>]... [--dry-run]
+                  [--extractors <dir>]... [--dry-run] [--no-prefer] [--exact] [--region <start>:<end>:<rate>]
+enrich/extract.py equivalence <extractor> --against <value> --content <file>... --bank <dir>
+                  [--config <file>] [--program name=path]... [--extractors <dir>]... [--jobs n]
 ```
 
 Runs extractors on one file and files their features in the feature bank,
@@ -834,7 +933,7 @@ Versions, needs, and outputs by kind are listed together in
 | `quality` | Python, Essentia 2.1b6.dev1438, ffmpeg | how well a recording was captured, from one more decode at the stream's own rate with every channel: EBU R 128 `integrated`, `loudness_range`, and `true_peak`; `sample_peak`, `full_scale_samples`, `clipped_seconds`, `dc_offset`, `whole_correlation`, `anti_phase`, `false_stereo`, `noise_floor`, `snr`, `bandwidth`, `band_limited`; per channel, `clipping` (flat tops at full scale, or long ones at the recording's own peak), `overs` (0 dBTP reached between samples, 4x oversampled), `gaps`, `noise_bursts` (spans) and `clicks`, `discontinuities` (events), each of the last three kept only where it stands out from the transients around it or (clicks and discontinuities) stands alone among the steps of the 150 ms around it, so that drums and limiters on a finished master are not defects while crackle still is; `hum` (spans: narrow, steady peaks at 50 or 60 Hz and their harmonics that persist through the quiet or sound in it); on the `frames` grid, `correlation` and `peak_db` |
 | `melody` | Python, Essentia 2.1b6.dev1438 | on a grid of 2,048-sample frames every 128 (the `hop_size` stride) at 44,100 Hz: `pitch` (MELODIA, in `bin_cents` bins: 5, or 2 on the vocal stem), `confidence`, `voiced`, `midi`, `cents`, `level_db`; `notes` spans; scalars `voiced_fraction`, `melodia_voiced_fraction`, `measured_fraction`, `loud_db`, `gate_db`, `reference_hz`, `samples`. The predominant melody of the vocal stem where the bank holds one voicing at least a fifth of its rows (it prefers `stems/vocals`, then `stems-6s/vocals`), else of the content; `voiced` is MELODIA's decision kept where a contour is mostly above a gate relative to the recording's loud level, and MELODIA runs only within a second of a row that reaches the gate |
 | `colour` | Python, numpy, ffmpeg | for each waveform pixel of [`media.py`](media.py)'s derived-media peaks (about 10 ms; the peaks stay derived media and are not copied into the bank): series `colour` (`u8` red, green, blue, on grid `peaks`) coloured from `frames/centroid` (hue between limits that [`hue_range.py`](hue_range.py) can take from a set of recordings) or `frames/hpcp` (hue) and `frames/rms_db` (lightness), interpolated to each pixel's centre; file `palette` (the mapping and legend stops, JSON, fields in [its README](extractors/colour/README.md)); file `preview` (a PNG of the whole recording). The mapping is its parameters |
-| `stems` | Python under `${demucs-python}` (Demucs 4.1.0, PyTorch), ffmpeg | `vocals`, `drums`, `bass`, `other`: 44.1 kHz stereo 16-bit FLAC from pinned htdemucs weights; `levels` (each stem's RMS every 4,096 samples); each stem's `_rms_db`, `_peak_db`, `_clamped`; `mix_rms_db`, `samples`, `seconds` ([ADR 0075](../docs/decisions/0075-stems-as-content.md)). On the CPU, or on Apple's GPU with `apply.device` `mps` (another key) |
+| `stems` | Python under `${demucs-python}` (Demucs 4.1.0, PyTorch), ffmpeg | `vocals`, `drums`, `bass`, `other`: 44.1 kHz stereo 16-bit FLAC from pinned htdemucs weights; `levels` (each stem's RMS every 4,096 samples); each stem's `_rms_db`, `_peak_db`, `_clamped`; `mix_rms_db`, `samples`, `seconds` ([ADR 0075](../docs/decisions/0075-stems-as-content.md)). On the CPU, or on Apple's GPU with `apply.device` `mps` (another key; either stands in for the other under a passing equivalence record) |
 | `beats-beatthis` | Python under `${beatthis-python}` (beat_this 1.1.0, PyTorch), with the checkpoint `${beatthis-checkpoint}` | from its own decode at the file's rate (soundfile; the model resamples to 22,050 Hz mono): events `beats` and `downbeats` from Beat This's pinned `final0` checkpoint with its minimal postprocessor, at the model's own metrical level (nothing asserts a meter, and the downbeats' spacing is not one); scalars `beat_count`, `downbeat_count`, `median_bpm` (60 over the median beat interval). On a 69-minute album, 0.20 CPU-seconds a second of audio and 0.76 GB at most |
 | `chords-jiang` | Python under `${jiang-python}` (PyTorch, librosa), from the recogniser's checkout `${jiang-repo}` | from its own decode: spans `chords` (the HMM-decoded labels of Jiang et al.'s large-vocabulary recogniser in Harte spelling, `N` for none, each valued by its label's weight), file `readings` (JSON: per span, the decoded label and the three most probable templates with weights, each a share of the whole template set, so a span's three sum to at most 1), scalars `chord_count` and `decoded_in_top3`. On the same album, 0.17 CPU-seconds a second and 1.6 GB at most |
 | `chords-chordino` | Python under `${chordino-python}` (the vamp host, chord-extractor 0.1.3's Chordino build, librosa) | from its own 44,100 Hz mono decode: spans `chords` (Chordino's simple chord labels in its own spelling, such as `Am7` or `F/A`, `N` for none, tiling the decoded length); scalars `chord_count`, `seconds`. Not learned: a second opinion beside `chords-jiang`. On the same album, 0.042 CPU-seconds a second and 0.56 GB at most |
@@ -849,7 +948,10 @@ the stems are made if they are missing. An extractor whose manifest `prefers`
 a stem (`melody` prefers `stems/vocals`, then `stems-6s/vocals`) measures it without `--from` where
 the bank already holds it, and the content otherwise, or where its measure of
 the stem falls short of the preference's `at_least` (a vocal stem voicing
-less than a fifth of its rows falls back to the mix); `--no-prefer` measures
+less than a fifth of its rows falls back to the mix), or, before it is
+measured, where the preference's `probe` falls short (`f0-pesto` already
+measured the stem, and fewer than 3% of its rows have a confidence of 0.5
+or more: the stem is passed over unmeasured, under `probed_over`); `--no-prefer` measures
 the content, and `bank.Bank.default_entry` reads back whichever was made. `stems` runs only where the operator
 configures Demucs's interpreter (`--program demucs-python=<path>`, or
 `programs` in `--config`); `run all` elsewhere skips it and says so. The other
@@ -864,6 +966,51 @@ digests its parameters pin and refuses others. The Essentia `chords`
 extractor is retired: its entries stay readable
 ([retired extractors](../docs/feature-bank.md#retired-extractors)).
 
+`--region <start>:<end>:<rate>` limits the run to `[start, end)` samples of
+the content at its stream rate ([ADR 0112](../docs/decisions/0112-bulk-import-at-scale.md)):
+the runner cuts that region once to FLAC (ffmpeg from `--program ffmpeg=`,
+else `PATH`), checks the cut holds exactly those samples, and files region
+entries keyed by `archive-feature-bank-key/2`, needs made over the same
+region ([regions and requests](../docs/feature-bank.md#regions-and-requests)).
+Which regions are a recording's song regions, and what each mode makes
+eagerly, is [`regions.py`](regions.py): song spans from head song
+occurrences, else selections, else the detector's `music` suggestions, else
+`structure/playing`, the first source with any winning whole; each widened by
+10 s, snapped to whole seconds and merged under 30 s apart; in `songs` mode
+the extractors whose recorded cost is above 0.04 s per audio-second run over
+those regions and the rest whole (`regions.plan`). `bank.ask` files a bank
+request for an entry nothing holds yet.
+
+### A stem is a stem: `equivalence` and `--exact`
+
+`stems` declares `apply.device` `cpu` and `mps` interchangeable
+([ADR 0090's amendment](../docs/decisions/0090-extractor-runs-travel-through-spool.md#amendment-2026-10-19-a-stem-is-a-stem);
+[format](../docs/feature-bank.md#interchangeable-entries)). Each device's
+stems keep their own key; where the configured device's are missing, the
+other's answer every reader (practice audio, preferred inputs, the
+proposers) once the bank holds a passing **equivalence record** for the pair
+whose software matches them. The runner and `remote.py put` then count them
+as made (`hit`, `stands_in_for` the configured key), so a recording
+separated on the Mac is not separated again on the laptop; `run --exact` and
+`put --exact` ask for the configured key alone.
+
+`equivalence stems --against mps --content <clip>...` makes the record: for
+each test input it makes or finds both devices' stems (one this machine
+cannot make must already be in the bank, made elsewhere and collected), runs
+`notes-basic-pitch` over each side's `vocals` and `bass` and `f0-pesto` over
+each side's `vocals`, and files the measured agreement (note F1, f0
+difference in cents, voicing agreement) against the manifest's thresholds, with each stem's largest
+sample difference and signal-to-difference ratio as evidence. It prints, for each measure, the value that decides it (note F1 pooled over
+every input's notes, voicing over every voiced row, the pitch difference by
+the worst input) and the worst single input's, and exits 0 when the record passes, 1 when it
+fails (it is filed either way, and lets nothing stand in), and 2 when no
+record could be made. A measure with nothing to compare on every input fails:
+the inputs must hold notes on the bass. `f0-pesto` compares only the vocals:
+on the bass stems of two whole rehearsals (2026-10-19) its confidence never
+passed 0.13, so the note builder voices no bass row and there is nothing to
+compare. An
+upgrade of torch or demucs on either side is a reason to measure again:
+lookup honours only a record naming the software the entry was made with.
 ### The model extractors' interpreters
 
 Each is a virtual environment of its own, never the archive's. The versions

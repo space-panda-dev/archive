@@ -418,6 +418,75 @@ class CircleChecks(unittest.TestCase):
         status, _, answer = call("GET", f"/media/{self.recording}/bank/stems/bass")
         self.assertEqual((status, answer["error"]["code"]), (404, "feature_not_served"))
 
+    # -- bulk import: what is not made is queued (ADR 0112) -----------------
+
+    def scheduled(self) -> tuple[Client, Path]:
+        """A relay whose bank has a scheduler, over a bank of its own that
+        holds the recording's stems and nothing for the take."""
+        root = private(self.work / "bank")
+        stems_entry(root, self.recording)
+        return self.relay(bank_root=root, bank_scheduler=True), root
+
+    def filed(self, root: Path) -> list[dict]:
+        return [json.loads(p.read_text()) for p in sorted((root / bank.REQUESTS).glob("*.json"))]
+
+    def test_without_a_scheduler_nothing_is_asked_for(self) -> None:
+        call = self.relay()
+        status, _, answer = call("GET", f"/media/{self.take}/bank")
+        self.assertEqual((status, answer["result"]["missing"]), (200, FEATURES))
+        self.assertNotIn("queued", answer["result"])
+        status, _, answer = call("GET", f"/media/{self.take}/bank/stems/bass")
+        self.assertEqual((status, answer["error"]["code"]), (404, "feature_not_made"))
+        self.assertFalse((self.bank_root / bank.REQUESTS).exists())
+
+    def test_a_feature_not_made_is_asked_for_and_answered_queued(self) -> None:
+        call, root = self.scheduled()
+        expected = bank.Catalog.load().keys(self.take, ["stems"])["stems"]
+        self.assertNotEqual(expected, self.stems_key)
+        status, _, answer = call("GET", f"/media/{self.take}/bank/stems/bass")
+        self.assertEqual((status, answer["error"]["code"]), (202, "feature_queued"))
+        self.assertIn(expected, answer["error"]["message"])
+        [request] = self.filed(root)
+        self.assertEqual((request["contract"], request["key"], request["content"], request["extractor"]["id"],
+                          request["region"], request["feature"], request["asked_by"]),
+                         (bank.BANK_REQUEST_CONTRACT, expected, self.take, "stems", None, None, "relay"))
+        # Never an empty result: the listing names each feature queued, with its key to come.
+        status, _, answer = call("GET", f"/media/{self.take}/bank")
+        self.assertEqual((status, answer["result"]["features"], answer["result"]["missing"]), (200, [], FEATURES))
+        self.assertEqual(answer["result"]["queued"], [{"name": name, "key": expected} for name in FEATURES])
+        # Asking again, by any route, is the same one request.
+        self.assertEqual(len(self.filed(root)), 1)
+        # What is made is served as before, and asks for nothing.
+        status, _, answer = call("GET", f"/media/{self.recording}/bank")
+        self.assertEqual((answer["result"]["missing"], answer["result"]["queued"]), ([], []))
+        self.assertEqual(len(self.filed(root)), 1)
+        # The gate comes first: a caller who may not hear it asks for nothing.
+        shutil.rmtree(root / bank.REQUESTS)
+        status, _, answer = call("GET", f"/media/{self.take}/bank/stems/bass", login=MEMBER_LOGIN)
+        self.assertEqual((status, answer["error"]["code"]), (403, "media_forbidden"))
+        self.assertEqual(self.filed(root), [])
+
+    def test_a_practice_render_of_stems_not_made_is_queued(self) -> None:
+        call, root = self.scheduled()
+        expected = bank.Catalog.load().keys(self.take, ["stems"])["stems"]
+        path = f"/media/{self.take}/practice"
+        request = self.practice(content=self.take, stems={"extractor": "stems", "key": expected})
+        status, _, answer = call("POST", path, request)
+        self.assertEqual(status, 200, answer)
+        self.assertEqual((answer["result"]["status"], answer["result"]["key"]),
+                         ("queued", export_rules.practice_key(request)))
+        self.assertEqual([r["key"] for r in self.filed(root)], [expected])
+        self.assertTrue(call.harness.relay.renderer.work.empty())
+        # A key the installed extractors would not make is never queued.
+        status, _, answer = call("POST", path, self.practice(content=self.take,
+                                                             stems={"extractor": "stems", "key": self.stems_key}))
+        self.assertEqual((status, answer["error"]["code"]), (404, "stems_not_made"))
+        # Stems that are made render as before (a mix no other test renders,
+        # since renders share the media root).
+        status, _, answer = call("POST", f"/media/{self.recording}/practice", self.practice(gains={"bass": 100}))
+        self.assertEqual((status, answer["result"]["status"]), (200, "rendering"))
+        call.harness.relay.renderer.work.join()
+
     # -- practice renders --------------------------------------------------
 
     def practice(self, **changes) -> dict:

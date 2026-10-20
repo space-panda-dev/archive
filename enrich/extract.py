@@ -5,7 +5,7 @@
     extract.py run <extractor|all> --content <file> [--digest sha256:<hex>] [--media-type <type>]
                    --bank <dir> [--from <extractor>/<output>] [--jobs <n>] [--config <file>]
                    [--program <name>=<path>]... [--extractors <dir>]... [--timeout <seconds>] [--dry-run]
-                   [--no-prefer]
+                   [--no-prefer] [--region <start>:<end>:<rate>]
 
 `run` resolves what the named extractor needs as a graph over the bank, runs
 only the extractors whose entries are missing, each once, upstream first and
@@ -45,10 +45,24 @@ first of those the bank already holds for the content, as `--from` would,
 after everything else has run; where the bank holds none, it measures the content. A preference may
 set minimums for scalars of its measure (`melody` asks a `voiced_fraction`
 of at least 0.2 on the vocal stem); a measure below one is kept but passed
-over, and the next default input is measured too. A preference never
+over, and the next default input is measured too. A preference may also
+name a probe, a series another extractor measured of the feature (`melody`
+reads `f0-pesto`'s confidence on the vocal stem): while the preference's own
+measure is not in the bank and the probe's is and falls short, the
+preference is passed over unmeasured (`probed_over`). A preference never
 makes the feature, and an extractor run only because another needs it always
 measures the content. `--no-prefer` measures the content regardless.
 `Bank.default_entry` reads back what this made.
+
+With `--region <start>:<end>:<rate>` (samples at the content's stream rate),
+the run is limited to that region of the content (ADR 0112): the runner cuts
+it once to a FLAC file with pinned arguments, checks the cut holds exactly
+that many samples at that rate, and runs every extractor over the cut as over
+any content. Entries are region entries (`archive-feature-bank-entry/2`,
+keyed by `archive-feature-bank-key/2`), filed under the content's directory
+with the region and the cut's digest; an extractor's needs are made over the
+same region. Their times are on the cut's timeline; a reader adds `start`.
+A stem made over a region is content of its own, measured whole.
 
 The runner uses only Python's standard library. It never reads or writes an
 archive and proposes nothing: features are not claims.
@@ -79,6 +93,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bank  # noqa: E402
 
 RUNNER = {"name": "archive-enrich-extract", "version": "1"}
+CUT_MEDIA_TYPE = "audio/flac"
 LOG_TAIL = 4000
 # After SIGTERM, how long an extractor's process group has before SIGKILL (as Spool's workers wait).
 KILL_GRACE = 5.0
@@ -285,12 +300,63 @@ def place_entry(output_dir: Path, manifest: dict[str, Any], final: Path) -> bool
     return True
 
 
+def parse_region(text: str) -> dict[str, int]:
+    """`<start>:<end>:<rate>`, in samples at the content's stream rate."""
+    parts = text.split(":")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        raise RunError(f"--region takes <start>:<end>:<rate> in samples, not {text!r}")
+    return bank.check_region({"start": int(parts[0]), "end": int(parts[1]), "rate": int(parts[2])}, "--region")
+
+
+def cut_arguments(source: Path, region: dict[str, int], target: Path) -> list[str]:
+    """The pinned ffmpeg arguments of a region's cut: the first audio stream,
+    trimmed by sample, as bit-exact FLAC without metadata, so cutting again
+    gives the same bytes on the same ffmpeg."""
+    return ["-nostdin", "-hide_banner", "-nostats", "-loglevel", "error", "-i", str(source), "-map", "0:a:0",
+            "-af", f"atrim=start_sample={region['start']}:end_sample={region['end']},asetpts=PTS-STARTPTS",
+            "-map_metadata", "-1", "-fflags", "+bitexact", "-flags:a", "+bitexact", "-c:a", "flac",
+            "-compression_level", "5", "-f", "flac", "-y", str(target)]
+
+
+def flac_stream_info(path: Path) -> tuple[int, int]:
+    """A FLAC file's sample rate and total samples per channel, from its
+    STREAMINFO block."""
+    with open(path, "rb") as handle:
+        head = handle.read(42)
+    if len(head) < 42 or head[:4] != b"fLaC" or head[4] & 0x7F != 0:
+        raise RunError(f"{path} is not a FLAC file that begins with its STREAMINFO")
+    packed = int.from_bytes(head[18:26], "big")
+    return packed >> 44, packed & ((1 << 36) - 1)
+
+
+def cut_region(ffmpeg: str, source: Path, region: dict[str, int], target: Path,
+               timeout: float | None = None) -> str:
+    """Cut a region of the content to `target` and return the cut's digest.
+    A region past the content's end, or at another rate than the stream's,
+    is refused rather than cut short."""
+    try:
+        completed = subprocess.run([ffmpeg, *cut_arguments(source, region, target)], capture_output=True,
+                                   text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RunError(f"the region could not be cut: {exc}") from exc
+    if completed.returncode != 0:
+        raise RunError(f"the region could not be cut: ffmpeg exited {completed.returncode}: "
+                       f"{completed.stderr.strip()[-300:]}")
+    rate, samples = flac_stream_info(target)
+    if rate != region["rate"]:
+        raise RunError(f"the region is at {region['rate']} Hz but the content's first audio stream is at {rate} Hz")
+    if samples != region["end"] - region["start"]:
+        raise RunError(f"the region holds {region['end'] - region['start']} samples but the cut holds {samples}; "
+                       f"it runs past the content's end")
+    return bank.file_digest(target)
+
+
 class Run:
     """One `run`: the content, the catalog, the bank, and what happened."""
 
     def __init__(self, catalog: bank.Catalog, root: Path, content: Path, media_type: str, digest: str | None,
                  programs: dict[str, str], parameters: dict[str, dict[str, Any]], timeout: float | None,
-                 filed_under: str | None = None, optional: bool = False):
+                 filed_under: str | None = None, optional: bool = False, exact: bool = False):
         self.catalog, self.root, self.content, self.media_type = catalog, root, content, media_type
         self.digest, self.digest_checked = digest, digest is None
         self.programs, self.parameters, self.timeout = programs, parameters, timeout
@@ -299,8 +365,17 @@ class Run:
         self.filed_under = filed_under
         # Whether an extractor whose program is not configured is skipped (`all`) rather than failed.
         self.optional = optional
+        # Exact: an entry counts only under the configured key, never one
+        # that stands in for it (ADR 0090's amendment).
+        self.exact = exact
+        # The configured key of each extractor answered by a stand-in, and
+        # why a stand-in could not be looked up.
+        self.stands_in_for: dict[str, str] = {}
+        self.lookup_errors: dict[str, str] = {}
         self.lock = threading.Lock()
         self.scratch: Path | None = None
+        # A region run's cut and its digest, made once before the first extractor runs.
+        self.cut: tuple[Path, str] | None = None
 
     # -- the content's digest --------------------------------------------
 
@@ -311,6 +386,29 @@ class Run:
 
     def directory_digest(self) -> str:
         return self.filed_under or self.content_digest()
+
+    @property
+    def region(self) -> dict[str, int] | None:
+        """The region of the content this run is limited to (ADR 0112), from
+        the catalog's view (`Catalog.within`); None for the whole content."""
+        if self.catalog.region is None:
+            return None
+        return self.catalog.region_of(self.content_digest())
+
+    def input_media_type(self) -> str:
+        return CUT_MEDIA_TYPE if self.region is not None else self.media_type
+
+    def make_cut(self) -> None:
+        """Cut the region once, into this run's scratch directory."""
+        with self.lock:
+            if self.cut is not None or self.region is None:
+                return
+            assert self.scratch is not None
+            ffmpeg = self.programs.get("ffmpeg") or shutil.which("ffmpeg")
+            if ffmpeg is None:
+                raise RunError("a region run cuts with ffmpeg; pass --program ffmpeg=<path>")
+            target = self.scratch / "cut.flac"
+            self.cut = (target, cut_region(ffmpeg, self.content, self.region, target, self.timeout))
 
     def verify_digest(self) -> None:
         """Hash the content once, before anything is filed under its digest."""
@@ -329,11 +427,13 @@ class Run:
         any is not applicable to this content."""
         order = self.catalog.order(targets)
         keys = self.catalog.keys(self.content_digest(), order, self.parameters)
+        if not self.exact:
+            keys = self.stand_in(order, keys)
         unusable: dict[str, str] = {}
         for extractor_id in order:
             extractor = self.catalog[extractor_id]
-            if not extractor.accepts(self.media_type):
-                unusable[extractor_id] = f"does not accept {self.media_type}"
+            if not extractor.accepts(self.input_media_type()):
+                unusable[extractor_id] = f"does not accept {self.input_media_type()}"
             elif self.optional and (missing := unconfigured(extractor, self.programs)):
                 unusable[extractor_id] = (f"runs ${{{missing}}}, which is not configured here; "
                                           f"pass --program {missing}=<path> to run it")
@@ -343,6 +443,28 @@ class Run:
                         unusable[extractor_id] = f"needs {source}, which {unusable[source]}"
                         break
         return order, keys, unusable
+
+    def stand_in(self, order: list[str], keys: dict[str, str]) -> dict[str, str]:
+        """Where the bank holds no entry under an interchangeable extractor's
+        configured key but one that stands in for it, take that entry's
+        parameters for this run, so it is a hit and what needs it keys on
+        it. A record that cannot be read fails that extractor, never reads
+        as no stand-in."""
+        reader = bank.Bank(self.root, self.catalog, self.parameters)
+        for extractor_id in order:
+            if self.catalog[extractor_id].interchangeable is None:
+                continue
+            try:
+                found = reader.entry(self.content_digest(), extractor_id, self.filed_under)
+            except bank.BankError as exc:
+                self.lookup_errors[extractor_id] = str(exc)
+                continue
+            if found is not None and found.manifest["key"] != keys[extractor_id]:
+                self.stands_in_for[extractor_id] = keys[extractor_id]
+                self.parameters = {**self.parameters, extractor_id: found.manifest["parameters"]}
+                keys = self.catalog.keys(self.content_digest(), order, self.parameters)
+                reader = bank.Bank(self.root, self.catalog, self.parameters)
+        return keys
 
     def request(self, extractor_id: str, keys: dict[str, str], output_dir: Path) -> dict[str, Any]:
         """The request an extractor receives: everything it may read, by path
@@ -365,9 +487,15 @@ class Run:
                 "extractor": {"id": extractor.id, "version": extractor.version},
                 "key": keys[extractor_id],
                 "parameters": self.catalog.parameters(extractor_id, self.parameters),
-                "input": {"path": str(self.content.resolve()), "digest": self.content_digest(),
-                          "media_type": self.media_type},
+                "input": self.input(),
                 "needs": needs, "output_dir": str(output_dir)}
+
+    def input(self) -> dict[str, str]:
+        """What an extractor reads: the content, or a region run's cut."""
+        if self.region is not None:
+            assert self.cut is not None
+            return {"path": str(self.cut[0].resolve()), "digest": self.cut[1], "media_type": CUT_MEDIA_TYPE}
+        return {"path": str(self.content.resolve()), "digest": self.content_digest(), "media_type": self.media_type}
 
     # -- running one extractor ---------------------------------------------
 
@@ -419,9 +547,12 @@ class Run:
             manifest = {"contract": bank.ENTRY_CONTRACT, "key": key,
                         "extractor": {"id": extractor.id, "version": extractor.version},
                         "parameters": request["parameters"], "content": self.content_digest(),
-                        "media_type": self.media_type,
+                        "media_type": self.input_media_type(),
                         "needs": {need: keys[need.split("/", 1)[0]] for need in extractor.needs},
                         **checked, "started_at": started, "ended_at": now(), "runner": RUNNER}
+            if self.region is not None:
+                assert self.cut is not None
+                manifest.update(contract=bank.REGION_ENTRY_CONTRACT, region=self.region, cut=self.cut[1])
             bank.check_entry(manifest, f"{extractor_id} entry")
             if not place_entry(output_dir, manifest, final):
                 return {"status": "hit", "key": key, "entry": str(final), "raced": True}
@@ -471,6 +602,8 @@ class Run:
                                          "reason": unusable[extractor_id]}
                 continue
             try:
+                if extractor_id in self.lookup_errors:
+                    raise bank.BankError(self.lookup_errors[extractor_id])
                 entry = bank.read_entry(bank.entry_directory(self.root, self.directory_digest(), extractor_id,
                                                              keys[extractor_id]))
             except bank.BankError as exc:
@@ -481,6 +614,8 @@ class Run:
                 continue
             if entry is not None:
                 outcome[extractor_id] = {"status": "hit", "key": keys[extractor_id], "entry": str(entry.path)}
+                if extractor_id in self.stands_in_for:
+                    outcome[extractor_id]["stands_in_for"] = self.stands_in_for[extractor_id]
             else:
                 pending.append(extractor_id)
         if dry_run:
@@ -492,13 +627,17 @@ class Run:
                              "requires": extractor.manifest.get("requires", []),
                              "after": [keys[s] for s in self.catalog.upstream(extractor_id)],
                              "parameters": self.catalog.parameters(extractor_id, self.parameters),
-                             "input": {"digest": self.content_digest(), "media_type": self.media_type,
-                                       **({"filed_under": self.filed_under} if self.filed_under else {})}}}
+                             "input": {"digest": self.content_digest(), "media_type": self.input_media_type(),
+                                       **({"filed_under": self.filed_under} if self.filed_under else {}),
+                                       **({"region": self.region} if self.region is not None else {})}}}
             return self.answer(order, outcome)
         if pending:
             (self.root / "tmp").mkdir(parents=True, exist_ok=True)
             self.scratch = Path(tempfile.mkdtemp(prefix=f"run-{os.getpid()}-", dir=self.root / "tmp"))
         try:
+            if pending and self.region is not None:
+                self.verify_digest()
+                self.make_cut()
             with ThreadPoolExecutor(max_workers=jobs) as pool:
                 running: dict[Future, str] = {}
                 while pending or running:
@@ -532,12 +671,17 @@ class Run:
                   "extractors": {e: outcome[e] for e in order}}
         if self.filed_under is not None:
             answer["filed_under"] = self.filed_under
+        if self.region is not None:
+            answer["region"] = self.region
+            if self.cut is not None:
+                answer["cut"] = self.cut[1]
         return answer
 
 
 def run_from(catalog: bank.Catalog, root: Path, content: Path, media_type: str, digest: str | None,
              programs: dict[str, str], parameters: dict[str, dict[str, Any]], timeout: float | None,
-             feature: str, targets: list[str], jobs: int, dry_run: bool, optional: bool) -> dict[str, Any]:
+             feature: str, targets: list[str], jobs: int, dry_run: bool, optional: bool,
+             exact: bool = False) -> dict[str, Any]:
     """Run `targets` on a file feature of the content, as content (ADR 0075).
 
     The feature's extractor runs first, on the content, if its entry is
@@ -556,7 +700,7 @@ def run_from(catalog: bank.Catalog, root: Path, content: Path, media_type: str, 
     for target in targets:
         if source in catalog.order([target]):
             raise RunError(f"{target} would measure {feature}, which it makes or needs; it cannot be its own input")
-    first = Run(catalog, root, content, media_type, digest, programs, parameters, timeout)
+    first = Run(catalog, root, content, media_type, digest, programs, parameters, timeout, exact=exact)
     # The source is made with the operator's parameters; what measures it, with those an extractor prefers there.
     measuring = catalog.overrides_for(feature, parameters)
     made = first.execute([source], jobs, dry_run)
@@ -568,13 +712,18 @@ def run_from(catalog: bank.Catalog, root: Path, content: Path, media_type: str, 
         ok = dry_run and status == "would_run"
         return {"status": "ok" if ok else "failed", "content": None, "media_type": declared["media_type"],
                 "bank": str(root), "extractors": {}, "from": origin}
-    found = bank.Bank(root, catalog, parameters).input_of(made["content"], feature)
-    if found is None:
+    # Of the entries that answer for the feature (another device's may stand
+    # in, ADR 0090's amendment), the first over whose file every target is
+    # measured already, else the best: nothing is measured twice.
+    over = bank.Bank(root, catalog, parameters, exact=exact).measured_over(made["content"], feature, targets)
+    if not over:
         raise RunError(f"{feature} was made but its entry cannot be found")
-    path, stem_digest, stem_type = found
-    origin["entry"] = made["extractors"][source]["key"]
+    chosen = next((entry for entry, measures in over if all(measures.values())), over[0][0])
+    described = chosen.output(output)
+    path, stem_digest, stem_type = chosen.path / described["file"], described["sha256"], described["media_type"]
+    origin["entry"] = chosen.manifest["key"]
     second = Run(catalog, root, path, stem_type, stem_digest, programs, measuring, timeout,
-                 filed_under=made["content"], optional=optional)
+                 filed_under=made["content"], optional=optional, exact=exact)
     answer = second.execute(targets, jobs, dry_run)
     answer["from"] = origin
     return answer
@@ -582,7 +731,7 @@ def run_from(catalog: bank.Catalog, root: Path, content: Path, media_type: str, 
 
 def run_default(catalog: bank.Catalog, root: Path, content: Path, media_type: str, digest: str | None,
                 programs: dict[str, str], parameters: dict[str, dict[str, Any]], timeout: float | None,
-                targets: list[str], jobs: int, dry_run: bool, optional: bool) -> dict[str, Any]:
+                targets: list[str], jobs: int, dry_run: bool, optional: bool, exact: bool = False) -> dict[str, Any]:
     """Run `targets` on the content, each on its default input.
 
     The targets that prefer no feature run first, with everything they need.
@@ -590,17 +739,20 @@ def run_default(catalog: bank.Catalog, root: Path, content: Path, media_type: st
     the bank now holds (`Bank.default_input`), as `run_from` would, or the
     content where it holds none. Where that measure falls short of the
     preference's `at_least`, the target measures its next default input as
-    well (the mix, when its vocal stem is mostly unvoiced). A preferring
-    target's answer says which feature it measured (`input`) and the keys of
-    the measures it passed over (`passed_over`); what was run to measure a
-    feature is under `inputs`."""
-    run = Run(catalog, root, content, media_type, digest, programs, parameters, timeout, optional=optional)
+    well (the mix, when its vocal stem is mostly unvoiced). A preference
+    whose probe is in the bank and falls short is passed over before it is
+    measured. A preferring target's answer says which feature it measured
+    (`input`), the keys of the measures it passed over (`passed_over`), and
+    the keys of the probes that passed one over unmeasured (`probed_over`);
+    what was run to measure a feature is under `inputs`."""
+    run = Run(catalog, root, content, media_type, digest, programs, parameters, timeout, optional=optional,
+              exact=exact)
     preferring = [t for t in targets if catalog[t].prefers and catalog[t].accepts(media_type)]
     plain = [t for t in targets if t not in preferring]
     answer = run.execute(plain, jobs, dry_run) if plain else {
         "status": "ok", "content": run.content_digest(), "media_type": media_type, "bank": str(root),
         "extractors": {}}
-    reader = bank.Bank(root, catalog, parameters)
+    reader = bank.Bank(root, catalog, parameters, exact=exact)
     passed_over: dict[str, dict[str, str]] = {}
     pending = list(preferring)
     while pending:
@@ -616,7 +768,7 @@ def run_default(catalog: bank.Catalog, root: Path, content: Path, media_type: st
         pending = []
         for feature, group in by_feature.items():
             made = run_from(catalog, root, content, media_type, run.content_digest(), programs, parameters,
-                            timeout, feature, group, jobs, dry_run, optional)
+                            timeout, feature, group, jobs, dry_run, optional, exact)
             answer.setdefault("inputs", {})[feature] = {"content": made["content"],
                                                         "extractors": made["extractors"], "from": made["from"]}
             for target in group:
@@ -632,7 +784,28 @@ def run_default(catalog: bank.Catalog, root: Path, content: Path, media_type: st
             answer["status"] = "ok" if answer["status"] == made["status"] == "ok" else "failed"
     for target, measures in passed_over.items():
         answer["extractors"][target]["passed_over"] = measures
+    if not dry_run:
+        for target in preferring:
+            probed = probed_over(reader, run.content_digest(), target, answer["extractors"][target].get("input"))
+            if probed:
+                answer["extractors"][target]["probed_over"] = probed
     return answer
+
+
+def probed_over(reader: bank.Bank, content: str, target: str, measured: str | None) -> dict[str, str]:
+    """The preferred features passed over, before the one measured, on their
+    probe alone (the target never measured them): each with the key of the
+    probe's entry that decided."""
+    probed: dict[str, str] = {}
+    for preference in reader.catalog[target].prefers:
+        if preference["input"] == measured:
+            break
+        if (preference["probe"] is not None and reader.input_of(content, preference["input"]) is not None
+                and reader.entry_from(content, preference["input"], target) is None):
+            entry = reader.probe_falls_short(content, preference)
+            if entry is not None:
+                probed[preference["input"]] = entry.manifest["key"]
+    return probed
 
 
 def makes_content(extractor: bank.Extractor) -> bool:
@@ -655,16 +828,53 @@ def unconfigured(extractor: bank.Extractor, programs: dict[str, str]) -> str | N
 
 # -- the command line ----------------------------------------------------------
 
+def programs_of(arguments: argparse.Namespace, config: dict[str, Any]) -> dict[str, str]:
+    programs = {"python": sys.executable, "sh": "/bin/sh", **config.get("programs", {})}
+    for item in arguments.program:
+        name, separator, value = item.partition("=")
+        if not separator or not bank.ID.fullmatch(name) or not value:
+            raise RunError(f"--program takes <name>=<path>, not {item!r}")
+        programs[name] = value
+    return programs
+
+
+def main_equivalence(arguments: argparse.Namespace) -> int:
+    """Exit 0 when the record passes, 1 when it fails (it is filed either
+    way), 2 when no record could be made."""
+    import equivalence
+    try:
+        if arguments.jobs < 1:
+            raise RunError("--jobs must be at least 1")
+        config = load_config(arguments.config)
+        catalog = catalog_of(arguments, config)
+        parameters = config.get("parameters", {})
+        catalog.check_overrides(parameters, f"configuration {arguments.config}")
+        contents = [Path(c) for c in arguments.content]
+        for content in contents:
+            if not content.is_file():
+                raise RunError(f"no content file at {content}")
+        record, path = equivalence.measure(catalog, Path(arguments.bank).resolve(), contents,
+                                           programs_of(arguments, config), parameters, arguments.extractor,
+                                           arguments.against, arguments.jobs, arguments.timeout)
+    except (RunError, bank.BankError, equivalence.EquivalenceError, OSError) as exc:
+        print(json.dumps({"status": "failed", "detail": str(exc)}), file=sys.stderr)
+        return 2
+    print(json.dumps({**equivalence.summary(record), "record": str(path)}, indent=1))
+    return 0 if record["pass"] else 1
+
+
 def load_config(path: str | None) -> dict[str, Any]:
     """Configuration: `{"programs": {name: path}, "parameters": {extractor:
-    {field: value}}, "extractors": [directory, ...]}`, all optional."""
+    {field: value}}, "extractors": [directory, ...], "backfill": {...}}`, all
+    optional; `backfill` is `enrich backfill`'s (backfill.py) and the runner
+    ignores it."""
     if path is None:
         return {}
     try:
         config = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise RunError(f"configuration {path} is unreadable: {exc}") from exc
-    if not isinstance(config, dict) or set(config) - {"programs", "parameters", "extractors"}:
+    if not isinstance(config, dict) or set(config) - {"programs", "parameters", "extractors", "backfill"}:
         raise RunError(f"configuration {path} must be an object of programs, parameters, and extractors")
     if not all(isinstance(v, str) for v in config.get("programs", {}).values()):
         raise RunError(f"configuration {path}: each program is a path")
@@ -699,7 +909,23 @@ def main(argv: list[str] | None = None) -> int:
     running.add_argument("--from", dest="source", metavar="EXTRACTOR/OUTPUT")
     running.add_argument("--no-prefer", action="store_true",
                          help="measure the content itself, even where an extractor prefers a feature of it")
+    running.add_argument("--exact", action="store_true",
+                         help="count only the configured key's entry, never one that stands in for it")
+    comparing = commands.add_parser("equivalence", help="measure whether interchangeable entries agree downstream "
+                                                        "and file the record (ADR 0090's amendment)")
+    comparing.add_argument("extractor")
+    comparing.add_argument("--content", action="append", required=True, help="a test input; give several")
+    comparing.add_argument("--against", required=True, help="the other value of the interchangeable parameter")
+    comparing.add_argument("--bank", required=True)
+    comparing.add_argument("--jobs", type=int, default=1)
+    comparing.add_argument("--config")
+    comparing.add_argument("--program", action="append", default=[])
+    comparing.add_argument("--extractors", action="append")
+    comparing.add_argument("--timeout", type=float)
+    running.add_argument("--region", help="limit the run to [start, end) samples at rate: <start>:<end>:<rate>")
     arguments = parser.parse_args(argv)
+    if arguments.command == "equivalence":
+        return main_equivalence(arguments)
     try:
         config = load_config(arguments.config)
         catalog = catalog_of(arguments, config)
@@ -717,12 +943,7 @@ def main(argv: list[str] | None = None) -> int:
             raise RunError(f"no content file at {content}")
         if arguments.digest is not None and not bank.derived.is_digest(arguments.digest):
             raise RunError(f"--digest must be sha256:<64 hex>, not {arguments.digest!r}")
-        programs = {"python": sys.executable, "sh": "/bin/sh", **config.get("programs", {})}
-        for item in arguments.program:
-            name, separator, value = item.partition("=")
-            if not separator or not bank.ID.fullmatch(name) or not value:
-                raise RunError(f"--program takes <name>=<path>, not {item!r}")
-            programs[name] = value
+        programs = programs_of(arguments, config)
         catalog.check_overrides(config.get("parameters", {}), f"configuration {arguments.config}")
         everything = arguments.extractor == "all"
         targets = sorted(catalog.extractors) if everything else [arguments.extractor]
@@ -730,6 +951,11 @@ def main(argv: list[str] | None = None) -> int:
             catalog[target]
         root = Path(arguments.bank).resolve()
         media_type = arguments.media_type or media_type_of(content)
+        if arguments.region is not None:
+            region = parse_region(arguments.region)
+            if arguments.digest is None:
+                arguments.digest = bank.file_digest(content)
+            catalog = catalog.within(arguments.digest, region)
         if arguments.source is not None:
             if everything:
                 # Everything that can measure the feature; not what makes it,
@@ -739,15 +965,15 @@ def main(argv: list[str] | None = None) -> int:
                 targets = [t for t in targets if source not in catalog.order([t]) and not makes_content(catalog[t])]
             answer = run_from(catalog, root, content, media_type, arguments.digest, programs,
                               config.get("parameters", {}), arguments.timeout, arguments.source, targets,
-                              arguments.jobs, arguments.dry_run, everything)
+                              arguments.jobs, arguments.dry_run, everything, arguments.exact)
         elif arguments.no_prefer:
             run = Run(catalog, root, content, media_type, arguments.digest, programs, config.get("parameters", {}),
-                      arguments.timeout, optional=everything)
+                      arguments.timeout, optional=everything, exact=arguments.exact)
             answer = run.execute(targets, arguments.jobs, arguments.dry_run)
         else:
             answer = run_default(catalog, root, content, media_type, arguments.digest, programs,
                                  config.get("parameters", {}), arguments.timeout, targets, arguments.jobs,
-                                 arguments.dry_run, everything)
+                                 arguments.dry_run, everything, arguments.exact)
     except (RunError, bank.BankError) as exc:
         print(json.dumps({"status": "failed", "detail": str(exc)}), file=sys.stderr)
         return 1

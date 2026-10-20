@@ -56,8 +56,8 @@ scratch copy.
   leave-one-session-out on both kinds of label, and change the preset only
   if the labels move it and the window calibration still holds.
 - **Stem separation cost.** CPU separation takes about 33 s per minute of
-  audio; GPU separation through Spool (ADR 0090) waits for Spool 0.0.4 on both
-  machines and a grant.
+  audio; GPU separation through Spool and stand-in stems are step 0 of the
+  implementation order ([below](#step-0-bulk-import-at-scale-adr-0112)).
 
 ## Lead sheets and practice
 
@@ -106,6 +106,152 @@ scratch copy.
     non-commercial data keeps its weights to the operator's machines.
   The calibrations already done (the detector's held-out sessions, the window
   matcher's report, the melody metrics) are early instances to fold in.
+  The first instance is the horn set, [`enrich/bench`](../enrich/bench/README.md):
+  separated horn solos scored against a jazz-solo database and an aligned
+  saxophone omnibook, data private on the x86-64 laptop and referenced by
+  digest, `basic-pitch` and `horn-d0` baselines, and a `bench-horn` suite that
+  fails when a mean note F1 drops by more than 0.02. Still to come: other
+  tasks' sets, variants run from feature-bank outputs, a held-out split for
+  tuning, and cost in the gate.
+
+## Step 0: bulk import at scale (ADR 0112)
+
+Decided 2026-10-19 ([ADR 0112](decisions/0112-bulk-import-at-scale.md) and
+[ADR 0090's amendment](decisions/0090-extractor-runs-travel-through-spool.md#amendment-2026-10-19-a-stem-is-a-stem));
+the four pieces are built and merged together on `bulk/integration`
+(2026-10-19), each item saying what is left. Measured: the backfill costs about 0.98 s of laptop
+compute per audio-second; parallel copies and the Mac's GPU project 7.0x,
+with song regions 12.7x. Each record's "For the operator to confirm" list
+gives the proposed thresholds; build to them, and change them only on the
+operator's answer.
+
+Measured on `bulk/integration` (two profiled recordings on the laptop,
+scratch banks): `--eager` reaches 0.337 s per audio-second saturated on the
+laptop alone (2.9x) and 0.277 with stems on the Mac (3.5x, bound by the
+worker's transfers, one task at a time); `--songs` at the shadow's song
+coverage would reach 0.200 (4.9x). Below the projected 7x and 12.7x
+because stems cost more under load and f0-pesto costs 0.37 core-seconds per
+audio-second over its two passes. Before `--songs` is used on real data:
+region stems disagree with whole stems over the same span (bass SNR
+-0.15 dB on a 485 s region; not yet diagnosed), and no reader takes a
+region entry yet (`enrich propose` and the relay read whole entries), so a
+region entry is made and never read. A region that is the whole recording
+is made whole. Next levers by size: the Mac worker's throughput (two tasks
+at once, or FLAC instead of float WAV), f0-pesto on MPS, the layout's
+reserved widths (chordino reserves 3 cores and uses 1, basic-pitch reserves
+1 and uses about 3), then the cost gate's numbers replacing `SETTINGS` and
+`regions.PROFILED_COSTS`.
+
+Four pieces can be built at once, each on its own branch. `enrich/bank.py`
+is shared: **gpu** owns `Bank.entry`'s lookup and the manifest check,
+**triage** adds new functions beside them (keys, regions, requests) and
+leaves `Bank.entry` alone, and **scheduler** consumes both and merges last.
+**melody** is independent. Every piece runs on copies or scratch banks,
+never the shadow archive or its bank, and passes the cost gate once
+scheduler has added it.
+
+- **scheduler.** Built (`enrich backfill`, the pool, Spool fan-out, a dry
+  run by default; [the runbook](shadow-runbook.md#filling-the-feature-bank)),
+  and joined to the other three on `bulk/integration`: modes `songs`,
+  `eager` and `on-demand` from `regions.plan`, with the expensive units of
+  `songs` run over each recording's `regions_for` song regions as region
+  entries (`structure/playing` from the bank as the last source); bank
+  requests planned first in every mode, a request for a measure of a stem
+  planning the stem over its region too; stand-ins counted as made (the
+  planner reads through `Bank`), and a routed extractor's
+  `remote_parameters` (`stems` on the Mac with `apply.device` `mps`)
+  refused at the start unless a passing equivalence record is in the bank,
+  with a worker entry that does not stand in made here; `f0-pesto --from
+  stems/vocals` ordered before `melody` so its probe is read. Left:
+  `--follow` (serve `requests/` as they arrive) and removing a request once
+  its entry is made; region jobs on Spool (a task carries no region until
+  triage's task `/2`); the `bench-cost` suite, whose baselines replace both
+  the scheduler's `SETTINGS` costs and `regions.PROFILED_COSTS`, which
+  differ today (f0-pesto per unit against per recording); a first dry run
+  on a copy of the shadow.
+  As decided: `enrich/backfill.py` and `enrich/enrich.py backfill`
+  (ADR 0112's flags). Plan from the archive (the Artifacts `enrich propose
+  --all` finds) and the bank: compute the mode's keys, drop those present
+  or standing in, order requests, song regions, the rest. Regions come from
+  triage's `regions_for(export, artifact)`; until it lands, plan whole
+  content only. A pool of copies sized to cores and memory, threads per
+  extractor from the configuration, setting `OMP_NUM_THREADS` and its
+  kin (extract the slot and thread decision into a named, tested function).
+  Route configured extractors through `enrich/remote.py put` and collect as
+  results arrive; dependents wait. `--follow` reads `requests/`; `--dry-run`
+  prints the plan and projected days from recorded costs. Report
+  audio-seconds per wall-second. Tests (`enrich/test_backfill.py`, synthetic
+  audio from `enrich/support.py`): a rerun over an unchanged bank runs
+  nothing (replace the runner with one that raises); a run killed midway
+  resumes and files each entry once; a failed run is recorded and not
+  retried; each mode plans the keys it should. Also the `bench-cost` suite
+  in `enrich/bench`: CPU-seconds per audio-second per extractor, version and
+  machine against a recorded baseline, failing above the tolerance; declare
+  it with wf's suites as `bench-horn` is. Replace the hand-written backfill
+  scripts in [the shadow runbook](shadow-runbook.md).
+- **gpu.** Built 2026-10-19 but for `f0-pesto` on MPS (see its last
+  sentence): the stems record over six 60 s clips of two rehearsals passes
+  (note F1 pooled 0.997 vocals and bass; f0 0.09 cents; voicing 100%);
+  the set of ten clips from other recordings is still the operator's to
+  confirm. `interchangeable` in the manifest check
+  (`bank.check_manifest`) and in `stems`' `extractor.json` (update its
+  `SHIPPED` pin); `extract.py equivalence` writing and validating the
+  equivalence record (`archive-feature-bank-equivalence/1`) in the same
+  change; `Bank.entry` looks up stand-ins only under a passing record whose
+  software matches, and `entry_from` finds a measure over any in-tolerance
+  stem, the configured device's first; the runner and `remote.py put`
+  count a stand-in as `hit`, `--exact` asks for the configured key alone.
+  Tests: a stand-in is found with a passing record and not without one, not
+  with a failing one, and not with a software mismatch (each swallowed
+  branch its own test). Then the Mac worker path end to end: Spool 0.0.4 on
+  both machines, the grant, `worker.json` and a real `stems` run on the
+  Mac's GPU into a scratch bank, collected and filed; measure the record
+  over the agreed test set. Last, if a small environment with pesto and
+  torch fits the Mac's disk: `f0-pesto` with a `device` parameter (ADR
+  0090 amendment, item 4), its equivalence record, and its speed on MPS.
+- **triage.** Region keys (`archive-feature-bank-key/2`) and region entries
+  in `enrich/bank.py`, with their validator in the same change; `extract.py
+  run --region` cutting a pinned FLAC and recording the region and the
+  cut's digest; `Bank.covering(content, extractor, start, end)` answering a
+  whole or containing region entry; `remote.py` task
+  `archive-extractor-task/2` carrying the cut, and collect cutting again to
+  check it. `enrich/regions.py`: `regions_for` from accepted song
+  occurrences, else the detector's song suggestions, widened, snapped and
+  merged. Bank requests (`archive-feature-bank-request/1`, `requests/` named
+  by key) written by `relay/practice.py` (a `queued` status in
+  `relay/openapi.json` when the bank has a scheduler, the
+  `stems_not_made` refusal otherwise), by `enrich propose`, and by
+  `enrich/live.py compare` once it exists; proposers read region entries
+  with the region's offset. Tests: a whole-content key is unchanged by the
+  change (pin one); a region entry's outputs land at the right recording
+  times; a span edited within its margin is still covered; a second request
+  is the same file; the relay answers `queued`, never an empty result.
+  Measure on shadow copies how much of the audio song regions cover, with
+  and without detector spans.
+  *Built (branch `bulk/triage`):* region keys and entries with their
+  validator, `extract.py run --region`, `bank.covering`, bank requests
+  (`bank.ask`, `bank.requests`), `enrich/regions.py` (span precedence,
+  `regions_for`, `plan` per mode from recorded costs), and the relay's
+  `bank_scheduler` with `queued` and `feature_queued`. *Left:* `remote.py`
+  task `/2`; requests from `enrich propose` and region offsets in the
+  proposers; the coverage measurement on shadow copies.
+- **melody.** Decide before `melody`'s mix pass, cheaply, whether the vocal
+  stem will fall short, so the extractor runs once rather than twice (the
+  profile: the vocal pass falls short and the 151 s mix pass follows it on
+  a 2715 s rehearsal). Measure on shadow copies how often the vocal pass
+  falls short and what the mix melody gives there; candidates are the
+  vocal stem's `f0-pesto` voicing (already made) or its level, read through
+  `prefers`' `at_least` so the runner and every reader
+  (`Bank.default_input`) still agree on which entry is the default. Keep
+  the melody metrics and the bench's F1 within their gates, and show the
+  saving in the cost gate; bump `melody`'s version only if its outputs can
+  change. Tests in `enrich/test_melody.py` and `enrich/test_bank.py`
+  (preferred inputs).
+  Built (branch `bulk/melody`): a preference's `probe` (ADR 0076's second
+  amendment), `f0-pesto`'s confidence on the vocal stem; `melody` stays
+  version 3. The scheduler runs `f0-pesto --from stems/vocals` before
+  `melody` (`backfill.unit_order`). Left for the cost gate: the saving, once `bench-cost`
+  exists.
 
 ## People, samples, and rehearsals (ADRs 0092-0111)
 
@@ -113,7 +259,11 @@ The operator accepted ADRs 0092 to 0111 on 2026-10-19 as decisions only:
 none of their contracts, routes, or commands is built, and each installs
 with its implementation in a later specification release.
 
-- **Implementation order** (operator, 2026-10-19): (1) lineage, origin, and
+- **Implementation order** (operator, 2026-10-19): (0) bulk import at
+  scale ([ADR 0112](decisions/0112-bulk-import-at-scale.md), with
+  [ADR 0090's amendment](decisions/0090-extractor-runs-travel-through-spool.md#amendment-2026-10-19-a-stem-is-a-stem)),
+  first because every later step adds extractors or readers of the bank
+  ([its build work](#step-0-bulk-import-at-scale-adr-0112)); (1) lineage, origin, and
   rights by use ([ADR 0098](decisions/0098-content-lineage.md),
   [ADR 0096](decisions/0096-origin-of-recordings.md),
   [ADR 0097](decisions/0097-rights-by-use.md)); (2) selection version 3,

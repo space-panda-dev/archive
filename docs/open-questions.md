@@ -415,7 +415,11 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
     the same key. Should a reader refuse entries whose recorded software
     differs from its own, or should a key include a fingerprint of it? (A
     claim made from features keeps the software either way: its run copies
-    each read entry's `software`.)
+    each read entry's `software`.) For parameters a manifest declares
+    interchangeable, such as the stems' device, an equivalence record that
+    names the software on both sides answers it
+    ([ADR 0090's amendment](decisions/0090-extractor-runs-travel-through-spool.md#amendment-2026-10-19-a-stem-is-a-stem));
+    it stays open for the rest.
   - How is the disclosure of content to a worker outside the operator's
     custody recorded before the put (the Spool adapter question above)?
     [ADR 0090](decisions/0090-extractor-runs-travel-through-spool.md)

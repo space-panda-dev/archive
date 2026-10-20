@@ -10,6 +10,12 @@
                  [--staging <annex>] [--dry-run | --regenerate]
     enrich propose --archive <dir> (--artifact <object id> [--stream <claim id>] | --all)
                    [--proposers <name,...>] [--bank <root>] [--config <file>] [--staging <annex>] [--dry-run]
+    enrich backfill --archive <dir> --bank <root> [--config <file>] [--mode songs|eager|on-demand] [--cores <n>]
+                    [--spool <command>] [--commit] [--retry-failed] [--world-store <dir>] [--log <file>]
+
+`backfill` (backfill.py, ADR 0112) probes, fills the feature bank, and
+proposes for every recording; it streams one JSON line per event and is a
+dry run unless `--commit`.
 
 The command reads the archive only through `archive export`, runs the tool on
 locally present content, and proposes the run and its claims to `door admit`
@@ -674,7 +680,19 @@ def main(argv: list[str] | None = None) -> int:
     import propose
     propose.add_arguments(proposing)
     common(proposing)
+    backfilling = commands.add_parser("backfill", help="fill the feature bank for every recording and propose "
+                                                       "what it holds (ADR 0112); a dry run unless --commit")
+    import backfill
+    backfill.add_arguments(backfilling)
+    common(backfilling)
     args = parser.parse_args(argv)
+    if args.command == "backfill":
+        # Streams JSON lines, one per event, rather than printing one answer.
+        try:
+            return backfill.main(args, environment())
+        except (CommandError, backfill.BackfillError, backfill.bank.BankError, backfill.remote.RemoteError) as exc:
+            print(json.dumps({"status": "failed", "detail": str(exc)}), file=sys.stderr)
+            return 1
     if args.command == "match-windows" and args.jobs < 1:
         parser.error("--jobs must be at least 1")
     errors: tuple[type[Exception], ...] = (CommandError, adapter.AdapterError, probe_tool.ProbeError)

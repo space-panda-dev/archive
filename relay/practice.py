@@ -11,6 +11,12 @@ derived-media root may be deleted at any time.
 
 Which features are served is configuration; to whom is the recording's
 answer, decided by `practice_refusal` in `world/exports.py`.
+
+When the bank has a scheduler (`bank_scheduler`, ADR 0112), a served feature
+that is not made is asked for: the relay files a bank request for the entry
+the installed extractors would make of the whole recording, and answers that
+it is queued, never an empty result (INV-24). The request is the only thing
+the relay writes in the bank, and asking again is the same file.
 """
 
 from __future__ import annotations
@@ -59,8 +65,10 @@ class Features:
     """The configured practice features, checked against the installed
     extractors, and the bank they are read from."""
 
-    def __init__(self, root: Path | None, names: tuple[str, ...], parameters: Mapping[str, Any] | None):
+    def __init__(self, root: Path | None, names: tuple[str, ...], parameters: Mapping[str, Any] | None,
+                 scheduler: bool = False):
         self.names = frozenset(names)
+        self.scheduler = scheduler
         if len(self.names) != len(names):
             raise ValueError("practice_features repeats a feature")
         if not names:
@@ -111,27 +119,50 @@ class Features:
             raise Refused("feature_not_served", f"{name} is not a file")
         return entry.path / described["file"], described, entry.manifest["key"]
 
+    def ask(self, digest: str, extractor: str) -> str | None:
+        """With a scheduler, ask for the extractor's entry of the whole
+        recording and return its key; None without one."""
+        if not self.scheduler:
+            return None
+        try:
+            _, key, _ = bank.ask(self.bank, digest, extractor, "relay")
+        except (bank.BankError, OSError) as exc:
+            raise Refused("internal_error", f"the feature bank request could not be filed: {exc}") from None
+        return key
+
     def listing(self, digest: str) -> dict[str, Any]:
-        """Which configured features exist for this content."""
-        features, missing = [], []
+        """Which configured features exist for this content; with a
+        scheduler, those not made are asked for and listed as `queued`, each
+        with the key its entry will have."""
+        features, missing, queued = [], [], []
         for name in sorted(self.names):
             found = self.find(digest, name)
             if found is None:
                 missing.append(name)
+                key = self.ask(digest, name.split("/", 1)[0])
+                if key is not None:
+                    queued.append({"name": name, "key": key})
                 continue
             _, described, key = found
             features.append({"name": name, "media_type": described["media_type"], "bytes": described["bytes"],
                              "sha256": described["sha256"], "key": key})
-        return {"content": digest, "features": features, "missing": missing}
+        answer = {"content": digest, "features": features, "missing": missing}
+        if self.scheduler:
+            answer["queued"] = queued
+        return answer
 
-    def stems(self, request: dict[str, Any]) -> dict[str, Path]:
+    def stems(self, request: dict[str, Any]) -> dict[str, Path] | None:
         """The stem files a practice request mixes, from the entry it names.
         The entry must be the one the installed extractors give the
-        recording; otherwise its stems are `stems_not_made` here."""
+        recording; otherwise its stems are `stems_not_made` here. With a
+        scheduler, an entry not made yet whose key is the one it will have
+        is asked for, and None says it is queued."""
         extractor, key = request["stems"]["extractor"], request["stems"]["key"]
         inputs = {}
         for output in sorted(request["gains"]):
             found = self.find(request["content"], f"{extractor}/{output}")
+            if found is None and self.scheduler and self.ask(request["content"], extractor) == key:
+                return None
             if found is None or found[2] != key:
                 raise Refused("stems_not_made", f"the bank holds no {extractor} entry {key} for this recording")
             inputs[output] = found[0]
@@ -175,6 +206,12 @@ class Renderer:
         if installed is None or installed["version"] != renderer["version"]:
             raise Refused("renderer_unknown", f"no renderer {renderer['id']} version {renderer['version']} is installed")
         return installed["command"]
+
+    def queued(self, checked: dict[str, Any]) -> dict[str, Any]:
+        """The answer while the stems a render mixes are queued in the bank:
+        the client asks again, as it does while rendering."""
+        self.command(checked["renderer"])
+        return {**self.answer(checked, exports.practice_key(checked), None), "status": "queued"}
 
     def answer(self, request: dict[str, Any], key: str, size: int | None) -> dict[str, Any]:
         answer = {"key": key, "status": "ready" if size is not None else "rendering",

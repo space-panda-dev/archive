@@ -39,6 +39,13 @@ REQUEST_CONTRACT = "archive-extractor-request/1"
 RESULT_CONTRACT = "archive-extractor-result/1"
 ENTRY_CONTRACT = "archive-feature-bank-entry/1"
 KEY_CONTRACT = "archive-feature-bank-key/1"
+EQUIVALENCE_CONTRACT = "archive-feature-bank-equivalence/1"
+# A region entry (ADR 0112): made over `[start, end)` of its content, keyed by
+# `/1`'s members and the region; every whole-content key stays a `/1` key.
+REGION_ENTRY_CONTRACT = "archive-feature-bank-entry/2"
+REGION_KEY_CONTRACT = "archive-feature-bank-key/2"
+BANK_REQUEST_CONTRACT = "archive-feature-bank-request/1"
+REQUESTS = "requests"
 
 EXTRACTORS = Path(__file__).resolve().parent / "extractors"
 MANIFEST = "extractor.json"
@@ -65,6 +72,13 @@ DTYPES = {"f32": 4, "f64": 8, "i16": 2, "i32": 4, "i64": 8, "u8": 1}
 _ARRAY_CODES = {"f32": "f", "f64": "d"}  # the float types, checked for finite values
 KINDS = ("series", "scalar", "events", "spans", "file")
 MAX_SOFTWARE = 32
+# Where equivalence records live under a bank root (ADR 0090's amendment).
+EQUIVALENCE = "equivalence"
+# The downstream measures an `interchangeable` declaration may name, and the
+# extractor whose entries each compares; enrich/equivalence.py implements
+# them, and a test holds the two lists equal.
+MEASURES = {"note-f1": "notes-basic-pitch", "f0-cents-p99": "f0-pesto", "voicing-agreement": "f0-pesto"}
+PARAMETER_PATH = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,62}(\.[A-Za-z_][A-Za-z0-9_]{0,62}){0,7}")
 
 
 class BankError(Exception):
@@ -130,15 +144,37 @@ def check_parameters(value: Any, where: str = "parameters") -> None:
 
 
 def key_of(extractor_id: str, version: str, parameters: Mapping[str, Any], content: str,
-           needs: Mapping[str, str]) -> str:
+           needs: Mapping[str, str], region: Mapping[str, int] | None = None) -> str:
     """An entry's key: the digest of what decides its outputs. `needs` maps
     each needed feature to the key of the entry holding it, so a change
-    anywhere upstream is a new key here."""
+    anywhere upstream is a new key here. With a `region`, the key is a
+    region entry's (`archive-feature-bank-key/2`); without one it is the
+    whole content's `/1` key, exactly as before regions existed."""
     if not derived.is_digest(content):
         raise BankError(f"not a canonical content digest: {content!r}")
-    return digest_of(canonical({"contract": KEY_CONTRACT, "extractor": extractor_id, "version": version,
-                                "parameters": digest_of(canonical(parameters)), "content": content,
-                                "needs": dict(needs)}))
+    described = {"contract": KEY_CONTRACT, "extractor": extractor_id, "version": version,
+                 "parameters": digest_of(canonical(parameters)), "content": content, "needs": dict(needs)}
+    if region is not None:
+        described = {**described, "contract": REGION_KEY_CONTRACT, "region": check_region(region)}
+    return digest_of(canonical(described))
+
+
+def check_region(region: Any, where: str = "region") -> dict[str, int]:
+    """`{start, end, rate}`: `[start, end)` in samples at the content's
+    stream rate, `0 <= start < end`, all integers (ADR 0112)."""
+    _require(isinstance(region, dict) and set(region) == {"start", "end", "rate"},
+             f"{where} must be exactly {{start, end, rate}}")
+    _require(all(isinstance(region[k], int) and not isinstance(region[k], bool) for k in region),
+             f"{where}: start, end, and rate are integers")
+    _require(0 <= region["start"] < region["end"] <= MAX_INTEGER and 0 < region["rate"] <= 10_000_000,
+             f"{where}: needs 0 <= start < end and a positive rate")
+    return {"start": region["start"], "end": region["end"], "rate": region["rate"]}
+
+
+def region_contains(region: Mapping[str, int], start: int, end: int, rate: int) -> bool:
+    """Whether `[start, end)` at `rate` lies wholly inside the region, compared
+    exactly across rates (no rounding)."""
+    return region["start"] * rate <= start * region["rate"] and end * region["rate"] <= region["end"] * rate
 
 
 # -- layout ------------------------------------------------------------------
@@ -220,8 +256,16 @@ class Extractor:
     def prefers(self) -> list[dict[str, Any]]:
         """The file features this extractor measures by default where the
         content has them, in order, each with the parameters it takes there
-        and the minimums its measure there must reach to be the default."""
-        return [{"parameters": {}, "at_least": {}, **preference} for preference in self.manifest.get("prefers", [])]
+        and the minimums its measure there must reach to be the default,
+        and the probe that may pass it over before it is measured."""
+        return [{"parameters": {}, "at_least": {}, "probe": None, **preference}
+                for preference in self.manifest.get("prefers", [])]
+
+    @property
+    def interchangeable(self) -> dict[str, Any] | None:
+        """The parameter whose declared values make entries that may stand
+        in for each other under a passing equivalence record, or None."""
+        return self.manifest.get("interchangeable")
 
     def accepts(self, media_type: str) -> bool:
         kind, _, sub = media_type.partition("/")
@@ -264,12 +308,89 @@ def check_output_declaration(where: str, name: str, declared: Any) -> None:
     _require(not extra, f"{where}: output {name} has unknown fields {sorted(extra)}")
 
 
+def parameter_at(parameters: Mapping[str, Any], path: str) -> Any:
+    """The value at a dotted path of parameters (`apply.device`), or None."""
+    value: Any = parameters
+    for part in path.split("."):
+        if not isinstance(value, dict) or part not in value:
+            return None
+        value = value[part]
+    return value
+
+
+def with_parameter(parameters: Mapping[str, Any], path: str, value: Any) -> dict[str, Any]:
+    """A copy of parameters with the dotted path set to value."""
+    copy = json.loads(json.dumps(parameters))
+    target = copy
+    *parents, last = path.split(".")
+    for part in parents:
+        target = target[part]
+    target[last] = value
+    return copy
+
+
+def check_interchangeable(declared: Any, manifest: Mapping[str, Any], where: str) -> None:
+    """`interchangeable` (ADR 0090's amendment): one parameter, the values of
+    it whose entries may stand in for each other once an equivalence record
+    passes, the software a record must match, and the downstream agreement
+    that decides it."""
+    _require(isinstance(declared, dict) and set(declared) == {"parameter", "values", "software", "agree"},
+             f"{where}: interchangeable is {{parameter, values, software, agree}}")
+    path = declared["parameter"]
+    _require(isinstance(path, str) and PARAMETER_PATH.fullmatch(path) is not None,
+             f"{where}: interchangeable.parameter is a dotted path of the parameters, such as apply.device")
+    values = declared["values"]
+    _require(isinstance(values, list) and len(values) >= 2 and len(set(map(str, values))) == len(values)
+             and all(isinstance(v, str) and ID.fullmatch(v) for v in values),
+             f"{where}: interchangeable.values lists at least two distinct names, such as cpu and mps")
+    _require(parameter_at(manifest.get("parameters", {}), path) in values,
+             f"{where}: the parameter {path} must be declared, with one of {values}")
+    software = declared["software"]
+    _require(isinstance(software, list) and software and len(set(software)) == len(software)
+             and all(isinstance(name, str) and 0 < len(name) <= 200 for name in software),
+             f"{where}: interchangeable.software lists the software names a record must match")
+    agree = declared["agree"]
+    _require(isinstance(agree, list) and agree, f"{where}: interchangeable.agree lists at least one measure")
+    outputs = manifest.get("outputs") if isinstance(manifest.get("outputs"), dict) else {}
+    seen = set()
+    for item in agree:
+        _require(isinstance(item, dict) and set(item) in ({"measure", "outputs", "at_least"},
+                                                          {"measure", "outputs", "at_most"}),
+                 f"{where}: each agreement is {{measure, outputs, at_least or at_most}}")
+        _require(item["measure"] in MEASURES, f"{where}: no measure {item['measure']!r}; known: {sorted(MEASURES)}")
+        _require(item["measure"] not in seen, f"{where}: the measure {item['measure']} is named twice")
+        seen.add(item["measure"])
+        _require(isinstance(item["outputs"], list) and item["outputs"]
+                 and all(outputs.get(name, {}).get("kind") == "file" for name in item["outputs"]),
+                 f"{where}: {item['measure']} names file outputs this extractor declares")
+        bound = item.get("at_least", item.get("at_most"))
+        _require(isinstance(bound, str) and DECIMAL.fullmatch(bound) is not None,
+                 f"{where}: {item['measure']}'s threshold is decimal text, such as \"0.98\"")
+
+
+PROBE_FIELDS = {"series", "column", "at_or_above", "share_at_least"}
+
+
+def check_probe(probe: Any, where: str) -> None:
+    """A preference's probe: `{"series": "<extractor>/<output>", "column":
+    <n>, "at_or_above": "<decimal>", "share_at_least": "<decimal>"}`, the
+    share of that series' rows whose column is at or above a value, read
+    from another extractor's measure of the preferred feature."""
+    _require(isinstance(probe, dict) and set(probe) == PROBE_FIELDS
+             and isinstance(probe["series"], str) and FEATURE.fullmatch(probe["series"]) is not None
+             and isinstance(probe["column"], int) and not isinstance(probe["column"], bool) and probe["column"] >= 0
+             and all(isinstance(probe[f], str) and DECIMAL.fullmatch(probe[f]) is not None
+                     for f in ("at_or_above", "share_at_least")),
+             f"{where} is {{\"series\": \"<extractor>/<output>\", \"column\": <n>, "
+             f"\"at_or_above\": \"<decimal>\", \"share_at_least\": \"<decimal>\"}}")
+
+
 def check_manifest(manifest: Any, where: str) -> dict[str, Any]:
     """An extractor manifest, refused unless it is exactly the contract's shape."""
     _require(isinstance(manifest, dict), f"{where}: not a JSON object")
     _require(manifest.get("contract") == EXTRACTOR_CONTRACT, f"{where}: contract must be {EXTRACTOR_CONTRACT}")
     known = {"contract", "id", "version", "description", "command", "accepts", "requires", "needs", "prefers",
-             "parameters", "outputs"}
+             "parameters", "outputs", "interchangeable"}
     extra = set(manifest) - known
     _require(not extra, f"{where}: unknown fields {sorted(extra)}")
     _require(isinstance(manifest.get("id"), str) and ID.fullmatch(manifest["id"]) is not None,
@@ -294,7 +415,7 @@ def check_manifest(manifest: Any, where: str) -> dict[str, Any]:
     prefers = manifest.get("prefers", [])
     _require(isinstance(prefers, list), f"{where}: prefers must list preferred inputs")
     for preference in prefers:
-        _require(isinstance(preference, dict) and set(preference) <= {"input", "parameters", "at_least"}
+        _require(isinstance(preference, dict) and set(preference) <= {"input", "parameters", "at_least", "probe"}
                  and isinstance(preference.get("input"), str) and FEATURE.fullmatch(preference["input"]) is not None,
                  f"{where}: each preference is {{\"input\": \"<extractor>/<output>\", \"parameters\": {{...}}, "
                  f"\"at_least\": {{...}}}}")
@@ -305,6 +426,8 @@ def check_manifest(manifest: Any, where: str) -> dict[str, Any]:
         _require(all(isinstance(manifest.get("outputs"), dict)
                      and manifest["outputs"].get(name, {}).get("kind") == "scalar" for name in minimums),
                  f"{where}: at_least for {preference['input']} names only scalar outputs it declares")
+        if "probe" in preference:
+            check_probe(preference["probe"], f"{where}: the probe of {preference['input']}")
         fields = preference.get("parameters", {})
         _require(isinstance(fields, dict), f"{where}: a preference's parameters must be an object")
         check_parameters(fields, f"{where}: parameters preferred for {preference['input']}")
@@ -320,6 +443,9 @@ def check_manifest(manifest: Any, where: str) -> dict[str, Any]:
     files = [f for f in files if f is not None]
     _require(len(set(files)) == len(files) and RESULT not in files and ENTRY not in files,
              f"{where}: two outputs would share a file name")
+    if "interchangeable" in manifest:
+        check_interchangeable(manifest["interchangeable"], manifest, where)
+        _require(not needs, f"{where}: an extractor whose entries stand in for each other needs nothing")
     return manifest
 
 
@@ -335,6 +461,8 @@ class Catalog:
                 raise BankError(f"two extractors are called {extractor.id}: "
                                 f"{self.extractors[extractor.id].directory} and {extractor.directory}")
             self.extractors[extractor.id] = extractor
+        # The content and region a region run keys its entries over (see `within`).
+        self.region: tuple[str, dict[str, int]] | None = None
         for extractor in self.extractors.values():
             for need in extractor.needs:
                 source, output = FEATURE.fullmatch(need).groups()  # type: ignore[union-attr]
@@ -352,6 +480,26 @@ class Catalog:
                                     f"only a file can be content")
                 if source in self.order([extractor.id]):
                     raise BankError(f"{extractor.id} prefers {preference['input']}, which it makes or needs")
+                if preference["probe"] is not None:
+                    self.check_probe(extractor.id, preference)
+
+    def check_probe(self, extractor_id: str, preference: Mapping[str, Any]) -> None:
+        """A probe reads a series that another extractor here declares, with
+        the column it names. One whose extractor is not here is never present,
+        and the preference is measured as if it had none."""
+        probe = preference["probe"]
+        source, output = FEATURE.fullmatch(probe["series"]).groups()  # type: ignore[union-attr]
+        if source == extractor_id:
+            raise BankError(f"{extractor_id} probes its own {output}; its own measure is what at_least reads")
+        if source not in self.extractors:
+            return
+        declared = self[source].outputs.get(output, {})
+        if declared.get("kind") != "series" or declared.get("dtype") not in _ARRAY_CODES:
+            raise BankError(f"{extractor_id} probes {probe['series']} for {preference['input']}, "
+                            f"which is not a floating-point series")
+        if probe["column"] >= declared["columns"]:
+            raise BankError(f"{extractor_id} probes column {probe['column']} of {probe['series']}, "
+                            f"which has {declared['columns']}")
 
     @classmethod
     def load(cls, directories: Iterable[Path] = (EXTRACTORS,)) -> "Catalog":
@@ -405,14 +553,34 @@ class Catalog:
     def keys(self, content: str, targets: Iterable[str],
              parameters: Mapping[str, Mapping[str, Any]] | None = None) -> dict[str, str]:
         """Each extractor's entry key for this content, upstream first.
-        `parameters` replaces an extractor's declared defaults, field by field."""
+        `parameters` replaces an extractor's declared defaults, field by field.
+        In a view made by `within`, the keys of that content are its region
+        entries' (needs over the same region); any other content, such as a
+        stem made over the region, is keyed whole."""
+        region = self.region_of(content)
         keys: dict[str, str] = {}
         for extractor_id in self.order(targets):
             extractor = self[extractor_id]
             needs = {need: keys[need.split("/", 1)[0]] for need in extractor.needs}
             keys[extractor_id] = key_of(extractor.id, extractor.version,
-                                        self.parameters(extractor_id, parameters), content, needs)
+                                        self.parameters(extractor_id, parameters), content, needs, region)
         return keys
+
+    def within(self, content: str, region: Mapping[str, int] | None) -> "Catalog":
+        """This catalog, keying `content` over `region` (ADR 0112). Every
+        reader and the runner take a region through this view, so `Bank`'s
+        lookups and the runner's graph find region entries unchanged. A
+        region of None is the whole content."""
+        view = Catalog.__new__(Catalog)
+        view.extractors = self.extractors
+        view.region = None if region is None else (content, check_region(region))
+        return view
+
+    def region_of(self, content: str) -> dict[str, int] | None:
+        """The region this view keys `content` over, or None for whole."""
+        if self.region is not None and self.region[0] == content:
+            return self.region[1]
+        return None
 
     def check_overrides(self, overrides: Mapping[str, Any], where: str = "parameters") -> None:
         """Configured parameters must name an extractor here and only the
@@ -447,6 +615,22 @@ class Catalog:
         merged = {**self[extractor_id].manifest.get("parameters", {}), **((overrides or {}).get(extractor_id, {}))}
         check_parameters(merged, f"{extractor_id} parameters")
         return merged
+
+    def alternatives(self, extractor_id: str,
+                     overrides: Mapping[str, Mapping[str, Any]] | None = None) -> list[tuple[str, dict[str, Any]]]:
+        """The parameters whose entries may stand in for the configured
+        ones', each with its declared value, in the manifest's order: the
+        configured parameters with the interchangeable field set to each
+        other declared value. None when the extractor declares nothing
+        interchangeable or is configured with a value it does not declare."""
+        declared = self[extractor_id].interchangeable
+        if declared is None:
+            return []
+        configured = self.parameters(extractor_id, overrides)
+        if parameter_at(configured, declared["parameter"]) not in declared["values"]:
+            return []
+        return [(value, with_parameter(configured, declared["parameter"], value)) for value in declared["values"]
+                if value != parameter_at(configured, declared["parameter"])]
 
 
 # -- results and entries -----------------------------------------------------
@@ -599,11 +783,19 @@ def check_result(directory: Path, extractor: Extractor) -> dict[str, Any]:
 
 
 def check_entry(manifest: Any, where: str) -> dict[str, Any]:
-    """An entry manifest as the runner writes it; a reader refuses another shape."""
-    _require(isinstance(manifest, dict) and manifest.get("contract") == ENTRY_CONTRACT,
-             f"{where}: contract must be {ENTRY_CONTRACT}")
+    """An entry manifest as the runner writes it; a reader refuses another
+    shape. A region entry (`archive-feature-bank-entry/2`) has `/1`'s fields
+    and `region` and `cut`, the digest of the FLAC cut its programs read."""
+    _require(isinstance(manifest, dict) and manifest.get("contract") in (ENTRY_CONTRACT, REGION_ENTRY_CONTRACT),
+             f"{where}: contract must be {ENTRY_CONTRACT} or {REGION_ENTRY_CONTRACT}")
     fields = {"contract", "key", "extractor", "parameters", "content", "media_type", "needs", "software", "grids",
               "outputs", "started_at", "ended_at", "runner"}
+    region = None
+    if manifest["contract"] == REGION_ENTRY_CONTRACT:
+        fields |= {"region", "cut"}
+        _require(set(manifest) == fields, f"{where}: fields must be {sorted(fields)}")
+        region = check_region(manifest["region"], f"{where}: region")
+        _require(isinstance(manifest["cut"], str) and KEY.fullmatch(manifest["cut"]) is not None, f"{where}: cut")
     _require(set(manifest) == fields, f"{where}: fields must be {sorted(fields)}")
     _require(isinstance(manifest["key"], str) and KEY.fullmatch(manifest["key"]) is not None, f"{where}: key")
     _require(derived.is_digest(manifest["content"]), f"{where}: content")
@@ -613,12 +805,168 @@ def check_entry(manifest: Any, where: str) -> dict[str, Any]:
                                                          and KEY.fullmatch(v) for k, v in manifest["needs"].items()),
              f"{where}: needs")
     _require(manifest["key"] == key_of(extractor["id"], extractor["version"], manifest["parameters"],
-                                       manifest["content"], manifest["needs"]),
-             f"{where}: key does not match its extractor, parameters, content, and needs")
+                                       manifest["content"], manifest["needs"], region),
+             f"{where}: key does not match its extractor, parameters, content, needs, and region")
     _require(isinstance(manifest["outputs"], dict), f"{where}: outputs")
     for name, output in manifest["outputs"].items():
         _require(isinstance(output, dict) and output.get("kind") in KINDS, f"{where}: output {name}")
     return manifest
+
+
+# -- equivalence records (ADR 0090's amendment) ----------------------------------
+
+def pair_digest(extractor_id: str, version: str, first: Mapping[str, Any], second: Mapping[str, Any]) -> str:
+    """What names a pair of an extractor's parameters, in either order."""
+    digests = sorted([digest_of(canonical(first)), digest_of(canonical(second))])
+    return digest_of(canonical({"contract": EQUIVALENCE_CONTRACT, "extractor": extractor_id, "version": version,
+                                "parameters": digests}))
+
+
+def equivalence_directory(root: Path, extractor_id: str, pair: str) -> Path:
+    """Where the records of one pair live: one file a software pairing."""
+    if not KEY.fullmatch(pair) or not ID.fullmatch(extractor_id):
+        raise BankError(f"not a pair digest and extractor: {pair!r}, {extractor_id!r}")
+    return Path(root) / EQUIVALENCE / extractor_id / pair.removeprefix("sha256:")
+
+
+def named_software(software: Iterable[Mapping[str, str]], names: Iterable[str]) -> list[dict[str, str]]:
+    """The named software of an entry, by name: what a record must match."""
+    wanted = set(names)
+    return sorted(({"name": item["name"], "version": item["version"]} for item in software
+                   if item["name"] in wanted), key=lambda item: (item["name"], item["version"]))
+
+
+def decided_value(measure: str, values: list[tuple[float, Mapping[str, Any]]]) -> float | None:
+    """The value a measure of one output is decided by, over every input
+    that measured it (value and detail): `note-f1` pooled over all their
+    notes, `voicing-agreement` over all their voiced rows, and
+    `f0-cents-p99` the worst input's. Pooling keeps one borderline note of a
+    short clip from deciding alone; every input's own value is recorded
+    beside it. None when no input measured it."""
+    if not values:
+        return None
+    if measure == "note-f1":
+        matched = sum(int(detail["matched"]) for _, detail in values)
+        notes = sum(int(detail["notes"][0]) + int(detail["notes"][1]) for _, detail in values)
+        return 2 * matched / notes if notes else None
+    if measure == "voicing-agreement":
+        agreeing = sum(int(detail["agreeing"]) for _, detail in values)
+        either = sum(int(detail["voiced_in_either"]) for _, detail in values)
+        return agreeing / either if either else None
+    if measure == "f0-cents-p99":
+        return max(value for value, _ in values)
+    raise BankError(f"no measure {measure!r}")
+
+
+def decisions(agree: list[dict[str, Any]], inputs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each declared measure of each output it names: the value it is
+    decided by (`decided_value`), how many inputs measured it, and whether
+    it is within its threshold. A measure measured on no input fails: an
+    empty comparison (a stem with no confident pitch) is no evidence."""
+    found = []
+    for item in agree:
+        for output in item["outputs"]:
+            values = [(m["value"], m["detail"]) for i in inputs for m in i["measured"]
+                      if m["measure"] == item["measure"] and m["output"] == output and m["value"] is not None]
+            try:
+                value = decided_value(item["measure"], values)
+            except (KeyError, IndexError, TypeError, ValueError) as exc:
+                raise BankError(f"{item['measure']} of {output}: a detail lacks what decides it ({exc})") from exc
+            within = value is not None and (
+                Decimal(repr(value)) >= Decimal(item["at_least"]) if "at_least" in item
+                else Decimal(repr(value)) <= Decimal(item["at_most"]))
+            found.append({"measure": item["measure"], "output": output, "value": value,
+                          "measured_on": len(values), "pass": within})
+    return found
+
+
+def agreement_passes(agree: list[dict[str, Any]], inputs: list[dict[str, Any]]) -> bool:
+    """Whether every declared measure of every output passes (`decisions`)."""
+    return all(decision["pass"] for decision in decisions(agree, inputs))
+
+
+def check_equivalence(record: Any, where: str) -> dict[str, Any]:
+    """An equivalence record as `extract.py equivalence` writes it; a reader
+    refuses another shape, and a `pass` that its own values do not give."""
+    _require(isinstance(record, dict) and record.get("contract") == EQUIVALENCE_CONTRACT,
+             f"{where}: contract must be {EQUIVALENCE_CONTRACT}")
+    fields = {"contract", "extractor", "parameter", "sides", "agree", "inputs", "pass", "made_at"}
+    _require(set(record) == fields, f"{where}: fields must be {sorted(fields)}")
+    extractor = record["extractor"]
+    _require(isinstance(extractor, dict) and set(extractor) == {"id", "version"}
+             and isinstance(extractor["id"], str) and ID.fullmatch(extractor["id"]) is not None
+             and isinstance(extractor["version"], str), f"{where}: extractor")
+    _require(isinstance(record["parameter"], str) and PARAMETER_PATH.fullmatch(record["parameter"]) is not None,
+             f"{where}: parameter")
+    sides = record["sides"]
+    _require(isinstance(sides, list) and len(sides) == 2 and all(
+        isinstance(side, dict) and set(side) == {"value", "parameters", "software"}
+        and isinstance(side["value"], str) and isinstance(side["parameters"], str)
+        and KEY.fullmatch(side["parameters"]) is not None for side in sides)
+        and sides[0]["parameters"] != sides[1]["parameters"], f"{where}: two sides of other parameters")
+    for side in sides:
+        _software(side["software"], f"{where}: side {side['value']}")
+    agree = record["agree"]
+    _require(isinstance(agree, list) and agree and all(
+        isinstance(item, dict) and item.get("measure") in MEASURES and isinstance(item.get("outputs"), list)
+        and set(item) in ({"measure", "outputs", "at_least"}, {"measure", "outputs", "at_most"})
+        and DECIMAL.fullmatch(str(item.get("at_least", item.get("at_most")))) is not None for item in agree),
+             f"{where}: agree")
+    inputs = record["inputs"]
+    _require(isinstance(inputs, list) and inputs, f"{where}: inputs")
+    for index, item in enumerate(inputs):
+        _require(isinstance(item, dict) and set(item) == {"content", "entries", "measured", "evidence"}
+                 and derived.is_digest(item["content"]) and isinstance(item["entries"], list)
+                 and len(item["entries"]) == 2 and all(isinstance(k, str) and KEY.fullmatch(k) for k in item["entries"])
+                 and isinstance(item["evidence"], dict), f"{where}: inputs[{index}]")
+        _require(isinstance(item["measured"], list) and all(
+            isinstance(m, dict) and set(m) == {"measure", "output", "value", "detail"}
+            and isinstance(m["output"], str) and isinstance(m["detail"], dict)
+            and (m["value"] is None or (isinstance(m["value"], (int, float)) and not isinstance(m["value"], bool)
+                                        and math.isfinite(m["value"]))) for m in item["measured"]),
+                 f"{where}: inputs[{index}].measured")
+    _require(isinstance(record["pass"], bool), f"{where}: pass")
+    _require(record["pass"] == agreement_passes(agree, inputs),
+             f"{where}: pass is {record['pass']}, which its measured values do not give")
+    _require(isinstance(record["made_at"], str), f"{where}: made_at")
+    return record
+
+
+def read_equivalences(directory: Path) -> list[dict[str, Any]]:
+    """Every record of one pair. A record that is unreadable or the wrong
+    shape is refused, never read as absent or as failing."""
+    try:
+        paths = sorted(directory.glob("*.json"))
+    except OSError as exc:
+        raise BankError(f"{directory}: cannot list its records: {exc}") from exc
+    records = []
+    for path in paths:
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise BankError(f"{path}: unreadable: {exc}") from exc
+        records.append(check_equivalence(record, str(path)))
+    return records
+
+
+def write_equivalence(root: Path, record: dict[str, Any], first: Mapping[str, Any],
+                      second: Mapping[str, Any]) -> Path:
+    """File a record under its pair, named by its sides' software; a record
+    for the same software replaces the last, by one rename."""
+    check_equivalence(record, "the equivalence record")
+    extractor = record["extractor"]
+    directory = equivalence_directory(root, extractor["id"],
+                                      pair_digest(extractor["id"], extractor["version"], first, second))
+    sides = {side["parameters"] for side in record["sides"]}
+    _require(sides == {digest_of(canonical(first)), digest_of(canonical(second))},
+             "the record's sides are not the parameters it is filed under")
+    name = digest_of(canonical(sorted([[s["parameters"], s["software"]] for s in record["sides"]])))
+    directory.mkdir(parents=True, exist_ok=True)
+    final = directory / (name.removeprefix("sha256:") + ".json")
+    temporary = final.with_name(final.name + f".{os.getpid()}.tmp")
+    temporary.write_bytes(json.dumps(record, indent=1, sort_keys=True).encode("utf-8") + b"\n")
+    os.replace(temporary, final)
+    return final
 
 
 # -- reading -----------------------------------------------------------------
@@ -628,6 +976,18 @@ class Entry:
     """One complete entry of the bank."""
     path: Path
     manifest: dict[str, Any]
+
+    @property
+    def region(self) -> dict[str, int] | None:
+        """The region a region entry was made over, or None for whole content."""
+        return self.manifest.get("region")
+
+    @property
+    def offset(self) -> float:
+        """Seconds to add to this entry's times to place them on its content's
+        timeline: a region entry's outputs are on its cut's (ADR 0112)."""
+        region = self.region
+        return 0.0 if region is None else region["start"] / region["rate"]
 
     def output(self, name: str) -> dict[str, Any]:
         if name not in self.manifest["outputs"]:
@@ -706,10 +1066,12 @@ class Bank:
     the key the installed extractors would give it."""
 
     def __init__(self, root: Path, catalog: Catalog | None = None,
-                 parameters: Mapping[str, Mapping[str, Any]] | None = None):
+                 parameters: Mapping[str, Mapping[str, Any]] | None = None, exact: bool = False):
         self.root = Path(root)
         self.catalog = catalog if catalog is not None else Catalog.load()
         self.parameters = parameters
+        # Exact: the configured key alone, never an entry that stands in for it.
+        self.exact = exact
 
     def entry(self, content: str, extractor_id: str, filed_under: str | None = None,
               feature: str | None = None) -> Entry | None:
@@ -723,12 +1085,56 @@ class Bank:
                 p["parameters"] for p in self.catalog[extractor_id].prefers):
             raise BankError(f"{extractor_id} takes other parameters on a feature it prefers; "
                             f"say which feature {content} is")
+        return next(self.candidates(content, extractor_id, filed_under, feature), None)
+
+    def candidates(self, content: str, extractor_id: str, filed_under: str | None = None,
+                   feature: str | None = None) -> Iterable[Entry]:
+        """The entries that answer for one extractor and content, best
+        first: the configured parameters' entry, then, unless the bank is
+        exact, each entry of another interchangeable value in the manifest's
+        order that a passing equivalence record lets stand in (ADR 0090's
+        amendment). Without such a record there is only the first."""
+        if filed_under is not None and feature is None and any(
+                p["parameters"] for p in self.catalog[extractor_id].prefers):
+            raise BankError(f"{extractor_id} takes other parameters on a feature it prefers; "
+                            f"say which feature {content} is")
         parameters = self.parameters if feature is None else self.catalog.overrides_for(feature, self.parameters)
+        found = self._at(content, extractor_id, filed_under, parameters)
+        if found is not None:
+            yield found
+        if self.exact:
+            return
+        extractor = self.catalog[extractor_id]
+        configured = self.catalog.parameters(extractor_id, parameters)
+        for _value, other in self.catalog.alternatives(extractor_id, parameters):
+            standing = self._at(content, extractor_id, filed_under, {**(parameters or {}), extractor_id: other})
+            if standing is not None and self.stands_in(extractor, configured, standing):
+                yield standing
+
+    def _at(self, content: str, extractor_id: str, filed_under: str | None,
+            parameters: Mapping[str, Mapping[str, Any]] | None) -> Entry | None:
         key = self.catalog.keys(content, [extractor_id], parameters)[extractor_id]
         found = read_entry(entry_directory(self.root, filed_under or content, extractor_id, key))
         if found is not None and found.manifest["key"] != key:
             raise BankError(f"{found.path} holds key {found.manifest['key']}, not {key}")
         return found
+
+    def stands_in(self, extractor: Extractor, configured: Mapping[str, Any], standing: Entry) -> bool:
+        """Whether a passing record of this pair names the software the
+        standing entry was made with. A record for other software, a failing
+        record, or none, answers no; a damaged one is refused."""
+        declared = extractor.interchangeable
+        assert declared is not None
+        other = standing.manifest["parameters"]
+        directory = equivalence_directory(self.root, extractor.id,
+                                          pair_digest(extractor.id, extractor.version, configured, other))
+        made_with = named_software(standing.manifest["software"], declared["software"])
+        other_digest = digest_of(canonical(other))
+        for record in read_equivalences(directory):
+            side = next((s for s in record["sides"] if s["parameters"] == other_digest), None)
+            if record["pass"] and side is not None and side["software"] == made_with:
+                return True
+        return False
 
     def feature(self, content: str, feature: str, filed_under: str | None = None) -> tuple[Entry, str] | None:
         """The entry holding `<extractor>/<output>`, and the output's name."""
@@ -762,10 +1168,28 @@ class Bank:
         """The entry an extractor made of a file feature of this content (the
         melody of a recording's vocal stem), or None when the feature or the
         measure of it is not in the bank."""
-        found = self.input_of(content, feature)
-        if found is None:
-            return None
-        return self.entry(found[1], extractor_id, filed_under=content, feature=feature)
+        return next((measured for _, measured in self.measured_over(content, feature, [extractor_id])
+                     if measured[extractor_id] is not None), {extractor_id: None})[extractor_id]
+
+    def measured_over(self, content: str, feature: str,
+                      extractor_ids: Iterable[str]) -> list[tuple[Entry, dict[str, Entry | None]]]:
+        """For each entry that answers for the feature's extractor, best
+        first (`candidates`), that entry and each extractor's measure of its
+        file feature, or None. A reader that combines measures takes them
+        over one entry, so what it cites is what it read."""
+        match = FEATURE.fullmatch(feature)
+        if match is None:
+            raise BankError(f"not a feature name: {feature!r}")
+        source, output = match.groups()
+        extractor_ids = list(extractor_ids)
+        found = []
+        for entry in self.candidates(content, source):
+            described = entry.output(output)
+            if described["kind"] != "file":
+                raise BankError(f"{feature} is a {described['kind']}, not a file; only a file can be content")
+            found.append((entry, {extractor_id: self.entry(described["sha256"], extractor_id, filed_under=content,
+                                                           feature=feature) for extractor_id in extractor_ids}))
+        return found
 
     def default_input(self, content: str, extractor_id: str) -> str | None:
         """The file feature an extractor measures by default for this
@@ -780,18 +1204,22 @@ class Bank:
             source = preference["input"].split("/", 1)[0]
             if source not in self.catalog.extractors or self.input_of(content, preference["input"]) is None:
                 continue
-            if preference["at_least"] and self.falls_short(content, preference, extractor_id):
+            if ((preference["at_least"] or preference["probe"] is not None)
+                    and self.falls_short(content, preference, extractor_id)):
                 continue
             return preference["input"]
         return None
 
     def falls_short(self, content: str, preference: Mapping[str, Any], extractor_id: str) -> bool:
         """Whether the measure of a preferred feature is in the bank and one
-        of the scalars its preference names is below the minimum given. A
-        value that is not a number is refused rather than read as either."""
+        of the scalars its preference names is below the minimum given; or,
+        while that measure is not in the bank, whether the preference's
+        probe is and falls short (`probe_falls_short`). The extractor's own
+        measure, once made, decides alone. A value that is not a number is
+        refused rather than read as either."""
         measured = self.entry_from(content, preference["input"], extractor_id)
         if measured is None:
-            return False
+            return self.probe_falls_short(content, preference) is not None
         for name, minimum in preference["at_least"].items():
             value = measured.scalar(name)
             if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value:
@@ -799,6 +1227,39 @@ class Bank:
             if Decimal(repr(value)) < Decimal(minimum):
                 return True
         return False
+
+    def probe_falls_short(self, content: str, preference: Mapping[str, Any]) -> Entry | None:
+        """The probe's entry when it is in the bank and falls short, else
+        None: the share of the probed series' rows whose column is at or
+        above `at_or_above`, read from the probing extractor's measure of
+        the preferred feature (`f0-pesto`'s confidence on the vocal stem), is
+        below `share_at_least`. A series of no rows falls short. A probe
+        that is not in the bank says nothing, so the preference is measured.
+        It is read with the standard library, like the rest of the runner."""
+        probe = preference.get("probe")
+        if probe is None:
+            return None
+        source, output = FEATURE.fullmatch(probe["series"]).groups()  # type: ignore[union-attr]
+        if source not in self.catalog.extractors:
+            return None
+        found = self.input_of(content, preference["input"])
+        if found is None:
+            return None
+        entry = self.entry(found[1], source, filed_under=content, feature=preference["input"])
+        if entry is None:
+            return None
+        described = entry.output(output)
+        rows, columns = described["shape"]
+        values = array.array(_ARRAY_CODES[described["dtype"]], (entry.path / described["file"]).read_bytes())
+        if sys.byteorder != "little":
+            values.byteswap()
+        if len(values) != rows * columns:
+            raise BankError(f"{entry.path / described['file']} does not hold its shape {described['shape']}")
+        threshold = float(Decimal(probe["at_or_above"]))
+        reaching = sum(1 for value in values[probe["column"]::columns] if value >= threshold)
+        if rows and Decimal(reaching) / Decimal(rows) >= Decimal(probe["share_at_least"]):
+            return None
+        return entry
 
     def default_entry(self, content: str, extractor_id: str) -> tuple[Entry | None, str | None]:
         """The entry an extractor makes of this content by default, and the
@@ -811,6 +1272,120 @@ class Bank:
         if feature is None:
             return self.entry(content, extractor_id), None
         return self.entry_from(content, feature, extractor_id), feature
+
+
+# -- regions and requests (ADR 0112) -------------------------------------------
+#
+# Beside `Bank.entry`, which finds the whole-content entry (or, in a view made
+# by `Catalog.within`, one region's): `covering` answers what covers a span,
+# and a bank request asks the scheduler for a key nothing holds yet.
+
+def covering(reader: Bank, content: str, extractor_id: str, start: int, end: int, rate: int) -> Entry | None:
+    """The entry of the installed extractor that covers `[start, end)` of this
+    content (samples at `rate`): the whole-content entry, else a region entry
+    whose region contains the span and whose key is the one the installed
+    extractor, parameters, and needs give that region (so an entry of another
+    version is never served), the narrowest first. None when nothing covers
+    it: the span is then a request. Region entries are never stitched."""
+    _require(isinstance(rate, int) and rate > 0 and 0 <= start < end, "a span needs 0 <= start < end at a rate")
+    whole = reader.entry(content, extractor_id)
+    if whole is not None:
+        return whole
+    directory = derived.directory(reader.root, content) / "bank" / extractor_id
+    try:
+        names = sorted(child.name for child in directory.iterdir() if child.is_dir())
+    except FileNotFoundError:
+        return None
+    found: list[Entry] = []
+    for name in names:
+        entry = read_entry(directory / name)
+        if entry is None or entry.region is None or not region_contains(entry.region, start, end, rate):
+            continue
+        current = reader.catalog.within(content, entry.region).keys(content, [extractor_id], reader.parameters)
+        if current[extractor_id] == entry.manifest["key"]:
+            found.append(entry)
+    if not found:
+        return None
+    return min(found, key=lambda e: (e.region["end"] - e.region["start"]) / e.region["rate"])
+
+
+def request_path(root: Path, key: str) -> Path:
+    """Where the request for one key is filed: `requests/<key hex>.json`."""
+    if not isinstance(key, str) or not KEY.fullmatch(key):
+        raise BankError(f"not an entry key: {key!r}")
+    return Path(root) / REQUESTS / (key.removeprefix("sha256:") + ".json")
+
+
+def check_request(request: Any, where: str = "bank request") -> dict[str, Any]:
+    """A bank request as `ask` writes it; the scheduler refuses another shape."""
+    fields = {"contract", "key", "content", "extractor", "region", "feature", "asked_by"}
+    _require(isinstance(request, dict) and request.get("contract") == BANK_REQUEST_CONTRACT,
+             f"{where}: contract must be {BANK_REQUEST_CONTRACT}")
+    _require(set(request) == fields, f"{where}: fields must be {sorted(fields)}")
+    _require(isinstance(request["key"], str) and KEY.fullmatch(request["key"]) is not None, f"{where}: key")
+    _require(derived.is_digest(request["content"]), f"{where}: content")
+    extractor = request["extractor"]
+    _require(isinstance(extractor, dict) and set(extractor) == {"id", "version"}
+             and isinstance(extractor["id"], str) and ID.fullmatch(extractor["id"]) is not None
+             and isinstance(extractor["version"], str) and VERSION.fullmatch(extractor["version"]) is not None,
+             f"{where}: extractor is {{id, version}}")
+    if request["region"] is not None:
+        check_region(request["region"], f"{where}: region")
+    _require(request["feature"] is None or (isinstance(request["feature"], str)
+                                            and FEATURE.fullmatch(request["feature"]) is not None),
+             f"{where}: feature is null or <extractor>/<output>")
+    _require(isinstance(request["asked_by"], str) and 0 < len(request["asked_by"]) <= 200, f"{where}: asked_by")
+    return request
+
+
+def ask(reader: Bank, content: str, extractor_id: str, asked_by: str, region: Mapping[str, int] | None = None,
+        feature: str | None = None) -> tuple[Path, str, bool]:
+    """Ask for the entry the installed extractor would make of this content
+    (or of `region` of it): write a bank request named by that key, unless
+    one is there. Returns its path, the key, and whether this call wrote it.
+    Asking again is the same file, and the first asker's request stands.
+    `feature` names the file feature measured when the content is a preferred
+    input (the vocal stem `melody` measures), for the scheduler to find it."""
+    catalog = reader.catalog.within(content, region)
+    parameters = reader.parameters if feature is None else catalog.overrides_for(feature, reader.parameters)
+    key = catalog.keys(content, [extractor_id], parameters)[extractor_id]
+    extractor = reader.catalog[extractor_id]
+    request = check_request({"contract": BANK_REQUEST_CONTRACT, "key": key, "content": content,
+                             "extractor": {"id": extractor.id, "version": extractor.version},
+                             "region": None if region is None else check_region(region), "feature": feature,
+                             "asked_by": asked_by})
+    path = request_path(reader.root, key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.stem}.{os.getpid()}.{id(request):x}.partial")
+    try:
+        temporary.write_bytes(canonical(request))
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            return path, key, False
+        return path, key, True
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def requests(root: Path) -> list[dict[str, Any]]:
+    """Every bank request filed, in key order; one whose file is damaged or
+    misnamed is refused, not skipped (the scheduler would otherwise lose it)."""
+    directory = Path(root) / REQUESTS
+    try:
+        paths = sorted(p for p in directory.iterdir() if p.suffix == ".json" and not p.name.startswith("."))
+    except FileNotFoundError:
+        return []
+    found = []
+    for path in paths:
+        try:
+            request = check_request(json.loads(path.read_text(encoding="utf-8")), str(path))
+        except ValueError as exc:
+            raise BankError(f"{path}: unreadable: {exc}") from exc
+        if request_path(root, request["key"]) != path:
+            raise BankError(f"{path} holds the request for {request['key']}, not its own name")
+        found.append(request)
+    return found
 
 
 def environment_root() -> Path | None:

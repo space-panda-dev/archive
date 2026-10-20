@@ -158,9 +158,10 @@ SHIPPED = {
     # Version 3: only the rows within reach of the gate are measured; 5-cent bins,
     # and 2 on the vocal stem it prefers; measured_fraction. Still 3 when the
     # preference gained at_least, and again when it gained stems-6s/vocals after
-    # stems/vocals: no entry's bits change, only which is the default.
+    # stems/vocals, and again when each preference gained f0-pesto's probe: no
+    # entry's bits change, only which is the default.
     "melody": {"version": "3",
-               "code": "sha256:cb25749d8c1d95c87a6e40e2789397f7527daaf28d8df481e4bdfd5481cecedf",
+               "code": "sha256:988efc9141cf5132528401484f9225dd1866a796f81afe21b467c6bd10d0bbde",
                "outside": {}},
     # colour reads the peaks' format and decode from waveform.py, not the
     # derived-media tool media.py, so an edit to that tool's routes or
@@ -173,12 +174,14 @@ SHIPPED = {
     # The code was made to serve stems-6s too (a Separation names the model and stems); no output changed.
     # Version 1 also runs on Apple's GPU when `apply.device` is "mps": another
     # parameter, so another key; the CPU's stems are the same bits as before.
-    "stems": {"version": "1", "code": "sha256:df389c5a797d6d7d79ee57d34d17f2a99ae9fb1a68e62c93dd82e5f7c51042b4", "outside": {}},
+    # The manifest declares cpu and mps interchangeable (ADR 0090's amendment):
+    # lookup changes, no output does.
+    "stems": {"version": "1", "code": "sha256:1016d2305b3597731d357bcaa468f6a95e65bb23d9cb97acc7ea88d32db7a065", "outside": {}},
     # stems-6s is the stems program with another model and six stems.
     "stems-6s": {"version": "1",
                  "code": "sha256:23494ee6838986398b491f243a017b1687921f655db1c51693275931ebf892a2",
                  "outside": {"extractors/stems/stems.py":
-                                 "sha256:649708bb68316a9c33b94a9fa273ca3bfb45c2e1dcc6b310a960371fe0191586"}},
+                                 "sha256:545f232db757534feaacc7e541b7437ca5877ec6ba15725194906b95dc6a4738"}},
     "notes-basic-pitch": {"version": "1",
                           "code": "sha256:b81ad3ab4528b6c557e4a3ad254c5262754689efcbd157ac5bff976f28d40133",
                           "outside": {}},
@@ -898,15 +901,29 @@ class Manifests(unittest.TestCase):
                "minimum not a number": {**good, "prefers": [{"input": "s/f", "at_least": {"y": "much"}}]},
                "minimum of a series": {**good, "prefers": [{"input": "s/f", "at_least": {"x": "1"}}]},
                "minimum of an undeclared output": {**good, "prefers": [{"input": "s/f", "at_least": {"z": "1"}}]},
-               "minimums not an object": {**good, "prefers": [{"input": "s/f", "at_least": ["y"]}]}}
+               "minimums not an object": {**good, "prefers": [{"input": "s/f", "at_least": ["y"]}]},
+               **{f"probe {name}": {**good, "prefers": [{"input": "s/f", "probe": probe}]} for name, probe in {
+                   "not an object": ["p/x"],
+                   "missing a field": {"series": "p/x", "column": 1, "at_or_above": "0.5"},
+                   "with another field": {**PROBE, "when": "always"},
+                   "not a feature": {**PROBE, "series": "p"},
+                   "column not a number": {**PROBE, "column": "1"},
+                   "column a boolean": {**PROBE, "column": True},
+                   "column negative": {**PROBE, "column": -1},
+                   "value not decimal text": {**PROBE, "at_or_above": 0.5},
+                   "share not decimal text": {**PROBE, "share_at_least": "some"}}.items()}}
         for name, value in bad.items():
             with self.subTest(name):
                 with self.assertRaises(bank.BankError):
                     bank.check_manifest(value, name)
         self.assertEqual(bank.check_manifest(good, "good"), good)
         preferring = {**good, "prefers": [{"input": "s/f", "parameters": {"mode": "fine"}, "at_least": {"y": "0.2"}},
-                                          {"input": "t/f"}]}
+                                          {"input": "t/f", "probe": PROBE}]}
         self.assertEqual(bank.check_manifest(preferring, "preferring"), preferring)
+
+
+# A probe of the fixture's series: column 1 of `x` holds 1, 3, 5, so two rows in three are at or above 3.
+PROBE = {"series": "p/x", "column": 1, "at_or_above": "3", "share_at_least": "0.6"}
 
 
 class Preferences(unittest.TestCase):
@@ -1088,6 +1105,102 @@ class Preferences(unittest.TestCase):
             with self.subTest(value=value), patch.object(bank.Entry, "scalar", return_value=value):
                 with self.assertRaisesRegex(bank.BankError, "not a number"):
                     f.reader().default_input(f.digest, "m")
+
+    def probing(self, share: str, minimum: str = "0") -> Fixture:
+        """`m` prefers `sep/f` while its `y` there reaches `minimum` (the
+        test program writes 0, so "0" reaches it), and while `p`'s measure of
+        `sep/f` has at least `share` of its rows at or above 3 in column 1
+        of `x` (two in three do)."""
+        f = Fixture(self)
+        f.add("sep")
+        f.add("p", accepts=("audio/*", "application/*"))
+        f.add("m", accepts=("audio/*", "application/*"),
+              prefers=[{"input": "sep/f", "parameters": {"mode": "preferred"}, "at_least": {"y": minimum},
+                        "probe": {**PROBE, "share_at_least": share}}])
+        self.assertEqual(f.run("sep")[0], 0)
+        return f
+
+    def test_a_probe_that_falls_short_passes_the_feature_over_unmeasured(self) -> None:
+        f = self.probing("0.7")
+        # Until the probe's measure is in the bank, the feature is the default.
+        self.assertEqual(f.reader().default_input(f.digest, "m"), "sep/f")
+        self.assertEqual(f.run("p", "--from", "sep/f")[0], 0)
+        reader = f.reader()
+        probe = reader.entry_from(f.digest, "sep/f", "p")
+        self.assertIsNotNone(probe)  # anchor: the probe measured the feature
+        self.assertIsNone(reader.default_input(f.digest, "m"))
+        code, answer = f.run("m")
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(f.runs(), ["sep", "p", "m"])  # m ran once, on the content
+        said = answer["extractors"]["m"]
+        self.assertNotIn("input", said)
+        self.assertNotIn("passed_over", said)
+        self.assertEqual(said["probed_over"], {"sep/f": probe.manifest["key"]})
+        self.assertIsNone(f.reader().entry_from(f.digest, "sep/f", "m"))
+        entry, feature = f.reader().default_entry(f.digest, "m")
+        self.assertIsNone(feature)
+        self.assertEqual((entry.manifest["content"], entry.manifest["key"]), (f.digest, said["key"]))
+        # The next run decides from the bank as it stands, and runs nothing.
+        with patch.object(extract, "run_program", side_effect=AssertionError("ran")):
+            code, again = f.run("m")
+        self.assertEqual((code, again["extractors"]["m"]["status"]), (0, "hit"))
+
+    def test_a_probe_that_reaches_its_share_leaves_the_feature_measured(self) -> None:
+        f = self.probing("0.6")
+        self.assertEqual(f.run("p", "--from", "sep/f")[0], 0)
+        code, answer = f.run("m")
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(f.runs(), ["sep", "p", "m"])
+        self.assertEqual(answer["extractors"]["m"]["input"], "sep/f")
+        self.assertNotIn("probed_over", answer["extractors"]["m"])
+        self.assertEqual(f.reader().default_entry(f.digest, "m")[1], "sep/f")
+
+    def test_without_the_probe_the_feature_is_measured_and_its_minimum_decides(self) -> None:
+        # The probe would fall short, but it is not in the bank: as without a probe.
+        f = self.probing("0.7", minimum="1")
+        code, answer = f.run("m")
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(f.runs(), ["sep", "m", "m"])
+        self.assertIn("sep/f", answer["extractors"]["m"]["passed_over"])
+        self.assertNotIn("probed_over", answer["extractors"]["m"])
+        g = self.probing("0.7")
+        self.assertEqual(g.run("m")[1]["extractors"]["m"]["input"], "sep/f")
+
+    def test_the_extractors_own_measure_decides_over_its_probe(self) -> None:
+        f = self.probing("0.7")
+        self.assertEqual(f.run("m", "--from", "sep/f")[0], 0)
+        self.assertEqual(f.run("p", "--from", "sep/f")[0], 0)
+        reader = f.reader()
+        self.assertIsNotNone(reader.probe_falls_short(f.digest, reader.catalog["m"].prefers[0]))  # anchor
+        self.assertEqual(reader.default_input(f.digest, "m"), "sep/f")
+        with patch.object(extract, "run_program", side_effect=AssertionError("ran")):
+            code, answer = f.run("m")
+        self.assertEqual((code, answer["extractors"]["m"]["input"]), (0, "sep/f"))
+        self.assertNotIn("probed_over", answer["extractors"]["m"])
+
+    def test_a_probe_reads_the_measure_of_the_feature_not_of_the_content(self) -> None:
+        f = self.probing("0.7")
+        self.assertEqual(f.run("p")[0], 0)  # p of the content, not of sep/f
+        self.assertEqual(f.reader().default_input(f.digest, "m"), "sep/f")
+
+    def test_a_probe_must_read_a_column_of_another_extractors_float_series(self) -> None:
+        for name, probe, message in (
+                ("its own", {**PROBE, "series": "m/x"}, "its own"),
+                ("a scalar", {**PROBE, "series": "p/y"}, "floating-point series"),
+                ("a column it lacks", {**PROBE, "column": 2}, "which has 2")):
+            with self.subTest(name):
+                f = Fixture(self)
+                f.add("sep")
+                f.add("p")
+                f.add("m", prefers=[{"input": "sep/f", "probe": probe}])
+                with self.assertRaisesRegex(bank.BankError, message):
+                    bank.Catalog.load([f.extractors])
+        # A probe no extractor here declares is never present.
+        g = Fixture(self)
+        g.add("sep")
+        g.add("m", prefers=[{"input": "sep/f", "probe": {**PROBE, "series": "elsewhere/x"}}])
+        self.assertEqual(g.run("sep")[0], 0)
+        self.assertEqual(g.reader().default_input(g.digest, "m"), "sep/f")
 
     def test_the_preferred_parameters_yield_to_the_operators(self) -> None:
         catalog = bank.Catalog([bank.Extractor(Path("."), manifest("sep")), bank.Extractor(

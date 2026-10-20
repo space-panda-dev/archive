@@ -411,6 +411,66 @@ the real archive is not in scope before cutover.
    backups. A rebuilt shadow loses imported sessions until the same cards are
    imported again, which step 4's rule makes safe.
 
+## Filling the feature bank
+
+This procedure is **proposed**. [`enrich backfill`](../enrich/README.md#enrich-backfill)
+([ADR 0112](decisions/0112-bulk-import-at-scale.md)) replaces the
+hand-written backfill scripts: it probes the unprobed recordings, fills the
+bank, proposes `--all`, and refreshes World. It probes and proposes through
+Door, so a committing run against the shadow needs the operator's approval
+for that run, as an import does; a run against a scratch archive and a
+scratch bank is covered by the standing approval.
+
+1. **Dry run.** Without `--commit` it writes nothing: it prints the plan
+   (one line per recording: what it would run and what it leaves for on
+   demand), the layout of copies, and the projected hours from the recorded
+   costs. Check that the jobs are what the mode asks for.
+2. **Run it as a low-priority unit** on the x86-64 laptop, which holds the
+   bank, so the machine stays usable while it works:
+
+   ```sh
+   systemd-run --user --unit=archive-backfill -p Nice=10 -p IOSchedulingClass=idle -p CPUWeight=20 \
+     --setenv=HF_HUB_OFFLINE=1 "$ENRICH_PYTHON" enrich/enrich.py backfill \
+     --archive "$ARCHIVE" --bank "$BANK" --config "$CONFIG" --staging "$STAGING" \
+     --door "$BUILD/bin/door" --archive-command "$BUILD/bin/archive" \
+     --spool "spool --dir $SPOOL_DIR" --world-store "$STORE" --world-python "$WORLD_PYTHON" \
+     --commit --log backfill.jsonl
+   journalctl --user -u archive-backfill -f      # the log's last line is "done"
+   ```
+
+   `--songs` (the default) makes the expensive extractors over each
+   recording's song regions and leaves them for on demand where it has
+   none; `--eager` makes everything whole; `--on-demand` makes only the bank
+   requests, which every mode serves first. **Pass `--eager` on the shadow
+   for now**: no reader takes a region entry yet (`enrich propose` and the
+   relay read whole entries), and region stems disagreed with whole stems
+   over the same span when measured (step 0 of
+   [the backlog](backlog.md#step-0-bulk-import-at-scale-adr-0112)). A song
+   region that is the whole recording is made whole in `--songs` too. The configuration's `backfill`
+   object routes `stems` to the spool and sets threads per extractor; the
+   workers leasing from it are started as ADR 0090 describes. To separate
+   on the Mac's GPU, route it with the Mac's parameters,
+
+   ```json
+   {"backfill": {"extractors": {"stems": {"route": "spool", "remote_parameters": {"apply": {
+     "shifts": 0, "split": true, "overlap": "0.25", "segment": null, "device": "mps",
+     "normalise": "chunk mean and standard deviation, as demucs.api.Separator.separate_tensor"}}}}}}
+   ```
+
+   and copy the passing equivalence record for `cpu` and `mps` into the
+   bank's `equivalence/` first (or measure it there with `extract.py
+   equivalence stems --against mps`): without it the backfill refuses to
+   start, since every recording would be separated twice. Region jobs run
+   here: a Spool task carries no region yet.
+3. **Stopping is safe.** `systemctl --user stop archive-backfill` stops every
+   run in the unit; a rerun plans only what is missing, and tasks left on the
+   spool are collected by the rerun. What failed is recorded beside its entry
+   and is not run again without `--retry-failed`.
+4. **Confirm.** A second run must plan no jobs and its proposals must answer
+   `unchanged`. The `made` line reports audio-seconds made per wall-second and
+   CPU-seconds per audio-second by extractor; keep it with the operational
+   reports.
+
 ## Synthetic harness
 
 From the repository root, these commands create only temporary synthetic trees, use the existing read-only manifest/census tools, and remove the temporary data on exit:

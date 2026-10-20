@@ -43,6 +43,8 @@ module is `wf check enrich -- -p test_bank.py` and one test name is
 | `enrich-tests` | `unittest discover -s enrich/tests` (derived media) | 1800 s |
 | `enrich` | `unittest discover -s enrich -p "test_*.py"` (Essentia interpreter) | 3600 s |
 | `capture` | `unittest discover -s capture -p "test_*.py"` (Essentia interpreter) | 1800 s |
+| `bench` | `unittest discover -s enrich/bench` (the bench's own interpreter) | 300 s |
+| `bench-horn` | `python -m enrich.bench check horn-v1`: private data, x86-64 laptop only; fails on a regression | 3600 s |
 | `migration`, `shadow`, `fixture` | `unittest discover -s <dir> -p "test_*.py"` | 1800 s |
 
 Python suites build `door`/`archive` first and set
@@ -141,7 +143,7 @@ speed), 0069 (media by digest).
 ## enrich (Python)
 
 Purpose: machine claims proposed through Door, derived media, and the feature
-bank. Doc: [enrich/README.md](enrich/README.md) (875; one section per
+bank. Doc: [enrich/README.md](enrich/README.md) (1106; one section per
 command, `rg -n '^##' enrich/README.md`).
 
 | File | Lines | What |
@@ -152,24 +154,41 @@ command, `rg -n '^##' enrich/README.md`).
 | `enrich/note_builder.py` | 356 | `build`: one note per held pitch from a pitch track and its level (ADR 0086); settings `VOICE`, `BASS`; tests `enrich/test_note_builder.py` |
 | `enrich/probe.py`, `detector.py` | 234, 674 | stream facts (0065), span suggestions (0066; presets and the talk gate, 0091) |
 | `enrich/match.py`, `cover.py`, `windows.py` | 358, 1073, 517 | work matching (0067, 0071, 0072) |
-| `enrich/extract.py` | 756 | feature-bank runner: `main` (`list`, `run`), `run_default`, `run_from` |
-| `enrich/bank.py` | 819 | `Catalog` (326), `Bank` (704): the bank format |
-| `enrich/remote.py` | 494 | extractor runs through Spool: `put`, `work`, `collect` (ADR 0090) |
+| `enrich/extract.py` | 985 | feature-bank runner: `main` (`list`, `run` with `--region` and `--exact`, `equivalence`), `cut_region`, `run_default`, `run_from`; `Run.stand_in` |
+| `enrich/bank.py` | 1394 | `Catalog` (452; `within` for regions), `Bank` (1064; `candidates`, `stands_in`, `measured_over`, `probe_falls_short`): the bank format; equivalence records (`check_equivalence` 888, `decisions`); region keys (`key_of`, `check_region`), `covering`, bank requests (`ask`, `requests`) at the end (ADR 0112) |
+| `enrich/equivalence.py` | 262 | `measure`: the equivalence record of interchangeable entries; `MEASURES` (note F1, f0 cents, voicing) |
+| `enrich/regions.py` | 254 | song spans by precedence, `regions_of`, `regions_for`, `expensive`, `plan` per mode (ADR 0112); tests `enrich/test_regions.py` |
+| `enrich/remote.py` | 502 | extractor runs through Spool: `put`, `work`, `collect` (ADR 0090) |
+| `enrich/backfill.py` | 1053 | `enrich backfill` (ADR 0112): `plan` (modes from `regions.plan`, region jobs, requests first), `Planner.state` (reads the bank through `Bank`, over a region through `Catalog.within`), `unit_order` (probes first), `layout`/`copies`, `check_remote` (stand-in routing), `Runner` (the pool and the Spool fan-out); tests `enrich/test_backfill.py` |
 | `enrich/media.py`, `waveform.py`, `derived.py` | 193, 161, 62 | derived media (ADR 0069) |
 | `enrich/support.py` | 291 | test support: synthetic audio, scratch archives |
 | `enrich/extractors/<id>/` | | `extractor.json` + program; longest: `quality/quality.py` 1317, `tonal/tonal.py` 986, `structure/structure.py` 871, `rhythm/meter.py` 821 |
 
 Tests: suite `enrich`, `enrich/test_<topic>.py` by command or extractor
-family (`git ls-files 'enrich/test_*'`; `test_bank` 1147, `test_extractors`
+family (`git ls-files 'enrich/test_*'`; `test_bank` 1308, `test_extractors`
 runs all extractors together); suite `enrich-tests` is
 `enrich/tests/test_media.py`.
+The bench (`enrich/bench/`, [README](enrich/bench/README.md)) scores note
+transcribers against private sets outside the repository, and gates the
+backfill's CPU seconds per audio-second (`cost.py`, `python -m enrich.bench cost`); suites `bench` and
+`bench-horn`. The `enrich` suite does not discover it (no `__init__.py`).
 Rules: enrichment never changes its inputs (INV-9); every claim carries its
 run and provenance (ADR 0064, [provenance](docs/provenance.md)); an
 extractor's version changes whenever its outputs can (ADR 0074); stems are
 content (ADR 0075); preferred inputs ADR 0076.
+Stand-in stems by a measured tolerance (ADR 0090's amendment) are built:
+`interchangeable` in a manifest, `extract.py equivalence`, lookup in
+`Bank.candidates`; tests `enrich/test_equivalence.py`
+([format](docs/feature-bank.md#interchangeable-entries)). Bulk import (ADR
+0112) is built: `enrich backfill` with its modes, region entries, bank
+requests and song regions; what is left (`--follow`, readers of region
+entries, the region stems mismatch) is step 0 of
+[docs/backlog.md](docs/backlog.md).
+Pitfall: the backfill's job events are `ran`/`failed`; `done` is only its
+last line.
 Find: extractors in `enrich/extractors/<id>/extractor.json`; SHIPPED digest
 pins in `enrich/test_bank.py` (`SHIPPED = {`, line 115); byte format in
-[docs/feature-bank.md](docs/feature-bank.md) (444; shipped table at "The
+[docs/feature-bank.md](docs/feature-bank.md) (604; shipped table at "The
 shipped extractors").
 
 ## capture (Python)
