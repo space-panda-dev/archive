@@ -120,3 +120,4 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0103](0103-voice-capture.md) | Voice notes arrive from phones, browsers and recorders, each its own Artifact (proposed) |
 | [0104](0104-transcription-and-speakers.md) | Transcripts come from local ASR runs, and speaker spans name consenting people (proposed) |
 | [0105](0105-notebook.md) | Notes are snapshotted as documents, and their links to the archive are claims (proposed) |
+| [0106](0106-set-lists-and-clocks.md) | A set list is a claim of intent, and a clock asserts its own meter (proposed) |
