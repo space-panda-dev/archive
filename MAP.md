@@ -169,7 +169,8 @@ family (`git ls-files 'enrich/test_*'`; `test_bank` 1308, `test_extractors`
 runs all extractors together); suite `enrich-tests` is
 `enrich/tests/test_media.py`.
 The bench (`enrich/bench/`, [README](enrich/bench/README.md)) scores note
-transcribers against private sets outside the repository; suites `bench` and
+transcribers against private sets outside the repository, and gates the
+backfill's CPU seconds per audio-second (`cost.py`, `python -m enrich.bench cost`); suites `bench` and
 `bench-horn`. The `enrich` suite does not discover it (no `__init__.py`).
 Rules: enrichment never changes its inputs (INV-9); every claim carries its
 run and provenance (ADR 0064, [provenance](docs/provenance.md)); an

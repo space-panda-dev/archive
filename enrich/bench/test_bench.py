@@ -424,5 +424,97 @@ class EquivalenceCheck(unittest.TestCase):
         self.assertEqual(self.run_check(), 2)
 
 
+def write_wav(path: Path, seconds: float, rate: int = 48000, channels: int = 2) -> None:
+    """A float WAV header and silence: what the cost gate reads its length from."""
+    import struct
+    data = bytes(int(seconds * rate) * channels * 4)
+    fmt = struct.pack("<HHIIHH", 3, channels, rate, rate * channels * 4, channels * 4, 32)
+    path.write_bytes(b"RIFF" + struct.pack("<I", 4 + 8 + len(fmt) + 8 + len(data)) + b"WAVE"
+                     + b"fmt " + struct.pack("<I", len(fmt)) + fmt + b"LIST" + struct.pack("<I", 2) + b"xx"
+                     + b"data" + struct.pack("<I", len(data)) + data)
+
+
+class CostGate(unittest.TestCase):
+    """`python -m enrich.bench cost`: the backfill's units over one clip, as
+    the backfill runs them, and the gate on CPU seconds per audio-second."""
+
+    def setUp(self) -> None:
+        from enrich.bench import cost as gate
+        self.gate = gate
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        (self.root / "cost").mkdir()
+        write_wav(self.root / "cost" / "clip.wav", 2.0)
+        (self.root / "cost" / "extract.json").write_text("{}")
+        self.python = self.root / "python"
+        self.python.write_text(f"#!/bin/sh\necho \"$OMP_NUM_THREADS $@\" >> {self.root / 'calls'}\n"
+                               "echo '{\"status\": \"ok\"}'\n")
+        self.python.chmod(0o755)
+        self.configure()
+
+    def configure(self, **changes) -> None:
+        settings = {"python": "python", "config": "cost/extract.json", "clip": "cost/clip.wav", **changes}
+        (self.root / "config.json").write_text(json.dumps({"contract": "archive-bench-config/1", "variants": {},
+                                                           "cost": settings}))
+
+    def runner(self, costs: dict[str, float]):
+        def run(python, config, clip, digest, bank, unit):
+            return {"status": "ok"}, costs.get(unit["unit"], 0.1) * 2.0, 1.0   # a 2 s clip
+        return run
+
+    def check(self, *words: str, runner=None) -> int:
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            if runner is None:
+                return cli.main(["--root", str(self.root), "cost", *words])
+            try:
+                return self.gate.check(self.root, record_baseline="--record-baseline" in words, runner=runner)
+            except BenchError:
+                return 2
+
+    def test_it_runs_every_backfill_unit_through_extract_run_with_the_backfills_threads(self) -> None:
+        sys.path.insert(0, str(self.gate.ENRICH))
+        import backfill
+        self.assertEqual(self.check("--record-baseline"), 0)
+        calls = (self.root / "calls").read_text().splitlines()
+        self.assertEqual(len(calls), len(backfill.UNITS))
+        first = calls[0].split()
+        self.assertEqual(first[:4], [str(backfill.SETTINGS["stems"]["threads"]), str(self.gate.EXTRACT), "run",
+                                     "stems"])
+        self.assertTrue(self.gate.EXTRACT.is_file())
+        named = [" ".join(w for w in c.split()[3:] if w != "--from").split(" --content")[0] for c in calls]
+        self.assertEqual(sorted(named), sorted(" ".join(u) for u in backfill.UNITS))
+        self.assertLess(named.index("f0-pesto stems/vocals"), named.index("melody"))
+        baseline = json.loads(self.gate.baseline_path(self.root).read_text())
+        self.assertEqual(baseline["audio_seconds"], 2.0)
+        self.assertEqual(len(baseline["units"]), len(backfill.UNITS))
+
+    def test_a_regression_beyond_the_bounds_fails_and_within_passes(self) -> None:
+        base = {"stems": 0.5, "melody": 0.08, "structure": 0.001}
+        self.assertEqual(self.check("--record-baseline", runner=self.runner(base)), 0)
+        self.assertEqual(self.check(runner=self.runner({**base, "stems": 0.55})), 0)
+        self.assertEqual(self.check(runner=self.runner({**base, "stems": 0.9})), 1)          # the total
+        self.assertEqual(self.check(runner=self.runner({**base, "melody": 0.25})), 1)        # one unit
+        self.assertEqual(self.check(runner=self.runner({**base, "structure": 0.02})), 0)     # within the slack
+        self.assertEqual(self.check(runner=self.runner({**base, "stems": 0.3})), 0)          # faster passes
+
+    def test_what_cannot_be_compared_or_run_cannot_happen(self) -> None:
+        self.assertEqual(self.check(runner=self.runner({})), 2)                              # no baseline
+        self.assertEqual(self.check("--record-baseline", runner=self.runner({})), 0)
+        write_wav(self.root / "cost" / "clip.wav", 3.0)
+        self.assertEqual(self.check(runner=self.runner({})), 2)                              # another clip
+        failing = lambda *a: ({"status": "failed", "detail": "no model"}, 0.0, 0.0)
+        self.assertEqual(self.check("--record-baseline", runner=failing), 2)
+        self.configure(clip="cost/none.wav")
+        self.assertEqual(self.check(), 2)
+        (self.root / "cost" / "x.wav").write_bytes(b"not audio")
+        self.configure(clip="cost/x.wav")
+        self.assertEqual(self.check(), 2)
+
+    def test_a_float_wavs_length_comes_from_its_header(self) -> None:
+        write_wav(self.root / "a.wav", 1.5, rate=44100, channels=1)
+        self.assertAlmostEqual(self.gate.wav_seconds(self.root / "a.wav"), 1.5, places=3)
+
+
 if __name__ == "__main__":
     unittest.main()

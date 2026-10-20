@@ -1,4 +1,4 @@
-# The bench: regression sets for note transcription
+# The bench: regression sets for note transcription, and the backfill's cost
 
 The bench scores pipeline variants against fixed evaluation sets and fails
 when a change makes them worse. It is the first piece of the experiment floor
@@ -12,6 +12,7 @@ or writes an archive.
 | [`score.py`](score.py) | mir_eval note precision, recall and F1, without and with offsets; reading notes from MIDI |
 | [`variants.py`](variants.py) | The variant interface and the registry: `basic-pitch` (the bank's `notes-basic-pitch` extractor) and `horn-d0` (an adapter, see below) |
 | [`run.py`](run.py) | Running a variant over a set, the result document, baselines, and the gate |
+| [`cost.py`](cost.py) | The backfill's cost gate: CPU seconds per audio-second of every backfill unit over one clip |
 | [`equivalence.py`](equivalence.py) | The stem equivalence check: `extract.py equivalence` over the root's clips (ADR 0090's amendment) |
 | [`__main__.py`](__main__.py) | The command |
 | [`test_bench.py`](test_bench.py) | The harness on tiny synthetic sets |
@@ -51,6 +52,31 @@ Exit status: 0 passed, 1 a mean F1 dropped by more than the tolerance (0.02
 by default, over all items and per subset, with and without offsets), 2 the
 run could not happen. A missing or changed file, a variant that fails, or one
 that writes no notes stops the run with status 2; it never scores as zero.
+
+## The backfill's cost
+
+`$P -m enrich.bench cost` runs every unit of `enrich backfill` (its
+configuration's units, in `unit_order`) once over the root's clip, each as
+the backfill runs it: `extract.py run` in a process of its own, under the
+enrich interpreter, held to the threads `backfill.layout` gives it, into an
+empty bank. It records each unit's CPU seconds (the process and its
+children) per audio-second and their sum, files the result under
+`results/cost/`, and compares it with `baselines/cost/backfill.json`. It
+fails (exit 1) when the sum rises by more than 20%, or one unit more than
+doubles (by more than 100% plus 0.02 s per audio-second: a cheap unit moves
+by 2x between runs on the same machine, so only the sum is gated finely); `--record-baseline` stores the run
+as the baseline. CPU time is gated, not wall time, because other load on
+the machine moves the wall far more. A baseline of another clip, machine
+architecture or core count, or other units, cannot be compared (exit 2).
+The root's `config.json` names it:
+
+```json
+"cost": {"python": "<the enrich interpreter>", "config": "cost/extract-config.json", "clip": "cost/clip.wav"}
+```
+
+The clip is two minutes of a song with voice and bass, so every unit has
+work; the configuration is the backfill's (its programs). One run takes
+about four minutes on the x86-64 laptop.
 
 ## Scoring and cost
 
