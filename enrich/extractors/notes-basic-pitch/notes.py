@@ -34,6 +34,24 @@ The pinned model's contour axis sits one bin above where Basic Pitch's own
 sharp (the 31 cents an earlier trial measured). The opt-in test in
 `test_notes.py` plays tones of known pitch through the real model.
 
+A region run (ADR 0112) is laid on the whole run's grid. Basic Pitch cuts
+its 22,050 Hz input into windows of 43,844 samples every 36,164, from 3,840
+samples of silence before the start, and keeps 142 frames of each; a frame's
+time is its index in the whole run (`model_frames_to_time`), not 256 samples
+a frame. So a cut transcribed alone gives other windows, frames and times
+than the whole recording over the same span (note F1 0.78 against the whole
+run on a 485 s region). Where the request's input carries the `region` it
+lies at in the recording, the audio is placed at that offset (rounded to a
+sample at 22,050 Hz): silence before it back to the start of the whole run's
+window that holds it, the same windows from there, and frame k of the region
+is frame `base` + k of the whole run, timed as the whole run times it, less
+the region's start, so its times are on the cut's timeline. Frames run to the
+end of the region's audio; notes starting before the region are dropped. Only
+the silence where the whole run hears what lies before the region differs,
+which reaches the region's first window. (The whole run drops its frames past
+`floor(n x 86 / 22050)`, about its last 0.7 %, by Basic Pitch's own trim; a
+region keeps them.)
+
 Invoked by the runner as `<basic-pitch-python> notes.py <request.json>`; the
 settings are fixed, and a request naming others is refused.
 """
@@ -64,6 +82,15 @@ CENTS_REACH_BINS = 3             # a semitone either side of the note
 BEND_REACH_BINS = 25             # Basic Pitch's n_bins_tolerance
 BEND_WEIGHT_STD = 5              # Basic Pitch's Gaussian weighting of the bend window
 FRAME_RATE = 86                  # Basic Pitch's ANNOTATIONS_FPS: 256 samples at 22,050 Hz
+# Basic Pitch's run_inference windowing (0.4.0): see the module's description.
+MODEL_RATE = 22050               # AUDIO_SAMPLE_RATE
+FFT_HOP = 256
+WINDOW_SAMPLES = 43844           # AUDIO_N_SAMPLES: 2 s less one hop
+WINDOW_FRAMES = 172              # ANNOT_N_FRAMES: frames the model gives a window
+OVERLAP_FRAMES = 30              # run_inference's n_overlapping_frames
+OVERLAP_SAMPLES = OVERLAP_FRAMES * FFT_HOP
+WINDOW_HOP = WINDOW_SAMPLES - OVERLAP_SAMPLES
+KEPT_FRAMES = WINDOW_FRAMES - OVERLAP_FRAMES  # half the overlap dropped at each end
 
 
 class NotesError(Exception):
@@ -107,7 +134,65 @@ class Transcription(NamedTuple):
 class Model(Protocol):
     software: list[dict[str, str]]
 
-    def transcribe(self, wav: Path) -> Transcription: ...
+    def transcribe(self, wav: Path, offset: int | None = None) -> Transcription: ...
+
+
+# -- a region on the whole run's grid ---------------------------------------------
+
+def offset_at(region: dict[str, int] | None, rate: int) -> int | None:
+    """Where a region's audio starts on the recording's timeline, in samples
+    at `rate`, to the nearest (half to even); None for whole content."""
+    if region is None:
+        return None
+    whole, part = divmod(region["start"] * rate, region["rate"])
+    return whole + (1 if 2 * part > region["rate"] or (2 * part == region["rate"] and whole % 2) else 0)
+
+
+class Layout(NamedTuple):
+    """How audio at `offset` (samples at MODEL_RATE) is windowed as the whole
+    run windows it: `lead` samples of silence before it, the first window
+    being the whole run's window `base // KEPT_FRAMES`, and `frames` frames
+    kept, the first being the whole run's frame `base`."""
+    lead: int
+    base: int
+    frames: int
+
+
+def layout(offset: int, samples: int) -> Layout:
+    """The windows of `samples` samples at `offset` on the whole run's grid.
+    The whole run's frame `j x KEPT_FRAMES + i` (window j, i < KEPT_FRAMES)
+    reads the audio from `j x WINDOW_HOP + i x FFT_HOP`; the region keeps
+    each frame whose audio starts before the region's end."""
+    window = offset // WINDOW_HOP
+    lead = OVERLAP_SAMPLES // 2 + offset - window * WINDOW_HOP
+    reach = lead - OVERLAP_SAMPLES // 2 + samples  # the region's end, from the first window's first kept frame
+    frames = 0
+    for j in range(-(-reach // WINDOW_HOP)):
+        frames += min(KEPT_FRAMES, -(-(reach - j * WINDOW_HOP) // FFT_HOP))
+    return Layout(lead, window * KEPT_FRAMES, frames)
+
+
+def windowed(audio: numpy.ndarray, lead: int, frames: int, predict: Any) -> dict[str, numpy.ndarray]:
+    """`run_inference` over `audio` with `lead` samples of silence before it
+    in place of its own half overlap: the model's outputs per window, half
+    the overlap dropped at each end, joined, and cut to `frames` frames.
+    `predict` takes a [1, WINDOW_SAMPLES, 1] window and returns
+    {name: [1, WINDOW_FRAMES, bins]}."""
+    padded = numpy.concatenate([numpy.zeros(lead, dtype=numpy.float32), numpy.asarray(audio, dtype=numpy.float32)])
+    parts: dict[str, list[numpy.ndarray]] = {}
+    half = OVERLAP_FRAMES // 2
+    for start in range(0, len(padded), WINDOW_HOP):
+        window = padded[start:start + WINDOW_SAMPLES]
+        window = numpy.pad(window, (0, WINDOW_SAMPLES - len(window)))
+        for name, value in predict(window[None, :, None]).items():
+            value = numpy.asarray(value)
+            if value.shape[:2] != (1, WINDOW_FRAMES):
+                raise NotesError(f"the model gave {name} of shape {value.shape} for a window")
+            parts.setdefault(name, []).append(value[0, half:-half])
+    joined = {name: numpy.concatenate(values)[:frames] for name, values in parts.items()}
+    if any(len(value) != frames for value in joined.values()):
+        raise NotesError(f"the windows gave fewer than the {frames} frames the region holds")
+    return joined
 
 
 def sha256_file(path: Path) -> str:
@@ -142,18 +227,30 @@ class BasicPitch:
             raise NotesError(f"basic-pitch loaded the model with {self.model.model_type.name}, not ONNX Runtime")
         self.run_inference, self.to_notes, self.to_time = run_inference, output_to_notes_polyphonic, \
             model_frames_to_time
+        self.librosa = librosa
         self.software = [{"name": "basic-pitch", "version": version},
                          {"name": "onnxruntime", "version": onnxruntime.__version__},
                          {"name": "librosa", "version": librosa.__version__}]
 
-    def transcribe(self, wav: Path) -> Transcription:
-        output = self.run_inference(wav, self.model)
+    def transcribe(self, wav: Path, offset: int | None = None) -> Transcription:
+        """Basic Pitch's own `run_inference` over whole content; over a region
+        at `offset` (samples at MODEL_RATE), the same windows the whole run
+        lays there, timed as the whole run times them (see the module)."""
+        base = 0
+        if offset is None:
+            output = self.run_inference(wav, self.model)
+        else:
+            audio, _ = self.librosa.load(str(wav), sr=MODEL_RATE, mono=True)
+            lead, base, frames = layout(offset, len(audio))
+            output = windowed(audio, lead, frames, self.model.predict)
         notes = self.to_notes(output["note"], output["onset"], onset_thresh=float(ONSET_THRESHOLD),
                               frame_thresh=float(FRAME_THRESHOLD), infer_onsets=True,
                               min_note_len=MINIMUM_NOTE_FRAMES, max_freq=None, min_freq=None, melodia_trick=True)
         contour = numpy.asarray(output["contour"])
-        return Transcription([(int(s), int(e), int(p), float(a)) for s, e, p, a in notes], contour,
-                             numpy.asarray(self.to_time(contour.shape[0])))
+        times = numpy.asarray(self.to_time(base + contour.shape[0]))[base:]
+        if offset is not None:
+            times = times - offset / MODEL_RATE
+        return Transcription([(int(s), int(e), int(p), float(a)) for s, e, p, a in notes], contour, times)
 
 
 def load_model() -> Model:
@@ -219,6 +316,8 @@ def note_rows(transcription: Transcription) -> list[list[Any]]:
         # Basic Pitch ends a note at the frame after its last, which is a frame.
         if not 0 <= start < end < len(times):
             raise NotesError(f"a note spans frames {start} to {end} of {len(times)}")
+        if times[start] < 0:
+            continue  # a region's: it starts before the region (see the module)
         frames = contour[start:end]
         rows.append([round(float(times[start]), 4), round(float(times[end]), 4), int(midi),
                      round(float(amplitude), 4), round(note_cents(frames, midi), 1), note_bends(frames, midi)])
@@ -252,7 +351,8 @@ def main(argv: list[str]) -> int:
         with tempfile.TemporaryDirectory(prefix="notes-") as work:
             wav = Path(work) / "input.wav"
             decode(request["input"]["path"], wav)
-            transcription = model.transcribe(wav)
+            offset = offset_at(request["input"].get("region"), MODEL_RATE)
+            transcription = model.transcribe(wav) if offset is None else model.transcribe(wav, offset)
         rows = note_rows(transcription)
         (output / "notes.json").write_text(json.dumps(
             {"frame_rate": FRAME_RATE, "bend_unit": "1/3 semitone",
