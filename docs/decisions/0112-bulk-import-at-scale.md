@@ -416,6 +416,14 @@ From the recorded costs, not measured end to end:
 | laptop, Mac at 0.10 (FLAC, two tasks) | | about 50 min | | about 3.0 h |
 | `chords-jiang` in the background | 0.121 | about 21 min | | about the same |
 
+**Measured** (2026-10-20, laptop only, `--eager`, the two profiled
+recordings, 3269 s of audio, a scratch copy and a fresh bank, no
+proposers): usable after 183 s (projected 234 s), done after 3180 s (round
+1, without tiers: 2921 s). With two recordings the end is one recording's
+`stems` on one two-thread copy, now started after the fast tier, so the
+tiers cost 9% of time-to-done there and buy usable 17 times sooner; at the
+shadow's scale the background is bound by throughput, not by that tail.
+
 The laptop's background share below the Mac's stems (`f0-pesto` twice,
 `notes-basic-pitch`, `melody`) is 0.65 core-s per audio-s, 1.9 h alone on
 the shadow: with stems off the laptop, it bounds time-to-done until
