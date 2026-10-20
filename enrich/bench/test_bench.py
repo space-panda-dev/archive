@@ -373,5 +373,56 @@ class VariantTest(unittest.TestCase):
         self.assertEqual(variant.provenance()["software"], [{"name": "x", "version": "1"}])
 
 
+
+class EquivalenceCheck(unittest.TestCase):
+    """The suite around `extract.py equivalence`: its command from the root's
+    config, and its exit status passed through (any other than 0 or 1 is 2)."""
+
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        (self.root / "eq" / "clips").mkdir(parents=True)
+        for name in ("b.wav", "a.flac", "notes.txt"):
+            (self.root / "eq" / "clips" / name).write_bytes(b"x")
+        (self.root / "eq" / "extract.json").write_text("{}")
+        self.python = self.root / "python"
+
+    def configure(self, exit_code: int, **changes) -> None:
+        self.python.write_text(f"#!/bin/sh\necho \"$@\" > {self.root / 'argv'}\nexit {exit_code}\n")
+        self.python.chmod(0o755)
+        settings = {"python": "python", "config": "eq/extract.json", "bank": "eq/bank", "clips": "eq/clips",
+                    "extractor": "stems", "against": "mps", **changes}
+        (self.root / "config.json").write_text(json.dumps({"contract": "archive-bench-config/1", "variants": {},
+                                                           "equivalence": settings}))
+
+    def run_check(self) -> int:
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            return cli.main(["--root", str(self.root), "equivalence"])
+
+    def test_it_runs_extract_equivalence_over_every_clip(self) -> None:
+        from enrich.bench import equivalence
+        self.configure(0)
+        argv = equivalence.command(self.root)
+        self.assertEqual(argv[1:6], [str(equivalence.EXTRACT), "equivalence", "stems", "--against", "mps"])
+        self.assertTrue(equivalence.EXTRACT.is_file())
+        clips = [argv[i + 1] for i, word in enumerate(argv) if word == "--content"]
+        self.assertEqual([Path(c).name for c in clips], ["a.flac", "b.wav"])
+        self.assertEqual(self.run_check(), 0)
+        self.assertIn("equivalence stems --against mps", (self.root / "argv").read_text())
+
+    def test_its_status_is_the_records_and_anything_else_could_not_happen(self) -> None:
+        for code, expected in ((1, 1), (2, 2), (3, 2)):
+            with self.subTest(code=code):
+                self.configure(code)
+                self.assertEqual(self.run_check(), expected)
+
+    def test_a_config_without_it_or_a_missing_path_cannot_happen(self) -> None:
+        self.configure(0, against=None)
+        self.assertEqual(self.run_check(), 2)
+        self.configure(0, clips="eq/none")
+        self.assertEqual(self.run_check(), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

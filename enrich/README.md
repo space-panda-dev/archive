@@ -802,7 +802,9 @@ to stderr and exits 1. It needs `ffmpeg` and `ffprobe` (`--ffmpeg` and
 enrich/extract.py list
 enrich/extract.py run <extractor|all> --content <file> --bank <dir> [--digest sha256:<hex>] [--jobs n]
                   [--media-type <type>] [--from <extractor>/<output>] [--config <file>] [--program name=path]...
-                  [--extractors <dir>]... [--dry-run]
+                  [--extractors <dir>]... [--dry-run] [--exact]
+enrich/extract.py equivalence <extractor> --against <value> --content <file>... --bank <dir>
+                  [--config <file>] [--program name=path]... [--extractors <dir>]... [--jobs n]
 ```
 
 Runs extractors on one file and files their features in the feature bank,
@@ -835,7 +837,7 @@ Versions, needs, and outputs by kind are listed together in
 | `quality` | Python, Essentia 2.1b6.dev1438, ffmpeg | how well a recording was captured, from one more decode at the stream's own rate with every channel: EBU R 128 `integrated`, `loudness_range`, and `true_peak`; `sample_peak`, `full_scale_samples`, `clipped_seconds`, `dc_offset`, `whole_correlation`, `anti_phase`, `false_stereo`, `noise_floor`, `snr`, `bandwidth`, `band_limited`; per channel, `clipping` (flat tops at full scale, or long ones at the recording's own peak), `overs` (0 dBTP reached between samples, 4x oversampled), `gaps`, `noise_bursts` (spans) and `clicks`, `discontinuities` (events), each of the last three kept only where it stands out from the transients around it or (clicks and discontinuities) stands alone among the steps of the 150 ms around it, so that drums and limiters on a finished master are not defects while crackle still is; `hum` (spans: narrow, steady peaks at 50 or 60 Hz and their harmonics that persist through the quiet or sound in it); on the `frames` grid, `correlation` and `peak_db` |
 | `melody` | Python, Essentia 2.1b6.dev1438 | on a grid of 2,048-sample frames every 128 (the `hop_size` stride) at 44,100 Hz: `pitch` (MELODIA, in `bin_cents` bins: 5, or 2 on the vocal stem), `confidence`, `voiced`, `midi`, `cents`, `level_db`; `notes` spans; scalars `voiced_fraction`, `melodia_voiced_fraction`, `measured_fraction`, `loud_db`, `gate_db`, `reference_hz`, `samples`. The predominant melody of the vocal stem where the bank holds one voicing at least a fifth of its rows (it prefers `stems/vocals`, then `stems-6s/vocals`), else of the content; `voiced` is MELODIA's decision kept where a contour is mostly above a gate relative to the recording's loud level, and MELODIA runs only within a second of a row that reaches the gate |
 | `colour` | Python, numpy, ffmpeg | for each waveform pixel of [`media.py`](media.py)'s derived-media peaks (about 10 ms; the peaks stay derived media and are not copied into the bank): series `colour` (`u8` red, green, blue, on grid `peaks`) coloured from `frames/centroid` (hue between limits that [`hue_range.py`](hue_range.py) can take from a set of recordings) or `frames/hpcp` (hue) and `frames/rms_db` (lightness), interpolated to each pixel's centre; file `palette` (the mapping and legend stops, JSON, fields in [its README](extractors/colour/README.md)); file `preview` (a PNG of the whole recording). The mapping is its parameters |
-| `stems` | Python under `${demucs-python}` (Demucs 4.1.0, PyTorch), ffmpeg | `vocals`, `drums`, `bass`, `other`: 44.1 kHz stereo 16-bit FLAC from pinned htdemucs weights; `levels` (each stem's RMS every 4,096 samples); each stem's `_rms_db`, `_peak_db`, `_clamped`; `mix_rms_db`, `samples`, `seconds` ([ADR 0075](../docs/decisions/0075-stems-as-content.md)). On the CPU, or on Apple's GPU with `apply.device` `mps` (another key) |
+| `stems` | Python under `${demucs-python}` (Demucs 4.1.0, PyTorch), ffmpeg | `vocals`, `drums`, `bass`, `other`: 44.1 kHz stereo 16-bit FLAC from pinned htdemucs weights; `levels` (each stem's RMS every 4,096 samples); each stem's `_rms_db`, `_peak_db`, `_clamped`; `mix_rms_db`, `samples`, `seconds` ([ADR 0075](../docs/decisions/0075-stems-as-content.md)). On the CPU, or on Apple's GPU with `apply.device` `mps` (another key; either stands in for the other under a passing equivalence record) |
 | `beats-beatthis` | Python under `${beatthis-python}` (beat_this 1.1.0, PyTorch), with the checkpoint `${beatthis-checkpoint}` | from its own decode at the file's rate (soundfile; the model resamples to 22,050 Hz mono): events `beats` and `downbeats` from Beat This's pinned `final0` checkpoint with its minimal postprocessor, at the model's own metrical level (nothing asserts a meter, and the downbeats' spacing is not one); scalars `beat_count`, `downbeat_count`, `median_bpm` (60 over the median beat interval). On a 69-minute album, 0.20 CPU-seconds a second of audio and 0.76 GB at most |
 | `chords-jiang` | Python under `${jiang-python}` (PyTorch, librosa), from the recogniser's checkout `${jiang-repo}` | from its own decode: spans `chords` (the HMM-decoded labels of Jiang et al.'s large-vocabulary recogniser in Harte spelling, `N` for none, each valued by its label's weight), file `readings` (JSON: per span, the decoded label and the three most probable templates with weights, each a share of the whole template set, so a span's three sum to at most 1), scalars `chord_count` and `decoded_in_top3`. On the same album, 0.17 CPU-seconds a second and 1.6 GB at most |
 | `chords-chordino` | Python under `${chordino-python}` (the vamp host, chord-extractor 0.1.3's Chordino build, librosa) | from its own 44,100 Hz mono decode: spans `chords` (Chordino's simple chord labels in its own spelling, such as `Am7` or `F/A`, `N` for none, tiling the decoded length); scalars `chord_count`, `seconds`. Not learned: a second opinion beside `chords-jiang`. On the same album, 0.042 CPU-seconds a second and 0.56 GB at most |
@@ -864,6 +866,37 @@ configured (`beatthis-python`, `beatthis-checkpoint`, `jiang-python`,
 digests its parameters pin and refuses others. The Essentia `chords`
 extractor is retired: its entries stay readable
 ([retired extractors](../docs/feature-bank.md#retired-extractors)).
+
+### A stem is a stem: `equivalence` and `--exact`
+
+`stems` declares `apply.device` `cpu` and `mps` interchangeable
+([ADR 0090's amendment](../docs/decisions/0090-extractor-runs-travel-through-spool.md#amendment-2026-10-19-a-stem-is-a-stem);
+[format](../docs/feature-bank.md#interchangeable-entries)). Each device's
+stems keep their own key; where the configured device's are missing, the
+other's answer every reader (practice audio, preferred inputs, the
+proposers) once the bank holds a passing **equivalence record** for the pair
+whose software matches them. The runner and `remote.py put` then count them
+as made (`hit`, `stands_in_for` the configured key), so a recording
+separated on the Mac is not separated again on the laptop; `run --exact` and
+`put --exact` ask for the configured key alone.
+
+`equivalence stems --against mps --content <clip>...` makes the record: for
+each test input it makes or finds both devices' stems (one this machine
+cannot make must already be in the bank, made elsewhere and collected), runs
+`notes-basic-pitch` over each side's `vocals` and `bass` and `f0-pesto` over
+each side's `vocals`, and files the measured agreement (note F1, f0
+difference in cents, voicing agreement) against the manifest's thresholds, with each stem's largest
+sample difference and signal-to-difference ratio as evidence. It prints, for each measure, the value that decides it (note F1 pooled over
+every input's notes, voicing over every voiced row, the pitch difference by
+the worst input) and the worst single input's, and exits 0 when the record passes, 1 when it
+fails (it is filed either way, and lets nothing stand in), and 2 when no
+record could be made. A measure with nothing to compare on every input fails:
+the inputs must hold notes on the bass. `f0-pesto` compares only the vocals:
+on the bass stems of two whole rehearsals (2026-10-19) its confidence never
+passed 0.13, so the note builder voices no bass row and there is nothing to
+compare. An
+upgrade of torch or demucs on either side is a reason to measure again:
+lookup honours only a record naming the software the entry was made with.
 
 ### The model extractors' interpreters
 

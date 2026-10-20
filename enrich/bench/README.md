@@ -12,6 +12,7 @@ or writes an archive.
 | [`score.py`](score.py) | mir_eval note precision, recall and F1, without and with offsets; reading notes from MIDI |
 | [`variants.py`](variants.py) | The variant interface and the registry: `basic-pitch` (the bank's `notes-basic-pitch` extractor) and `horn-d0` (an adapter, see below) |
 | [`run.py`](run.py) | Running a variant over a set, the result document, baselines, and the gate |
+| [`equivalence.py`](equivalence.py) | The stem equivalence check: `extract.py equivalence` over the root's clips (ADR 0090's amendment) |
 | [`__main__.py`](__main__.py) | The command |
 | [`test_bench.py`](test_bench.py) | The harness on tiny synthetic sets |
 
@@ -34,7 +35,16 @@ $P -m enrich.bench check horn-v1                       # rerun every baseline; e
 ```
 
 `wf check bench` runs the unit tests and `wf check bench-horn` runs `check
-horn-v1` on the laptop. The suite is cached by source tree, so after changing
+horn-v1` on the laptop.
+
+`$P -m enrich.bench equivalence` checks that the Mac GPU's stems stand in for
+the CPU's: it runs `enrich/extract.py equivalence` over the clips and bank the
+root's `config.json` names under `equivalence` (see
+[`equivalence.py`](equivalence.py)), makes the CPU side where it is missing,
+and files the record in that bank. The GPU side must be there already, made
+by the Mac's worker through Spool and collected. Exit 0 the record passes, 1
+it fails, 2 it could not be made. Declared in wf's suites, it is
+`bench-stems`. The suite is cached by source tree, so after changing
 the data or a variant's environment ask again with `--fresh`.
 
 Exit status: 0 passed, 1 a mean F1 dropped by more than the tolerance (0.02

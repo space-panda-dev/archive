@@ -152,7 +152,11 @@ scheduler has added it.
   machine against a recorded baseline, failing above the tolerance; declare
   it with wf's suites as `bench-horn` is. Replace the hand-written backfill
   scripts in [the shadow runbook](shadow-runbook.md).
-- **gpu.** `interchangeable` in the manifest check
+- **gpu.** Built 2026-10-19 but for `f0-pesto` on MPS (see its last
+  sentence): the stems record over six 60 s clips of two rehearsals passes
+  (note F1 pooled 0.997 vocals and bass; f0 0.09 cents; voicing 100%);
+  the set of ten clips from other recordings is still the operator's to
+  confirm. `interchangeable` in the manifest check
   (`bank.check_manifest`) and in `stems`' `extractor.json` (update its
   `SHIPPED` pin); `extract.py equivalence` writing and validating the
   equivalence record (`archive-feature-bank-equivalence/1`) in the same

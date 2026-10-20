@@ -69,7 +69,9 @@ APPLY = {"shifts": 0, "split": True, "overlap": "0.25", "segment": None, "device
 # The devices the model may run on. The device is a parameter, so stems made
 # on a GPU are another key beside the CPU's: the same weights give other bits
 # on other hardware. "cpu" is the manifest's; an operator who has Apple's
-# Metal configures {"stems": {"apply": {..., "device": "mps"}}}.
+# Metal configures {"stems": {"apply": {..., "device": "mps"}}}. Either
+# device's stems stand in for the other's once a passing equivalence record
+# is in the bank (the manifest's `interchangeable`; ADR 0090's amendment).
 DEVICES = ("cpu", "mps")
 
 

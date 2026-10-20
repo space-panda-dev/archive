@@ -191,9 +191,11 @@ class Spool:
 # -- put -------------------------------------------------------------------------
 
 def put(catalog: bank.Catalog, root: Path, spool: Spool, extractor_id: str, content: Path, media_type: str,
-        digest: str | None, parameters: dict[str, Any]) -> dict[str, Any]:
+        digest: str | None, parameters: dict[str, Any], exact: bool = False) -> dict[str, Any]:
     """Put one task for the entry of this extractor and content, unless the
-    bank holds it already."""
+    bank holds it already, or (unless exact) an entry that stands in for it
+    (ADR 0090's amendment): a recording separated on one device is never
+    separated again on another."""
     extractor = traveling(catalog, extractor_id)
     if not extractor.accepts(media_type):
         raise RemoteError(f"{extractor_id} does not accept {media_type}")
@@ -202,7 +204,10 @@ def put(catalog: bank.Catalog, root: Path, spool: Spool, extractor_id: str, cont
         raise RemoteError(f"{content} has digest {actual}, not the {digest} given")
     key = catalog.keys(actual, [extractor_id], parameters)[extractor_id]
     answer = {"extractor": extractor_id, "key": key, "content": actual, "task_id": task_id(key)}
-    if bank.read_entry(bank.entry_directory(root, actual, extractor_id, key)) is not None:
+    found = bank.Bank(root, catalog, parameters, exact=exact).entry(actual, extractor_id)
+    if found is not None:
+        if found.manifest["key"] != key:
+            return {"status": "hit", **answer, "key": found.manifest["key"], "stands_in_for": key}
         return {"status": "hit", **answer}
     payload = {"contract": TASK_CONTRACT, "extractor": {"id": extractor.id, "version": extractor.version},
                "key": key, "parameters": catalog.parameters(extractor_id, parameters),
@@ -259,7 +264,7 @@ def work(catalog: bank.Catalog, directory: Path, programs: dict[str, str], paylo
     if bank.file_digest(content) != digest:
         raise Refused(f"the attachment {hex_of(digest)} is not the bits its digest names")
     root = directory / "bank"
-    run = extract.Run(catalog, root, content, media_type, digest, programs, overrides, None)
+    run = extract.Run(catalog, root, content, media_type, digest, programs, overrides, None, exact=True)
     answer = run.execute([extractor_id], 1)
     outcome = answer["extractors"][extractor_id]
     if outcome["status"] != "ran":
@@ -426,6 +431,8 @@ def main(argv: list[str] | None = None) -> int:
     putting.add_argument("--media-type")
     putting.add_argument("--bank", required=True)
     putting.add_argument("--spool", required=True)
+    putting.add_argument("--exact", action="store_true",
+                         help="put the task unless the configured key's own entry is in the bank")
     working = commands.add_parser("work")
     collecting = commands.add_parser("collect")
     collecting.add_argument("--bank", required=True)
@@ -451,7 +458,8 @@ def main(argv: list[str] | None = None) -> int:
             catalog.check_overrides(parameters, f"configuration {arguments.config}")
             catalog[arguments.extractor]
             answer = put(catalog, root, spool, arguments.extractor, content,
-                         arguments.media_type or extract.media_type_of(content), arguments.digest, parameters)
+                         arguments.media_type or extract.media_type_of(content), arguments.digest, parameters,
+                         arguments.exact)
             ok = True
         else:
             answer = collect(catalog, root, spool)

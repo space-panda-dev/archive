@@ -69,6 +69,7 @@ in [`enrich/test_bank.py`](../enrich/test_bank.py) writes one key out in full.
 <root>/sha256/<ab>/<cd>/<hex>/bank/<extractor id>/<key hex>/<output files>
 <root>/sha256/<ab>/<cd>/<hex>/bank/<extractor id>/<key hex>.failed.json
 <root>/sha256/<ab>/<cd>/<hex>/bank/<extractor id>/<key hex>.lock
+<root>/equivalence/<extractor id>/<pair hex>/<record hex>.json
 <root>/tmp/
 ```
 
@@ -196,8 +197,9 @@ audio, and `n` decoded samples make `ceil(n / 2048) + 1` rows.
 ```
 
 `contract`, `id`, `version`, `command`, `accepts`, and `outputs` are
-required; `description`, `requires`, `needs`, `prefers`, and `parameters` may
-be given; nothing else is allowed. `version` matches
+required; `description`, `requires`, `needs`, `prefers`, `parameters`, and
+`interchangeable` ([below](#interchangeable-entries)) may be given; nothing
+else is allowed. `version` matches
 `[A-Za-z0-9][A-Za-z0-9.]{0,39}`, so that `archive-extractor.<id>@<version>`
 is a Spool capability. Output names match `[a-z][a-z0-9_]{0,62}`.
 A series declares `dtype`, `columns`, and optionally `grid`; a file declares
@@ -249,6 +251,83 @@ content's directory, an extractor that prefers a feature with parameters
 without being told which feature it reads. A preferred feature must be a
 `file` output of an extractor in the catalog, not one the extractor makes or
 needs; one that no extractor in the catalog declares is never present.
+
+### Interchangeable entries
+
+`interchangeable` ([ADR 0090's amendment](decisions/0090-extractor-runs-travel-through-spool.md#amendment-2026-10-19-a-stem-is-a-stem))
+names one parameter, by dotted path, whose declared values make entries
+that may stand in for each other: a stem is a stem, whichever device made
+it. Declaring it changes no output, so it is not a new version.
+
+```json
+"interchangeable": {
+ "parameter": "apply.device", "values": ["cpu", "mps"],
+ "software": ["demucs", "torch"],
+ "agree": [{"measure": "note-f1", "outputs": ["vocals", "bass"], "at_least": "0.98"},
+           {"measure": "f0-cents-p99", "outputs": ["vocals"], "at_most": "5"},
+           {"measure": "voicing-agreement", "outputs": ["vocals"], "at_least": "0.99"}]}
+```
+
+The parameter must be declared, with one of `values`. `software` names the
+libraries a record must match. Each of `agree` names a downstream measure,
+the file outputs it compares, and one threshold in decimal text:
+`note-f1` (`notes-basic-pitch` over each side's file: same MIDI pitch,
+onsets within 50 ms, closest first, one pair a note), `f0-cents-p99` (the
+99th percentile of the absolute `f0-pesto` pitch difference over rows the
+note builder voices in both; the bass's settings for `bass`, the voice's
+otherwise) and `voicing-agreement` (the share of rows voiced in either that
+both voice). An extractor that declares it needs nothing.
+
+**Lookup.** The configured parameters' entry answers first. Where it is
+absent, each other declared value's entry, in the manifest's order, answers
+when the bank holds a passing **equivalence record** for the pair whose side
+for that value names the same `software` versions as the entry
+(`Bank.entry`; `Bank.candidates` gives every entry that answers, best
+first). Without such a record lookup is exactly the configured key. A measure of a
+file feature is found over whichever answering entry it was made over, the
+best first (`Bank.entry_from`, `Bank.measured_over`), and the runner measures
+the file of the first answering entry already measured, so nothing is
+measured twice. The runner and `remote.py put` count an entry that stands in
+as made (`hit`, with `stands_in_for` the configured key); `--exact` asks for
+the configured key alone. A record that cannot be read, or whose `pass` its
+own values do not give, is refused, never read as absent.
+
+**The record** (`archive-feature-bank-equivalence/1`, regenerable,
+INV-4) is written by `extract.py equivalence <extractor> --against <value>
+--content <input>...`, which makes or finds both sides' entries of each input
+(`--exact`), runs each measure's extractor over each side's files, and files:
+
+```json
+{"contract": "archive-feature-bank-equivalence/1",
+ "extractor": {"id": "stems", "version": "1"}, "parameter": "apply.device",
+ "sides": [{"value": "cpu", "parameters": "sha256:...", "software": [{"name": "demucs", "version": "4.1.0"}, ...]},
+           {"value": "mps", "parameters": "sha256:...", "software": [...]}],
+ "agree": [...as declared...],
+ "inputs": [{"content": "sha256:...", "entries": ["sha256:<cpu key>", "sha256:<mps key>"],
+             "measured": [{"measure": "note-f1", "output": "vocals", "value": 1.0,
+                           "detail": {"notes": [64, 64], "matched": 64, "entries": [...]}}, ...],
+             "evidence": {"vocals": {"samples": 5292000, "max_abs_steps": 1, "snr_db": 91.3}, ...}}],
+ "pass": true, "made_at": "2026-10-19T00:00:00Z"}
+```
+
+`parameters` is the digest of each side's canonical parameters; `software`
+is the named libraries of that side's entries, which must be the same over
+every input. A value is `null` where there is nothing to compare (no
+confident pitch on a stem). Each measure of each output is decided over
+every input that measured it: `note-f1` pooled over all their notes
+(`2 * matched / (notes of both sides)`, from each detail's `matched` and
+`notes`), `voicing-agreement` over all their voiced rows (`agreeing` /
+`voiced_in_either`), `f0-cents-p99` by the worst input. A record passes when
+every measure of every output it names is measured on at least one input and
+its decided value is within the threshold; pooling keeps one borderline note
+of a short clip (16 notes against 17) from deciding alone, and each input's
+own value stays in the record. `evidence` (the largest sample difference in 16-bit
+steps and the signal-to-difference ratio of each audio output) decides
+nothing. `<pair hex>` is the digest of
+`{"contract": "archive-feature-bank-equivalence/1", "extractor", "version",
+"parameters": [the two parameter digests, sorted]}`, and `<record hex>` the
+digest of the sides' parameters and software, so a record for the same
+software replaces the last and one for other software sits beside it.
 
 ## The request
 
