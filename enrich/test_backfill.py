@@ -62,6 +62,7 @@ class FakePlanner:
 
     def __init__(self, states: dict[tuple[str, Unit], str] | None = None, default: str = TODO):
         self.catalog, self.root, self.parameters = CATALOG, Path("/nonexistent"), {}
+        self.programs: dict[str, str] = {}
         self.states = dict(states or {})
         self.default = default
         self.lock = threading.Lock()
@@ -112,9 +113,16 @@ class SlotsAndThreads(unittest.TestCase):
 
     def test_the_configuration_refuses_what_it_does_not_know(self) -> None:
         for given in ({"unknown": 1}, {"units": [["no-such-extractor"]]}, {"units": [["tonal", "rhythm/beats"]]},
-                      {"extractors": {"stems": {"route": "cloud"}}}, {"extractors": {"stems": {"gpu": True}}}):
+                      {"extractors": {"stems": {"route": "cloud"}}}, {"extractors": {"stems": {"gpu": True}}},
+                      {"extractors": {"stems": {"transport": "mp3"}}}):
             with self.subTest(given=given), self.assertRaises((backfill.BackfillError, bank.BankError)):
                 backfill.schedule_of({"backfill": given}, CATALOG)
+
+    def test_stems_travel_as_wavpack_unless_configured_otherwise(self) -> None:
+        self.assertEqual(schedule().setting("stems")["transport"], "wavpack")
+        self.assertIsNone(schedule().setting("tonal")["transport"])
+        plain = backfill.schedule_of({"backfill": {"extractors": {"stems": {"transport": None}}}}, CATALOG)
+        self.assertIsNone(plain.setting("stems")["transport"])
 
     def test_expensive_is_the_recorded_cost_above_the_threshold(self) -> None:
         sched = schedule()
@@ -380,8 +388,9 @@ class Spool(unittest.TestCase):
 
     def go(self, collect, mode="eager"):
         planned = backfill.plan(self.recs, self.sched, self.planner, mode, shape(self.sched), True)
-        put = lambda catalog, root, spool, extractor, content, media_type, digest, parameters: {
-            "status": "put", "task_id": f"task-{digest[7:12]}", "key": "k"}
+        self.put_options: list[dict] = []
+        put = lambda catalog, root, spool, extractor, content, media_type, digest, parameters, **options: (
+            self.put_options.append(options) or {"status": "put", "task_id": f"task-{digest[7:12]}", "key": "k"})
         with patch.object(backfill.remote, "put", put), patch.object(backfill.remote, "collect", collect):
             runner = backfill.Runner(planned.jobs, self.planner, self.sched, shape(self.sched), 8, 32.0, mode,
                                      lambda **e: None, self.run_unit, spool=object())
@@ -397,6 +406,8 @@ class Spool(unittest.TestCase):
         planned = self.go(collect)
         self.assertTrue(all(j.status == "done" for j in planned.jobs))
         self.assertEqual({u for _, u in self.ran}, {BASS_TONAL})  # stems were never run here
+        # Their content travels as WavPack, the stems default, encoded by the configured ffmpeg.
+        self.assertEqual(self.put_options, [{"transport": "wavpack", "ffmpeg": None}] * 2)
 
     def test_a_task_the_spool_failed_for_good_runs_here(self) -> None:
         def collect(catalog, root, spool):
@@ -410,7 +421,7 @@ class Spool(unittest.TestCase):
     def test_a_put_that_fails_runs_here(self) -> None:
         planned = backfill.plan(self.recs, self.sched, self.planner, "eager", shape(self.sched), True)
 
-        def put(*arguments):
+        def put(*arguments, **options):
             raise backfill.remote.RemoteError("the spool cannot be reached")
 
         with patch.object(backfill.remote, "put", put):
@@ -475,7 +486,7 @@ class StandIns(unittest.TestCase):
         self.assertTrue(planned.jobs[0].routed)
         given = []
 
-        def put(catalog, root, spool, extractor, content, media_type, digest, parameters):
+        def put(catalog, root, spool, extractor, content, media_type, digest, parameters, **options):
             given.append(parameters)
             return {"status": "put", "task_id": "task-1", "key": "k"}
 

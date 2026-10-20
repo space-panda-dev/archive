@@ -158,7 +158,7 @@ command, `rg -n '^##' enrich/README.md`).
 | `enrich/bank.py` | 1394 | `Catalog` (452; `within` for regions), `Bank` (1064; `candidates`, `stands_in`, `measured_over`, `probe_falls_short`): the bank format; equivalence records (`check_equivalence` 888, `decisions`); region keys (`key_of`, `check_region`), `covering`, bank requests (`ask`, `requests`) at the end (ADR 0112) |
 | `enrich/equivalence.py` | 262 | `measure`: the equivalence record of interchangeable entries; `MEASURES` (note F1, f0 cents, voicing) |
 | `enrich/regions.py` | 254 | song spans by precedence, `regions_of`, `regions_for`, `expensive`, `plan` per mode (ADR 0112); tests `enrich/test_regions.py` |
-| `enrich/remote.py` | 502 | extractor runs through Spool: `put`, `work`, `collect` (ADR 0090) |
+| `enrich/remote.py` | 612 | extractor runs through Spool: `put` (with a lossless `make_transport` of the content), `work`, `collect` (ADR 0090) |
 | `enrich/backfill.py` | 1053 | `enrich backfill` (ADR 0112): `plan` (modes from `regions.plan`, region jobs, requests first), `Planner.state` (reads the bank through `Bank`, over a region through `Catalog.within`), `unit_order` (probes first), `layout`/`copies`, `check_remote` (stand-in routing), `Runner` (the pool and the Spool fan-out); tests `enrich/test_backfill.py` |
 | `enrich/media.py`, `waveform.py`, `derived.py` | 193, 161, 62 | derived media (ADR 0069) |
 | `enrich/support.py` | 291 | test support: synthetic audio, scratch archives |

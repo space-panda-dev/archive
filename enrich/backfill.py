@@ -109,7 +109,7 @@ UNITS = (("stems",), ("rhythm",), ("tonal",), ("chords-jiang",), ("chords-chordi
 # Several narrow copies beat one wide one (1.3-5.7x), so one thread each,
 # and two for stems (4 x 2 beat 8 x 1 there).
 SETTINGS: dict[str, dict[str, Any]] = {
-    "stems": {"threads": 2, "memory_gb": 3.0, "cost": 0.576, "remote_cost": 0.100},
+    "stems": {"threads": 2, "memory_gb": 3.0, "cost": 0.576, "remote_cost": 0.100, "transport": "wavpack"},
     "melody": {"cost": 0.079},
     "f0-pesto": {"cost": 0.062, "memory_gb": 1.5},
     "chords-jiang": {"cost": 0.060, "memory_gb": 2.0},
@@ -119,8 +119,11 @@ SETTINGS: dict[str, dict[str, Any]] = {
     "tonal": {"cost": 0.022},
     "structure": {"cost": 0.001},
 }
+# `transport`: the lossless encoding a routed extractor's content travels in
+# (`remote.TRANSPORTS`), for an extractor that reads only its first audio
+# stream's samples; null sends the content's own bits.
 DEFAULT_SETTING = {"threads": 1, "memory_gb": 1.0, "cost": None, "remote_cost": None, "route": None,
-                   "remote_parameters": None}
+                   "remote_parameters": None, "transport": None}
 SCHEDULE = {"expensive_above": regions.EXPENSIVE_THRESHOLD, "parallel_gain": 1.9, "poll_seconds": 30.0,
             "memory_reserve_gb": 2.0, "local_when_away_seconds": {"songs": None, "eager": 900, "on-demand": None}}
 THREAD_VARIABLES = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS",
@@ -199,6 +202,8 @@ def schedule_of(config: dict[str, Any], catalog: bank.Catalog) -> Schedule:
             raise BackfillError(f"backfill extractor {name}: route is \"spool\" or null")
         if value.get("remote_parameters") is not None and not isinstance(value["remote_parameters"], dict):
             raise BackfillError(f"backfill extractor {name}: remote_parameters is an object of its parameters")
+        if value.get("transport") not in (None, *remote.TRANSPORTS):
+            raise BackfillError(f"backfill extractor {name}: transport is one of {sorted(remote.TRANSPORTS)} or null")
         settings[name] = {**settings.get(name, {}), **value}
     numbers = {**SCHEDULE, **{k: v for k, v in given.items() if k in SCHEDULE}}
     away = numbers["local_when_away_seconds"]
@@ -705,7 +710,9 @@ class Runner:
                 answer = remote.put(self.planner.catalog, self.planner.root, self.spool, job.unit.extractor,
                                     job.recording.path, job.recording.media_type
                                     or extract.media_type_of(job.recording.path), job.recording.digest,
-                                    remote_parameters(self.planner.parameters, job.unit.extractor, self.schedule))
+                                    remote_parameters(self.planner.parameters, job.unit.extractor, self.schedule),
+                                    transport=self.schedule.setting(job.unit.extractor)["transport"],
+                                    ffmpeg=self.planner.programs.get("ffmpeg"))
             except (remote.RemoteError, bank.BankError, OSError) as exc:
                 job.routed = False
                 self.note(step="spool put failed; runs here", **job.describe(), error=str(exc)[-600:])
@@ -715,7 +722,8 @@ class Runner:
                 job.status = "done"
             else:
                 job.status, job.since = "put", time.monotonic()
-                self.note(step="spool put", **job.describe(), status=answer["status"], task=answer["task_id"])
+                self.note(step="spool put", **job.describe(), status=answer["status"], task=answer["task_id"],
+                          transport=answer.get("transport"))
 
     def collect(self) -> None:
         try:
