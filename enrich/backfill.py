@@ -433,7 +433,7 @@ class Job:
     routed: bool = False
     after: list["Job"] = field(default_factory=list)
     dependents: int = 0
-    status: str = "pending"  # pending, put, running, done, failed, blocked
+    status: str = "pending"  # pending, putting, put, running, done, failed, blocked
     detail: str | None = None
     since: float = 0.0
     cpu_s: float = 0.0
@@ -703,6 +703,9 @@ class Runner:
     # -- Spool --
 
     def put_routed(self) -> None:
+        """Put every routed job, in plan order, beside the pool: a transport
+        takes about 0.01 s per audio-second to encode and check, which must
+        not hold back what runs here. A job is `putting` until it is put."""
         for job in self.jobs:
             if not job.routed:
                 continue
@@ -713,17 +716,21 @@ class Runner:
                                     remote_parameters(self.planner.parameters, job.unit.extractor, self.schedule),
                                     transport=self.schedule.setting(job.unit.extractor)["transport"],
                                     ffmpeg=self.planner.programs.get("ffmpeg"))
-            except (remote.RemoteError, bank.BankError, OSError) as exc:
-                job.routed = False
-                self.note(step="spool put failed; runs here", **job.describe(), error=str(exc)[-600:])
+            except Exception as exc:  # noqa: BLE001  (the job runs here; the backfill goes on)
+                with self.changed:
+                    job.status, job.routed = "pending", False
+                    self.note(step="spool put failed; runs here", **job.describe(), error=str(exc)[-600:])
+                    self.changed.notify_all()
                 continue
-            job.detail = answer["task_id"]
-            if answer["status"] == "hit":
-                job.status = "done"
-            else:
-                job.status, job.since = "put", time.monotonic()
-                self.note(step="spool put", **job.describe(), status=answer["status"], task=answer["task_id"],
-                          transport=answer.get("transport"))
+            with self.changed:
+                job.detail = answer["task_id"]
+                if answer["status"] == "hit":
+                    job.status = "done"
+                else:
+                    job.status, job.since = "put", time.monotonic()
+                    self.note(step="spool put", **job.describe(), status=answer["status"],
+                              task=answer["task_id"], transport=answer.get("transport"))
+                self.changed.notify_all()
 
     def collect(self) -> None:
         try:
@@ -801,7 +808,10 @@ class Runner:
 
     def run(self) -> None:
         if self.spool is not None:
-            self.put_routed()
+            for job in self.jobs:
+                if job.routed:
+                    job.status = "putting"
+            threading.Thread(target=self.put_routed, daemon=True).start()
         last_collect = time.monotonic()
         with self.changed:
             while True:
@@ -818,10 +828,10 @@ class Runner:
                             break  # it waits for cores or memory: nothing behind it jumps ahead
                         continue  # its extractor's copies are all busy: the next may start
                     self.start(job)
-                if not any(j.status in ("pending", "put", "running") for j in self.jobs):
+                if not any(j.status in ("pending", "putting", "put", "running") for j in self.jobs):
                     return
                 waiting = [j for j in self.jobs if j.status == "put"]
-                if not waiting and not any(j.status == "running" for j in self.jobs):
+                if not waiting and not any(j.status in ("running", "putting") for j in self.jobs):
                     # With nothing running every ready job fits, so a pending one waits on itself.
                     raise BackfillError("nothing can start: the plan waits on itself")
                 if waiting and time.monotonic() - last_collect >= self.schedule.poll_seconds:

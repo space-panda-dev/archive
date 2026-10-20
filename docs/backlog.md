@@ -136,8 +136,16 @@ region stems disagree with whole stems over the same span (bass SNR
 -0.15 dB on a 485 s region; not yet diagnosed), and no reader takes a
 region entry yet (`enrich propose` and the relay read whole entries), so a
 region entry is made and never read. A region that is the whole recording
-is made whole. Next levers by size: the Mac worker's throughput (two tasks
-at once, or FLAC instead of float WAV), f0-pesto on MPS, the layout's
+is made whole. The Mac worker now gets the content as WavPack (73% of the
+float WAV, decoding to its very samples) and can run two tasks at once:
+on the two recordings, 0.223 s per audio-second end to end against 0.305
+the same day for float WAV one at a time, with byte-identical stems. The
+link is now the bound: off the home network the Mac pulls about 4.3 MB/s
+and pushes 3.3, and a task moves 0.28 MB per audio-second in and 0.18 (the
+stems' FLAC) out, so about 0.12 at best there; on the same network as the
+laptop it should reach separation's 0.10 (not measured). The worker's
+Spool configuration (`max_concurrent` 2) and its copy of `enrich/` are
+the operator's to update. Next levers by size: the layout's
 reserved widths (chordino reserves 3 cores and uses 1, basic-pitch reserves
 1 and uses about 3), then the cost gate's numbers replacing `SETTINGS` and
 `regions.PROFILED_COSTS`.
@@ -206,9 +214,17 @@ scheduler has added it.
   branch its own test). Then the Mac worker path end to end: Spool 0.0.4 on
   both machines, the grant, `worker.json` and a real `stems` run on the
   Mac's GPU into a scratch bank, collected and filed; measure the record
-  over the agreed test set. Last, if a small environment with pesto and
-  torch fits the Mac's disk: `f0-pesto` with a `device` parameter (ADR
-  0090 amendment, item 4), its equivalence record, and its speed on MPS.
+  over the agreed test set. `f0-pesto` on MPS was measured (2026-10-20, pesto
+  2.0.1, torchaudio 2.11 and omegaconf added to the Mac's stems environment,
+  under 10 MB): 0.039 s per audio-second a pass on the GPU against 0.12 on
+  the Mac's CPU and 0.19 core-seconds on the laptop; over the two profiled
+  recordings' vocal stems the GPU's track differs from the laptop CPU's by
+  0.002 cents at the 99th percentile with every row's voicing the same (the
+  bass stems again gave no voiced row). Not built: its two passes would add
+  0.078 s per audio-second to the Mac, which is the backfill's bound
+  (0.10 for separation), to save the laptop 0.046 at eight cores, and the
+  `device` parameter rekeys every `f0-pesto` entry (ADR 0090 amendment, item
+  4). Worth it only if the laptop becomes the bound.
 - **triage.** Region keys (`archive-feature-bank-key/2`) and region entries
   in `enrich/bank.py`, with their validator in the same change; `extract.py
   run --region` cutting a pinned FLAC and recording the region and the

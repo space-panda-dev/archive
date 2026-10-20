@@ -409,6 +409,35 @@ class Spool(unittest.TestCase):
         # Their content travels as WavPack, the stems default, encoded by the configured ffmpeg.
         self.assertEqual(self.put_options, [{"transport": "wavpack", "ffmpeg": None}] * 2)
 
+    def test_what_runs_here_does_not_wait_for_the_puts(self) -> None:
+        # A put encodes its transport first; rhythm, which needs no stems, runs meanwhile.
+        self.sched = backfill.schedule_of({"backfill": {"units": [["stems"], ["rhythm"]],
+                                                        "extractors": {"stems": {"route": "spool"}},
+                                                        "poll_seconds": 0.01}}, CATALOG)
+        rhythm_ran = threading.Event()
+        planned = backfill.plan(self.recs, self.sched, self.planner, "eager", shape(self.sched), True)
+
+        def put(*arguments, **options):
+            self.assertTrue(rhythm_ran.wait(10), "the pool waited for the put")
+            return {"status": "put", "task_id": f"task-{arguments[6][7:12]}", "key": "k"}
+
+        def collect(catalog, root, spool):
+            for rec in self.recs:
+                self.planner.made(rec, STEMS)
+            return {"status": "ok", "tasks": {}, "failed": {}}
+
+        def run_unit(job: Job):
+            result = self.run_unit(job)
+            if job.unit == RHYTHM:
+                rhythm_ran.set()
+            return result
+
+        with patch.object(backfill.remote, "put", put), patch.object(backfill.remote, "collect", collect):
+            backfill.Runner(planned.jobs, self.planner, self.sched, shape(self.sched), 8, 32.0, "eager",
+                            lambda **e: None, run_unit, spool=object()).run()
+        self.assertTrue(all(j.status == "done" for j in planned.jobs))
+        self.assertEqual({u for _, u in self.ran}, {RHYTHM})
+
     def test_a_task_the_spool_failed_for_good_runs_here(self) -> None:
         def collect(catalog, root, spool):
             return {"status": "failed", "tasks": {}, "failed": {f"task-{r.digest[7:12]}": "exit 65"
