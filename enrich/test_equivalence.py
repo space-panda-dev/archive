@@ -402,5 +402,74 @@ class StandIn(unittest.TestCase):
         self.assertEqual(code, 2)
 
 
+# A named parameter set (ADR 0112's CPU runtime): `fast` runs on the cpu with
+# less chunk overlap, so its value brings an overlap of its own.
+SETS = {"cpu": {"apply.overlap": "0.25"}, "gpu": {"apply.overlap": "0.25"}, "fast": {"apply.overlap": "0.1"}}
+WITH = {**INTERCHANGEABLE, "values": ["cpu", "gpu", "fast"], "with": SETS}
+
+
+def apply_of(value: str) -> dict:
+    return {"device": value, "shifts": 0, "overlap": SETS[value]["apply.overlap"]}
+
+
+class SetFixture(Fixture):
+    def __init__(self, test: unittest.TestCase):
+        super().__init__(test)
+        self.add("sep", SEP, sep_manifest(parameters={"apply": apply_of("cpu")}, interchangeable=WITH))
+
+    def config(self, device: str) -> Path:
+        path = self.dir / f"{device}.json"
+        path.write_text(json.dumps({"parameters": {"sep": {"apply": apply_of(device)}}}))
+        return path
+
+    def reader(self, device: str = "cpu", exact: bool = False) -> bank.Bank:
+        return bank.Bank(self.bank, self.catalog(), {"sep": {"apply": apply_of(device)}}, exact)
+
+
+class ParameterSets(unittest.TestCase):
+    """`interchangeable.with`: one value names a whole parameter set."""
+
+    def refused(self, declared: dict, message: str, apply: dict | None = None) -> None:
+        with self.assertRaisesRegex(bank.BankError, message):
+            bank.check_manifest(sep_manifest(parameters={"apply": apply or apply_of("cpu")},
+                                             interchangeable=declared), "m")
+
+    def test_a_declaration_names_the_same_declared_fields_for_every_value(self) -> None:
+        bank.check_manifest(sep_manifest(parameters={"apply": apply_of("cpu")}, interchangeable=WITH), "m")
+        self.refused({**WITH, "with": {"cpu": SETS["cpu"], "gpu": SETS["gpu"]}}, "for every value")
+        self.refused({**WITH, "with": {**SETS, "fast": {"apply.shifts": 1}}}, "same fields")
+        self.refused({**WITH, "with": {v: {"apply.segment": None} for v in SETS}}, "declared parameter fields")
+        self.refused({**WITH, "with": {v: {"apply.device": v} for v in SETS}}, "other than apply.device")
+        self.refused({**WITH, "with": {v: {"apply": {}} for v in SETS}}, "other than apply.device")
+        # The manifest's own value must be what its `with` says.
+        self.refused(WITH, "must be what", apply={**apply_of("cpu"), "overlap": "0.1"})
+
+    def test_each_alternative_carries_the_fields_its_value_brings(self) -> None:
+        catalog = SetFixture(self).catalog()
+        self.assertEqual(dict(catalog.alternatives("sep")),
+                         {"gpu": {"apply": apply_of("gpu")}, "fast": {"apply": apply_of("fast")}})
+        configured_fast = {"sep": {"apply": apply_of("fast")}}
+        self.assertEqual(dict(catalog.alternatives("sep", configured_fast)),
+                         {"cpu": {"apply": apply_of("cpu")}, "gpu": {"apply": apply_of("gpu")}})
+        # A value configured with fields it does not bring is no parameter set: nothing stands in.
+        mixed = {"sep": {"apply": {**apply_of("fast"), "overlap": "0.25"}}}
+        self.assertEqual(catalog.alternatives("sep", mixed), [])
+
+    def test_a_passing_record_lets_a_parameter_set_stand_in_either_way(self) -> None:
+        f = SetFixture(self)
+        code, said = f.measure("fast")
+        self.assertEqual(code, 0, said)
+        self.assertEqual(said["sides"], ["cpu", "fast"])
+        cpu, fast = f.entry_of("cpu"), f.entry_of("fast")
+        self.assertEqual(fast.manifest["parameters"]["apply"]["overlap"], "0.1")  # provenance kept
+        self.assertNotEqual(cpu.manifest["key"], fast.manifest["key"])  # anchor
+        f.drop("cpu")
+        self.assertEqual(f.reader("cpu").entry(f.digest, "sep").manifest["key"], fast.manifest["key"])
+        self.assertIsNone(f.reader("gpu").entry(f.digest, "sep"))  # no record for gpu and fast
+        self.assertEqual(f.run("sep", "--config", str(f.config("cpu")), "--exact")[0], 0)
+        f.drop("fast")
+        self.assertEqual(f.reader("fast").entry(f.digest, "sep").manifest["key"], cpu.manifest["key"])
+
+
 if __name__ == "__main__":
     unittest.main()

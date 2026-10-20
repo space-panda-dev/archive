@@ -28,8 +28,8 @@ gives the same samples each time.
 
 Invoked by the runner as `<demucs-python> stems.py <request.json>`; the
 settings are fixed but for the device the model runs on (`apply.device`,
-one of DEVICES: a GPU's stems are other bits, so another key), and a request
-naming others is refused. Another separator that differs only in its model
+one of DEVICES: a GPU's stems, or another runtime's, are other bits, so
+another key), and a request naming others is refused. Another separator that differs only in its model
 and its stems (`stems-6s`) runs this program's `main` with its own
 `Separation`.
 """
@@ -66,13 +66,21 @@ MODEL = {"name": "htdemucs", "demucs": "4.1.0", "repository": "adefossez/HTDemuc
                        "sha256:d9fa14133cfcc034a6758923bb3a8ca9f8dfd0b582134643bbf83f72c17576dd"}}
 APPLY = {"shifts": 0, "split": True, "overlap": "0.25", "segment": None, "device": "cpu",
          "normalise": "chunk mean and standard deviation, as demucs.api.Separator.separate_tensor"}
-# The devices the model may run on. The device is a parameter, so stems made
-# on a GPU are another key beside the CPU's: the same weights give other bits
-# on other hardware. "cpu" is the manifest's; an operator who has Apple's
-# Metal configures {"stems": {"apply": {..., "device": "mps"}}}. Either
-# device's stems stand in for the other's once a passing equivalence record
-# is in the bank (the manifest's `interchangeable`; ADR 0090's amendment).
-DEVICES = ("cpu", "mps")
+# The devices the model may run on, each with the other apply settings it
+# brings (the manifest's `interchangeable.with`) and the PyTorch device it
+# runs on. The device is a parameter, so stems made on a GPU, or by another
+# runtime, are another key beside the CPU's: the same weights give other bits
+# on other hardware. "cpu" is the manifest's: PyTorch's eager CPU kernels. An
+# operator who has Apple's Metal configures {"stems": {"apply": {...,
+# "device": "mps"}}}; "cpu-inductor" runs the network compiled by PyTorch's
+# inductor on the CPU, about a sixth less CPU time on the x86-64 laptop (ADR
+# 0112). Any device's stems stand in for another's once a passing
+# equivalence record of the pair is in the bank (the manifest's
+# `interchangeable`; ADR 0090's amendment).
+DEVICES: dict[str, dict[str, Any]] = {"cpu": {"overlap": "0.25"}, "mps": {"overlap": "0.25"},
+                                      "cpu-inductor": {"overlap": "0.25"}}
+TORCH_DEVICE = {"cpu": "cpu", "mps": "mps", "cpu-inductor": "cpu"}
+COMPILED = ("cpu-inductor",)
 
 
 class Separation(NamedTuple):
@@ -107,13 +115,14 @@ def encode_arguments(path: str) -> list[str]:
 
 
 def apply_on(device: str) -> dict[str, Any]:
-    """Demucs's application settings, on one of DEVICES."""
-    return {**APPLY, "device": device}
+    """Demucs's application settings, on one of DEVICES, with what it brings."""
+    return {**APPLY, **DEVICES[device], "device": device}
 
 
 def parameters(separation: Separation = HTDEMUCS, device: str = "cpu") -> dict[str, Any]:
     """The settings, which the manifest must declare exactly, on the CPU;
-    on another of DEVICES they differ only in `apply.device`."""
+    on another of DEVICES they differ only in `apply.device` and the apply
+    settings that device brings."""
     return {"decoder": "ffmpeg", "decode_arguments": decode_arguments("{input}"), "model": separation.model,
             "apply": apply_on(device), "chunk_seconds": CHUNK_SECONDS, "crossfade_seconds": CROSSFADE_SECONDS,
             "stems": list(separation.stems),
@@ -180,6 +189,9 @@ class Demucs:
             models.append(load_safetensors_model(paths[f"{signature}.safetensors"]))
         self.model = BagOfModels(models, bag.get("weights"), bag.get("segment"))
         self.model.eval()
+        compiled = apply["device"] in COMPILED
+        if compiled:
+            compile_network(torch, self.model.models)
         self.torch, self.apply_model, self.apply = torch, apply_model, apply
         self.sources = list(self.model.sources)
         self.samplerate = int(self.model.samplerate)
@@ -187,6 +199,8 @@ class Demucs:
         self.software = [{"name": "demucs", "version": demucs.__version__},
                          {"name": "torch", "version": torch.__version__},
                          {"name": settings["name"], "version": f"{settings['repository']}@{settings['revision']}"}]
+        if compiled:
+            self.software.append({"name": "c++", "version": cxx_version()})
 
     def separate(self, mix: numpy.ndarray) -> numpy.ndarray:
         torch = self.torch
@@ -197,9 +211,123 @@ class Demucs:
             std = reference.std() + 1e-8
             out = self.apply_model(self.model, ((wav - mean) / std)[None], shifts=self.apply["shifts"],
                                    split=self.apply["split"], overlap=float(self.apply["overlap"]),
-                                   segment=self.apply["segment"], device=self.apply["device"], progress=False)
+                                   segment=self.apply["segment"], device=TORCH_DEVICE[self.apply["device"]],
+                                   progress=False)
             out = out * std + mean
         return out[0].cpu().numpy()
+
+
+def htdemucs_core(m: Any, mix: Any, mag: Any) -> tuple[Any, Any]:
+    """HTDemucs.forward of demucs 4.1.0 (the pinned version) between the
+    spectrogram and the mask, for one segment of `m.segment` seconds: the
+    frequency branch's output, before masking, and the time branch's. The
+    spectrogram, the mask, and the inverse stay in PyTorch around it, so a
+    runtime that cannot take complex numbers (a compiler, OpenVINO) can run
+    this part, which is nearly all of the work."""
+    import torch
+    x = mag
+    B, C, Fq, T = x.shape
+    mean = x.mean(dim=(1, 2, 3), keepdim=True)
+    std = x.std(dim=(1, 2, 3), keepdim=True)
+    x = (x - mean) / (1e-5 + std)
+    xt = mix
+    meant = xt.mean(dim=(1, 2), keepdim=True)
+    stdt = xt.std(dim=(1, 2), keepdim=True)
+    xt = (xt - meant) / (1e-5 + stdt)
+    saved, saved_t, lengths, lengths_t = [], [], [], []
+    for idx, encode in enumerate(m.encoder):
+        lengths.append(x.shape[-1])
+        inject = None
+        if idx < len(m.tencoder):
+            lengths_t.append(xt.shape[-1])
+            tenc = m.tencoder[idx]
+            xt = tenc(xt)
+            if not tenc.empty:
+                saved_t.append(xt)
+            else:
+                inject = xt
+        x = encode(x, inject)
+        if idx == 0 and m.freq_emb is not None:
+            frs = torch.arange(x.shape[-2], device=x.device)
+            emb = m.freq_emb(frs).t()[None, :, :, None].expand_as(x)
+            x = x + m.freq_emb_scale * emb
+        saved.append(x)
+    if m.crosstransformer:
+        if m.bottom_channels:
+            b, c, f, t = x.shape
+            x = m.channel_upsampler(x.reshape(b, c, f * t)).reshape(b, -1, f, t)
+            xt = m.channel_upsampler_t(xt)
+        x, xt = m.crosstransformer(x, xt)
+        if m.bottom_channels:
+            b, c, f, t = x.shape
+            x = m.channel_downsampler(x.reshape(b, c, f * t)).reshape(b, -1, f, t)
+            xt = m.channel_downsampler_t(xt)
+    for idx, decode in enumerate(m.decoder):
+        x, pre = decode(x, saved.pop(-1), lengths.pop(-1))
+        offset = m.depth - len(m.tdecoder)
+        if idx >= offset:
+            tdec = m.tdecoder[idx - offset]
+            length_t = lengths_t.pop(-1)
+            if tdec.empty:
+                xt, _ = tdec(pre[:, :, 0], None, length_t)
+            else:
+                xt, _ = tdec(xt, saved_t.pop(-1), length_t)
+    S = len(m.sources)
+    x = x.view(B, S, -1, Fq, T) * std[:, None] + mean[:, None]
+    xt = xt.view(B, S, -1, mix.shape[-1]) * stdt[:, None] + meant[:, None]
+    return x, xt
+
+
+def segment_forward(m: Any, core: Any) -> Any:
+    """HTDemucs.forward (eval, its training segment) with `core` in place of
+    the network: the spectrogram, mask, and inverse as Demucs does them."""
+    import torch
+    training_length = int(m.segment * m.samplerate)
+
+    def forward(mix: Any) -> Any:
+        length = mix.shape[-1]
+        if length < training_length:
+            mix = torch.nn.functional.pad(mix, (0, training_length - length))
+        z = m._spec(mix)
+        x, xt = core(mix, m._magnitude(z).to(mix.device))
+        out = m._ispec(m._mask(z, x), training_length) + xt
+        return out[..., :length]
+    return forward
+
+
+def compile_network(torch: Any, models: list[Any]) -> None:
+    """Each model's network (`htdemucs_core`) compiled by PyTorch's inductor
+    for the CPU, one thread's worth of work at a time. Every segment Demucs
+    hands a model is padded to its training length, so one shape is compiled
+    once per process (and found in inductor's cache after the first). The
+    compile itself runs in this process, so it holds the copy's one thread
+    rather than starting a pool of compile workers."""
+    import torch._inductor.config as inductor
+    inductor.compile_threads = 1
+    for model in models:
+        if not hasattr(model, "crosstransformer") or not hasattr(model, "_magnitude"):
+            raise StemsError(f"only HTDemucs can be compiled, not {type(model).__name__}")
+
+        class Network(torch.nn.Module):
+            def __init__(self, m: Any):
+                super().__init__()
+                self.m = m
+
+            def forward(self, mix: Any, mag: Any) -> tuple[Any, Any]:
+                return htdemucs_core(self.m, mix, mag)
+
+        model.forward = segment_forward(model, torch.compile(Network(model).eval(), dynamic=False))
+
+
+def cxx_version() -> str:
+    """The C++ compiler inductor builds with (its code is part of the method)."""
+    import os
+    compiler = os.environ.get("CXX", "g++")
+    try:
+        found = subprocess.run([compiler, "-dumpfullversion"], capture_output=True, text=True, timeout=30)
+    except OSError as exc:
+        raise StemsError(f"cpu-inductor needs a C++ compiler ({compiler}): {exc}") from exc
+    return f"{Path(compiler).name} {found.stdout.strip() or 'unknown'}"
 
 
 def load_model(settings: dict[str, Any], apply: dict[str, Any]) -> Model:
@@ -494,7 +622,7 @@ def main(argv: list[str], separation: Separation = HTDEMUCS) -> int:
         device = next((d for d in DEVICES if request.get("parameters") == parameters(separation, d)), None)
         if device is None:
             raise StemsError(f"{separation.extractor} has fixed settings but for the device "
-                             f"({', '.join(DEVICES)}); the request names others")
+                             f"({', '.join(DEVICES)}) and what it brings; the request names others")
         output = Path(request["output_dir"])
         model = load_model(separation.model, apply_on(device))
         outputs = separate(request["input"]["path"], output, model, stems=separation.stems)
