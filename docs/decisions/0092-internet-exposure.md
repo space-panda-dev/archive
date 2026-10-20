@@ -179,8 +179,9 @@ readable sets of the audiences whose member lists name the operator's person
 ([ADR 0093](0093-audiences.md)), which includes the operator's own records
 exactly where those sets pin them. This amends ADR 0088's clause for the
 internet ingress only. Over the tailnet the operator is never a member and
-reads everything, as today. Whether that login also sees its own unapproved
-records is still open (ADR 0093, Still open 1).
+reads everything, as today. That login also sees the operator's own records
+whose pins are readable in one of those audiences, without adding them to
+any audience's set (R5.1, ADR 0093).
 
 **Capacity is not recorded on claims (R4.11).** A claim the operator makes
 over the internet names the operator's person, as a tailnet one does. Named

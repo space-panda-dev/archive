@@ -35,8 +35,9 @@ W1.15); this record states it as given.
   [open questions](../open-questions.md).
 
 The operator settled this record's open questions on 2026-10-19 (round 4
-answers R4.2 and R4.9; R4.11 settles the rest as recommended). The decision
-below states the settled choices; the list at the end records them.
+answers R4.2 and R4.9; R4.11 settles the rest as recommended; round 5
+answer R5.1 settles the last). The decision below states the settled
+choices; the list at the end records them.
 
 ## Decision
 
@@ -127,8 +128,10 @@ records are still counted (INV-24).
 
 A member reads the union of the sets of the audiences they belong to, plus
 their own records. The operator's internet login reads the union of the
-sets of the audiences that list the operator, and nothing more (R4.2; see
-Still open). A record a member asserts reaches the audiences they
+sets of the audiences that list the operator (R4.2), plus the operator's
+own records whose pins are readable in one of those audiences, as any member
+sees their own; those records join no audience's set, so other members still
+see them only once approved (R5.1). A record a member asserts reaches the audiences they
 belong to in which what it pins is readable, and no others. A producer's note
 on a song disclosed to both the band and the crew reaches the crew. It
 reaches the band only when the producer is also in the band, or when the
@@ -317,13 +320,7 @@ A later implementation would change:
 8. **When the relay stops reading configuration.** At the specification
    release that installs `archive.transition/audience`; a relay with both a
    configured `circle` and a live audience refuses to start (R4.9).
-
-### Still open
-
-1. **The operator's own unapproved records over the internet.** R4.2 gives
-   the operator's internet login exactly the union of its audiences, so an
-   annotation the operator makes from a browser is not shown back to that
-   login until it is approved, although every other member sees their own.
-   *Recommend:* show the operator's internet login its own records whose
-   pins are readable in one of its audiences, as any member sees their own,
-   without adding them to any audience's set.
+9. **The operator's own unapproved records over the internet.** The
+   operator's internet login also sees the operator's own records whose pins
+   are readable in one of its audiences, as any member sees their own,
+   without adding them to any audience's set (R5.1).

@@ -60,8 +60,8 @@ W1.7); this record states them as given.
 
 The operator settled this record's open questions on 2026-10-19 (round 4
 answers R4.2, R4.3, R4.5, R4.7 and R4.8; R4.11 settles the rest as
-recommended). The decision below states the settled choices; the list at the
-end records them.
+recommended; round 5 answer R5.2 settles the last). The decision below states
+the settled choices; the list at the end records them.
 
 ## Decision
 
@@ -163,7 +163,8 @@ is refused **`not_granted`** (403), a new code under
 
 **The operator's internet login (R4.2).** Over the internet the operator's
 person is a member ([ADR 0092](0092-internet-exposure.md)) and reads the
-union of the audiences that list it (ADR 0093). The view's rule gives that
+union of the audiences that list it, plus its own records whose pins are
+readable in one of them (ADR 0093, R5.1). The view's rule gives that
 login all three abilities, in member capacity, over those audiences; no grant
 names the operator, and Door refuses one that does. It still sends only what
 member capacity allows: no transition, no operator-only contract.
@@ -272,24 +273,30 @@ member assert `archive.claim/sensitivity`":
     asserted by the caller themselves, and the active operator's standing on
     that revision is not `rejected` (R4.3);
   - the subject of a head contribution at `recording`, `span` or `channel`
-    scope (ADR 0078) naming the caller as contributor, that the operator
-    asserted or affirmed (see Still open 1);
+    scope (ADR 0078) naming the caller as contributor, where the
+    contribution was asserted by the operator, affirmed by the operator, or
+    asserted by the caller themselves, and the active operator's standing on
+    that revision is not `rejected` (R5.2);
   - content the caller deposited: the subject of a head origin claim
     ([ADR 0096](0096-origin-of-recordings.md)) that names the caller in the
-    `depositor` role, which the operator has not rejected (R4.8); or
+    `depositor` role, which the operator asserted or affirmed, or which
+    arrived in the same admission as that content, and which the operator
+    has not rejected (R4.8, R5.3); or
   - a subject of one of the caller's own head sensitivity claims, so that a
     limit the operator entered on their behalf can always be revised by
     them.
 
   A subject that fails the test is refused `not_granted` with the reason.
-  The test is for limits only (R4.3). A member's own participation selects
-  what they may limit, because a limit only narrows (INV-26); it does not
-  make them a participant, which still needs the operator's assertion or
-  affirmation (W1.9, ADR 0095). Someone else's unaffirmed claim that the
-  caller played does not select. The operator can reject a self-asserted
-  participation; a rejection stops it selecting new limits, but a limit the
-  member already set stays theirs and binds until they lift it (INV-26),
-  subject only to the operator's one-destination override.
+  The test is for limits only (R4.3, R5.2). A member's own participation,
+  or their own credit on a recording, span or channel, selects what they may
+  limit, because a limit only narrows (INV-26); it does not make them a
+  participant or a credited contributor, which still needs the operator's
+  assertion or affirmation (W1.9, ADR 0095). Someone else's unaffirmed claim
+  that the caller played does not select. The operator can reject a
+  self-asserted participation or credit; a rejection stops it selecting new
+  limits, but a limit the member already set stays theirs and binds until
+  they lift it (INV-26), subject only to the operator's one-destination
+  override.
 - **Lifting and tightening.** Because ADR 0085's rule takes each person's
   latest sensitivity claim about an object as their limit, a member lifts
   or tightens simply by asserting a later claim, or by superseding their own
@@ -441,7 +448,8 @@ Verified on 2026-10-19 to exist; a later implementation would change:
   sensitivity subject exception), `readable_by` (unchanged rule, now relied
   on for own limits and admitted content).
 - `world/grants.py` (new): effective grants, defaults, records-them test
-  (operator-counted or self-asserted participation, part credits, depositor).
+  (operator-counted or self-asserted participation and part credits; a
+  depositor from an operator-counted or same-admission origin claim).
 - `world/views.py`: `check_request` and `catalogue` gain
   `archive.view/write_grants` and `archive.view/person_limits`.
 - `world/documents.py`: `check_stage_request` (members with `admit`),
@@ -473,6 +481,8 @@ Verified on 2026-10-19 to exist; a later implementation would change:
    operator can reject a self-asserted participation (R4.3).
 3. **Depositors' limits.** A depositor's limits bind like a recorded
    person's; ADR 0096 proposes the INV-26 and ADR 0018 amendment text (R4.8).
+   A depositor counts only when the operator asserted or affirmed the origin
+   claim, or it arrived in the same admission as the content (R5.3).
 4. **Policy revision.** A grant cites none until policy exists (R4.11).
 5. **Door re-checking grants.** No; the relay enforces (R4.11).
 6. **The operator's own internet login.** It reads the union of the audiences
@@ -486,13 +496,7 @@ Verified on 2026-10-19 to exist; a later implementation would change:
    audience (R4.5).
 10. **The ability's name.** `admit`; applications may label it "Upload"
     (R4.7).
-
-### Still open
-
-1. **Self-asserted part-level credits.** R4.3 lets a person's own
-   session-scope participation select what they may limit, but says nothing
-   of their own `recording`, `span` or `channel` contribution naming
-   themselves, which this record still counts only when the operator
-   asserted or affirmed it. *Recommend:* treat them the same as R4.3's
-   participation, since a limit only narrows: a person's own credit on a
-   part selects that part for their limit, and the operator can reject it.
+11. **Self-asserted part-level credits.** Treated the same as R4.3's
+    participation, for limits only: a person's own `recording`, `span` or
+    `channel` contribution naming themselves selects that part for their
+    limit, and the operator can reject it (R5.2).
