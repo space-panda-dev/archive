@@ -148,6 +148,8 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
   content (verbatim transcripts, thumbnails, fingerprints, embeddings)? Storage
   deletion and privacy deletion differ: keeping a transcript after deleting a
   WAV suits the first and may defeat the second. Destroy does not answer this.
+  ([ADR 0102](decisions/0102-retrieval-index.md), proposed, would answer this
+  for the retrieval index's own copies: embeddings and machine facets.)
 - What form does a recorded reclaim verdict take, and how is the verification
   state it snapshots represented?
 - How does an operator declare, ahead of time, what happens to an archive
