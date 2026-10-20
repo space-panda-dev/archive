@@ -69,6 +69,7 @@ TEMPLATE_ROUTES = {
     **{path: "GET" for path in MEDIA_ROUTES},
     "/media/{digest}/bank": "GET",
     "/media/{digest}/bank/{extractor}/{output}": "GET",
+    "/media/{digest}/bank/{extractor}/{output}/{key}": "GET",
     "/media/{digest}/practice": "POST",
     "/media/{digest}/practice/{key}": "GET",
     "/documents/{digest}": "GET",
@@ -970,6 +971,10 @@ def make_handler(relay: Relay) -> type[BaseHTTPRequestHandler]:
                     result = relay.bank_listing(named["digest"], caller)
                 elif route == "/media/{digest}/bank/{extractor}/{output}":
                     self._send_file(relay.bank_file(named["digest"], named["extractor"], named["output"], caller))
+                    return
+                elif route == "/media/{digest}/bank/{extractor}/{output}/{key}":
+                    self._send_file(relay.bank_file_keyed(named["digest"], named["extractor"], named["output"],
+                                                          named["key"], caller))
                     return
                 elif route == "/media/{digest}/practice":
                     result = relay.practice(named["digest"], self._body(), caller)

@@ -27,8 +27,8 @@ import os
 import re
 import stat
 import sys
-from dataclasses import dataclass
-from decimal import Decimal
+from dataclasses import dataclass, replace
+from decimal import ROUND_HALF_EVEN, Decimal
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -973,9 +973,13 @@ def write_equivalence(root: Path, record: dict[str, Any], first: Mapping[str, An
 
 @dataclass(frozen=True)
 class Entry:
-    """One complete entry of the bank."""
+    """One complete entry of the bank. `placed` is the region of the
+    recording whose timeline this entry's times are on when that is not its
+    own: a measure of a stem made over a region (ADR 0112), as
+    `Bank.measured_over` found it."""
     path: Path
     manifest: dict[str, Any]
+    placed: dict[str, int] | None = None
 
     @property
     def region(self) -> dict[str, int] | None:
@@ -983,11 +987,28 @@ class Entry:
         return self.manifest.get("region")
 
     @property
+    def timeline(self) -> dict[str, int] | None:
+        """The region of the recording this entry's times start at: its own
+        region, or the region of the stem it measured; None for the whole."""
+        return self.region if self.region is not None else self.placed
+
+    @property
     def offset(self) -> float:
-        """Seconds to add to this entry's times to place them on its content's
-        timeline: a region entry's outputs are on its cut's (ADR 0112)."""
-        region = self.region
+        """Seconds to add to this entry's times to place them on its
+        recording's timeline: a region entry's outputs, and those of a
+        measure of a stem made over a region, are on the cut's (ADR 0112)."""
+        region = self.timeline
         return 0.0 if region is None else region["start"] / region["rate"]
+
+    def shift(self, rate: int) -> int:
+        """`offset` in samples at `rate`, exactly when the region is at that
+        rate (it is at the content's stream rate), else rounded half to even."""
+        region = self.timeline
+        if region is None:
+            return 0
+        if region["rate"] == rate:
+            return region["start"]
+        return int((Decimal(region["start"]) * rate / region["rate"]).quantize(Decimal(1), ROUND_HALF_EVEN))
 
     def output(self, name: str) -> dict[str, Any]:
         if name not in self.manifest["outputs"]:
@@ -1187,8 +1208,15 @@ class Bank:
             described = entry.output(output)
             if described["kind"] != "file":
                 raise BankError(f"{feature} is a {described['kind']}, not a file; only a file can be content")
-            found.append((entry, {extractor_id: self.entry(described["sha256"], extractor_id, filed_under=content,
-                                                           feature=feature) for extractor_id in extractor_ids}))
+            measures = {}
+            for extractor_id in extractor_ids:
+                measured = self.entry(described["sha256"], extractor_id, filed_under=content, feature=feature)
+                if measured is not None and entry.timeline is not None and measured.timeline is None:
+                    # A stem made over a region is content of its own, measured
+                    # whole, so its measures' times are on the region's cut.
+                    measured = replace(measured, placed=entry.timeline)
+                measures[extractor_id] = measured
+            found.append((entry, measures))
         return found
 
     def default_input(self, content: str, extractor_id: str) -> str | None:
@@ -1280,6 +1308,69 @@ class Bank:
 # by `Catalog.within`, one region's): `covering` answers what covers a span,
 # and a bank request asks the scheduler for a key nothing holds yet.
 
+class RegionView(Bank):
+    """One region of a content read as the whole is read (ADR 0112): every
+    lookup of `content` finds the whole-content entry first, else the entry
+    made over `region` whose key the installed extractors give that region.
+    Other content (a stem made over the region) is keyed whole, as the
+    runner keys it. A reader takes times from `Entry.offset`/`Entry.shift`:
+    region entries and the measures of their stems are on the cut's."""
+
+    def __init__(self, base: Bank, content: str, region: Mapping[str, int]):
+        super().__init__(base.root, base.catalog, base.parameters, base.exact)
+        self.content = content
+        self.region = check_region(region)
+        self.view = base.catalog.within(content, self.region)
+
+    def _at(self, content: str, extractor_id: str, filed_under: str | None,
+            parameters: Mapping[str, Mapping[str, Any]] | None) -> Entry | None:
+        found = super()._at(content, extractor_id, filed_under, parameters)
+        if found is not None or content != self.content or filed_under not in (None, content):
+            return found
+        key = self.view.keys(content, [extractor_id], parameters)[extractor_id]
+        found = read_entry(entry_directory(self.root, content, extractor_id, key))
+        if found is not None and found.manifest["key"] != key:
+            raise BankError(f"{found.path} holds key {found.manifest['key']}, not {key}")
+        return found
+
+
+def region_entries(reader: Bank, content: str, extractor_id: str) -> list[Entry]:
+    """The current region entries of one extractor for this content: those
+    whose key is the one the installed extractor, parameters, and needs give
+    their region (an entry of another version is never served), by region."""
+    directory = derived.directory(reader.root, content) / "bank" / extractor_id
+    try:
+        names = sorted(child.name for child in directory.iterdir() if child.is_dir())
+    except FileNotFoundError:
+        return []
+    found: list[Entry] = []
+    for name in names:
+        entry = read_entry(directory / name)
+        if entry is None or entry.region is None:
+            continue
+        current = reader.catalog.within(content, entry.region).keys(content, [extractor_id], reader.parameters)
+        if current[extractor_id] == entry.manifest["key"]:
+            found.append(entry)
+    return sorted(found, key=lambda e: (e.region["start"] / e.region["rate"], e.region["end"] / e.region["rate"]))
+
+
+def regions(reader: Bank, content: str) -> list[dict[str, int]]:
+    """Every region some current region entry of this content was made over,
+    in order of start, each once."""
+    directory = derived.directory(reader.root, content) / "bank"
+    try:
+        extractor_ids = sorted(child.name for child in directory.iterdir()
+                               if child.is_dir() and child.name in reader.catalog.extractors)
+    except FileNotFoundError:
+        return []
+    found: list[dict[str, int]] = []
+    for extractor_id in extractor_ids:
+        for entry in region_entries(reader, content, extractor_id):
+            if entry.region not in found:
+                found.append(dict(entry.region))
+    return sorted(found, key=lambda r: (r["start"] / r["rate"], r["end"] / r["rate"]))
+
+
 def covering(reader: Bank, content: str, extractor_id: str, start: int, end: int, rate: int) -> Entry | None:
     """The entry of the installed extractor that covers `[start, end)` of this
     content (samples at `rate`): the whole-content entry, else a region entry
@@ -1291,19 +1382,8 @@ def covering(reader: Bank, content: str, extractor_id: str, start: int, end: int
     whole = reader.entry(content, extractor_id)
     if whole is not None:
         return whole
-    directory = derived.directory(reader.root, content) / "bank" / extractor_id
-    try:
-        names = sorted(child.name for child in directory.iterdir() if child.is_dir())
-    except FileNotFoundError:
-        return None
-    found: list[Entry] = []
-    for name in names:
-        entry = read_entry(directory / name)
-        if entry is None or entry.region is None or not region_contains(entry.region, start, end, rate):
-            continue
-        current = reader.catalog.within(content, entry.region).keys(content, [extractor_id], reader.parameters)
-        if current[extractor_id] == entry.manifest["key"]:
-            found.append(entry)
+    found = [entry for entry in region_entries(reader, content, extractor_id)
+             if region_contains(entry.region, start, end, rate)]
     if not found:
         return None
     return min(found, key=lambda e: (e.region["end"] - e.region["start"]) / e.region["rate"])

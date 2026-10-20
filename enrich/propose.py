@@ -14,6 +14,17 @@ every read entry's recorded software. Each claim pins the mix as `source`,
 the stream claim as `stream`, and the run, and has the tool's Package URL as
 its agent. World's own check of each contract runs before Door sees it.
 
+A recording made under `enrich backfill --songs` holds its expensive
+features (stems, chords-jiang, pitch, notes) as region entries, made over its
+song regions only (ADR 0112). Where a proposer lacks a whole-recording
+feature, it is run again over each region the bank holds entries for
+(`bank.regions`), reading through `bank.RegionView`: the whole entry wherever
+one exists, else the region's. Each region is its own run, its settings
+naming the region; region times are placed on the stream by the region's
+start, so its claims say the same samples a whole run would over that span.
+Whole entries are preferred: a proposer that finds what it needs whole is
+never run per region.
+
 A run equivalent to a recorded one (same method, parameters, and inputs)
 proposes nothing and answers `unchanged`: history stays quiet. A new
 extractor version or a stem made again with other bits is a new key or
@@ -119,8 +130,12 @@ def propose_one(proposer: proposers.Proposer, context: proposers.Context, reader
         found = proposer.propose(context)
     except (proposers.ProposerError, bank.BankError) as exc:
         raise ProposeError(f"{proposer.id}: {exc}") from exc
+    region = {} if context.region is None else {"region": dict(context.region)}
     if isinstance(found, proposers.Lacking):
-        return {"name": proposer.id, "status": "nothing_proposed", **found.as_json()}
+        return {"name": proposer.id, **region, "status": "nothing_proposed", **found.as_json()}
+    if context.region is not None:
+        found.settings["region"] = {**context.region, "times": "region entries' times plus the region's start, "
+                                                               "clamped to the region"}
     ended = adapter.now()
     refs = (adapter.Pin("source", artifact["object_id"], artifact["revision_id"]),
             adapter.Pin("stream", stream["object_id"], stream["revision_id"]))
@@ -147,11 +162,11 @@ def propose_one(proposer: proposers.Proposer, context: proposers.Context, reader
                             parameters=parameters)
     previous = reader.equivalent_run(run)
     if previous is not None:
-        return {"name": proposer.id, "status": "unchanged", "run": pin(previous)}
+        return {"name": proposer.id, **region, "status": "unchanged", "run": pin(previous)}
     admission = adapter.propose(reader, run, door=args.door, staging=staging, dry_run=args.dry_run, env=env)
     if not args.dry_run:
         reader.refresh(args.archive_command, env)
-    return {"name": proposer.id, "status": admission.status,
+    return {"name": proposer.id, **region, "status": admission.status,
             "run": {"id": admission.run["object_id"], "revision_id": admission.run["revision_id"]},
             "claims": len(admission.outputs)}
 
@@ -166,10 +181,19 @@ def propose_artifact(reader: adapter.ArchiveReader, artifact: dict[str, Any], st
     payload = stream["payload"]
     context = proposers.Context(store, artifact["payload"]["content"]["digest"], payload["sample_rate"],
                                 payload["sample_count"])
+    regions: list[dict[str, int]] | None = None
     for name in names:
         try:
-            answer["proposers"].append(propose_one(proposers.PROPOSERS[name], context, reader, artifact, stream,
-                                                   args, staging, env))
+            whole = propose_one(proposers.PROPOSERS[name], context, reader, artifact, stream, args, staging, env)
+            answer["proposers"].append(whole)
+            if whole["status"] == "nothing_proposed" and whole.get("missing"):
+                if regions is None:
+                    regions = bank.regions(store, context.content)
+                for region in regions:
+                    over = proposers.Context(bank.RegionView(store, context.content, region), context.content,
+                                             context.sample_rate, context.sample_count, region)
+                    answer["proposers"].append(propose_one(proposers.PROPOSERS[name], over, reader, artifact, stream,
+                                                           args, staging, env))
         except (ProposeError, adapter.AdapterError) as exc:
             answer["proposers"].append({"name": name, "status": "failed"})
             answer["status"] = "failed"

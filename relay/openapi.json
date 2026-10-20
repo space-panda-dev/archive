@@ -1053,6 +1053,73 @@
               }
             }
           },
+          "regions": {
+            "type": "array",
+            "description": "Present when a configured feature has no whole entry but region entries (ADR 0112, a recording made under --songs): each region entry's file, by region. Its name stays in missing; fetch it from /media/{digest}/bank/{extractor}/{output}/{key}.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "media_type",
+                "bytes",
+                "sha256",
+                "key",
+                "region",
+                "offset_seconds"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{0,62}/[a-z][a-z0-9_]{0,62}$"
+                },
+                "media_type": {
+                  "type": "string"
+                },
+                "bytes": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                "key": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                "region": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "start",
+                    "end",
+                    "rate"
+                  ],
+                  "description": "The region of the recording the entry was made over: [start, end) in samples at rate.",
+                  "properties": {
+                    "start": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "end": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "rate": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                },
+                "offset_seconds": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Where the file starts on the recording: start / rate."
+                }
+              }
+            }
+          },
           "queued": {
             "type": "array",
             "description": "Present when the bank has a scheduler (ADR 0112): the configured features not made, each asked for with a bank request, and the key its entry will have, which a practice request may name.",
@@ -3499,6 +3566,243 @@
           },
           "400": {
             "description": "request_malformed (the digest is not sha256:<64 lowercase hex>), or query_invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden_identity, forbidden_origin, or media_forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found, feature_not_served, feature_not_made, media_unknown_digest, or projection_not_served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "method_not_allowed; Allow names the method.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "range_not_satisfiable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "headers": {
+              "Content-Range": {
+                "description": "bytes */size.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "query_too_many_rows, from World's lookup under a very small row limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error: World's answer or the derived-media root could not be read.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "world_unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "query_timeout, from World's media lookup.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/media/{digest}/bank/{extractor}/{output}/{key}": {
+      "get": {
+        "summary": "One configured audio feature from the bank entry with this key, whole or over a region (ADR 0089, 0112)",
+        "description": "The listing's features and regions name the key of the entry holding each file; a recording made under enrich backfill --songs has its stems as region entries, whose files start at the region's offset_seconds on the recording. Answered only when the feature is configured and declared an audio file, the digest is an Artifact's content, the caller may hear the recording, and the key is the whole entry's or a current region entry's; the relay never runs an extractor and asks for nothing here.",
+        "security": [
+          {
+            "tailnet": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "digest",
+            "in": "path",
+            "required": true,
+            "description": "The content digest, as World projects it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          {
+            "name": "extractor",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "output",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "The entry's key, as the listing gives it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "One range of bytes, bytes=first-last, bytes=first-, or bytes=-suffix."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The entity tag the range was taken from; any other value sends the whole file."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The whole feature's file.",
+            "content": {
+              "audio/*": {
+                "schema": {
+                  "type": "string",
+                  "contentMediaType": "audio/*"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "A strong entity tag naming what the bytes are.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "private, max-age=31536000, immutable.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Ranges": {
+                "description": "bytes.",
+                "schema": {
+                  "type": "string",
+                  "const": "bytes"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "The range asked for of feature's file.",
+            "content": {
+              "audio/*": {
+                "schema": {
+                  "type": "string",
+                  "contentMediaType": "audio/*"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "A strong entity tag naming what the bytes are.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "private, max-age=31536000, immutable.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Accept-Ranges": {
+                "description": "bytes.",
+                "schema": {
+                  "type": "string",
+                  "const": "bytes"
+                }
+              },
+              "Content-Range": {
+                "description": "bytes first-last/size.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request_malformed (the digest or key is not sha256:<64 lowercase hex>), or query_invalid.",
             "content": {
               "application/json": {
                 "schema": {
