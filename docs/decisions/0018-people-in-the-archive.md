@@ -1,6 +1,8 @@
 # 0018. People in the archive who are not its operator
 
-Status: accepted
+Status: accepted; amended 2026-10-19 by
+[ADR 0096](0096-origin-of-recordings.md) (a depositor's limits bind like a
+recorded person's; accepted by the operator, 2026-10-19)
 
 An archive records other people: bandmates in a rehearsal, a friend in a diary,
 a therapist in a session. The operator governs the archive (ADR 0005), and
@@ -12,13 +14,27 @@ about.
 
 ## Decision
 
-**A person the content records may limit its disclosure.** Their limit is a
-sensitivity claim (ADR 0016) whose source is that person: "Sam: AMBER on the
-rehearsals Sam plays in". The operator records it, and its provenance names the
+**A person the content records, or who deposited it, may limit its
+disclosure.** Their limit is a sensitivity claim (ADR 0016) whose source is
+that person: "Sam: AMBER on the rehearsals Sam plays in". The operator records it, and its provenance names the
 person as its author, never the operator. It caps disclosure, including
 publication, exactly as the operator's own label does. No key or account is
 needed: people who never touch a computer still have preferences, and the
 archive's physical collections record them too.
+
+A depositor is the person whose library the archive took the content
+from, named in the `depositor` role of a head origin claim (ADR 0096)
+that the operator asserted or affirmed, or that arrived in the same
+admission as the content, and that the operator has not rejected. Custody
+of someone else's material is held on their behalf, so they keep a say over where it goes even when it
+does not record them. Their limit is a sensitivity claim whose source is
+that person, it binds exactly as a recorded person's does, and only they
+lift it. Being a depositor gives no authorship and no consent over
+sharing; it gives only the limit. If the operator later rejects the
+origin claim, the depositor can set no new limit through it, and a limit
+already set still binds until its author lifts it. (Added by the
+amendment of 2026-10-19, [ADR 0096](0096-origin-of-recordings.md); the
+rules below apply to depositors unchanged.)
 
 **A limit's author is a governance fact.** Who may lift a limit follows the
 claim's agent, so authorship here is more than provenance, and no separate field

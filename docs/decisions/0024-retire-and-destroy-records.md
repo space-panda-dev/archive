@@ -1,6 +1,9 @@
 # 0024. Retire and destroy records keep decisions, not execution state
 
-Status: accepted
+Status: accepted; note added 2026-10-19 (lineage and containment
+dependents, [ADR 0098](0098-content-lineage.md) and
+[ADR 0101](0101-daw-projects.md), both accepted by the operator,
+2026-10-19)
 
 Retire and destroy are settled as person-initiated transition claims, but their
 minimum record contracts are not. In particular, a destroy record must explain
@@ -117,3 +120,18 @@ and ADR 0015, so neither is retained.
   change what the transition appears to have considered.
 - **Guess policy provenance.** S-23 requires rules and matched facts, while
   their representation is still an open question.
+
+## Note, 2026-10-19: lineage and containment dependents
+
+The rule above is unchanged; what it reaches grows. "Reachable from the
+destroyed content under the installed contracts" gains its first
+contracts: [ADR 0098](0098-content-lineage.md)'s lineage claim (the outputs
+made from the destroyed content) and [ADR 0101](0101-daw-projects.md)'s
+project snapshot (the snapshot packs that hold or rebuild it), computed
+together as one set of dependents with the dispositions above. A whole
+snapshot pack holds the destroyed bytes, so it accepts only
+`dependent_destroy`. Until a specification release installs those
+contracts, the specification's D-9 refusal of `dependent_destroy`,
+`dependent_source_gone`, and `external_survivor` references stands, and
+Door refuses them as unsupported; the release replaces that refusal with
+the lineage and containment dependents.
