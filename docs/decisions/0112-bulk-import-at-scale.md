@@ -483,11 +483,13 @@ process:
 | run | core-s per audio-s | memory peak |
 |---|---|---|
 | 720 s, eager, 2 threads (today's default) | 1.49 | 3.9 GB |
+| 720 s, eager, 1 thread | 1.23 | 3.2 GB |
 | 720 s, compiled, 1 thread, warm compile cache | 1.04 | 3.5 GB |
 | 120 s, eager, 1 thread | 1.18 | 1.4 GB |
 | 120 s, compiled, 1 thread, warm | 1.07 | 1.4 GB |
 
-Most of the saving is one thread a copy; compiling adds about 9% more.
+On the 720 s input, one thread a copy saves 17% and compiling 15% more
+(9% on the 120 s clip).
 The backfill reserves a `cpu-inductor` copy one core and records its cost
 as 1.04 (`backfill.DEVICE_SETTINGS`) when the configured parameters name
 the device; the eager default stays two threads a copy, which round 1
