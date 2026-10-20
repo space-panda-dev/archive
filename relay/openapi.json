@@ -84,6 +84,10 @@
             "description": "Relay (404): The relay's configuration does not serve this feature, or no installed extractor declares it as an audio file (ADR 0089)."
           },
           {
+            "const": "feature_queued",
+            "description": "Relay (202): The feature is not made yet, and the bank has a scheduler: the relay has filed a bank request for it (ADR 0112). Ask again later; this is not a failure of the request."
+          },
+          {
             "const": "forbidden_identity",
             "description": "Relay (403): The caller's tailnet login is not allowed."
           },
@@ -1048,6 +1052,28 @@
                 }
               }
             }
+          },
+          "queued": {
+            "type": "array",
+            "description": "Present when the bank has a scheduler (ADR 0112): the configured features not made, each asked for with a bank request, and the key its entry will have, which a practice request may name.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "key"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{0,62}/[a-z][a-z0-9_]{0,62}$"
+                },
+                "key": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                }
+              }
+            }
           }
         }
       },
@@ -1159,8 +1185,10 @@
           "status": {
             "enum": [
               "ready",
-              "rendering"
-            ]
+              "rendering",
+              "queued"
+            ],
+            "description": "ready: the render exists; rendering: it is being made; queued: the stems it mixes are not made yet and the bank's scheduler has been asked for them (ADR 0112). Ask again while rendering or queued."
           },
           "media_type": {
             "const": "audio/flac"
@@ -3221,7 +3249,7 @@
     "/media/{digest}/bank": {
       "get": {
         "summary": "Which configured practice features exist for this content (ADR 0089)",
-        "description": "Served under the recording's gate: the operator, or a member the recording is disclosed to.",
+        "description": "Served under the recording's gate: the operator, or a member the recording is disclosed to. With a scheduler (ADR 0112), each configured feature not made is asked for and listed under queued with the key its entry will have.",
         "security": [
           {
             "tailnet": []
@@ -3336,7 +3364,7 @@
     "/media/{digest}/bank/{extractor}/{output}": {
       "get": {
         "summary": "One configured audio feature of the content, such as a stem (ADR 0089)",
-        "description": "Answered only when the feature is configured and declared an audio file, the digest is an Artifact's content, and the caller may hear the recording; the relay never runs an extractor.",
+        "description": "Answered only when the feature is configured and declared an audio file, the digest is an Artifact's content, and the caller may hear the recording; the relay never runs an extractor. When the feature is not made and the bank has a scheduler, the relay files a bank request for it and answers feature_queued (202) instead of feature_not_made (ADR 0112).",
         "security": [
           {
             "tailnet": []
@@ -3417,6 +3445,16 @@
                 "schema": {
                   "type": "string",
                   "const": "bytes"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "feature_queued: not made yet, and now asked for; ask again later.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
                 }
               }
             }
@@ -3563,7 +3601,7 @@
     "/media/{digest}/practice": {
       "post": {
         "summary": "Ask for a practice render of a mix of the recording's stems (ADR 0089)",
-        "description": "Ready when the render exists; otherwise the relay begins it, one render at a time in the background with a renderer installed on its own host, and answers rendering, and the client asks again. Same gate as the stems.",
+        "description": "Ready when the render exists; otherwise the relay begins it, one render at a time in the background with a renderer installed on its own host, and answers rendering, and the client asks again. Same gate as the stems. When the stems are not made, the bank has a scheduler, and the request names the key their entry will have (the bank listing's queued), the relay asks for them and answers queued; otherwise stems_not_made.",
         "security": [
           {
             "tailnet": []

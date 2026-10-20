@@ -70,7 +70,8 @@ class Served:
 
     def setup_served(self) -> None:
         config = self.config
-        self.features = practice.Features(config.bank_root, tuple(config.practice_features), config.bank_parameters)
+        self.features = practice.Features(config.bank_root, tuple(config.practice_features), config.bank_parameters,
+                                          config.bank_scheduler)
         self.renderer = practice.Renderer(practice.check_renderers(config.renderers, "renderers"),
                                           config.media_root, config.render_timeout_seconds)
         self.exporters = exporting.Exporters(practice.check_renderers(config.exporters, "exporters"),
@@ -182,6 +183,10 @@ class Served:
         self.media_gate(digest, caller)
         found = self.features.find(digest, name)
         if found is None:
+            key = self.features.ask(digest, extractor)
+            if key is not None:
+                raise Refused("feature_queued", f"{name} has not been made for this content; it is queued as "
+                                                f"entry {key}, so ask again later")
             raise Refused("feature_not_made", f"{name} has not been made for this content")
         path, described, key = found
         return FileAnswer(path, described["media_type"], f'"{key}/{output}"', f"{name} has not been made for this content")
@@ -200,7 +205,10 @@ class Served:
             raise Refused("media_not_derived", "this relay has no derived-media root configured")
         self.media_gate(digest, caller)
         self.renderer.command(checked["renderer"])
-        return self.renderer.request(checked, self.features.stems(checked))
+        inputs = self.features.stems(checked)
+        if inputs is None:
+            return self.renderer.queued(checked)
+        return self.renderer.request(checked, inputs)
 
     def practice_file(self, digest: str, key: str, caller: Caller) -> FileAnswer:
         _digest(digest)

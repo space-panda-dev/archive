@@ -77,6 +77,13 @@ run as the user that made the derived media, whose files only that user can
 read. `bank_root` is the feature bank's root (often the same directory), and
 `practice_features` the `<extractor>/<output>` features it serves, each of
 which an installed extractor must declare as an audio file; none by default.
+`bank_scheduler` (default false) says a scheduler makes the bank's requests
+([ADR 0112](../docs/decisions/0112-bulk-import-at-scale.md)): a served
+feature not made is then asked for with a bank request and answered as
+queued (`feature_queued`, 202, for its file; `queued` in the listing and in
+a practice answer), never as an empty result; without it the answers are
+`feature_not_made` and `stems_not_made`. The request is all the relay
+writes in the bank.
 `renderers` and `exporters` name programs installed on the relay's own host
 by an absolute path, each with the version that stands for its code. None is
 built yet; without one, practice renders and exports are refused
@@ -106,9 +113,9 @@ versions served.
 | `POST /world/view` | `{"view", "version", "subject", "parameters"?}` | `{snapshot, projection, view, version, subject, parameters, answer, withheld}` |
 | `GET /media/{digest}/peaks` | | the waveform peaks, `application/octet-stream` |
 | `GET /media/{digest}/listen` | | the listening copy, `audio/mp4` |
-| `GET /media/{digest}/bank` | | `{content, features, missing}`: the configured features made for this content |
-| `GET /media/{digest}/bank/{extractor}/{output}` | | one configured feature's file, such as a stem |
-| `POST /media/{digest}/practice` | a practice request | `{key, status, media_type, bytes?, speed, semitones}`; `status` is `ready` or `rendering` |
+| `GET /media/{digest}/bank` | | `{content, features, missing, queued?}`: the configured features made for this content; with a scheduler, `queued` names each one not made with the key its entry will have |
+| `GET /media/{digest}/bank/{extractor}/{output}` | | one configured feature's file, such as a stem; with a scheduler, `feature_queued` (202) while it is not made |
+| `POST /media/{digest}/practice` | a practice request | `{key, status, media_type, bytes?, speed, semitones}`; `status` is `ready`, `rendering`, or `queued` (the stems are asked for) |
 | `GET /media/{digest}/practice/{key}` | | a ready practice render, `audio/flac` |
 | `POST /documents/stage` | `{"media_type", "content", "filename"?}`, bytes as base64 | `{digest, size, annex_key, staging_remote, media_type, artifacts}` |
 | `GET /documents/{digest}` | | an admitted document's bytes, with its document source's media type |

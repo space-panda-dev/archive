@@ -158,6 +158,10 @@ command, `rg -n '^##' enrich/README.md`).
 | `enrich/bank.py` | 1132 | `Catalog` (403), `Bank` (953; `candidates`, `stands_in`, `measured_over`): the bank format; equivalence records (`check_equivalence` 789, `decisions`) |
 | `enrich/equivalence.py` | 262 | `measure`: the equivalence record of interchangeable entries; `MEASURES` (note F1, f0 cents, voicing) |
 | `enrich/remote.py` | 502 | extractor runs through Spool: `put`, `work`, `collect` (ADR 0090) |
+| `enrich/extract.py` | 869 | feature-bank runner: `main` (`list`, `run`, `--region`), `cut_region`, `run_default`, `run_from` |
+| `enrich/bank.py` | 1003 | `Catalog` (354), `Bank` (774): the bank format; region keys (`key_of`, `check_region`, `Catalog.within`), `covering`, bank requests (`ask`, `requests`) at the end (ADR 0112) |
+| `enrich/regions.py` | 248 | song spans by precedence, `regions_of`, `regions_for`, `expensive`, `plan` per mode (ADR 0112); tests `enrich/test_regions.py` |
+| `enrich/remote.py` | 494 | extractor runs through Spool: `put`, `work`, `collect` (ADR 0090) |
 | `enrich/media.py`, `waveform.py`, `derived.py` | 193, 161, 62 | derived media (ADR 0069) |
 | `enrich/support.py` | 291 | test support: synthetic audio, scratch archives |
 | `enrich/extractors/<id>/` | | `extractor.json` + program; longest: `quality/quality.py` 1317, `tonal/tonal.py` 986, `structure/structure.py` 871, `rhythm/meter.py` 821 |
@@ -180,6 +184,10 @@ Stand-in stems by a measured tolerance (ADR 0090's amendment) are built:
 built: bulk import (`enrich backfill`, region entries, bank requests, the
 cost gate; ADR 0112); the build work is step 0 of
 [docs/backlog.md](docs/backlog.md).
+Decided, not built: stand-in stems by a measured tolerance (ADR 0090's
+amendment) and the rest of bulk import (`enrich backfill`, the cost gate;
+ADR 0112); region entries, bank requests and song regions are built; the
+build work is step 0 of [docs/backlog.md](docs/backlog.md).
 Find: extractors in `enrich/extractors/<id>/extractor.json`; SHIPPED digest
 pins in `enrich/test_bank.py` (`SHIPPED = {`, line 115); byte format in
 [docs/feature-bank.md](docs/feature-bank.md) (444; shipped table at "The

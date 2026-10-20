@@ -802,7 +802,7 @@ to stderr and exits 1. It needs `ffmpeg` and `ffprobe` (`--ffmpeg` and
 enrich/extract.py list
 enrich/extract.py run <extractor|all> --content <file> --bank <dir> [--digest sha256:<hex>] [--jobs n]
                   [--media-type <type>] [--from <extractor>/<output>] [--config <file>] [--program name=path]...
-                  [--extractors <dir>]... [--dry-run] [--exact]
+                  [--extractors <dir>]... [--dry-run] [--no-prefer] [--exact] [--region <start>:<end>:<rate>]
 enrich/extract.py equivalence <extractor> --against <value> --content <file>... --bank <dir>
                   [--config <file>] [--program name=path]... [--extractors <dir>]... [--jobs n]
 ```
@@ -867,6 +867,21 @@ digests its parameters pin and refuses others. The Essentia `chords`
 extractor is retired: its entries stay readable
 ([retired extractors](../docs/feature-bank.md#retired-extractors)).
 
+`--region <start>:<end>:<rate>` limits the run to `[start, end)` samples of
+the content at its stream rate ([ADR 0112](../docs/decisions/0112-bulk-import-at-scale.md)):
+the runner cuts that region once to FLAC (ffmpeg from `--program ffmpeg=`,
+else `PATH`), checks the cut holds exactly those samples, and files region
+entries keyed by `archive-feature-bank-key/2`, needs made over the same
+region ([regions and requests](../docs/feature-bank.md#regions-and-requests)).
+Which regions are a recording's song regions, and what each mode makes
+eagerly, is [`regions.py`](regions.py): song spans from head song
+occurrences, else selections, else the detector's `music` suggestions, else
+`structure/playing`, the first source with any winning whole; each widened by
+10 s, snapped to whole seconds and merged under 30 s apart; in `songs` mode
+the extractors whose recorded cost is above 0.04 s per audio-second run over
+those regions and the rest whole (`regions.plan`). `bank.ask` files a bank
+request for an entry nothing holds yet.
+
 ### A stem is a stem: `equivalence` and `--exact`
 
 `stems` declares `apply.device` `cpu` and `mps` interchangeable
@@ -897,7 +912,6 @@ passed 0.13, so the note builder voices no bass row and there is nothing to
 compare. An
 upgrade of torch or demucs on either side is a reason to measure again:
 lookup honours only a record naming the software the entry was made with.
-
 ### The model extractors' interpreters
 
 Each is a virtual environment of its own, never the archive's. The versions

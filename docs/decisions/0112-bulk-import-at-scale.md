@@ -91,12 +91,24 @@ them ([ADR 0075](0075-stems-as-content.md)). An extractor's needs are made
 over the same region. Through Spool the cut travels, not the recording,
 and the bank checks the result by cutting again and comparing digests.
 
-**Which regions.** Each song span (an accepted song occurrence; for a
-recording with none, the span detector's song suggestions,
-[ADR 0066](0066-span-suggestions.md), [ADR 0091](0091-talk-needs-level.md))
-is widened by a margin on both sides and snapped outward to whole seconds,
-and regions that overlap or nearly touch are merged. A span edited within
-its margin is still covered, so curation does not rerun anything.
+**Which regions.** A recording's song spans come from the first of these
+sources that has any for it, and a source that has some wins whole, never
+mixed with a lower one:
+
+1. the pieces on the recording of the selections head song occurrences pin
+   (curators said these are songs);
+2. the pieces of head selections on the recording (a curator marked them,
+   though no occurrence says they are songs);
+3. the span detector's `music` suggestions
+   ([ADR 0066](0066-span-suggestions.md), [ADR 0091](0091-talk-needs-level.md));
+4. the `structure` extractor's `playing` spans, when the bank holds them.
+
+A recording with none has no song spans, and its expensive features are made
+only on request. Each span is widened by a margin on both sides and snapped
+outward to whole seconds, and regions that overlap or nearly touch are
+merged. A span edited within its margin is still covered, so curation does
+not rerun anything. (`enrich/regions.py`; the precedence is item 3 of the
+list for the operator to confirm.)
 
 **A reader takes whatever covers its span.** The whole-content entry covers
 every span; otherwise any region entry whose region contains the span. A
@@ -117,7 +129,10 @@ operational state, deletable like the rest of the bank (INV-4).
 not made answers that they are queued, never an empty result: practice
 audio's `stems_not_made` refusal ([ADR 0089](0089-practice-audio-and-exports.md))
 becomes a `queued` status when the bank has a scheduler, and stays the
-refusal when it has none. `enrich propose` and `enrich/live.py compare`
+refusal when it has none; likewise a bank feature's file answers
+`feature_queued` (HTTP 202) instead of `feature_not_made`, and the bank
+listing names what it queued with the key each entry will have, which a
+practice request may name. `enrich propose` and `enrich/live.py compare`
 ([ADR 0108](0108-live-analysis.md)) write requests for what they lack and
 say which.
 
@@ -276,10 +291,12 @@ experiment floor gets its cost axis from this.
    is measured on the bank's machine.
 2. The region margin and merge gap: proposed, 10 s each side and merging
    regions less than 30 s apart.
-3. For a recording with no song occurrence, using the span detector's song
-   suggestions as its song spans (the profile found triage reaches about
-   half only if detection matches curation; the structure extractor's
-   "playing" spans alone cover 92% and save little).
+3. The precedence of song spans: occurrences, then plain selections, then
+   the span detector's `music` suggestions, then `structure`'s `playing`
+   spans, the first source with any winning whole (the profile: occurrences
+   cover 52.6% of the shadow's audio, any selection 68.5%, "playing" 92%,
+   which saves little; triage reaches about half only if detection matches
+   curation).
 4. Region keys as a new key contract `/2`, leaving every `/1` key as it is.
 5. The cost gate's tolerance (15% on CPU-seconds per audio-second) and that
    wall time and GPU time are recorded, not gated.
