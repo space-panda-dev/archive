@@ -36,14 +36,14 @@ them as given.
   the `admit` ability), talk spans in recorder takes, friends' voice notes.
   Each voice note is its own Artifact, never forced into a session."
 - **ASR runs locally only** (hosted ASR stays possible through processor
-  policy, not built). Transcription is ADR 0104's.
+  policy, not built). Transcription is [ADR 0104](0104-transcription-and-speakers.md)'s.
 - **W2.8 Speakers.** Anyone but the operator "is identified only by their own
   consent claim, made through their login"; speaker spans are ADR 0104's.
 - **W2.9 Transcript text search** lives in the disposable index store
-  (ADR 0102).
+  ([ADR 0102](0102-retrieval-index.md)).
 - **W2.10 Notebook links.** "A link from a note to an archive object ... is a
   claim, asserted by a person or proposed by a machine"
-  (ADR 0105).
+  ([ADR 0105](0105-notebook.md)).
 - **Context (R4.10, ADR 0096).** The capture import proposes `own_capture`
   only for devices the operator configured as their own.
 
@@ -65,8 +65,9 @@ The first three make one Artifact per note and no session. The fourth makes
 none: the take is already an Artifact in its session, and cutting its talk
 into another Artifact would store the same sound twice. A
 `within_recording` note becomes an Artifact only when someone renders it to
-send or keep, as a regenerable render with lineage to the take
-([ADR 0098](0098-content-lineage.md), ADR 0099). Open
+send or keep, as a regenerable render whose lineage names the selection, and so the
+take
+([ADR 0098](0098-content-lineage.md), [ADR 0099](0099-samples.md)). Open
 question 1 asks the operator to confirm this reading of "each its own
 Artifact".
 
@@ -106,14 +107,14 @@ for a note a machine read from a source's metadata (an `x-archive-agent`
 rule, as for `work_origin`). The claim says nothing of who speaks (W2.8,
 ADR 0104), what is said (ADR 0104's transcript), or what it is about
 (W2.10's link claims, ADR 0105). Original file names and paths are the
-source-path claim of ADR 0100 (W2.4), not a
+source-path claim of [ADR 0100](0100-packs-and-collections.md) (W2.4), not a
 field here.
 
 Like any claim, voice notes coexist (INV-7). A machine's `voice_memos` claim
 and a person's later one with a corrected title both stand, and a view
 chooses (ADR 0082). A person who decides a file is not a voice note (a whole
 rehearsal recorded on a phone, which is a capture source of
-ADR 0107) judges the claim `rejected`
+[ADR 0107](0107-multi-device-and-live.md)) judges the claim `rejected`
 ([ADR 0081](0081-judgments-and-annotations.md)); nothing is deleted.
 
 ### Never forced into a session

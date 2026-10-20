@@ -53,7 +53,7 @@ W2.14); this record states them as given.
 - **MIDI** recorded during a session is a capture source aligned by capture
   alignment (exact on a shared clock), not a document; MIDI is evidence for
   notes and chords. Sampler contents import as libraries in wave 2
-  (ADR 0100); performance lineage (which
+  ([ADR 0100](0100-packs-and-collections.md)); performance lineage (which
   pad fired which sample when) waits for a later wave.
 - **Live is advice, batch is evidence.** Live signals are operational and
   never admitted; the admitted recording is re-analysed in batch. Live
@@ -72,8 +72,8 @@ W2.14); this record states them as given.
   practice mix they were played over; "practice" is a view. No new
   `selection_kind` value.
 
-Set lists and a clock's tempo map are ADR 0106's;
-voice notes are ADR 0103's.
+Set lists and a clock's tempo map are [ADR 0106](0106-set-lists-and-clocks.md)'s;
+voice notes are [ADR 0103](0103-voice-capture.md)'s.
 
 ## Decision
 
@@ -120,7 +120,7 @@ name every track, or only those that exist for a moment, so losing one
 device loses tracks, never the excerpt.
 
 **Interim phone and tablet mics.** Each device runs Voice Memos; its files
-reach the Mac by the synced folder ADR 0103 watches. ADR 0103 imports a
+reach the Mac by the synced folder ADR 0103 imports from. ADR 0103 imports a
 voice note as its own Artifact, never forced into a session; a file becomes
 a session source only by `capture import --into`. A device the operator has
 marked as their own in the importer's configuration gives `own_capture`
@@ -164,7 +164,7 @@ through `aligned_spans`, and ranks the sources by how far the span's median
 level rises above that source's own band level (the bank's loudness series,
 `loudness-r128`), highest first, with the numbers as `why`. Parameter
 `prefer`: a source the caller wants first. The transcription tool
-(ADR 0104) reads its first answer as
+([ADR 0104](0104-transcription-and-speakers.md)) reads its first answer as
 its default input, as an extractor reads `Bank.default_input`. Sources
 without the series, or without an unambiguous alignment, are listed as not
 ranked, with the reason.
@@ -448,7 +448,7 @@ advice and need no contract.
    request>}` (ADR 0089's request, its `content` the input's digest), as
    `recipe` already allows.
 3. **Selections and alignment version 2.** Selection version 2 may pin only
-   alignment version 1. *Recommend:* ADR 0099's selection version 3 accepts
+   alignment version 1. *Recommend:* [ADR 0099](0099-samples.md)'s selection version 3 accepts
    alignment version 2 pins.
 4. **Work links from member capacity.** `song_occurrence` is not under
    `annotate`, so a phone node over the internet cannot link a rendition to
@@ -456,7 +456,8 @@ advice and need no contract.
 5. **A kept take admitted over the internet.** The operator's internet login
    is member capacity and may not assert `own_capture` (ADR 0096, R4.4), so
    W2.14 cannot be met in one proposal there. *Recommend:* admit the take
-   with its lineage and no origin (unknown, which only narrows), and have
+   with its lineage and origin `unknown` (ADR 0096 requires an origin in a
+   member's admission; `unknown` only narrows), and have
    the practice app queue an `own_capture` claim for the operator to send
    over the tailnet; do not loosen R4.4.
 6. **Placement note target.** A span annotation sits on one source's

@@ -54,9 +54,12 @@ folder it lives in a **notebook**.
 ### A notebook is a collection; a page is one Artifact with revisions
 
 **The notebook.** Each notebook is an Entity of kind `collection`
-(ADR 0100, W2.3), created once by the
+([ADR 0100](0100-packs-and-collections.md), W2.3), created once by the
 operator with a label ("Field notebook"). No new kind: a notebook is a
-personal library of pages, as a sample library is of samples. Where its
+personal library of pages, as a sample library is of samples. ADR 0100
+defines a collection as a set of audio with Artifacts and selections as
+members, so this use widens it; that conflict is the operator's (ADR 0100,
+Open 10). Where its
 folder is on disk is configuration, never a record (S-9).
 
 **The page.** Each page is one Artifact object. Its first snapshot is the
@@ -150,7 +153,7 @@ to `dcterms:references` from page to target, as a mapping only
 | Role | Count | Pins |
 |---|---|---|
 | `page` | exactly 1 | an Artifact revision: the page revision the link was asserted on or read from |
-| `target` | exactly 1 | an Artifact revision (a recording, a sample render, any content), an Entity revision of an installed kind (a `musical_work`, `recording`, `recording_session`, `release`, `collection`, person or organisation), or an `archive.claim/audio_selection` Claim revision of version 2 or later (a cut or sample, ADR 0099) |
+| `target` | exactly 1 | an Artifact revision (a recording, a sample render, any content), an Entity revision of an installed kind (a `musical_work`, `recording`, `recording_session`, `release`, `collection`, person or organisation), or an `archive.claim/audio_selection` Claim revision of version 2 or later (a cut or sample, [ADR 0099](0099-samples.md)) |
 | `run` | 0 or 1 | a `derivation_run` version 1 Claim revision, when a machine read the link |
 
 Payload, every field optional:
@@ -274,9 +277,10 @@ technique) stay outside links in the view.
   object: the pages that link to a recording, Work, session, collection or
   sample, which is what the review app, the songbook and the sample app
   show as "in the notebook".
-- **Search.** Page text enters the retrieval index's full-text search
-  (ADR 0102, W2.9), head revisions only; results
-  are filtered by the caller's readable set before they leave the relay
+- **Search.** W2.9 names transcripts only; page text (head revisions
+  only) enters the retrieval index's full-text search
+  ([ADR 0102](0102-retrieval-index.md)) when that record adds it as a
+  further text source, as its Open 5 recommends. Results are filtered by the caller's readable set before they leave the relay
   (W2.7).
 - **Relay.** Page bytes are served by `GET /documents/{digest}`, which
   already serves any Artifact a `document_source` describes, under
@@ -395,7 +399,8 @@ technique) stay outside links in the view.
 2. **Recording a removal.** A page deleted from the folder writes nothing
    today, so "deleted" and "unchanged" look alike. Recommended: the command
    supersedes the page's source-path claim with one saying the file left
-   the notebook at that snapshot, if ADR 0100's claim can say so; never a
+   the notebook at that snapshot; ADR 0100's version 1 has no field that
+   says so, so this needs a field or a later version of that contract; never a
    retire, which is the operator's act of taking something out of the
    archive.
 3. **Machine links from titles.** Recommended: in wave 2 the link reader
@@ -416,5 +421,5 @@ technique) stay outside links in the view.
    stays visible with its history (INV-7).
 8. **Vault attachments.** Recommended: images and PDFs in a notebook may be
    snapshotted later as ordinary documents with source paths; audio enters
-   only through voice capture (ADR 0103), never
+   only through voice capture ([ADR 0103](0103-voice-capture.md)), never
    through the notebook command.

@@ -45,7 +45,7 @@ states it as given.
   OP-1-style exports) import as libraries in wave 2; performance lineage
   (which pad fired which sample when) waits for a later wave."
 
-Form and sound are the classification claims of ADR 0099 (proposed, wave 2)
+Form and sound are the classification claims of [ADR 0099](0099-samples.md) (proposed, wave 2)
 (W2.1); this record proposes them and defines neither.
 
 ## Decision
@@ -208,7 +208,7 @@ layout: which folders hold samples and how a file name or folder gives a
 slot. It reads names, sizes, and headers only. A device whose pad
 assignments live only in a proprietary project file gets no slots in wave 2;
 that file is admitted whole as an Artifact pinned as the membership claim's
-`document`, as ADR 0101 (proposed, wave 2) admits a DAW snapshot, and
+`document`, as [ADR 0101](0101-daw-projects.md) (proposed, wave 2) admits a DAW snapshot, and
 is not parsed. Which pad fired which sample when is the later wave's.
 
 ### The path proposer (W2.4)
@@ -235,8 +235,8 @@ It proposes no free tags and no origin, and it reads no audio.
 - **Projection.** A `collection` Entity projects as `arch:Collection`; a
   membership claim as `prov:hadMember` from container to each member, with
   the slot on a resource of its own; a source-path claim as one resource per
-  entry under `arch:` terms (`arch:sourcePath`, `arch:sourceRoot`,
-  `arch:observedAt`). A rejected membership claim is projected with its
+  entry under `arch:` terms (`arch:source_path`, `arch:source_root`,
+  `arch:observed_at`). A rejected membership claim is projected with its
   judgment, never dropped.
 - **Views.** `collection_members` answers a collection's or release's
   members, with slots, each member's source paths and origin, and each
@@ -393,4 +393,8 @@ It proposes no free tags and no origin, and it reads no audio.
    vocabulary say "the archive's holdings" for the old sense.
 10. **Members beyond audio.** The sample app shows songbook songs too.
     Recommended: members are Artifacts and selections only in version 1; a
-    Work in a collection waits for a reader that needs it.
+    Work in a collection waits for a reader that needs it. ADR 0105
+    (proposed) makes each notebook a `collection` of text pages, tied to it
+    by source-path claims' `within` rather than membership claims, which
+    widens "a set of audio" above; the two drafts do not agree and neither
+    is chosen here.

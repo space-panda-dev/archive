@@ -45,9 +45,9 @@ this record states them as given.
   claims over the selection. No new field.
 
 Packs, collections and source paths (W2.3, W2.4) are
-ADR 0100's; the similarity index that
+[ADR 0100](0100-packs-and-collections.md)'s; the similarity index that
 reads this record's facets (W2.6, W2.7) is
-ADR 0102's.
+[ADR 0102](0102-retrieval-index.md)'s.
 
 ## Decision
 
@@ -57,7 +57,9 @@ ADR 0102's.
 Its references and every version 2 rule are unchanged (tracks of ordered
 `pieces`, one `piece` reference per span in track-then-span order, distinct
 content across tracks, optional `alignment` pins), plus optional `stream`
-references (below). Its payload:
+references (below). Whether version 3's `alignment` pins may also name
+`capture_alignment` version 2, which ADR 0107's aligner proposes, is that
+record's Open 3; this draft keeps version 2's rule. Its payload:
 
 ```json
 {
@@ -291,7 +293,7 @@ A cut kept in a library is its **selection**, admitted under `cut`; that is
 the sample, and it is backed up with the recordings it pins. Its rendered
 file stays regenerable. A render is **chosen** when a person asks to keep
 the file itself (to load it on a sampler, drop it in a DAW project,
-ADR 0101), and **sent** when it goes to someone
+[ADR 0101](0101-daw-projects.md)), and **sent** when it goes to someone
 outside the relay. Then, and only then, its exact bytes are admitted:
 
 1. `POST /media/samples/{key}/stage` copies the ready render into the
@@ -333,14 +335,15 @@ through operator tools, never through the relay.
 
 - **Projection.** A version 3 selection projects as version 2, plus each
   span's stem citation as ADR 0079 projects one, its `channel` as
-  `arch:channel`, and the recipe as an ordered list of operation resources
+  `arch:channel_index` (the term a channel contribution already projects), and the recipe as an ordered list of operation resources
   under `arch:` terms shared with ADR 0098's transforms. `sample_form`
   projects its SKOS concept; `sample_sound` the MusicBrainz instrument URIs
   as they are, as contributions project them; `sample_tag` a literal.
 - **`archive.view/samples` version 1** lists the samples the caller may
   read: by default every head selection with a signal, a recipe, or a kind
-  claim, and every Artifact with a kind claim, with `all` adding every other
-  selection (Open 8). It filters by form, instrument, tag, collection
+  claim, and every Artifact with a kind claim, and every selection or
+  Artifact that is a member of a collection (ADR 0100), with `all` adding
+  every other selection (Open 8). It filters by form, instrument, tag, collection
   (ADR 0100) and facet ranges, and answers each row's kinds as listed claims
   and its facets from `sample_facets`. Its readable set is the caller's
   (ADR 0093).
@@ -432,8 +435,9 @@ through operator tools, never through the relay.
 5. Their claims are evidence, as every claim is.
 6. Contracts, not subsystems.
 
-None of these is a new kind of Entity; `collection` (ADR 0100) is wave 2's
-one new noun in that sense.
+None of these is a new kind of Entity. Wave 2's new Entity kinds are
+`collection` (ADR 0100, W2.3) and, if the operator accepts it, `daw_project`
+(ADR 0101, its Open 1).
 
 ## Touch points
 

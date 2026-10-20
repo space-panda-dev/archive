@@ -44,7 +44,7 @@ record states them as given.
   never admitted; the admitted recording is re-analysed in batch.
 - **MIDI recorded during a session** is a capture source aligned by capture
   alignment (exact on a shared clock), not a document. Its contract is
-  ADR 0107's.
+  [ADR 0107](0107-multi-device-and-live.md)'s.
 - **W2.13 Live responses are ordinary claims** asserted by the operator,
   written `by` the node software, and anchored to the node's recording.
 
@@ -124,7 +124,9 @@ claim about readable things, so it falls under `annotate`: a member may
 assert one naming themselves as agent, and the relay's existing rule that
 every pin be readable applies to the session, the Works and the singers.
 The live edits the rehearsal node sends are the operator's, `by` the node
-software (W2.13); how they travel is ADR 0107's.
+software (W2.13); how they travel is ADR 0107's. Because a revision keeps
+its agent, the operator can revise live only a set list the operator
+asserted.
 
 ### A clock asserts its own meter
 
@@ -359,9 +361,12 @@ is wave 3's, and live guesses are never admitted.
    session, and the first revision after the session is admitted pins it.
 2. **When a live edit happened.** The envelope `at` is Door's commit time,
    and live edits arrive after the rehearsal. Recommended: a live revision
-   pins the node's recording in an `anchor` role with an `anchor_sample`, in
-   whatever shape ADR 0107 gives live responses, added in version 1 so wave 3
-   needs no new version.
+   carries an anchor in the node's recording, added in version 1 so wave 3
+   needs no new version. ADR 0107 anchors every live response by drafting or
+   pinning an `audio_selection` over the node's parts, with no `anchor` role
+   or `anchor_sample` field, and its outbox lists no set-list edit; whether a
+   set list pins such a selection or the node's part with a sample position
+   is not settled by either draft and is left to the operator.
 3. **Who may revise a set list.** Recommended: only its agent; another
    person's plan is their own set list, side by side.
 4. **What a prior may do.** Recommended: only widen candidates

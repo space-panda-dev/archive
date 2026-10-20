@@ -380,7 +380,7 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
 
 - Which vocabularies beyond the first musical Work and MusicBrainz
   correspondence does World need? ADRs 0041 and 0042 settle only the first
-  slice. (ADR 0105, proposed, would answer this for Wikidata.)
+  slice. ([ADR 0105](decisions/0105-notebook.md), proposed, would answer this for Wikidata.)
 - How is evidence for a specific external response admitted and pinned before
   a World candidate based on that response is promoted? Manual assertions do
   not require an external response (ADR 0042).

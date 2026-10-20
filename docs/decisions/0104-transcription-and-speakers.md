@@ -4,8 +4,8 @@ Status: proposed (wave 2, drafted 2026-10-19)
 
 Talk is half of what a rehearsal holds that the music does not: "take it
 from the bridge", "that was the one", a count, an argument about the ending.
-Voice notes (ADR 0103, proposed) are nothing but
-talk. The applications want to read it, search it (ADR 0102,
+Voice notes ([ADR 0103](0103-voice-capture.md), proposed) are nothing but
+talk. The applications want to read it, search it ([ADR 0102](0102-retrieval-index.md),
 proposed, W2.9), and know who said it.
 
 - [ADR 0085](0085-documents-lyrics-rights.md) already settles what a
@@ -285,7 +285,7 @@ rejection sets nothing aside.
 - **Projection.** World projects a voice consent as a claim about its
   person, and a speaker spans claim's spans as resources under `arch:`
   terms, each with its samples and either `arch:speaker` (the person) or an
-  `arch:unknownSpeaker` number scoped to the claim. No voiceprint or
+  `arch:unknown_speaker` number scoped to the claim. No voiceprint or
   embedding is projected.
 - **`archive.view/speakers` version 1**: for a recording, each speaker span
   of its claims with its run and confidence, naming the person only while

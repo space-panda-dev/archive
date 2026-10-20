@@ -4,9 +4,9 @@ Status: proposed (wave 2, drafted 2026-10-19)
 
 The sample app is a browser over thousands of short sounds: cuts from the
 review app, songbook songs, and libraries of kicks and snares
-(ADR 0099 and ADR 0100, both proposed). Its questions are "loops near 92
+([ADR 0099](0099-samples.md) and [ADR 0100](0100-packs-and-collections.md), both proposed). Its questions are "loops near 92
 BPM in A minor", "snares like this one", and, once transcripts exist
-(ADR 0104, proposed), "where did we talk about the bridge".
+([ADR 0104](0104-transcription-and-speakers.md), proposed), "where did we talk about the bridge".
 World cannot answer any of them well today.
 
 - World is one Oxigraph store of named RDF graphs (ADR 0041, ADR 0055).
@@ -63,17 +63,18 @@ content is audio (a library one-shot, a recording), or a transcript
 segment (below).
 
 - **Facets**: one named value about a unit, with the revisions it depends on.
-  Machine facets come from bank entries, read by the key the installed
-  extractors give (ADR 0073), over the unit's spans, by the same rule as
-  ADR 0099's W2.2 views, so a facet in the index always equals that view's
-  answer:
+  Machine facets are ADR 0099's `archive.view/sample_facets` answers for
+  the unit, computed by that view's rule (bank entries read by the key the
+  installed extractors give, ADR 0073, over the unit's spans, then the
+  selection's recipe applied), never by a rule of the index's own, so a
+  facet in the index always equals that view's answer:
 
   | Facet | From | Value |
   |---|---|---|
-  | `bpm` | `rhythm` (tempo series over the spans; `bpm` for a whole file) | number |
-  | `key` | `tonal` key regions over the spans | tonic and mode |
-  | `duration` | the spans, or the Artifact's `frames/samples` | seconds |
-  | `loudness` | `loudness-r128` integrated loudness | LUFS |
+  | `bpm` | the view's `bpm` | number |
+  | `key` | the view's `key` | tonic and mode |
+  | `duration` | the view's `length`, in seconds | seconds |
+  | `loudness` | the view's `loudness` | as the view states it |
   | `form` | W2.1 form claims (ADR 0099) | a concept of the local scheme |
   | `sound` | W2.1 sound claims (ADR 0099) | a MusicBrainz instrument ID |
   | `tag` | W2.1 free-tag claims (ADR 0099) | text, filter only |
@@ -88,8 +89,10 @@ segment (below).
 - **Embeddings**: one timbre vector per unit, from a new extractor (below),
   for "sounds like this". Vectors never leave the index: no answer carries
   one, and the relay serves no route that returns one.
-- **Search text**: the text of each transcript segment ADR 0104 admits,
-  with the span of the recording it covers, in a full-text table.
+- **Search text**: the text of each transcript segment (a line of a
+  transcript document, placed on its recording by the run's `timed_lyrics`
+  claim) as ADR 0104's `transcript` view joins it, with the span of the
+  recording it covers, in a full-text table.
 
 **Every row carries its dependencies.** A row names the revisions it was
 made from: the unit's revision (the selection's Claim revision, or the
@@ -108,7 +111,8 @@ entries that exist. A unit's embedding is the mean of the series' rows over
 its spans, L2-normalised; a whole short Artifact uses every row. The
 manifest pins the model files by digest (ADR 0074's amendment) and states
 the weights' licence, which must permit redistribution (W2.6). A
-transform recipe in a selection (ADR 0099) is not applied: a selection is
+transform recipe in a selection (ADR 0099) is not applied to the
+embedding (the facets above do apply it, through the view): a selection is
 indexed as its source span sounds, and a render that was chosen and
 admitted is an Artifact with its own content, indexed as itself.
 
@@ -388,8 +392,8 @@ INV-4's word for regenerable state.
    W2.7 asks that nothing hidden be revealed. *Recommend:* the
    request-independent count above; a per-request count is refused for good.
 5. **Which text is searched.** W2.9 names transcripts. *Recommend:* add
-   titles, span annotations and notebook note revisions
-   (ADR 0105, proposed) as further text sources in later
+   titles, span annotations and notebook pages
+   ([ADR 0105](0105-notebook.md), proposed) as further text sources in later
    additions under the same dependency rule, each a separate index source.
 6. **Claimed facets by default.** No current rule exists yet for form and
    sound claims. *Recommend:* `unrejected` as the default until ADR 0099 or

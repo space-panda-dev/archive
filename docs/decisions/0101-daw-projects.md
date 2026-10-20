@@ -272,7 +272,7 @@ their own, not made from the pack.
 - **A snapshot as an Entity.** A snapshot is a state of the project at one
   moment, with exact bytes; a claim relating an Artifact to the project
   says that, as a document's dated exports do (ADR 0085).
-- **A project as a `collection` (ADR 0100) of snapshots.** Membership is a
+- **A project as a `collection` ([ADR 0100](0100-packs-and-collections.md)) of snapshots.** Membership is a
   person's grouping of independent things; snapshots are ordered states of
   one production, with a time and a file to open.
 - **Lineage from the pack to its audio.** Lineage has at most 64 inputs and
