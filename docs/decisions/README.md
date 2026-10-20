@@ -122,3 +122,4 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0105](0105-notebook.md) | Notes are snapshotted as documents, and their links to the archive are claims |
 | [0106](0106-set-lists-and-clocks.md) | A set list is a claim of intent, and a clock asserts its own meter |
 | [0107](0107-multi-device-and-live.md) | Many devices capture one moment, MIDI is a source, and live responses wait on the node |
+| [0110](0110-shared-clock.md) | The node is tempo master, and its clock asserts the meter (proposed) |
