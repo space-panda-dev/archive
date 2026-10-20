@@ -37,7 +37,8 @@ expensive unit (recorded cost above `expensive_above` seconds per
 audio-second) runs over the recording's song regions (`regions.regions_for`:
 song occurrences, else selections, else the detector's `music` spans, else
 `structure/playing` from the bank; widened, snapped and merged) as region
-entries, and where there are none it is left for on demand; a unit on a
+entries (one region that is the whole recording: whole), and where there
+are none it is left for on demand; a unit on a
 file feature follows that feature's maker (whole where it is made whole).
 `on-demand`: only the bank requests. Requests are served in every mode.
 A unit routed to Spool runs whole only: a task carries no region yet.
@@ -91,7 +92,7 @@ from regions import Region  # noqa: E402
 
 STREAM = "archive.claim/audio_stream"
 MODES = regions.MODES  # songs, eager, on-demand
-# rehearsal-010b's set; not timed-lyrics, which answers not_yet.
+# The 0.0.10 backfill's set; not timed-lyrics, which answers not_yet.
 PROPOSERS = "chords-jiang,chords-chordino,beats,bass,key,tuning,notes,bass-line,sections"
 
 # What the 0.0.10 backfill made of every recording: an extractor on the
@@ -262,6 +263,7 @@ class Recording:
     media_type: str | None = None
     regions: list[Region] = field(default_factory=list)
     span_source: str = "none"  # which source its song spans came from
+    length: int | None = None  # samples of its first audio stream at the regions' rate
 
 
 def heads(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -321,6 +323,7 @@ def find_regions(recordings: list[Recording], export: dict[str, Any], archive: P
             note(step="no song regions", recording=recording.object_id, error=str(exc)[-300:])
             continue
         recording.regions, recording.span_source = found["regions"], found["source"]
+        recording.length = found["length"]
         recording.songs = bool(found["regions"])
 
 
@@ -539,7 +542,7 @@ def plan(recordings: list[Recording], schedule: Schedule, planner: Planner, mode
 
     ordered = sorted(recordings, key=lambda r: (not r.songs,)) if mode == "songs" else list(recordings)
     for recording in ordered:
-        choice = regions.plan(mode, known, recording.regions, costs, schedule.expensive_above)
+        choice = regions.plan(mode, known, recording.regions, costs, schedule.expensive_above, recording.length)
         for unit in units:
             whole = planner.state(recording, unit)
             if whole[0] in (DONE, SKIPPED, UNCONFIGURED, DAMAGED):

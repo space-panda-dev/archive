@@ -299,7 +299,10 @@ experiment floor gets its cost axis from this.
    curation).
 4. Region keys as a new key contract `/2`, leaving every `/1` key as it is.
 5. The cost gate's tolerance (15% on CPU-seconds per audio-second) and that
-   wall time and GPU time are recorded, not gated.
+   wall time and GPU time are recorded, not gated. As built
+   (`enrich/bench/cost.py`), the sum is gated at 20% and each unit at
+   double its baseline plus 0.02, since two runs on one machine moved the
+   sum by 10% and one cheap unit by 2.2x.
 6. Under `songs`, `asr-whisper` eager for voice notes and on demand for
    rehearsals.
 7. When the GPU worker is away, the laptop separates (proposed default:

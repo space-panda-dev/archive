@@ -223,18 +223,24 @@ def expensive(extractor_id: str, costs: Mapping[str, float] = PROFILED_COSTS,
 
 
 def plan(mode: str, extractor_ids: Iterable[str], regions: list[Region],
-         costs: Mapping[str, float] = PROFILED_COSTS, threshold: float = EXPENSIVE_THRESHOLD
-         ) -> dict[str, Any]:
+         costs: Mapping[str, float] = PROFILED_COSTS, threshold: float = EXPENSIVE_THRESHOLD,
+         length: int | None = None) -> dict[str, Any]:
     """What each extractor is made over eagerly in this mode: `"whole"`, a
     list of regions, or `None` (made only when a request asks for it).
 
     - `eager`: everything whole.
     - `songs`: cheap extractors whole; expensive ones over the song regions,
-      and on request only where there are none.
+      and on request only where there are none. One region that is the whole
+      content (`length` samples: a recording selected end to end) is made
+      whole, so readers of whole entries find it and a routed unit may go to
+      its worker.
     - `on-demand`: nothing.
     """
     if mode not in MODES:
         raise RegionError(f"mode {mode!r} is not one of {', '.join(MODES)}")
+    if length is not None and len(regions) == 1 and (regions[0].start, regions[0].end) == (0, length):
+        regions = []
+        mode = "eager" if mode == "songs" else mode
     chosen: dict[str, Any] = {}
     for extractor_id in sorted(extractor_ids):
         if mode == "eager":

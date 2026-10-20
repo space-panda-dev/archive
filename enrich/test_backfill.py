@@ -203,6 +203,19 @@ class Plans(unittest.TestCase):
         self.assertFalse(any(j.routed for j in planned.jobs if j.region))
         self.assertEqual(planned.jobs[0].seconds, 180.0)  # a region job measures its region
 
+    def test_a_song_region_that_is_the_whole_recording_is_made_whole_and_may_be_routed(self) -> None:
+        # A recording selected end to end: one region [0, length). Made as region
+        # entries, no reader of whole entries would find it and no worker could take it.
+        rec = recording("a", regions=[Region(0, 44100 * 600, 44100)])
+        rec.length = 44100 * 600
+        sched = schedule()
+        sched.settings["stems"]["route"] = "spool"
+        planned = self.plan([rec], "songs", sched=sched, spool=True)
+        self.assertEqual({j.region for j in planned.jobs}, {None})
+        self.assertTrue(any(j.routed for j in planned.jobs if j.unit == STEMS))
+        rec.length = 44100 * 601  # anchor: a region short of the end stays a region
+        self.assertIn(rec.regions[0], {j.region for j in self.plan([rec], "songs").jobs})
+
     def test_eager_makes_everything_whole_even_with_song_regions(self) -> None:
         planned = self.plan([recording("a", songs=True)], "eager")
         self.assertEqual({j.region for j in planned.jobs}, {None})

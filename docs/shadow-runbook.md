@@ -441,7 +441,12 @@ scratch bank is covered by the standing approval.
    `--songs` (the default) makes the expensive extractors over each
    recording's song regions and leaves them for on demand where it has
    none; `--eager` makes everything whole; `--on-demand` makes only the bank
-   requests, which every mode serves first. The configuration's `backfill`
+   requests, which every mode serves first. **Pass `--eager` on the shadow
+   for now**: no reader takes a region entry yet (`enrich propose` and the
+   relay read whole entries), and region stems disagreed with whole stems
+   over the same span when measured (step 0 of
+   [the backlog](backlog.md#step-0-bulk-import-at-scale-adr-0112)). A song
+   region that is the whole recording is made whole in `--songs` too. The configuration's `backfill`
    object routes `stems` to the spool and sets threads per extractor; the
    workers leasing from it are started as ADR 0090 describes. To separate
    on the Mac's GPU, route it with the Mac's parameters,

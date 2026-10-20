@@ -125,6 +125,23 @@ with song regions 12.7x. Each record's "For the operator to confirm" list
 gives the proposed thresholds; build to them, and change them only on the
 operator's answer.
 
+Measured on `bulk/integration` (two profiled recordings on the laptop,
+scratch banks): `--eager` reaches 0.337 s per audio-second saturated on the
+laptop alone (2.9x) and 0.277 with stems on the Mac (3.5x, bound by the
+worker's transfers, one task at a time); `--songs` at the shadow's song
+coverage would reach 0.200 (4.9x). Below the projected 7x and 12.7x
+because stems cost more under load and f0-pesto costs 0.37 core-seconds per
+audio-second over its two passes. Before `--songs` is used on real data:
+region stems disagree with whole stems over the same span (bass SNR
+-0.15 dB on a 485 s region; not yet diagnosed), and no reader takes a
+region entry yet (`enrich propose` and the relay read whole entries), so a
+region entry is made and never read. A region that is the whole recording
+is made whole. Next levers by size: the Mac worker's throughput (two tasks
+at once, or FLAC instead of float WAV), f0-pesto on MPS, the layout's
+reserved widths (chordino reserves 3 cores and uses 1, basic-pitch reserves
+1 and uses about 3), then the cost gate's numbers replacing `SETTINGS` and
+`regions.PROFILED_COSTS`.
+
 Four pieces can be built at once, each on its own branch. `enrich/bank.py`
 is shared: **gpu** owns `Bank.entry`'s lookup and the manifest check,
 **triage** adds new functions beside them (keys, regions, requests) and

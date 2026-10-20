@@ -167,6 +167,10 @@ class Plans(unittest.TestCase):
         self.assertEqual({e for e, p in planned.items() if p == "whole"}, {"frames", "rhythm", "structure", "quality"})
         # A recording with no song spans makes its expensive features only on request.
         self.assertEqual(regions.plan("songs", ["stems", "frames"], []), {"stems": None, "frames": "whole"})
+        # One region that is the whole content is made whole; in on-demand, still nothing.
+        self.assertEqual(set(regions.plan("songs", self.EXTRACTORS, songs, length=RATE).values()), {"whole"})
+        self.assertEqual(set(regions.plan("on-demand", self.EXTRACTORS, songs, length=RATE).values()), {None})
+        self.assertEqual(regions.plan("songs", ["stems"], songs, length=RATE + 1), {"stems": songs})
         with self.assertRaisesRegex(regions.RegionError, "not one of"):
             regions.plan("lazy", self.EXTRACTORS, songs)
 

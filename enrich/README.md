@@ -703,7 +703,11 @@ cost above `expensive_above`, 0.04 seconds per audio-second) over each of
 the recording's song regions (`regions.regions_for`: song occurrences,
 else selections, else the detector's `music` spans, else `structure/playing`
 read from the bank), one `extract.py run --region` job per region, filing
-region entries; a recording with no song regions leaves it for on demand.
+region entries; one region that is the whole recording (a recording
+selected end to end) is made whole instead, so readers of whole entries
+find it and a routed unit may go to its worker; a recording with no song
+regions leaves it for on demand. No reader takes a region entry yet
+(`enrich propose` and the relay read whole entries).
 A unit on a file feature goes where that feature is made: whole once the
 stems are made whole, else over the regions they are made over. A region,
 or any span inside one already made, counts as made (`bank.covering`).
