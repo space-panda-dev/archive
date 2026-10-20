@@ -193,6 +193,22 @@ class UsableProposal(unittest.TestCase):
         self.assertIsNotNone(proposals.usable_s)
         self.assertFalse(proposals.usable_pending)
 
+    def test_a_usable_proposal_that_cannot_run_is_a_failure_not_usable(self) -> None:
+        class Steps:
+            failures = 0
+
+            def propose(self, label: str) -> None:
+                raise OSError("no such program")
+
+        notes: list[dict] = []
+        steps = Steps()
+        proposals = backfill.Proposals(steps, argparse.Namespace(world_store=None), lambda **e: notes.append(e),
+                                       time.monotonic(), 0.0, True)
+        proposals.begin("usable")
+        proposals.finish()
+        self.assertEqual([n["step"] for n in notes], ["proposal could not run", "usable proposal failed"])
+        self.assertEqual((steps.failures, proposals.usable_s, proposals.usable_pending), (1, None, True))
+
 
 class Plans(unittest.TestCase):
     def plan(self, recordings, mode, planner=None, sched=None, spool=False):

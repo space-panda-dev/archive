@@ -1394,6 +1394,9 @@ class Proposals:
                 self.steps.propose(f"propose --all ({'usable' if kind == 'usable' else 'background batch'})")
                 if kind == "usable" and self.args.world_store:
                     self.steps.world()
+        except Exception as exc:  # noqa: BLE001  (a proposal that could not run is not usable; the pool goes on)
+            self.steps.failures += 1
+            self.note(step="proposal could not run", kind=kind, error=f"{type(exc).__name__}: {exc}"[-600:])
         finally:
             with self.lock:
                 self.last = time.monotonic()
@@ -1624,7 +1627,13 @@ def main(args: argparse.Namespace, env: dict[str, str] | None = None,
     if names:
         if commit:
             steps.propose("propose --all (dry run)", "--dry-run")
+            before = steps.failures
             steps.propose("propose --all (commit)")
+            if proposals.usable_pending and steps.failures == before:
+                # The usable proposal failed and no batch succeeded since: the last proposal is the usable one.
+                proposals.usable_pending = False
+                proposals.usable_s = round(time.monotonic() - started, 1)
+                note(step="usable", s=proposals.usable_s, first=True)
             rerun = steps.propose("propose --all (rerun: must be unchanged)")
             if isinstance(rerun, dict) and rerun.get("status") not in ("unchanged", "nothing_proposed"):
                 steps.failures += 1

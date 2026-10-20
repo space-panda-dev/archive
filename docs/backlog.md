@@ -150,8 +150,14 @@ fast tier, then a proposal) and stems and what measures them in the
 background by priority, requests first; it reports time-to-usable and
 time-to-done, reserves each copy the cores it uses, takes its costs from
 the cost gate's baseline, and never waits for ever for an absent worker.
-Projected on the shadow: usable in about 50 minutes, done in about 4.6
-hours with the Mac as it is (not yet measured end to end).
+Measured on a copy of the whole shadow: usable after about 22 minutes
+with `chords-jiang` in the background tier (with it in the fast tier its
+copies need up to 11.4 GB each on a 93-minute recording and a long one runs
+nearly alone). Left: the background queue idles the laptop because a job
+waiting for cores or memory holds every job behind it, and routed stems are
+offered here only after local work (backfill the queue behind a waiting
+job, by the recorded costs); Jiang over windows, so several copies fit;
+the usable proposal per recording or in parallel (23% of time-to-usable).
 The Mac worker now gets the content as WavPack (73% of the
 float WAV, decoding to its very samples) and can run two tasks at once:
 on the two recordings, 0.223 s per audio-second end to end against 0.305

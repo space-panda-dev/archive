@@ -742,7 +742,9 @@ fixed `threads` parameter where it has one, as `chords-jiang` does), as
 many as the cores hold at the cores each copy is reserved (`cores`, what it
 really uses: `chords-chordino` 1 though its `threads` parameter is 3,
 `chords-jiang` 2, `notes-basic-pitch` 3 though held to one thread) and
-bounded by `memory_gb` per copy (`layout`); every copy is an `extract.py
+bounded by `memory_gb` per copy (`layout`; a job also reserves
+`memory_gb_per_hour` per hour of its audio: `chords-jiang` 6, since a
+93-minute recording holds 11.4 GB); every copy is an `extract.py
 run` of its own with `OMP_NUM_THREADS` and its kin set to its threads. Ready
 jobs go in `Job.priority` order (requests, fast, background; then the
 recording's place; then what others wait for, such as `stems`). The
@@ -768,7 +770,7 @@ stand in (made with other software than the record names) is made here.
 
 **The configuration** is `extract.py`'s file; its optional `backfill`
 object holds `units` (a list of `[extractor]` or `[extractor, feature]`),
-`extractors` (per extractor `threads`, `cores`, `memory_gb`, `cost`,
+`extractors` (per extractor `threads`, `cores`, `memory_gb`, `memory_gb_per_hour`, `cost`,
 `remote_cost`, `route`, `remote_parameters`, `tier`, `transport`), `expensive_above`,
 `fast_above`, `load_factor`, `poll_seconds`, `memory_reserve_gb`,
 `local_when_away_seconds`, `spool_in_flight`, `overflow`,

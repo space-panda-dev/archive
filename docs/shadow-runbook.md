@@ -442,13 +442,25 @@ scratch bank is covered by the standing approval.
    recording's song regions and leaves them for on demand where it has
    none; `--eager` makes everything whole; `--on-demand` makes only the bank
    requests, which every mode serves first. **Pass `--eager` on the shadow
-   for now**: no reader takes a region entry yet (`enrich propose` and the
-   relay read whole entries), and region stems disagreed with whole stems
-   over the same span when measured (step 0 of
-   [the backlog](backlog.md#step-0-bulk-import-at-scale-adr-0112)). A song
+   for now**: readers now take region entries and a region's stems are the
+   whole's, but what measures a region's stems (notes, pitch, melody) lays
+   its own windows from the region's start, so it is a transcription of its
+   own (notes F1 0.78 against the whole run's), an operator's decision
+   still open (step 0 of
+   [the backlog](backlog.md#step-0-bulk-import-at-scale-adr-0112)). Every
+   recording is usable (the fast tier made and proposed) before any stem
+   starts; set `chords-jiang`'s `tier` to `background` on the laptop
+   (`{"backfill": {"extractors": {"chords-jiang": {"tier": "background"}}}}`),
+   as it was measured: usable after about 22 minutes on the shadow. The
+   `usable` and `done` lines carry `time_to_usable_s` and `time_to_done_s`.
+   `--follow` keeps the unit running after that, making bank requests and
+   new admissions as they arrive. A song
    region that is the whole recording is made whole in `--songs` too. The configuration's `backfill`
    object routes `stems` to the spool and sets threads per extractor; the
-   workers leasing from it are started as ADR 0090 describes. To separate
+   workers leasing from it are started as ADR 0090 describes, and each must
+   run this release's `enrich/`: an older worker refuses a task whose
+   content travels as WavPack (the stems default `transport`), and every
+   such task is then made here. To separate
    on the Mac's GPU, route it with the Mac's parameters,
 
    ```json

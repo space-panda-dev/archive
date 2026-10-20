@@ -444,6 +444,23 @@ The laptop's background share below the Mac's stems (`f0-pesto` twice,
 the shadow: with stems off the laptop, it bounds time-to-done until
 `f0-pesto` moves to the GPU.
 
+**Measured on the whole shadow** (2026-10-20, a scratch copy and a fresh
+bank, 25 recordings, 82,019 s). With the defaults, `chords-jiang`'s copies
+peaked at 11.4 GB resident on the 93-minute recordings against a 2 GB
+reservation, and the laptop went into swap; its reservation is now 2 GB
+plus 6 GB per hour of audio (`memory_gb_per_hour`), so a long one runs
+nearly alone (the 50-minute projection above did not count that). With
+`chords-jiang` in the background tier the fast pass took 1015 s (0.0876
+core-s per audio-s, 89% of the cores busy) and the usable proposal 298 s:
+**usable after about 22 minutes** (0.016 s per audio-s; about 6 days at
+10,000 hours). The background did not reach its projected throughput: a
+job that waits for cores or memory holds every job behind it, so a long
+recording's Jiang (11.3 GB) left 6 of 8 cores idle, and routed stems,
+offered after local work, never ran here. On the two recordings with the
+Mac at two tasks and WavPack, its stems took 0.213 s per audio-s end to
+end; modelled with the laptop taking spare stems, 0.159 (about 3.6 h for
+the shadow, 66 days for 10,000 h), which needs the queue fixed first.
+
 ### For the operator to confirm (amendment)
 
 1. The line of "usable" above, and that `chords-jiang` is in it (about 50
