@@ -45,8 +45,9 @@ this record states it as given.
   default)."
 
 The operator settled this record's open questions on 2026-10-19 (round 4
-answers R4.4, R4.8 and R4.10; R4.11 settles the rest as recommended). The
-decision below states the settled choices; the list at the end records them.
+answers R4.4, R4.8 and R4.10; R4.11 settles the rest as recommended; round 5
+answer R5.3 settles the last). The decision below states the settled choices;
+the list at the end records them.
 
 ## Decision
 
@@ -249,13 +250,18 @@ origin claim (R4.11).
 
 **A depositor's limits bind like a recorded person's (R4.8).** A depositor
 may set a sensitivity limit on what they deposited, and it binds until they
-lift it, exactly as the limit of a person the content records. A friend's
+lift it, exactly as the limit of a person the content records. For limits,
+a depositor counts only when the operator asserted or affirmed the origin
+claim, or when the claim arrived in the same admission as the content
+(R5.3): a member who names themselves depositor of content already in the
+archive gains no limit from it until the operator affirms the claim. A friend's
 bought albums do not record them, so this needs INV-26 and ADR 0018 to say
 so. When this record is accepted, they are amended as follows (neither is
 edited by this proposal). [ADR 0094](0094-peoples-writes.md) applies the
 rule at the relay: its records-them test admits a member's limit on content
-whose head origin claim names them as depositor and which the operator has
-not rejected.
+whose head origin claim names them as depositor, was asserted or affirmed by
+the operator or arrived in the same admission as the content, and has not
+been rejected by the operator.
 
 *Proposed INV-26* (in `docs/invariants.md`; the changed words are "or
 deposited"):
@@ -273,7 +279,8 @@ disclosure.**", and this paragraph is added after it:
 
 > A depositor is the person whose library the archive took the content
 > from, named in the `depositor` role of a head origin claim (ADR 0096)
-> that the operator has not rejected. Custody of someone else's material is
+> that the operator asserted or affirmed, or that arrived in the same
+> admission as the content, and that the operator has not rejected. Custody of someone else's material is
 > held on their behalf, so they keep a say over where it goes even when it
 > does not record them. Their limit is a sensitivity claim whose source is
 > that person, it binds exactly as a recorded person's does, and only they
@@ -411,12 +418,6 @@ contract and a closed set.
 6. **`captured_by` consent beyond the circle.** Not in wave 1 (R4.11).
 7. **`generated` by the operator's own instrument.** Others' work; what the
    operator played and recorded is `own_capture` (R4.11).
-
-### Still open
-
-1. **Naming oneself depositor of existing content.** With `annotate` (R4.4)
-   a member may assert an origin claim naming themselves as depositor of any
-   readable content, and R4.8 then lets them limit it until the operator
-   rejects the claim. *Recommend:* for limits, count a depositor only when
-   the operator asserted or affirmed the origin claim, or when it came in
-   the same admission as the content the depositor admitted.
+8. **Naming oneself depositor of existing content.** For limits, a depositor
+   counts only when the operator asserted or affirmed the origin claim, or
+   when it arrived in the same admission as the content (R5.3).
