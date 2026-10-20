@@ -43,18 +43,23 @@ SUGGESTIONS = ("archive.claim/span_suggestions", "1")
 STREAM = ("archive.claim/audio_stream", "1")
 
 # Proposed in ADR 0112 and awaiting the operator: 10 s each side, merging
-# regions less than 30 s apart, and 0.04 CPU-seconds per audio-second.
+# regions less than 30 s apart, and 0.05 CPU-seconds per audio-second (0.04
+# until the cost gate measured chords-chordino at 0.042: the threshold sits
+# between it and melody's 0.076, so the units the span detector and work
+# matching read stay whole).
 MARGIN_SECONDS = 10
 GAP_SECONDS = 30
-EXPENSIVE_THRESHOLD = 0.04
+EXPENSIVE_THRESHOLD = 0.05
 
-# The backfill profile of 2026-10-19 (x86-64 laptop, 2715 s rehearsal, run as
-# the backfill runs them): seconds per audio-second, both passes counted
-# where an extractor runs twice. The `bench-cost` suite's recorded baselines
-# replace these; until then they decide what is expensive.
+# The cost gate's baseline (`python -m enrich.bench cost`, x86-64 laptop,
+# 2026-10-20): CPU-seconds per audio-second of one pass at the backfill's
+# threads, the costlier pass where an extractor runs twice (f0-pesto on the
+# vocal and the bass stems, tonal on the mix and the bass stem); `frames` is
+# not in the gate and keeps the profile's figure. `backfill.SETTINGS` holds
+# the same numbers, and a configuration's `cost` overrides both.
 PROFILED_COSTS: dict[str, float] = {
-    "stems": 0.576, "f0-pesto": 0.125, "melody": 0.079, "chords-jiang": 0.060, "notes-basic-pitch": 0.045,
-    "rhythm": 0.031, "chords-chordino": 0.027, "frames": 0.022, "tonal": 0.014, "structure": 0.001,
+    "stems": 1.445, "f0-pesto": 0.186, "chords-jiang": 0.151, "notes-basic-pitch": 0.107, "melody": 0.076,
+    "chords-chordino": 0.042, "rhythm": 0.032, "tonal": 0.028, "frames": 0.022, "structure": 0.003,
 }
 
 
