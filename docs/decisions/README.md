@@ -116,3 +116,4 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0099](0099-samples.md) | A sample is a selection with a stem, a recipe and kinds, rendered on demand (proposed) |
 | [0100](0100-packs-and-collections.md) | Sample packs are releases, libraries are collections, and source paths are kept (proposed) |
 | [0101](0101-daw-projects.md) | A DAW project is an Entity with snapshots, its audio, and lineage to its bounces (proposed) |
+| [0102](0102-retrieval-index.md) | World keeps a second disposable store for facets, embeddings and text search (proposed) |
