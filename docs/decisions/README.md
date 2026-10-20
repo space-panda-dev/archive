@@ -113,3 +113,4 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0096](0096-origin-of-recordings.md) | Recordings and Artifacts have an origin (proposed) |
 | [0097](0097-rights-by-use.md) | Rights say which use they permit, and a clearance permits one use (proposed) |
 | [0098](0098-content-lineage.md) | Content lineage: an Artifact can say what it was made from (proposed) |
+| [0104](0104-transcription-and-speakers.md) | Transcripts come from local ASR runs, and speaker spans name consenting people (proposed) |
