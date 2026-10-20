@@ -852,7 +852,10 @@ the stems are made if they are missing. An extractor whose manifest `prefers`
 a stem (`melody` prefers `stems/vocals`, then `stems-6s/vocals`) measures it without `--from` where
 the bank already holds it, and the content otherwise, or where its measure of
 the stem falls short of the preference's `at_least` (a vocal stem voicing
-less than a fifth of its rows falls back to the mix); `--no-prefer` measures
+less than a fifth of its rows falls back to the mix), or, before it is
+measured, where the preference's `probe` falls short (`f0-pesto` already
+measured the stem, and fewer than 3% of its rows have a confidence of 0.5
+or more: the stem is passed over unmeasured, under `probed_over`); `--no-prefer` measures
 the content, and `bank.Bank.default_entry` reads back whichever was made. `stems` runs only where the operator
 configures Demucs's interpreter (`--program demucs-python=<path>`, or
 `programs` in `--config`); `run all` elsewhere skips it and says so. The other

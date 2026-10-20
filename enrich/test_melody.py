@@ -33,6 +33,14 @@ import melody  # noqa: E402
 
 RATE = melody.RATE
 
+# The probe on a vocal stem (docs/feature-bank.md, "Preferred inputs"): the
+# share of f0-pesto's rows with a confidence of 0.5 or more. On the 20
+# recordings measured both ways (ADR 0076's second amendment), the five whose
+# vocal stem voiced less than a fifth of its rows had shares of 0.000 to
+# 0.024 and the fifteen others 0.118 or more, so 0.03 passes over only
+# stems melody would itself pass over.
+PROBE = {"series": "f0-pesto/f0", "column": 1, "at_or_above": "0.5", "share_at_least": "0.03"}
+
 # MELODIA keeps a contour as melody only when its salience is near the mean
 # of every contour in the audio (`voicingTolerance`, 0.2 by default). Music
 # has hundreds of contours; a test tune of a few pure tones has a handful,
@@ -99,7 +107,7 @@ class Manifest(unittest.TestCase):
         # It prefers a vocal stem, in finer bins, where the bank holds one (never making it):
         # the 4-stem separator's, then the 6-stem separator's, then the mix.
         self.assertEqual(extractor.prefers, [{"input": feature, "parameters": {"bin_cents": 2},
-                                              "at_least": {"voiced_fraction": "0.2"}}
+                                              "at_least": {"voiced_fraction": "0.2"}, "probe": PROBE}
                                              for feature in ("stems/vocals", "stems-6s/vocals")])
         self.assertEqual(melody.settings({**melody.parameters(), **extractor.prefers[0]["parameters"]})
                          ["predominant"]["binResolution"], 2.0)
@@ -876,6 +884,13 @@ class VocalStem(unittest.TestCase):
             self.assertNotIn("bass", output)
             self.assertEqual(catalog[source].outputs[output]["kind"], "file")
             self.assertEqual(preference["at_least"], {"voiced_fraction": "0.2"})
+            # Before measuring a vocal stem, f0-pesto's confidence there may pass it over:
+            # column 1 of its f0 is the confidence, 0 to 1.
+            self.assertEqual(preference["probe"], PROBE)
+            pesto = catalog["f0-pesto"].outputs["f0"]
+            self.assertEqual((pesto["kind"], pesto["dtype"], pesto["columns"]), ("series", "f32", 2))
+            self.assertIn("columns the pitch in Hz", pesto["description"])
+            self.assertIn("and PESTO's confidence", pesto["description"])
 
 
 if __name__ == "__main__":

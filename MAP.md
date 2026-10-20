@@ -180,17 +180,13 @@ content (ADR 0075); preferred inputs ADR 0076.
 Stand-in stems by a measured tolerance (ADR 0090's amendment) are built:
 `interchangeable` in a manifest, `extract.py equivalence`, lookup in
 `Bank.candidates`; tests `enrich/test_equivalence.py`
-([format](docs/feature-bank.md#interchangeable-entries)). Decided, not
-built: bulk import (`enrich backfill`, region entries, bank requests, the
-cost gate; ADR 0112); the build work is step 0 of
+([format](docs/feature-bank.md#interchangeable-entries)). Bulk import (ADR
+0112): region entries, bank requests and song regions are built; the rest
+(`enrich backfill`, the cost gate) is step 0 of
 [docs/backlog.md](docs/backlog.md).
-Decided, not built: stand-in stems by a measured tolerance (ADR 0090's
-amendment) and the rest of bulk import (`enrich backfill`, the cost gate;
-ADR 0112); region entries, bank requests and song regions are built; the
-build work is step 0 of [docs/backlog.md](docs/backlog.md).
 Find: extractors in `enrich/extractors/<id>/extractor.json`; SHIPPED digest
 pins in `enrich/test_bank.py` (`SHIPPED = {`, line 115); byte format in
-[docs/feature-bank.md](docs/feature-bank.md) (444; shipped table at "The
+[docs/feature-bank.md](docs/feature-bank.md) (483; shipped table at "The
 shipped extractors").
 
 ## capture (Python)
