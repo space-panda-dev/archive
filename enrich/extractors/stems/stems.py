@@ -26,6 +26,23 @@ track, so the chunked result is close to, but not the bits of, one whole-file
 run. With `shifts` 0 Demucs applies no random offset, so a run on one build
 gives the same samples each time.
 
+A region run (ADR 0112) gives the stems of the whole recording over its
+region, not the stems of a cut. Demucs separates overlapping segments
+(7.8 s, a quarter overlapping) laid from the start of what it is given and
+averages them with triangular weights, so every sample of a cut separated
+alone is a different average than the same sample of the whole: on a 485 s
+region of a rehearsal the drums and other stems differed by 21-23 dB and a
+nearly silent bass stem by as much as itself (-0.16 dB), though the cut was
+faithful. Normalising the cut by the whole's mean and deviation changed
+nothing (htdemucs normalises each segment itself), nor did context alone.
+So a region run separates the source over a window that starts on the
+whole run's grid (a chunk start plus whole segment strides, at least one
+segment before the region) and runs past it by a segment, with chunks on the
+whole run's absolute boundaries, and keeps the region's samples: they match
+the whole recording's stems to within float rounding (above 97 dB on every
+stem). The mix levels are the cut's. Where the source's rate cannot place
+that grid exactly, the cut is separated alone, as before.
+
 Invoked by the runner as `<demucs-python> stems.py <request.json>`; the
 settings are fixed but for the device the model runs on (`apply.device`,
 one of DEVICES: a GPU's stems, or another runtime's, are other bits, so
@@ -38,6 +55,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import platform
 import subprocess
 import sys
@@ -134,7 +152,9 @@ def parameters(separation: Separation = HTDEMUCS, device: str = "cpu") -> dict[s
 
 class Model(Protocol):
     """A separator: `separate` takes [channels, samples] float32 and returns
-    [len(sources), channels, samples] float32, in `sources` order."""
+    [len(sources), channels, samples] float32, in `sources` order. A model
+    that splits its input into segments says their length and stride in
+    samples (`segment_samples`, `stride`); one that does not, 0 and 1."""
     sources: list[str]
     samplerate: int
     channels: int
@@ -193,6 +213,11 @@ class Demucs:
         self.torch, self.apply_model, self.apply = torch, apply_model, apply
         self.sources = list(self.model.sources)
         self.samplerate = int(self.model.samplerate)
+        # demucs.apply.apply_model's split, per model of the bag: segments of
+        # int(rate * segment) samples every int((1 - overlap) * length).
+        lengths = {int(self.samplerate * (apply["segment"] or m.segment)) for m in models}
+        self.segment_samples = max(lengths)
+        self.stride = int((1 - float(apply["overlap"])) * self.segment_samples) if len(lengths) == 1 else 0
         self.channels = int(self.model.audio_channels)
         self.software = [{"name": "demucs", "version": demucs.__version__},
                          {"name": "torch", "version": torch.__version__},
@@ -340,12 +365,14 @@ def load_model(settings: dict[str, Any], apply: dict[str, Any]) -> Model:
 
 # -- decoding, chunking, and joining ----------------------------------------------
 
-def decoded_blocks(path: str, ffmpeg: str = "ffmpeg", block_bytes: int = BLOCK_BYTES) -> Iterator[numpy.ndarray]:
-    """The first audio stream as [channels, n] float32 blocks, in order."""
+def decoded_blocks(path: str, ffmpeg: str = "ffmpeg", block_bytes: int = BLOCK_BYTES,
+                   arguments: list[str] | None = None) -> Iterator[numpy.ndarray]:
+    """The first audio stream as [channels, n] float32 blocks, in order
+    (decoded by `arguments`, when given, in place of `decode_arguments`)."""
     frame_bytes = 4 * CHANNELS
     with tempfile.TemporaryFile() as errors:
         try:
-            process = subprocess.Popen([ffmpeg, *decode_arguments(path)], stdin=subprocess.DEVNULL,
+            process = subprocess.Popen([ffmpeg, *(arguments or decode_arguments(path))], stdin=subprocess.DEVNULL,
                                        stdout=subprocess.PIPE, stderr=errors)
         except OSError as exc:
             raise StemsError(f"ffmpeg could not run: {exc}") from exc
@@ -367,24 +394,29 @@ def decoded_blocks(path: str, ffmpeg: str = "ffmpeg", block_bytes: int = BLOCK_B
                              f"{errors.read().decode('utf-8', 'replace').strip()[:300]}")
 
 
-def windows(blocks: Iterable[numpy.ndarray], chunk: int, overlap: int) -> Iterator[tuple[numpy.ndarray, bool]]:
+def windows(blocks: Iterable[numpy.ndarray], chunk: int, overlap: int,
+            first: int | None = None) -> Iterator[tuple[numpy.ndarray, bool]]:
     """Consecutive windows of `chunk + overlap` samples starting every
     `chunk`, so each overlaps the next by `overlap`; the last holds the rest
     and is marked last. Every window after the first is longer than
     `overlap`, since a window is not last only when more than
-    `chunk + overlap` samples remain."""
-    if chunk < 1 or overlap < 0:
-        raise StemsError("a chunk must be positive and an overlap not negative")
+    `chunk + overlap` samples remain. With `first`, the first window starts
+    `chunk - first` samples into a chunk, so later ones start on the same
+    boundaries as a whole run's."""
+    if chunk < 1 or overlap < 0 or (first is not None and not 0 < first <= chunk):
+        raise StemsError("a chunk must be positive, an overlap not negative, and a first chunk within one")
     pieces: list[numpy.ndarray] = []
     held = 0
+    step = chunk if first is None else first
     for block in blocks:
         pieces.append(block)
         held += block.shape[1]
-        if held > chunk + overlap:
+        if held > step + overlap:
             buffer = numpy.concatenate(pieces, axis=1)  # once per window, not once per block
-            while buffer.shape[1] > chunk + overlap:
-                yield buffer[:, :chunk + overlap], False
-                buffer = buffer[:, chunk:]
+            while buffer.shape[1] > step + overlap:
+                yield buffer[:, :step + overlap], False
+                buffer = buffer[:, step:]
+                step = chunk
             pieces, held = [buffer], buffer.shape[1]
     if held:
         yield numpy.concatenate(pieces, axis=1), True
@@ -545,12 +577,80 @@ def ffmpeg_version(ffmpeg: str = "ffmpeg") -> str:
     return first[2] if len(first) > 2 and first[:2] == ["ffmpeg", "version"] else "unknown"
 
 
+class Context(NamedTuple):
+    """Where a region's stems come from (see the module): `arguments` decode
+    the source over [lo, hi) of its own samples as `decode_arguments` do,
+    whose first `lead` samples at RATE come before the region, and whose
+    first chunk is `first` samples long."""
+    arguments: list[str]
+    lead: int
+    first: int
+
+
+def aligned(region: dict[str, int], model: Model, chunk: int, overlap: int) -> tuple[int, int] | None:
+    """[lo, hi) at RATE: the window a region is separated over, on the whole
+    run's grid, or None when the region's rate cannot place it exactly."""
+    rate, stride, segment = region["rate"], getattr(model, "stride", 1), getattr(model, "segment_samples", 0)
+    step = RATE // math.gcd(RATE, rate)  # RATE samples that are whole samples at `rate`
+    if stride < 1 or (region["start"] * RATE) % rate or stride % step or chunk % step:
+        return None
+    start, end = region["start"] * RATE // rate, -(-region["end"] * RATE // rate)
+    before = max(0, start - segment)
+    base = before // chunk * chunk
+    lo = base + (before - base) // stride * stride
+    hi = end + segment
+    boundary = end // chunk * chunk
+    if boundary and end < boundary + overlap:  # inside a crossfade: past it, as the whole run's next window
+        hi = max(hi, boundary + overlap + segment)
+    return lo, hi
+
+
+def context_of(request_input: dict[str, Any], model: Model, chunk: int, overlap: int) -> Context | None:
+    """How a region run's stems are separated, or None for the input alone."""
+    region, source = request_input.get("region"), request_input.get("source")
+    if region is None or source is None:
+        return None
+    window = aligned(region, model, chunk, overlap)
+    if window is None:
+        return None
+    lo, hi = window
+    rate = region["rate"]
+    arguments = decode_arguments(source["path"])
+    at = arguments.index("-map") + 2  # after the stream map, before the output's channels and rate
+    trim = f"atrim=start_sample={lo * rate // RATE}:end_sample={-(-hi * rate // RATE)},asetpts=PTS-STARTPTS"
+    arguments[at:at] = ["-af", trim]
+    return Context(arguments, region["start"] * RATE // rate - lo, chunk - lo % chunk)
+
+
+def trimmed(blocks: Iterable[numpy.ndarray], lead: int, count: int) -> Iterator[numpy.ndarray]:
+    """[sources, channels, n] blocks without their first `lead` samples,
+    `count` samples in all; a source decoded a sample or two short at the
+    content's end (resampling rounds) is completed with silence."""
+    skipped = kept = 0
+    for block in blocks:
+        if skipped < lead:
+            drop = min(lead - skipped, block.shape[-1])
+            skipped += drop
+            block = block[..., drop:]
+        block = block[..., :count - kept]
+        if block.shape[-1]:
+            kept += block.shape[-1]
+            yield block
+    if 0 < count - kept <= 2 and skipped == lead:
+        yield numpy.zeros(block.shape[:-1] + (count - kept,), dtype=numpy.float32)  # type: ignore[possibly-undefined]
+    elif kept != count:
+        raise StemsError(f"the region's window gave {kept} of the region's {count} samples")
+
+
 def separate(input_path: str, output: Path, model: Model, chunk: int = CHUNK_SECONDS * RATE,
-             overlap: int = CROSSFADE_SECONDS * RATE, stems: tuple[str, ...] = STEMS) -> dict[str, Any]:
+             overlap: int = CROSSFADE_SECONDS * RATE, stems: tuple[str, ...] = STEMS,
+             context: Context | None = None, ffmpeg: str = "ffmpeg") -> dict[str, Any]:
     """Decode, separate, join, measure, and encode `stems`; returns the
     result's outputs. `chunk` and `overlap` are in samples; the parameters
     fix them, and only a test passes others, to join many chunks of a short
-    input."""
+    input. With a `context`, the input is a region's cut, which gives the
+    mix levels and the length, and the stems are separated from the source
+    over the context's window (see the module)."""
     if model.samplerate != RATE or model.channels != CHANNELS:
         raise StemsError(f"the model separates {model.channels} channels at {model.samplerate} Hz, "
                          f"not {CHANNELS} at {RATE}")
@@ -571,14 +671,24 @@ def separate(input_path: str, output: Path, model: Model, chunk: int = CHUNK_SEC
                 mix.add(block[None])
                 yield block
 
-        for window, last in windows(counted(decoded_blocks(input_path)), chunk, overlap):
-            separated = numpy.asarray(model.separate(window))
-            if separated.shape != (len(model.sources), CHANNELS, window.shape[1]):
-                raise StemsError(f"the model returned shape {separated.shape} for "
-                                 f"{window.shape[1]} samples of {CHANNELS} channels")
-            if not numpy.isfinite(separated).all():
-                raise StemsError("the model returned a value that is not finite")
-            for joined in joiner.add(separated.astype(numpy.float32, copy=False), last):
+        def joined_blocks(source: Iterable[numpy.ndarray], first: int | None) -> Iterator[numpy.ndarray]:
+            for window, last in windows(source, chunk, overlap, first):
+                separated = numpy.asarray(model.separate(window))
+                if separated.shape != (len(model.sources), CHANNELS, window.shape[1]):
+                    raise StemsError(f"the model returned shape {separated.shape} for "
+                                     f"{window.shape[1]} samples of {CHANNELS} channels")
+                if not numpy.isfinite(separated).all():
+                    raise StemsError("the model returned a value that is not finite")
+                yield from joiner.add(separated.astype(numpy.float32, copy=False), last)
+
+        if context is None:
+            separated_blocks = joined_blocks(counted(decoded_blocks(input_path, ffmpeg)), None)
+        else:
+            for _ in counted(decoded_blocks(input_path, ffmpeg)):
+                pass
+            separated_blocks = trimmed(joined_blocks(decoded_blocks(input_path, ffmpeg, arguments=context.arguments),
+                                                     context.first), context.lead, mix.samples)
+        for joined in separated_blocks:
                 # A block at a time, so the reordered copy, the float64
                 # squares, and the scaled samples never span a whole window.
                 for start in range(0, joined.shape[-1], MEASURE_BLOCK):
@@ -625,7 +735,8 @@ def main(argv: list[str], separation: Separation = HTDEMUCS) -> int:
                              f"({', '.join(DEVICES)}); the request names others")
         output = Path(request["output_dir"])
         model = load_model(separation.model, apply_on(device))
-        outputs = separate(request["input"]["path"], output, model, stems=separation.stems)
+        context = context_of(request["input"], model, CHUNK_SECONDS * RATE, CROSSFADE_SECONDS * RATE)
+        outputs = separate(request["input"]["path"], output, model, stems=separation.stems, context=context)
         software = [*model.software, {"name": "ffmpeg", "version": ffmpeg_version()},
                     {"name": "numpy", "version": numpy.__version__},
                     {"name": "python", "version": platform.python_version()}]

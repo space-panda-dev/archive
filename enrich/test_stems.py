@@ -72,8 +72,16 @@ class Gains:
     if mode == "nobass":
         sources[1] = "flute" if six else "guitar"
 
+    if mode == "grid":
+        # Demucs's shape: segments laid from the start of each window, so a
+        # sample's output depends on where it falls on that grid (0.2 s
+        # segments every 0.15 s, whole samples at 48 kHz too).
+        segment_samples, stride = 8820, 6615
+
     def separate(self, mix):
         out = numpy.stack([mix * numpy.float32(g) for g in self.gains])
+        if mode == "grid":
+            out = out * (1 + (numpy.arange(mix.shape[-1]) % self.stride) / self.stride).astype(numpy.float32)
         if mode == "shape":
             return out[..., :-1]
         if mode == "nan":
@@ -95,6 +103,12 @@ for module in modules:
     if os.environ.get("STEMS_FAKE_CHUNK") and hasattr(module, "separate"):
         chunk, overlap = (int(v) * module.RATE for v in os.environ["STEMS_FAKE_CHUNK"].split(","))
         module.separate = functools.partial(module.separate, chunk=chunk, overlap=overlap)
+        if hasattr(module, "context_of"):
+            module.context_of = functools.partial(
+                lambda given, model, c, o, original: original(given, model, chunk, overlap),
+                original=module.context_of)
+    if os.environ.get("STEMS_FAKE_NO_CONTEXT") and hasattr(module, "context_of"):
+        module.context_of = lambda *arguments: None
 sys.exit(program.main(sys.argv[2:]))
 '''
 # Manifest order: vocals, drums, bass, other.
@@ -452,6 +466,74 @@ class Separation(unittest.TestCase):
         code, answer = run(directory, audio, "stems", "--config", str(config), program=fake_python(directory))
         self.assertEqual(code, 1)
         self.assertIn("fixed settings", answer["extractors"]["stems"]["log"])
+
+    def test_a_region_run_gives_the_whole_recordings_stems_over_the_region(self) -> None:
+        # ADR 0112: a region entry stands for the whole's stems over its span.
+        # A model that separates on a grid from the start of what it is given
+        # (as Demucs does) gives a cut's samples other stems; the region run
+        # separates the source over a window on the whole run's grid.
+        directory = scratch(self)
+        audio = chord_with_clicks(directory / "take.flac", 13)
+        fake = fake_python(directory)
+        env = {"STEMS_FAKE": "grid", "STEMS_FAKE_CHUNK": "4,1"}
+        code, answer = run(directory / "whole", audio, program=fake, env=env)
+        self.assertEqual(code, 0, answer)
+        digest = bank.file_digest(audio)
+        whole = bank.Bank(directory / "whole" / "bank").entry(digest, "stems")
+        # The second region ends inside the crossfade after the 8 s chunk boundary.
+        for start, end in ((241120, 432480), (48000, 408000)):
+            with self.subTest(start=start, end=end):
+                first, last = start * 44100 // 48000, end * 44100 // 48000
+                found = {}
+                for name, extra in (("region", {}), ("cut", {"STEMS_FAKE_NO_CONTEXT": "1"})):
+                    where = directory / f"{name}-{start}"
+                    code, answer = run(where, audio, "stems", "--region", f"{start}:{end}:48000", program=fake,
+                                       env={**env, **extra})
+                    self.assertEqual(code, 0, answer)
+                    entry = bank.covering(bank.Bank(where / "bank"), digest, "stems", start, end, 48000)
+                    self.assertIsNotNone(entry)
+                    self.assertEqual(dict(entry.region), {"start": start, "end": end, "rate": 48000})
+                    found[name] = {stem: decode(entry.file(stem)) for stem in GAINS}
+                for stem in GAINS:
+                    expected = decode(whole.file(stem))[:, first:last]
+                    region = found["region"][stem]
+                    self.assertEqual(region.shape, expected.shape)
+                    self.assertLessEqual(numpy.abs(region - expected).max(), 1 / 32768 + 1e-9, stem)
+                    # Anchor: the cut separated alone is other stems.
+                    self.assertGreater(numpy.abs(found["cut"][stem] - expected).max(), 0.01, stem)
+
+    def test_a_region_window_starts_on_the_whole_runs_grid(self) -> None:
+        class Grid:
+            segment_samples, stride = 8820, 6615
+        chunk, overlap = 4 * 44100, 44100
+        lo, hi = stems.aligned({"start": 241120, "end": 432480, "rate": 48000}, Grid(), chunk, overlap)
+        start = 241120 * 44100 // 48000
+        self.assertEqual((lo // chunk * chunk - lo) % Grid.stride, 0)
+        self.assertLessEqual(lo, start - Grid.segment_samples)
+        self.assertGreater(lo, start - Grid.segment_samples - Grid.stride)
+        self.assertEqual(hi, 432480 * 44100 // 48000 + Grid.segment_samples)
+        # Ending inside a crossfade: past it, as the whole run's next window is.
+        _, hi = stems.aligned({"start": 48000, "end": 408000, "rate": 48000}, Grid(), chunk, overlap)
+        self.assertGreaterEqual(hi, 2 * chunk + overlap + Grid.segment_samples)
+        # A region the 44.1 kHz grid cannot place exactly, or a model without a grid: the cut alone.
+        self.assertIsNone(stems.aligned({"start": 241121, "end": 432480, "rate": 48000}, Grid(), chunk, overlap))
+        self.assertIsNone(stems.aligned({"start": 0, "end": 48000, "rate": 48000}, object(), chunk, overlap))
+
+    def test_windows_after_a_short_first_one_start_on_chunk_boundaries(self) -> None:
+        blocks = [numpy.zeros((2, 7), numpy.float32) for _ in range(5)]
+        got = [(w.shape[1], last) for w, last in stems.windows(blocks, 10, 2, first=4)]
+        self.assertEqual(got, [(6, False), (12, False), (12, False), (11, True)])
+        with self.assertRaises(stems.StemsError):
+            list(stems.windows(blocks, 10, 2, first=11))
+
+    def test_trimmed_drops_the_lead_and_keeps_the_count(self) -> None:
+        blocks = [numpy.arange(i * 5, i * 5 + 5, dtype=numpy.float32)[None, None] for i in range(4)]
+        got = numpy.concatenate(list(stems.trimmed(blocks, 7, 9)), axis=-1)
+        numpy.testing.assert_array_equal(got[0, 0], numpy.arange(7, 16))
+        padded = numpy.concatenate(list(stems.trimmed(blocks, 7, 15)), axis=-1)  # two short: silence
+        numpy.testing.assert_array_equal(padded[0, 0, -2:], [0, 0])
+        with self.assertRaises(stems.StemsError):
+            list(stems.trimmed(blocks, 7, 20))
 
     def test_each_device_is_run_with_its_settings(self) -> None:
         directory = scratch(self)
