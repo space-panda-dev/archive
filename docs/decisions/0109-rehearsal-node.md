@@ -1,6 +1,7 @@
 # 0109. The rehearsal node is an application, and the watch is a display and a voice
 
-Status: proposed (wave 3, drafted 2026-10-19)
+Status: accepted (operator, 2026-10-19); proposed in wave 3 and its open
+questions settled the same day
 
 ## Context
 
@@ -64,25 +65,33 @@ sibling project, not as a concept of Archive.
 and outbox are handed to the archive machine and imported with `capture
 import`, which admits the recording, waits for the stream probe, and flushes
 the outbox group by group (ADR 0107). It never calls Door's service, and the
-relay gains no route for it in this record.
+relay gains no route for it in this record. A laptop node hands over with
+`capture send`; a phone or tablet, which cannot run it, writes its bundles to
+a folder synced to the archive machine, as Voice Memos does, until a later
+record adds a relay route for node bundles (tailnet, operator capacity only,
+staging then `capture import`) (Settled 1).
 
 ### What Archive publishes for the node
 
 The node depends on these and on nothing else of Archive. Contracts and
 formats are pinned as the review app pins its contracts (`{id, version,
-digest}`), never by an Archive commit; the live runner (item 4) runs from a
-checkout of this repository (ADR 0108), and how the node pins that checkout
-is not settled:
+digest}`), never by an Archive commit. The live runner (item 4) runs from a
+checkout of this repository at a tagged release, which the node pins, and
+each streaming extractor is pinned by its id, version and digest (R7.2,
+ADR 0108):
 
 1. **The read side.** Before a rehearsal the node reads, through the relay
    over the tailnet in operator capacity, the Work Entity revisions, set
    lists ([ADR 0106](0106-set-lists-and-clocks.md)) and clock Entities it may
    pin, with the projection version it queried (ADR 0059). It keeps them as
    a cache for the evening; during the rehearsal it needs no connection to
-   Archive. ADR 0108's live song guess also needs Works' reference
-   profiles, and ADR 0111 (Open 4) suggests pad maps; neither is in this
-   list yet, and how the profiles reach the node is not settled. A pinned revision that Door later refuses fails only its own
-   group (ADR 0107).
+   Archive. The same reads fetch the reference profiles of the Works it
+   may hear, for ADR 0108's live song guess, which the node hands to the
+   live runner (R7.1), and the pad maps of the sampler banks it may see,
+   for [ADR 0111](0111-pad-maps.md)'s live pad display (ADR 0111,
+   Settled 4). Today's relay serves no reference profile; the read that
+   serves them is added when the live song guess is built. A pinned
+   revision that Door later refuses fails only its own group (ADR 0107).
 2. **The outbox format.** ADR 0107's entry shape (a response group of drafts
    in their contracts' shapes, with the `node`, `node_stream` and `outbox`
    placeholders) is published as a JSON Schema beside the importer,
@@ -96,10 +105,13 @@ is not settled:
    source token in `session_parts` version 2.
 4. **The live runner** (ADR 0108), `enrich/live.py run`, which the node
    starts as a child process, writing its recorded sample frames to its
-   standard input and reading `archive-live-event/1` lines from its standard
-   output. The node never imports `enrich/` as a library, so Archive's code
-   and the node's (Ableton Link included, ADR 0110) stay separate works; the
-   licence check is ADR 0110's.
+   standard input, optionally its clock events to a second named pipe
+   (R7.3, ADR 0110), and reading `archive-live-event/1` lines from its
+   standard output. The node never imports `enrich/` as a library, so
+   Archive's code and the node's (Ableton Link included, ADR 0110) stay
+   separate works. Link's licence is checked before the node is first
+   published, and the node repository is `AGPL-3.0-or-later` if the check
+   passes (Settled 7, ADR 0110).
 5. **Identity.** Every draft's `agent` is the operator's person and its `by`
    is the node software's Package URL (W2.13); a companion app has its own.
 
@@ -113,10 +125,20 @@ A response made on the watch goes to whichever recording device it is linked
 to. Capture alignment then carries every response onto the other sources, as
 ADR 0107 already says, so no device needs to know another's samples.
 
+**Only the operator's devices hold an outbox.** A member's phone records as
+a mic node only, with no outbox, and its recording is admitted under `admit`
+(ADR 0094): the `node_stream` placeholder needs the stream probe, which a
+member's admission never starts, so a member's outbox could not be flushed.
+Responses come only from the operator's devices until someone needs more
+(Settled 2, R7.4; consistent with ADR 0107).
+
 **A response is taken only when an outbox holds it.** The watch or phone
 that originates a response gives it a response identifier and sends it to
 its node; the node turns it into a response group (its span chosen by the
 node, ADR 0107), writes and syncs the entry, and only then acknowledges.
+The span a gesture makes is a node setting, by default the ten seconds
+before the gesture clamped to the recording's start, with a start-now and
+end-now pair on the watch for a deliberate cut (Settled 5).
 The watch shows a response as taken only on that acknowledgement, and
 resends with the same identifier until it gets one; the node keeps the
 identifier in the entry and answers a repeat with the entry it already
@@ -141,13 +163,24 @@ outbox unless the operator acts on it (ADR 0107, "live is advice").
   part of a watch source. Text from it comes later from local ASR
   ([ADR 0104](0104-transcription-and-speakers.md)); system dictation is not
   used for any draft, because ASR runs locally only and where a platform's
-  dictation runs is unverified. How that clip relates to its response group
-  is open (Open 3).
+  dictation runs is unverified. The reply's response group drafts a
+  selection and a mark on the node's recording at the moment of the reply;
+  the clip enters as a watch source, and a `within_recording` voice note
+  ([ADR 0103](0103-voice-capture.md)) on it is proposed after alignment. No
+  new placeholder is needed (Settled 3, R7.8).
 
 ### Notifications: the plan (W3.3)
 
 **Notifications are the node's, and Archive never sends one.** They carry
 advice outward and answers back; losing one loses nothing archival.
+
+**A push payload carries no title, name or lyric**, because it crosses the
+platform's push servers outside the tailnet; the companion app fetches the
+text from the node over the tailnet, and the web-push spike uses Works with
+invented titles only (Settled 4, R7.9). The companion app's direct link to
+the node is the main path and push the fallback, since push needs the
+internet and a rehearsal room may have none; the spikes measure both
+(Settled 6).
 
 **Two spikes come first, then the companion app.**
 
@@ -180,7 +213,7 @@ node's repository or a sibling of it. It is three things:
   watch;
 - **a node** when no laptop is there: the same software, holding its own
   outbox. It sends no live hints until it has streaming builds held to ADR
-  0108's replay test (ADR 0108, Open 6).
+  0108's replay test (ADR 0108, Settled 6).
 
 ## Consequences
 
@@ -235,8 +268,7 @@ test in [vocabulary.md](../vocabulary.md#adding-a-noun) as an Archive noun:
 - **Response identifier.** A field between a device and its node, kept in
   the outbox entry; a protocol detail of the outbox schema, not a contract.
 
-When accepted, the vocabulary's *rehearsal node* entry says it is a sibling
-application.
+The vocabulary's *rehearsal node* entry says it is a sibling application.
 
 ## Touch points
 
@@ -254,37 +286,33 @@ application.
 - `docs/boundaries.md`: the node beside the review app as a sibling project.
 - `docs/vocabulary.md`: the *rehearsal node* entry.
 
-## Open for the operator
+## Settled by the operator (2026-10-19)
 
-1. **How a phone node hands over.** ADR 0107 flushes on the archive machine
-   in operator capacity, the relay has no route for it, and a phone cannot
-   run `capture send`. *Recommended:* until a later record adds a relay route
-   for node bundles (tailnet, operator capacity only, staging then `capture
-   import`), the companion app writes bundles to a folder synced to the
-   archive machine, as Voice Memos does.
-2. **Members' phones as nodes.** ADR 0107 lets a phone node act in member
-   capacity, but the `node_stream` placeholder needs the stream probe, which
-   a member's admission never starts (ADR 0094), so the flush cannot resolve
-   it. *Recommended:* members' devices are mic nodes without an outbox
-   (their recording admitted under `admit`); responses come only from the
-   operator's devices until someone needs more.
-3. **A spoken reply and its anchor.** ADR 0107 anchors every group to the
-   node's recording, and no placeholder names another source's part.
-   *Recommended:* the group drafts a selection and a mark on the node's
-   recording at the moment of the reply; the clip enters as a watch source;
-   a `within_recording` voice note on it is proposed after alignment. No new
-   placeholder.
-4. **What a notification may say.** Push payloads cross the platform's push
-   servers, outside the tailnet. *Recommended:* no title, name or lyric in
-   a payload; the companion app fetches the text from the node over the
-   tailnet; the web-push spike uses Works with invented titles only.
-5. **The span a gesture makes.** ADR 0107 left it to wave 3.
-   *Recommended:* a node setting, by default the ten seconds before the
-   gesture clamped to the recording's start, with a start-now/end-now pair
-   on the watch for a deliberate cut.
-6. **Rehearsal rooms without internet.** Push needs the internet.
-   *Recommended:* the companion app's direct link to the node is the main
-   path and push the fallback; the spike measures both.
-7. **The node repository's licence.** *Recommended:* AGPL-3.0-or-later, as
-   Archive, subject to ADR 0110's Ableton Link check (its Open 1 asks who
-   does it and when).
+1. **How a phone node hands over.** Through a folder synced to the archive
+   machine now, as Voice Memos does; a relay route for node bundles
+   (tailnet, operator capacity only, staging then `capture import`) later,
+   in its own record (R7.5).
+2. **Members' phones record as mic nodes only,** with no outbox, their
+   recording admitted under `admit`; responses come only from the
+   operator's devices (R7.4; consistent with ADR 0107).
+3. **A spoken reply and its anchor.** A selection and a mark on the node's
+   recording at the moment of the reply, the clip as a watch source, and a
+   `within_recording` voice note on it after alignment; no new placeholder
+   (R7.8).
+4. **What a notification may say.** No title, name or lyric in a push
+   payload; the companion app fetches the text over the tailnet; the
+   web-push spike uses invented titles only (R7.9).
+5. **The span a gesture makes.** A node setting, by default the ten seconds
+   before the gesture clamped to the recording's start, with a start-now and
+   end-now pair on the watch (R7.12).
+6. **Rehearsal rooms without internet.** The companion app's direct link to
+   the node is the main path and push the fallback; the spikes measure both
+   (R7.12).
+7. **The node repository's licence.** Link's licence is checked before the
+   node is first published; the node repository is `AGPL-3.0-or-later` if
+   the check passes (R7.7, ADR 0110).
+8. **Reference profiles and pad maps on the read side.** The node fetches
+   the Works' reference profiles before the rehearsal through a relay read
+   (R7.1), and pad maps with the rest of its read side (ADR 0111, R7.12).
+9. **Pinning.** Extractors by id, version and digest; the live runner by a
+   tagged release (R7.2).

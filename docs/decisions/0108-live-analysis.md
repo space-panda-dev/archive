@@ -1,6 +1,7 @@
 # 0108. Live analysis is Enrichment over a stream, and extractors gain a streaming mode
 
-Status: proposed (wave 3, drafted 2026-10-19)
+Status: accepted (operator, 2026-10-19); proposed in wave 3 and its open
+questions settled the same day; extends [ADR 0074](0074-extractor-contract.md)
 
 ## Context
 
@@ -67,14 +68,15 @@ the key, so no entry is re-keyed by the contract change.
 The id, version and `parameters` are the batch ones: one manifest, one
 version, one method. In this version only an extractor with no `needs`
 streams, as only one with no needs travels through Spool
-([ADR 0090](0090-extractor-runs-travel-through-spool.md)) (Open 2).
+([ADR 0090](0090-extractor-runs-travel-through-spool.md)) (Settled 2).
 
 **A stream request, audio in, events out.** The streaming runner writes
 `stream-request.json` (`archive-extractor-stream-request/1`): the extractor's
 id and version, its canonical parameters and their digest, `input`, the
 block size it will write, and `events`, the path of a named pipe the runner
-made. The program reads raw sample frames from standard input until end of
-file, and writes **stream events** (W3.2's "events") to `events` as JSON
+made, and optionally `clock`, the path of a second named pipe of clock
+events (below). The program reads raw sample frames from standard input until
+end of file, and writes **stream events** (W3.2's "events") to `events` as JSON
 Lines, one object per line:
 
 ```json
@@ -95,8 +97,16 @@ runner checks each line as it checks a batch result: a declared output, the
 right width, finite values, a row or sample never earlier than one already
 emitted for that output; a bad line ends the stream as a failure.
 
-**Streaming is deterministic.** Given the same samples, block size and
-parameters, a program emits the same stream events. That is what lets the
+**Clock events are a second, optional input (R7.3).** When the node keeps
+a clock ([ADR 0110](0110-shared-clock.md)), it hands the live runner a named
+pipe of its clock events (each tempo, meter, start and stop, at an input
+sample position), and the live runner names that pipe as `clock` in the
+stream request of a program that declares it reads one. Only `provisional`
+outputs and live tools may read the clock; an `exact` output never does,
+because a batch run has no clock to read.
+
+**Streaming is deterministic.** Given the same samples, clock events, block
+size and parameters, a program emits the same stream events. That is what lets the
 replay test below compare them with the batch entry, and makes any log of
 them regenerable (INV-4).
 
@@ -142,7 +152,7 @@ admitted.
 never a derivation run or cited by one (`used` or parameters), and never
 filed as a bank entry, even when `exact`: an entry is made by the batch
 runner from admitted content, under a key with its digest, and the runner's
-checks (Open 3). It reaches the archive only when the operator acts on it,
+checks (Settled 3). It reaches the archive only when the operator acts on it,
 as the operator's own claim in the node's outbox (ADR 0107, W2.13); that
 claim and the later batch claim coexist (INV-7).
 
@@ -153,8 +163,10 @@ like `enrich/extract.py`, whose catalog, command resolution and process
 handling it reuses. It runs a fixed set of streaming extractors over one
 stream on one machine, and live tools that read their stream events: the
 live song guess (the window matcher's method over streamed `frames/hpcp`,
-against reference profiles of Works read from World before the rehearsal,
-optionally with a set list as its prior, ADR 0106), and tempo and tuning
+against reference profiles of Works that the node fetched through a relay
+read before the rehearsal and hands it as a file (R7.1,
+[ADR 0109](0109-rehearsal-node.md)), optionally with a set list as its
+prior, ADR 0106), and tempo and tuning
 hints read against a set list entry's targets. It proposes nothing, reads no
 archive during the rehearsal, writes no bank entry and keeps no state of its
 own; ADR 0074's line holds: no workflow engine, no scheduler, no retries.
@@ -171,6 +183,20 @@ anchors to. A process boundary keeps this repository free of a library shared
 with a sibling project and of a daemon or event bus
 ([left out on purpose](../boundaries.md#left-out-on-purpose)): one producer,
 one consumer, for the life of a rehearsal.
+
+**Its events on standard output are allowed.** This record keeps stream
+events off an extractor's standard output (below, and ADR 0074) because
+libraries print there. The live runner is not an extractor: it is standard
+library only, loads no analysis library into its own process, and prints
+nothing on standard output but `archive-live-event/1` lines; its extractors'
+standard output and standard error are its logs, never its standard output.
+
+**The node pins what it runs (R7.2).** The node pins the live runner by a
+tagged release of this repository, and each streaming extractor by its id,
+version and code digest, as ADR 0074 pins an extractor's code; the live
+runner refuses to start an extractor whose installed manifest does not
+match the pin it is given, and every live event names the extractor, version
+and parameter digest that made it.
 
 **A stream follows the node's parts.** The node feeds the live runner
 exactly the samples it writes to its recording, losslessly, and starts a new
@@ -200,7 +226,7 @@ with the batch measure of the kept take; otherwise it is the client's own
 code and says nothing about any extractor. A browser build ships code, and
 any model, to every device that opens the client, so only an extractor whose
 code and weights may be distributed can have one; weights licensed for
-non-commercial or local use never ship (Open 4).
+non-commercial or local use never ship (Settled 4).
 
 ### Which accepted records this extends
 
@@ -212,7 +238,8 @@ non-commercial or local use never ship (Open 4).
   only as a person's claim.
 - ADR 0107: the node's live computation is named (`enrich/live.py`) and its
   samples are the recording's; outbox and responses are unchanged (ADR 0109
-  publishes the outbox format and starts the live runner).
+  publishes the outbox format and starts the live runner; ADR 0110 feeds it
+  the clock).
 - ADR 0106: live song ID's prior is a set list, as there; the batch matcher's
   prior rule is unchanged.
 - [Boundaries](../boundaries.md): `enrich/` gains a tool that reads a stream
@@ -228,7 +255,7 @@ non-commercial or local use never ship (Open 4).
   digest changes (`test_a_shipped_extractor_changes_only_with_its_version`).
   Where the replay test shows the batch outputs unchanged, the new digest is
   recorded; otherwise it is a new version, and for `frames` that re-keys
-  every entry in the bank below it (Open 1).
+  every entry in the bank below it (Settled 1).
 - Restarting at each part rollover costs a provisional output its context for
   the first seconds of a part; batch has the same boundary.
 - Live tools in `enrich/` run on the node's machine, so that machine needs
@@ -279,7 +306,7 @@ non-commercial or local use never ship (Open 4).
   `check_output_declaration`, reused for stream events.
 - `enrich/extract.py`: `resolve_command`, `run_program` and the catalog,
   reused by the live runner.
-- `enrich/live.py` (new): `run` and `compare`; `enrich/test_live.py` (new):
+- `enrich/live.py` (new): `run` (with the clock pipe) and `compare`; `enrich/test_live.py` (new):
   the replay test.
 - `enrich/extractors/frames/frames.py`: `decoded_blocks` and
   `decode_arguments`, the first streaming core if `frames` streams first.
@@ -289,35 +316,39 @@ non-commercial or local use never ship (Open 4).
   `docs/adding-an-extractor.md` (a step for streaming), `enrich/README.md`.
 - `docs/boundaries.md`: the `enrich/` paragraph and the commands list
   (`enrich/live.py run | compare`).
-- `docs/vocabulary.md`: *streaming mode*, *stream event*, *live runner*, on
-  acceptance.
+- `docs/vocabulary.md`: *streaming mode*, *stream event*, *live runner*.
 - Outside this repository: the node application starts `enrich/live.py`;
   the practice client holds any browser build.
 
-## Open for the operator
+## Settled by the operator (2026-10-19)
 
-1. **Which extractors stream first, and at what cost?** Recommended:
-   `frames` (`hpcp`, `rms_db` exact, for the song guess and level), `rhythm`
-   (beats and tempo, provisional) and `f0-pesto` (pitch, for practice
-   feedback; whether its code and weights may be distributed to a browser is
-   unverified). Add each only where the replay test shows its batch outputs
-   unchanged, so its digest is recorded rather than its version bumped; a
-   `frames` version bump would re-key the whole bank.
-2. **Streaming an extractor that needs features.** `tonal`'s tuning needs
-   `frames/rms_db`. Recommended: not in this version; allow it when a live
-   hint needs it, with the live runner feeding the needed extractor's stream
-   events as the need, and the key rule unchanged.
-3. **May an `exact` stream ever fill the bank?** Recommended: no; batch
-   runs on the admitted content are the only writer of entries.
-4. **Where does a browser build live?** Recommended: its build recipe
-   beside the extractor in `enrich/extractors/<id>/`, under the same version,
-   with the replay test here; the compiled file is built and served by the
-   practice client's repository from a pinned checkout, and only for
-   extractors whose code and weights may be distributed.
-5. **Does the node keep its stream-event log?** Recommended: yes, as
-   operational state beside its recording, deleted with it; since it is
-   regenerable by replay, `compare` may also replay the admitted part
-   instead.
-6. **Must the node machine hold the extractors' environments?** Recommended:
-   yes for the laptop node; phone and tablet nodes use browser builds or
-   native code held to the replay test, and until then send no live hints.
+1. **The first streaming extractors.** `frames` (`hpcp` and `rms_db`
+   exact, for the song guess and level) and `rhythm` (beats and tempo,
+   provisional). `f0-pesto` (pitch, for practice feedback) streams only after
+   its code and weights are checked distributable. Each is added only where
+   the replay test shows its batch outputs unchanged, so its digest is
+   recorded rather than its version bumped (R7.6).
+2. **Streaming an extractor that needs features.** Not in this version;
+   allowed when a live hint needs it, with the live runner feeding the
+   needed extractor's stream events as the need, and the key rule unchanged
+   (R7.12).
+3. **An `exact` stream never fills the bank.** Batch runs on the admitted
+   content are the only writer of entries (R7.12).
+4. **Where a browser build lives.** Its build recipe beside the extractor in
+   `enrich/extractors/<id>/`, under the same version, with the replay test
+   here; the compiled file is built and served by the practice client's
+   repository from a pinned checkout, and only for extractors whose code and
+   weights may be distributed (R7.12).
+5. **The node keeps its stream-event log** as operational state beside its
+   recording, deleted with it; since it is regenerable by replay, `compare`
+   may also replay the admitted part instead (R7.12).
+6. **The node machine holds the extractors' environments** for the laptop
+   node; phone and tablet nodes use browser builds or native code held to
+   the replay test, and until then send no live hints (R7.12).
+7. **Reference profiles.** The node fetches the Works' reference profiles
+   before the rehearsal through a relay read, with the rest of its read side
+   (ADR 0109), and hands them to the live runner (R7.1).
+8. **Pinning.** Streaming extractors by id, version and digest; the live
+   runner by a tagged release (R7.2).
+9. **The clock.** An optional second named pipe of clock events in the
+   stream request (R7.3, ADR 0110).

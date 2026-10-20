@@ -1,6 +1,7 @@
 # 0110. The node is tempo master, and its clock asserts the meter
 
-Status: proposed (wave 3, drafted 2026-10-19)
+Status: accepted (operator, 2026-10-19); proposed in wave 3 and its open
+questions settled the same day
 
 ## Context
 
@@ -53,13 +54,15 @@ rehearsal is **the tempo map**. Everything else that keeps time is a
 | The click on the node's audio output (ears, monitors) | rendered from the tempo map, accented on downbeats | as the clock track (below); a click channel on the mixer is extra evidence |
 | Link peers (software, other laptops) | the node is a Link peer whose session tempo, beat and phase are the map's; the Link quantum is the bar's beat count, so peers agree on the downbeat | no: Link's session state is transport, not evidence |
 | Hardware (drum machine, sequencer, synth arpeggiators) | MIDI clock out through the interface: Start, Stop, Song Position, 24 ticks per quarter at the map's tempo | no: what a follower played is in its audio, aligned like any source |
-| The watch click | the node sends the next beats' times and accents ahead; the watch schedules taps against its own clock | no: a late tap changes nothing in the archive |
+| The watch click | the node sends the next beats' times and accents ahead; the watch schedules taps against its own clock | no: a late tap changes nothing in the archive; the tap is unverified until ADR 0109's spikes measure its jitter, and the click in the ears stays the reference (Settled 6) |
 
 **Link has no master in its own protocol**: any peer may change the session
 tempo (*unverified*: stated from knowledge of the protocol, not checked
 against Link's documentation for this record). "The node is tempo master" is therefore the node's policy, not Link's:
 when a peer changes the tempo, the node does not follow; it restores the map's
-tempo and shows the attempt to the operator (Open 2). A follower that drifts or
+tempo at the next beat and shows "tempo change from a peer ignored", and the
+operator can adopt the change with one action, which then becomes the map's
+(Settled 2). A follower that drifts or
 drops out is a fault of that follower, never a change to the map.
 
 ### The tempo map reaches the archive as the node's MIDI capture
@@ -80,6 +83,10 @@ is needed:
   output latency it compensated, so the clock track's beat times are when the
   click left the interface, on the node's input sample clock;
 - the operator's other MIDI (a keyboard) in later tracks, on the same ticks.
+
+The convention is written down in `enrich/clock.py`'s documentation and in
+the node repository, not in `spec/`: the file is content and the claim is
+ADR 0106's, so it binds two programs, not every archive reader (Settled 5).
 
 The file's `midi_stream` claim (ADR 0107) times every event in microseconds
 from those tempo events, so each beat the clock played has an exact time on
@@ -106,7 +113,8 @@ clock track and proposes ADR 0106's claim unchanged:
 
 A click channel recorded on the mixer can yield a second claim by the same
 clock, read from audio onsets, beside the first (INV-7); the reader proposes
-it only when no node clock track covers that span (Open 4).
+it only when no node clock track covers that span (another clock's click,
+or a node crash) (Settled 4).
 
 ### When the band drifts from the click
 
@@ -119,8 +127,10 @@ meet the band. How far the band ran from the click is a comparison between
 the two layers, which is the open question of matching beat grids
 ([open](../open-questions.md#claims-and-provenance)); until it is answered,
 World shows both. Live, the node may show a drift hint (advice, never
-admitted). The node never follows the band: tempo following is out of scope
-(Open 3).
+admitted). The node never follows the band: there is no tempo following in
+the first version, and if it is wanted later a following clock is a
+different `process` Entity, so its claim is never mistaken for an
+independent click (Settled 3).
 
 ### Where the code lives, and the licence precondition
 
@@ -131,17 +141,22 @@ admitted). The node never follows the band: tempo following is out of scope
 - **Archive** (`enrich/`, `capture/`): reading the clock track from a
   Standard MIDI File into ADR 0106's claim. It needs no Link code, no Link
   dependency and no Link headers, because the tempo map arrives as MIDI.
-- **Precondition.** Before any Link code, header, binding or vendored copy
-  enters the archive repository, someone checks Link's licence terms against
+- **Precondition.** Before the node application is first published, and so
+  before any Link code, header, binding or vendored copy could enter the
+  archive repository, someone checks Link's licence terms against
   `AGPL-3.0-or-later` ([ADR 0017](0017-licensing.md)): the licence the
   upstream repository states, whether it allows "or later" upgrade to a
   version compatible with AGPL, the licences of its bundled dependencies, and
-  any naming or logo conditions. The result is recorded in a decision record
-  or in `REUSE.toml`'s annotations. That check has not been done; nothing in
-  this record assumes its outcome. Live analysis in `enrich/` that needs a
-  tempo gets it from the node, never through Link; how the node passes its
-  clock to [ADR 0108](0108-live-analysis.md)'s live runner, whose standard
-  input carries only audio, is not settled.
+  any naming or logo conditions. The result is recorded as a short decision
+  record (and in `REUSE.toml`'s annotations if Link ever enters this
+  repository). If the check passes, the node repository is
+  `AGPL-3.0-or-later`, as Archive (Settled 1, R7.7). That check has not been
+  done; nothing in this record assumes its outcome.
+- **The clock to the live runner.** Live analysis in `enrich/` that needs a
+  tempo gets it from the node, never through Link: the node writes its clock
+  events to an optional second named pipe, named in the stream request
+  beside the audio on standard input
+  ([ADR 0108](0108-live-analysis.md); R7.3).
 
 ## Consequences
 
@@ -207,29 +222,29 @@ admitted). The node never follows the band: tempo following is out of scope
 - `REUSE.toml` and a decision record: where the Link licence check's result
   is recorded, if Link ever enters the repository.
 - The node application repository (outside Archive): the clock, its
-  followers, and the clock track writer.
+  followers, the clock track writer, and the clock-event pipe to the live
+  runner.
+- `enrich/live.py` (new, ADR 0108): passing the clock pipe on.
 
-## Open for the operator
+## Settled by the operator (2026-10-19)
 
-1. **The licence check: who does it, and when?** Recommended: do it before
-   the node application is first published, not only before Link enters the
-   archive repository, since the node application will be shared too; record
-   the result as a short decision record. ADR 0109 (Open 7) makes the node
-   repository's own licence depend on it.
-2. **A Link peer changes the tempo.** Recommended: the node restores its own
-   tempo at the next beat and shows "tempo change from a peer ignored"; the
-   operator can adopt it with one action, which then becomes the map's.
-3. **Tempo following.** Recommended: none in the first version; if wanted
-   later, a following clock is a different `process` Entity, so its claim is
-   never mistaken for an independent click.
-4. **Two claims from one clock.** When the click is also recorded on the
-   mixer, recommended: propose only the clock-track claim, and read the click
-   channel only for spans no clock track covers (another clock's click, or a
-   node crash).
-5. **Where the clock track convention is written down.** Recommended: in
+1. **The licence check: when.** Before the node application is
+   first published, not only before Link enters the archive repository,
+   since the node application will be shared too; the result is recorded
+   as a short decision record, and the node repository is
+   `AGPL-3.0-or-later` if it passes (R7.7, ADR 0109).
+2. **A Link peer changes the tempo.** The node restores its own tempo at the
+   next beat and shows "tempo change from a peer ignored"; the operator can
+   adopt it with one action, which then becomes the map's (R7.12).
+3. **Tempo following.** None in the first version; if wanted later, a
+   following clock is a different `process` Entity (R7.12).
+4. **Two claims from one clock.** Only the clock-track claim is proposed;
+   the click channel is read only for spans no clock track covers (R7.12).
+5. **Where the clock track convention is written down.** In
    `enrich/clock.py`'s documentation and the node repository, not in
-   `spec/`: the file is content and the claim is ADR 0106's, so the
-   convention binds two programs, not every archive reader.
-6. **Watch click timing.** Recommended: treat the watch tap as unverified
-   until ADR 0109's spikes measure its jitter; the click in the ears stays the
-   reference, and nothing about the watch is recorded.
+   `spec/` (R7.12).
+6. **Watch click timing.** Unverified until ADR 0109's spikes measure its
+   jitter; the click in the ears stays the reference, and nothing about the
+   watch is recorded (R7.12).
+7. **The clock to the live runner.** An optional second named pipe of clock
+   events in the stream request (R7.3, ADR 0108).

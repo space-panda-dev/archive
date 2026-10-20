@@ -1,6 +1,8 @@
 # 0111. A pad map says what a sampler plays, and a proposer turns a session's MIDI into lineage
 
-Status: proposed (wave 3, drafted 2026-10-19)
+Status: accepted (operator, 2026-10-19); proposed in wave 3 and its open
+questions settled the same day; amends
+[ADR 0107](0107-multi-device-and-live.md)'s notes proposer
 
 ## Context
 
@@ -139,7 +141,10 @@ A machine proposer, `enrich/pad_lineage.py` (new), reads one session's MIDI
 capture through one pad map and proposes ADR 0098 lineage claims whose
 output is the session's audio and whose inputs are the samples the pads
 fired. It is a derivation run (ADR 0064) asserting through its process
-agent, and runs only when the operator names its inputs:
+agent. It runs only by the operator's command, per session, and never
+automatically in the enrichment chain, because it can narrow the reach of a
+recording others already read (Settled 2, R7.10); the command names its
+inputs:
 
 - **The MIDI and the map are named, never guessed.** The operator names
   the MIDI Artifact, optionally its track and channels (in a rehearsal
@@ -162,7 +167,9 @@ agent, and runs only when the operator names its inputs:
   names, else the map's only bank; a program change (with its bank
   selects) matching a bank's `select` switches it. A note while no bank is
   known, or that no pad of the active bank triggers, is skipped and
-  counted.
+  counted; the run's report lists the counts, and no claim records "unknown
+  sample here", since whole-output lineage with no input cannot be
+  expressed and an absent claim already says nothing (Settled 5).
 - **One span per note.** A note-on with velocity above 0 on a pad's
   trigger becomes a lineage span naming that pad's sample as `input`:
   `to` starts at the mapped note-on; it ends at the mapped note-off for
@@ -199,10 +206,16 @@ tolerates with one strictest reach.
   claim; its Settled 7 (proprietary project files unparsed) stands, and
   the hand-written map is how such a device gets one.
 - **ADR 0107**'s performance-lineage deferral is answered; its MIDI stream,
-  alignment and `aligned_spans` are read, not changed.
+  alignment and `aligned_spans` are read, not changed. Its notes proposer
+  (`enrich/midi_notes.py`) is amended (Settled 1, R7.11): when its run names
+  a pad map, notes on a pad's trigger become `unpitched`, with `part` the
+  bank and pad, so a pad struck on channel 1 no longer reads as a pitch;
+  key-range pads stay pitched. The run pins the pad map in `used`.
 - **ADR 0094**'s ability table: a pad map is the operator's or a bank
-  grammar's, never member capacity; the pad proposer's lineage and run are
-  machine provenance, never member capacity. No member contract changes.
+  grammar's, never member capacity, as collections and membership are
+  (ADR 0100, Settled 2; here Settled 3); the pad proposer's lineage and run
+  are machine provenance, never member capacity. No member contract
+  changes.
 - **ADR 0097**: a sample reached through pad lineage has no recipe, so its
   rights are read for `derive`, as for any lineage without one.
 
@@ -227,6 +240,13 @@ third-party services.
   sessions used this sample", and `lineage` answers "which samples does
   this recording use, where".
 
+### At the rehearsal node
+
+The node may show which sample a pad fired, as advice, reading the pad map
+from World before the rehearsal with the rest of
+[ADR 0109](0109-rehearsal-node.md)'s read side; nothing is written to the
+outbox from it (ADR 0107: live is advice) (Settled 4).
+
 ## Consequences
 
 - A rehearsal recorded with the sampler's MIDI says, span by span, which
@@ -245,7 +265,8 @@ third-party services.
 - Placements are as good as the pad map and the alignment; both are pinned
   in the run, so a wrong one is found and its claims rejected together.
 - A 10,000-note part is one or a few claims, not thousands.
-- No invariant changes; no accepted contract changes.
+- No invariant changes; no accepted contract changes. ADR 0107's notes
+  proposer reads pad triggers as unpitched when a pad map is named.
 
 ## Alternatives considered
 
@@ -294,30 +315,24 @@ pad map graph and its `arch:` terms); `door/src/Archive/Door/Contracts.hs`
 New, or new in an accepted but unbuilt record: `enrich/pad_lineage.py`
 (this record); `capture/bank_grammar.py` and `capture/library.py`
 (ADR 0100; a bank grammar may propose a pad map); `enrich/align.py` and
-`enrich/midi_notes.py` (ADR 0107); `world/collections.py` (ADR 0100;
-`check_pad_map` beside `check_collection_members`); `spec/archive-spec.md`
+`enrich/midi_notes.py` (ADR 0107; the pad-map amendment);
+`world/collections.py` (ADR 0100; `check_pad_map` beside
+`check_collection_members`); `spec/archive-spec.md`
 and `spec/contracts/` (the `pad_map` bundle and its profile rules);
-`docs/vocabulary.md` (*pad map*) when accepted.
+`docs/vocabulary.md` (*pad map*).
 
-## Open for the operator
+## Settled by the operator (2026-10-19)
 
-1. **Pad notes in the notes proposer.** ADR 0107's `midi_notes` reads a
-   pad struck on channel 1 as a pitch. Recommended: when its run names a
-   pad map, notes on a pad trigger become `unpitched` with `part` the bank
-   and pad, except key-range pads, which stay pitched; an amendment to
-   ADR 0107.
-2. **Run by hand or in the chain.** Recommended: by the operator's command
-   per session only, because it can narrow the reach of a recording others
-   already read; never automatically in the enrichment chain.
-3. **Member-capacity pad maps.** A friend who owns the sampler knows its
-   map best. Recommended: not now; pad maps stay the operator's and the
-   bank grammar's, as collections and membership do (ADR 0100, Settled 2).
-4. **Live pad display at the node.** Recommended: the node may show which
-   sample a pad fired as advice, reading the pad map from World before the
-   rehearsal (an addition to [ADR 0109](0109-rehearsal-node.md)'s read
-   side); nothing is written to the outbox from it (ADR 0107: live is
-   advice).
-5. **Skipped notes.** Notes with no known bank or pad are counted but not
-   recorded. Recommended: the run's report lists the counts; no claim
-   records "unknown sample here", since whole-output lineage with no input
-   cannot be expressed and an absent claim already says nothing.
+1. **Pad notes in the notes proposer.** When its run names a pad map,
+   notes on a pad trigger become `unpitched` with `part` the bank and pad,
+   except key-range pads, which stay pitched; this amends ADR 0107 (R7.11).
+2. **Run by hand, never in the chain.** The pad proposer runs only by the
+   operator's command, per session (R7.10).
+3. **Member-capacity pad maps.** Not now; pad maps stay the operator's and
+   the bank grammar's, as collections and membership do (ADR 0100,
+   Settled 2) (R7.12).
+4. **Live pad display at the node.** Allowed as advice, reading the pad map
+   from World before the rehearsal (ADR 0109's read side); nothing is
+   written to the outbox from it (R7.12).
+5. **Skipped notes.** The run's report lists the counts; no claim records
+   "unknown sample here" (R7.12).

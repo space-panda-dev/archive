@@ -107,9 +107,9 @@ scratch copy.
   The calibrations already done (the detector's held-out sessions, the window
   matcher's report, the melody metrics) are early instances to fold in.
 
-## People, samples, and rehearsals (ADRs 0092-0107)
+## People, samples, and rehearsals (ADRs 0092-0111)
 
-The operator accepted ADRs 0092 to 0107 on 2026-10-19 as decisions only:
+The operator accepted ADRs 0092 to 0111 on 2026-10-19 as decisions only:
 none of their contracts, routes, or commands is built, and each installs
 with its implementation in a later specification release.
 
@@ -120,7 +120,8 @@ with its implementation in a later specification release.
   sample renders, packs, and the index, giving the operator a sample app on
   the tailnet ([ADR 0099](decisions/0099-samples.md),
   [ADR 0100](decisions/0100-packs-and-collections.md),
-  [ADR 0102](decisions/0102-retrieval-index.md)); (3) audiences, grants,
+  [ADR 0102](decisions/0102-retrieval-index.md)), with DAW projects
+  ([ADR 0101](decisions/0101-daw-projects.md)) alongside; (3) audiences, grants,
   participation, and Cloudflare, so friends get in
   ([ADR 0093](decisions/0093-audiences.md),
   [ADR 0094](decisions/0094-peoples-writes.md),
@@ -130,17 +131,24 @@ with its implementation in a later specification release.
   [ADR 0104](decisions/0104-transcription-and-speakers.md),
   [ADR 0105](decisions/0105-notebook.md)); (5) live
   ([ADR 0106](decisions/0106-set-lists-and-clocks.md),
-  [ADR 0107](decisions/0107-multi-device-and-live.md)). DAW projects
-  ([ADR 0101](decisions/0101-daw-projects.md)) are not placed in the order.
+  [ADR 0107](decisions/0107-multi-device-and-live.md),
+  [ADR 0108](decisions/0108-live-analysis.md),
+  [ADR 0109](decisions/0109-rehearsal-node.md),
+  [ADR 0110](decisions/0110-shared-clock.md)). Pad maps
+  ([ADR 0111](decisions/0111-pad-maps.md)) are not placed; they build on
+  lineage (step 1), sampler banks (step 2) and MIDI capture (step 5).
 - **Notification and watch spike.** A self-hosted push service on the
   tailnet with action buttons, and web push from a home-screen web app,
   first; whether actions and voice replies work on the watch is unverified.
   The destination is a native phone and watch companion app, which is also
   the phone and tablet microphone node (background recording).
-- **Ableton Link licence check.** The rehearsal node is tempo master and
-  syncs software and devices by Ableton Link (hardware by MIDI clock). Check
-  Link's licence against AGPL before any of it enters this repository; until
-  then Link stays in the node application.
+- **Link licence check before the node is first published.** The rehearsal
+  node is tempo master and syncs software and devices by Ableton Link
+  (hardware by MIDI clock). Check Link's licence against AGPL before the node
+  application is first published, and so before any of it could enter this
+  repository; record the result as a short decision record. The node
+  repository is AGPL-3.0-or-later if it passes; Link stays in the node
+  application either way ([ADR 0110](decisions/0110-shared-clock.md)).
 - **Sample identification spike.** Locally, on a public or test corpus
   first, with no third-party uploads; friends' tracks with known samples once
   their custody is in place. Its output is machine-proposed lineage claims

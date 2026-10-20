@@ -3,7 +3,9 @@
 Status: accepted (proposed and accepted by the operator on 2026-10-18);
 amended 2026-10-19, accepted the same day (seven model extractors join the
 catalog and `chords` is retired; heavy dependencies are pinned; runs travel
-through Spool by ADR 0090)
+through Spool by ADR 0090); extended 2026-10-19 by
+[ADR 0108](0108-live-analysis.md) (a streaming mode; accepted by the
+operator, 2026-10-19)
 
 The feature bank ([ADR 0073](0073-feature-bank.md)) needs writers,
 and the operator wants adding one to be easy and independent of language:
@@ -323,3 +325,15 @@ and `chords-chordino`
 path is open" no longer holds: [ADR 0090](0090-extractor-runs-travel-through-spool.md)
 returns an extractor's files as Spool result attachments (`enrich/remote.py`),
 for an extractor that needs no other feature.
+
+## Note, 2026-10-19: a streaming mode
+
+Made on the acceptance of [ADR 0108](0108-live-analysis.md), which gives the
+reasons and the rules. A manifest may declare `stream`
+(`archive-extractor/2`, version 1 plus that optional field): the same
+extractor, id, version and parameters run over an unbounded stream of audio
+sample frames, reading them on standard input and writing stream events as
+JSON Lines to a named pipe, each streamed output declaring whether it agrees
+with batch `exact`ly or is `provisional`. Results still never go on an
+extractor's standard output. Streaming never writes the feature bank, and
+the batch contract above is unchanged.
