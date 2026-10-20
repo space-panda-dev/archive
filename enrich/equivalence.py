@@ -280,7 +280,8 @@ REGION_FEATURES = {"stems/vocals": ("notes-basic-pitch", "f0-pesto", "melody"),
 
 def first_row(whole: bank.Entry, region: bank.Entry, grid: str) -> int:
     """The whole entry's row that is the region entry's first, by the
-    region's offset at the grid's rate and the region's `first_centre`."""
+    region's offset at the grid's rate and the region's `first_centre`;
+    `grid` names a series output on it."""
     placed = region.timeline
     shape = region.grid(grid)
     if placed is None or shape is None or whole.grid(grid) is None:
@@ -340,7 +341,7 @@ def region_agreement(measure: str, whole: bank.Entry, region: bank.Entry, output
             return _voicing(a_voiced, b_voiced)
         return _cents_p99(a_midi, a_voiced, b_midi, b_voiced, 100)
     if measure in ("melody-cents-p99", "melody-voicing"):
-        row = first_row(whole, region, "melody")
+        row = first_row(whole, region, "pitch")
         a, b = _over(whole.series("pitch")[:, 0], region.series("pitch")[:, 0], row)
         a_voiced, b_voiced = a > 0, b > 0
         if measure == "melody-voicing":
