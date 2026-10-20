@@ -123,3 +123,4 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0106](0106-set-lists-and-clocks.md) | A set list is a claim of intent, and a clock asserts its own meter |
 | [0107](0107-multi-device-and-live.md) | Many devices capture one moment, MIDI is a source, and live responses wait on the node |
 | [0108](0108-live-analysis.md) | Live analysis is Enrichment over a stream, and extractors gain a streaming mode (proposed) |
+| [0109](0109-rehearsal-node.md) | The rehearsal node is an application, and the watch is a display and a voice (proposed) |
