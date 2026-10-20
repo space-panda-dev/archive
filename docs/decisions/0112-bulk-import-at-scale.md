@@ -458,3 +458,56 @@ the shadow: with stems off the laptop, it bounds time-to-done until
 4. Background proposals at most every 15 minutes.
 5. That the background never starts before the fast tier's proposal, even
    though cores idle while it runs.
+
+## Amendment (2026-10-20): faster stems, and a region's stems are the whole's
+
+Status: proposed with the second round's integration (`fast/integration2`);
+the operator config below is the operator's to apply.
+
+**Stems on the Mac.** The worker gets the content as lossless WavPack
+(`remote.TRANSPORTS`, the stems default `transport`; it decodes to the
+content's very samples, checked by `same_samples`) and runs two tasks at
+once (Spool `max_concurrent` 2). On the two recordings, 0.223 s per
+audio-second end to end against 0.305 for float WAV one task at a time,
+with byte-identical stems. The link is now the bound off the home network
+(about 0.12 at best); on the laptop's network it should reach separation's
+0.10 (not measured). The backfill puts routed jobs beside the pool, so
+encoding never holds back what runs here. `remote_cost` is 0.223.
+
+**Stems on the laptop's CPU.** A new interchangeable device, `cpu-inductor`,
+runs htdemucs's network compiled by `torch.compile` for the CPU: its stems
+are within the ADR 0090 amendment's tolerance of `cpu`'s (records in the
+bank's `equivalence/stems/`). Measured on the laptop, whole extractor
+process:
+
+| run | core-s per audio-s | memory peak |
+|---|---|---|
+| 720 s, eager, 2 threads (today's default) | 1.49 | 3.9 GB |
+| 720 s, compiled, 1 thread, warm compile cache | 1.04 | 3.5 GB |
+| 120 s, eager, 1 thread | 1.18 | 1.4 GB |
+| 120 s, compiled, 1 thread, warm | 1.07 | 1.4 GB |
+
+Most of the saving is one thread a copy; compiling adds about 9% more.
+The backfill reserves a `cpu-inductor` copy one core and records its cost
+as 1.04 (`backfill.DEVICE_SETTINGS`) when the configured parameters name
+the device; the eager default stays two threads a copy, which round 1
+measured ahead of one under full load. Needs a C++ compiler where
+`demucs-python` runs and a persistent `TORCHINDUCTOR_CACHE_DIR` (the first
+run compiles for minutes).
+
+**A region's stems.** Demucs lays its segments from the start of what it
+is given and averages them, so a cut separated alone gives other samples
+than the whole recording over the same span (bass -0.15 dB SNR on a 485 s
+region, though the cut itself was faithful at 56 dB). A region run now
+separates the source over a window that starts on the whole run's segment
+grid at least one segment before the region and runs a segment past it
+(past a chunk crossfade where the region ends in one), and keeps the
+region's samples (`stems.aligned`, `context_of`); where the region's rate
+cannot place that grid exactly, the cut is separated alone as before. Only
+local runs carry the source (`extract.py` passes it); routed tasks are
+whole-content only. Readers take region entries (`bank.RegionView`,
+`enrich propose` per region, the relay's region stems by key), so
+`--songs` is no longer blocked on a reader. Before it is used on real
+data: confirm on the laptop with Demucs that a region's stems match the
+whole's above 90 dB (bass notes F1 at least 0.98), and add the bench's
+region test.

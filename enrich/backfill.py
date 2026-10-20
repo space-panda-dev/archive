@@ -157,6 +157,14 @@ DEFAULT_SETTING = {"threads": 1, "cores": None, "memory_gb": 1.0, "cost": None, 
 # `transport`: the lossless encoding a routed extractor's content travels in
 # (`remote.TRANSPORTS`), for an extractor that reads only its first audio
 # stream's samples; null sends the content's own bits.
+# What one copy takes where the configured parameters run an extractor on
+# another device: stems on `cpu-inductor` (the network compiled for the CPU)
+# measured 1.04 CPU-seconds per audio-second at one thread on the laptop
+# against 1.49 eager at two (720 s, warm compile cache, 2026-10-20), so one
+# thread a copy and twice the copies. A configured setting still wins.
+DEVICE_SETTINGS: dict[tuple[str, str], dict[str, Any]] = {
+    ("stems", "cpu-inductor"): {"threads": 1, "cores": None, "cost": 1.04},  # reserved: its threads
+}
 TIERS = ("fast", "background")
 SCHEDULE = {
     "expensive_above": regions.EXPENSIVE_THRESHOLD,
@@ -268,6 +276,9 @@ def schedule_of(config: dict[str, Any], catalog: bank.Catalog) -> Schedule:
                 raise BackfillError(f"{unit.name}: only a file feature can be measured as content")
         units.append(unit)
     settings = {name: dict(value) for name, value in SETTINGS.items()}
+    for (name, device), value in DEVICE_SETTINGS.items():
+        if name in catalog.extractors and device_of(catalog.parameters(name, config.get("parameters"))) == device:
+            settings[name] = {**settings.get(name, {}), **value}
     for name, value in given.get("extractors", {}).items():
         catalog[name]
         if not isinstance(value, dict) or set(value) - set(DEFAULT_SETTING):
@@ -278,8 +289,6 @@ def schedule_of(config: dict[str, Any], catalog: bank.Catalog) -> Schedule:
             raise BackfillError(f"backfill extractor {name}: tier is one of {', '.join(TIERS)}, or null")
         if value.get("remote_parameters") is not None and not isinstance(value["remote_parameters"], dict):
             raise BackfillError(f"backfill extractor {name}: remote_parameters is an object of its parameters")
-        if value.get("transport") not in (None, *remote.TRANSPORTS):
-            raise BackfillError(f"backfill extractor {name}: transport is one of {sorted(remote.TRANSPORTS)} or null")
         if value.get("transport") not in (None, *remote.TRANSPORTS):
             raise BackfillError(f"backfill extractor {name}: transport is one of {sorted(remote.TRANSPORTS)} or null")
         settings[name] = {**settings.get(name, {}), **value}
@@ -296,6 +305,12 @@ def schedule_of(config: dict[str, Any], catalog: bank.Catalog) -> Schedule:
                     float(numbers["memory_reserve_gb"]), {mode: float(away[mode]) for mode in MODES},
                     int(numbers["spool_in_flight"]), bool(numbers["overflow"]),
                     float(numbers["propose_every_seconds"]), float(numbers["rescan_seconds"]))
+
+
+def device_of(parameters: dict[str, Any]) -> str | None:
+    """The device an extractor's parameters run its model on (`apply.device`)."""
+    apply = parameters.get("apply")
+    return apply.get("device") if isinstance(apply, dict) else None
 
 
 def width_of(catalog: bank.Catalog, extractor_id: str, schedule: Schedule,

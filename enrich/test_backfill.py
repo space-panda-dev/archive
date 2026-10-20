@@ -139,6 +139,19 @@ class SlotsAndThreads(unittest.TestCase):
             with self.subTest(given=given), self.assertRaises((backfill.BackfillError, bank.BankError)):
                 backfill.schedule_of({"backfill": given}, CATALOG)
 
+    def test_stems_compiled_for_the_cpu_take_one_core_a_copy(self) -> None:
+        apply = {**CATALOG.parameters("stems")["apply"], "device": "cpu-inductor"}
+        config = {"parameters": {"stems": {"apply": apply}}, "backfill": {"units": [["stems"]]}}
+        compiled = backfill.schedule_of(config, CATALOG)
+        self.assertEqual({k: compiled.setting("stems")[k] for k in ("threads", "cores", "cost")},
+                         backfill.DEVICE_SETTINGS[("stems", "cpu-inductor")])
+        self.assertEqual(backfill.layout(CATALOG, compiled, config["parameters"], 8, 64.0)["stems"]["copies"], 8)
+        self.assertEqual(schedule().setting("stems")["threads"], 2)  # the eager default is unchanged
+        # A configured setting still wins over the device's.
+        config["backfill"]["extractors"] = {"stems": {"threads": 2}}
+        self.assertEqual(backfill.layout(CATALOG, backfill.schedule_of(config, CATALOG), config["parameters"], 8,
+                                         64.0)["stems"]["cores"], 2)
+
     def test_stems_travel_as_wavpack_unless_configured_otherwise(self) -> None:
         self.assertEqual(schedule().setting("stems")["transport"], "wavpack")
         self.assertIsNone(schedule().setting("tonal")["transport"])

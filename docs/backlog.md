@@ -132,10 +132,18 @@ worker's transfers, one task at a time); `--songs` at the shadow's song
 coverage would reach 0.200 (4.9x). Below the projected 7x and 12.7x
 because stems cost more under load and f0-pesto costs 0.37 core-seconds per
 audio-second over its two passes. Before `--songs` is used on real data:
-region stems disagree with whole stems over the same span (bass SNR
--0.15 dB on a 485 s region; not yet diagnosed), and no reader takes a
-region entry yet (`enrich propose` and the relay read whole entries), so a
-region entry is made and never read. A region that is the whole recording
+region stems disagreed with whole stems over the same span (bass SNR
+-0.15 dB on a 485 s region). Diagnosed and fixed on `fast/integration2`
+(2026-10-20): Demucs lays its segments from the start of what it is
+given, so a cut separated alone is other averages; a region run now
+separates the source over a window on the whole run's grid and keeps the
+region's samples (`stems.aligned`, `context_of`; `extract.py` passes the
+source). Tested with a grid-shaped stand-in model (the region's stems are
+the whole's to one rounding step; the cut alone is not); not yet confirmed
+on real audio with Demucs (expect above 90 dB and bass notes F1 at least
+0.98 over the short recording's 35-520 s), nor in the bench. Readers now
+take region entries (`bank.RegionView`, `enrich propose` per region, the
+relay's region stems by key). A region that is the whole recording
 is made whole. Round 2 (ADR
 0112's amendment): the backfill makes every recording usable first (the
 fast tier, then a proposal) and stems and what measures them in the

@@ -1058,7 +1058,11 @@ inductor's cache). It is the laptop's cheapest way to separate (round 2 of
 [ADR 0112](../docs/decisions/0112-bulk-import-at-scale.md)):
 configure `{"stems": {"apply": {..., "device": "cpu-inductor"}}}` and run
 `equivalence stems --against cpu` (and `--against mps`) so the entries
-already made stand in.
+already made stand in. `enrich backfill` then gives each
+stems copy one thread and one core (`backfill.DEVICE_SETTINGS`; a
+configured `backfill.extractors.stems` setting still wins). Set
+`TORCHINDUCTOR_CACHE_DIR` to a directory that persists, or every process
+compiles again after the default cache in the temporary directory is emptied.
 
 ### The model extractors' interpreters
 
