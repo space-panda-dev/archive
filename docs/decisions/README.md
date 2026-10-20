@@ -125,3 +125,4 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0108](0108-live-analysis.md) | Live analysis is Enrichment over a stream, and extractors gain a streaming mode (proposed) |
 | [0109](0109-rehearsal-node.md) | The rehearsal node is an application, and the watch is a display and a voice (proposed) |
 | [0110](0110-shared-clock.md) | The node is tempo master, and its clock asserts the meter (proposed) |
+| [0111](0111-pad-maps.md) | A pad map says what a sampler plays, and a proposer turns a session's MIDI into lineage (proposed) |
