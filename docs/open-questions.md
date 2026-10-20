@@ -53,6 +53,7 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
   claim's name. Should a later contract version record the source, and the
   primary one, in the claim
   ([ADR 0070](decisions/0070-capture-import.md))?
+  ([ADR 0107](decisions/0107-multi-device-and-live.md), proposed, would answer this.)
 - How does an existing archive migrate to a specification version that is not
   additive? (Additive releases are adopted by a transition,
   [ADR 0068](decisions/0068-specification-upgrade.md).)
