@@ -201,7 +201,7 @@ SHIPPED = {
     # commit makes the same bits. 2 bounds its memory: over ten minutes, its
     # convolutional layers are normalised by a sample's statistics.
     "chords-jiang": {"version": "2",
-                     "code": "sha256:7a4760737d313db4842e8aa9e62fcbbe8baf8dc77bb4b7f6149ded975698aa4f",
+                     "code": "sha256:6a3456b7612ac76068706f00b4b156c571a12fb9b86eb0dde77aac3beaf25329",
                      "outside": {}},
     "chords-chordino": {"version": "1",
                         "code": "sha256:e404cea891963fd123d5d865c8f58ece5191bb5d0ab729aaf3d87de4426881ba",

@@ -673,7 +673,7 @@ def main(argv: list[str]) -> int:
         return 2
     request = json.loads(Path(argv[1]).read_text(encoding="utf-8"))
     if request.get("parameters") != PARAMETERS:
-        print("chords-jiang 1 has fixed settings; the request names others", file=sys.stderr)
+        print("chords-jiang 2 has fixed settings; the request names others", file=sys.stderr)
         return 1
     try:
         model = load_model(Path(argv[0]))
