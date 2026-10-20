@@ -440,7 +440,8 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
   - Practice audio ([ADR 0089](decisions/0089-practice-audio-and-exports.md)): should the import chain separate every
     recording, is a lossy practice copy needed for phones, should the relay
     cut excerpts, and does the client's live mix or a server render serve
-    better (D11.5 leaves that to testing)?
+    better (D11.5 leaves that to testing)? ([ADR 0099](decisions/0099-samples.md),
+    proposed, would answer this for cut excerpts: sample renders.)
   - Should decoded audio at another rate (44.1 kHz for a separator) be a
     shared feature, so that extractors off the `frames` grid stop decoding
     again, at about 1.3 GB per four mono hours at 22,050 Hz?
