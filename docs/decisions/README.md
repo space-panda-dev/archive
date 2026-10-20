@@ -119,3 +119,4 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0102](0102-retrieval-index.md) | World keeps a second disposable store for facets, embeddings and text search (proposed) |
 | [0103](0103-voice-capture.md) | Voice notes arrive from phones, browsers and recorders, each its own Artifact (proposed) |
 | [0104](0104-transcription-and-speakers.md) | Transcripts come from local ASR runs, and speaker spans name consenting people (proposed) |
+| [0105](0105-notebook.md) | Notes are snapshotted as documents, and their links to the archive are claims (proposed) |
