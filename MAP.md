@@ -154,8 +154,9 @@ command, `rg -n '^##' enrich/README.md`).
 | `enrich/note_builder.py` | 356 | `build`: one note per held pitch from a pitch track and its level (ADR 0086); settings `VOICE`, `BASS`; tests `enrich/test_note_builder.py` |
 | `enrich/probe.py`, `detector.py` | 234, 674 | stream facts (0065), span suggestions (0066; presets and the talk gate, 0091) |
 | `enrich/match.py`, `cover.py`, `windows.py` | 358, 1073, 517 | work matching (0067, 0071, 0072) |
-| `enrich/extract.py` | 756 | feature-bank runner: `main` (`list`, `run`), `run_default`, `run_from` |
-| `enrich/bank.py` | 819 | `Catalog` (326), `Bank` (704): the bank format |
+| `enrich/extract.py` | 869 | feature-bank runner: `main` (`list`, `run`, `--region`), `cut_region`, `run_default`, `run_from` |
+| `enrich/bank.py` | 1003 | `Catalog` (354), `Bank` (774): the bank format; region keys (`key_of`, `check_region`, `Catalog.within`), `covering`, bank requests (`ask`, `requests`) at the end (ADR 0112) |
+| `enrich/regions.py` | 248 | song spans by precedence, `regions_of`, `regions_for`, `expensive`, `plan` per mode (ADR 0112); tests `enrich/test_regions.py` |
 | `enrich/remote.py` | 494 | extractor runs through Spool: `put`, `work`, `collect` (ADR 0090) |
 | `enrich/media.py`, `waveform.py`, `derived.py` | 193, 161, 62 | derived media (ADR 0069) |
 | `enrich/support.py` | 291 | test support: synthetic audio, scratch archives |
@@ -173,9 +174,9 @@ run and provenance (ADR 0064, [provenance](docs/provenance.md)); an
 extractor's version changes whenever its outputs can (ADR 0074); stems are
 content (ADR 0075); preferred inputs ADR 0076.
 Decided, not built: stand-in stems by a measured tolerance (ADR 0090's
-amendment) and bulk import (`enrich backfill`, region entries, bank
-requests, the cost gate; ADR 0112); the build work is step 0 of
-[docs/backlog.md](docs/backlog.md).
+amendment) and the rest of bulk import (`enrich backfill`, the cost gate;
+ADR 0112); region entries, bank requests and song regions are built; the
+build work is step 0 of [docs/backlog.md](docs/backlog.md).
 Find: extractors in `enrich/extractors/<id>/extractor.json`; SHIPPED digest
 pins in `enrich/test_bank.py` (`SHIPPED = {`, line 115); byte format in
 [docs/feature-bank.md](docs/feature-bank.md) (444; shipped table at "The

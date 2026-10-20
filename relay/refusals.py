@@ -52,6 +52,8 @@ RELAY_CODES: dict[str, HTTPStatus] = {
     "feature_not_served": HTTPStatus.NOT_FOUND,
     "feature_not_made": HTTPStatus.NOT_FOUND,
     "stems_not_made": HTTPStatus.NOT_FOUND,
+    # Bulk import (ADR 0112): not made yet, and now asked for.
+    "feature_queued": HTTPStatus.ACCEPTED,
     "renderer_unknown": HTTPStatus.UNPROCESSABLE_ENTITY,
     "render_failed": HTTPStatus.BAD_GATEWAY,
     "exporter_unknown": HTTPStatus.UNPROCESSABLE_ENTITY,

@@ -62,6 +62,47 @@ every feature the extractor's manifest needs, so the keys are computed
 upstream first. The test `test_a_key_is_the_digest_of_its_canonical_description`
 in [`enrich/test_bank.py`](../enrich/test_bank.py) writes one key out in full.
 
+**A region entry's key** ([ADR 0112](decisions/0112-bulk-import-at-scale.md))
+is the same description under `"contract": "archive-feature-bank-key/2"`
+with one more member, `"region": {"start", "end", "rate"}`: `[start, end)`
+in samples at the content's stream rate, integers with `0 <= start < end`.
+Its `needs` are the keys of the same region's entries. A whole-content key is
+always `/1`, so no key made before regions existed changes. The test
+`test_a_region_key_is_the_digest_of_its_canonical_description` in
+[`enrich/test_regions.py`](../enrich/test_regions.py) writes one out.
+
+## Regions and requests
+
+**A region entry** is made by `extract.py run --region <start>:<end>:<rate>`:
+the runner cuts the region from the content's first audio stream to FLAC
+with pinned ffmpeg arguments (`extract.cut_arguments`: trimmed by sample,
+bit-exact, no metadata), refuses a cut whose STREAMINFO is not exactly
+`end - start` samples at `rate`, and runs each extractor over the cut. Its
+`entry.json` is `archive-feature-bank-entry/2`: `/1`'s fields, `media_type`
+the cut's (`audio/flac`), `region`, and `cut`, the cut's digest. It is filed
+under the content's directory like any entry, so deleting the content deletes
+it. Outputs are on the cut's timeline; a reader adds `start / rate` seconds
+(`Entry.offset`). A stem made over a region is content of its own and is
+measured whole. A reader takes the whole-content entry when there is one,
+else a region entry whose region contains the span it needs and whose key
+the installed extractor gives that region (`bank.covering`); region entries
+are never stitched together.
+
+**A bank request** asks the scheduler for one key nothing holds yet. It is
+`<root>/requests/<key hex>.json`, operational and deletable:
+
+```json
+{"contract": "archive-feature-bank-request/1", "key": "sha256:<hex>",
+ "content": "sha256:<hex>", "extractor": {"id": "stems", "version": "1"},
+ "region": null, "feature": null, "asked_by": "relay"}
+```
+
+`region` is null for the whole content; `feature` names the file feature
+measured when the content is a preferred input. A request is written to a
+temporary name and linked into place, so asking again finds the same file and
+the first asker's request stands (`bank.ask`); `bank.requests` lists them and
+refuses a damaged or misnamed one rather than skipping it.
+
 ## Layout
 
 ```
@@ -69,6 +110,7 @@ in [`enrich/test_bank.py`](../enrich/test_bank.py) writes one key out in full.
 <root>/sha256/<ab>/<cd>/<hex>/bank/<extractor id>/<key hex>/<output files>
 <root>/sha256/<ab>/<cd>/<hex>/bank/<extractor id>/<key hex>.failed.json
 <root>/sha256/<ab>/<cd>/<hex>/bank/<extractor id>/<key hex>.lock
+<root>/requests/<key hex>.json
 <root>/tmp/
 ```
 

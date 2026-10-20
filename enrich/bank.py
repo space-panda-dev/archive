@@ -39,6 +39,12 @@ REQUEST_CONTRACT = "archive-extractor-request/1"
 RESULT_CONTRACT = "archive-extractor-result/1"
 ENTRY_CONTRACT = "archive-feature-bank-entry/1"
 KEY_CONTRACT = "archive-feature-bank-key/1"
+# A region entry (ADR 0112): made over `[start, end)` of its content, keyed by
+# `/1`'s members and the region; every whole-content key stays a `/1` key.
+REGION_ENTRY_CONTRACT = "archive-feature-bank-entry/2"
+REGION_KEY_CONTRACT = "archive-feature-bank-key/2"
+BANK_REQUEST_CONTRACT = "archive-feature-bank-request/1"
+REQUESTS = "requests"
 
 EXTRACTORS = Path(__file__).resolve().parent / "extractors"
 MANIFEST = "extractor.json"
@@ -130,15 +136,37 @@ def check_parameters(value: Any, where: str = "parameters") -> None:
 
 
 def key_of(extractor_id: str, version: str, parameters: Mapping[str, Any], content: str,
-           needs: Mapping[str, str]) -> str:
+           needs: Mapping[str, str], region: Mapping[str, int] | None = None) -> str:
     """An entry's key: the digest of what decides its outputs. `needs` maps
     each needed feature to the key of the entry holding it, so a change
-    anywhere upstream is a new key here."""
+    anywhere upstream is a new key here. With a `region`, the key is a
+    region entry's (`archive-feature-bank-key/2`); without one it is the
+    whole content's `/1` key, exactly as before regions existed."""
     if not derived.is_digest(content):
         raise BankError(f"not a canonical content digest: {content!r}")
-    return digest_of(canonical({"contract": KEY_CONTRACT, "extractor": extractor_id, "version": version,
-                                "parameters": digest_of(canonical(parameters)), "content": content,
-                                "needs": dict(needs)}))
+    described = {"contract": KEY_CONTRACT, "extractor": extractor_id, "version": version,
+                 "parameters": digest_of(canonical(parameters)), "content": content, "needs": dict(needs)}
+    if region is not None:
+        described = {**described, "contract": REGION_KEY_CONTRACT, "region": check_region(region)}
+    return digest_of(canonical(described))
+
+
+def check_region(region: Any, where: str = "region") -> dict[str, int]:
+    """`{start, end, rate}`: `[start, end)` in samples at the content's
+    stream rate, `0 <= start < end`, all integers (ADR 0112)."""
+    _require(isinstance(region, dict) and set(region) == {"start", "end", "rate"},
+             f"{where} must be exactly {{start, end, rate}}")
+    _require(all(isinstance(region[k], int) and not isinstance(region[k], bool) for k in region),
+             f"{where}: start, end, and rate are integers")
+    _require(0 <= region["start"] < region["end"] <= MAX_INTEGER and 0 < region["rate"] <= 10_000_000,
+             f"{where}: needs 0 <= start < end and a positive rate")
+    return {"start": region["start"], "end": region["end"], "rate": region["rate"]}
+
+
+def region_contains(region: Mapping[str, int], start: int, end: int, rate: int) -> bool:
+    """Whether `[start, end)` at `rate` lies wholly inside the region, compared
+    exactly across rates (no rounding)."""
+    return region["start"] * rate <= start * region["rate"] and end * region["rate"] <= region["end"] * rate
 
 
 # -- layout ------------------------------------------------------------------
@@ -335,6 +363,8 @@ class Catalog:
                 raise BankError(f"two extractors are called {extractor.id}: "
                                 f"{self.extractors[extractor.id].directory} and {extractor.directory}")
             self.extractors[extractor.id] = extractor
+        # The content and region a region run keys its entries over (see `within`).
+        self.region: tuple[str, dict[str, int]] | None = None
         for extractor in self.extractors.values():
             for need in extractor.needs:
                 source, output = FEATURE.fullmatch(need).groups()  # type: ignore[union-attr]
@@ -405,14 +435,34 @@ class Catalog:
     def keys(self, content: str, targets: Iterable[str],
              parameters: Mapping[str, Mapping[str, Any]] | None = None) -> dict[str, str]:
         """Each extractor's entry key for this content, upstream first.
-        `parameters` replaces an extractor's declared defaults, field by field."""
+        `parameters` replaces an extractor's declared defaults, field by field.
+        In a view made by `within`, the keys of that content are its region
+        entries' (needs over the same region); any other content, such as a
+        stem made over the region, is keyed whole."""
+        region = self.region_of(content)
         keys: dict[str, str] = {}
         for extractor_id in self.order(targets):
             extractor = self[extractor_id]
             needs = {need: keys[need.split("/", 1)[0]] for need in extractor.needs}
             keys[extractor_id] = key_of(extractor.id, extractor.version,
-                                        self.parameters(extractor_id, parameters), content, needs)
+                                        self.parameters(extractor_id, parameters), content, needs, region)
         return keys
+
+    def within(self, content: str, region: Mapping[str, int] | None) -> "Catalog":
+        """This catalog, keying `content` over `region` (ADR 0112). Every
+        reader and the runner take a region through this view, so `Bank`'s
+        lookups and the runner's graph find region entries unchanged. A
+        region of None is the whole content."""
+        view = Catalog.__new__(Catalog)
+        view.extractors = self.extractors
+        view.region = None if region is None else (content, check_region(region))
+        return view
+
+    def region_of(self, content: str) -> dict[str, int] | None:
+        """The region this view keys `content` over, or None for whole."""
+        if self.region is not None and self.region[0] == content:
+            return self.region[1]
+        return None
 
     def check_overrides(self, overrides: Mapping[str, Any], where: str = "parameters") -> None:
         """Configured parameters must name an extractor here and only the
@@ -599,11 +649,19 @@ def check_result(directory: Path, extractor: Extractor) -> dict[str, Any]:
 
 
 def check_entry(manifest: Any, where: str) -> dict[str, Any]:
-    """An entry manifest as the runner writes it; a reader refuses another shape."""
-    _require(isinstance(manifest, dict) and manifest.get("contract") == ENTRY_CONTRACT,
-             f"{where}: contract must be {ENTRY_CONTRACT}")
+    """An entry manifest as the runner writes it; a reader refuses another
+    shape. A region entry (`archive-feature-bank-entry/2`) has `/1`'s fields
+    and `region` and `cut`, the digest of the FLAC cut its programs read."""
+    _require(isinstance(manifest, dict) and manifest.get("contract") in (ENTRY_CONTRACT, REGION_ENTRY_CONTRACT),
+             f"{where}: contract must be {ENTRY_CONTRACT} or {REGION_ENTRY_CONTRACT}")
     fields = {"contract", "key", "extractor", "parameters", "content", "media_type", "needs", "software", "grids",
               "outputs", "started_at", "ended_at", "runner"}
+    region = None
+    if manifest["contract"] == REGION_ENTRY_CONTRACT:
+        fields |= {"region", "cut"}
+        _require(set(manifest) == fields, f"{where}: fields must be {sorted(fields)}")
+        region = check_region(manifest["region"], f"{where}: region")
+        _require(isinstance(manifest["cut"], str) and KEY.fullmatch(manifest["cut"]) is not None, f"{where}: cut")
     _require(set(manifest) == fields, f"{where}: fields must be {sorted(fields)}")
     _require(isinstance(manifest["key"], str) and KEY.fullmatch(manifest["key"]) is not None, f"{where}: key")
     _require(derived.is_digest(manifest["content"]), f"{where}: content")
@@ -613,8 +671,8 @@ def check_entry(manifest: Any, where: str) -> dict[str, Any]:
                                                          and KEY.fullmatch(v) for k, v in manifest["needs"].items()),
              f"{where}: needs")
     _require(manifest["key"] == key_of(extractor["id"], extractor["version"], manifest["parameters"],
-                                       manifest["content"], manifest["needs"]),
-             f"{where}: key does not match its extractor, parameters, content, and needs")
+                                       manifest["content"], manifest["needs"], region),
+             f"{where}: key does not match its extractor, parameters, content, needs, and region")
     _require(isinstance(manifest["outputs"], dict), f"{where}: outputs")
     for name, output in manifest["outputs"].items():
         _require(isinstance(output, dict) and output.get("kind") in KINDS, f"{where}: output {name}")
@@ -628,6 +686,18 @@ class Entry:
     """One complete entry of the bank."""
     path: Path
     manifest: dict[str, Any]
+
+    @property
+    def region(self) -> dict[str, int] | None:
+        """The region a region entry was made over, or None for whole content."""
+        return self.manifest.get("region")
+
+    @property
+    def offset(self) -> float:
+        """Seconds to add to this entry's times to place them on its content's
+        timeline: a region entry's outputs are on its cut's (ADR 0112)."""
+        region = self.region
+        return 0.0 if region is None else region["start"] / region["rate"]
 
     def output(self, name: str) -> dict[str, Any]:
         if name not in self.manifest["outputs"]:
@@ -811,6 +881,120 @@ class Bank:
         if feature is None:
             return self.entry(content, extractor_id), None
         return self.entry_from(content, feature, extractor_id), feature
+
+
+# -- regions and requests (ADR 0112) -------------------------------------------
+#
+# Beside `Bank.entry`, which finds the whole-content entry (or, in a view made
+# by `Catalog.within`, one region's): `covering` answers what covers a span,
+# and a bank request asks the scheduler for a key nothing holds yet.
+
+def covering(reader: Bank, content: str, extractor_id: str, start: int, end: int, rate: int) -> Entry | None:
+    """The entry of the installed extractor that covers `[start, end)` of this
+    content (samples at `rate`): the whole-content entry, else a region entry
+    whose region contains the span and whose key is the one the installed
+    extractor, parameters, and needs give that region (so an entry of another
+    version is never served), the narrowest first. None when nothing covers
+    it: the span is then a request. Region entries are never stitched."""
+    _require(isinstance(rate, int) and rate > 0 and 0 <= start < end, "a span needs 0 <= start < end at a rate")
+    whole = reader.entry(content, extractor_id)
+    if whole is not None:
+        return whole
+    directory = derived.directory(reader.root, content) / "bank" / extractor_id
+    try:
+        names = sorted(child.name for child in directory.iterdir() if child.is_dir())
+    except FileNotFoundError:
+        return None
+    found: list[Entry] = []
+    for name in names:
+        entry = read_entry(directory / name)
+        if entry is None or entry.region is None or not region_contains(entry.region, start, end, rate):
+            continue
+        current = reader.catalog.within(content, entry.region).keys(content, [extractor_id], reader.parameters)
+        if current[extractor_id] == entry.manifest["key"]:
+            found.append(entry)
+    if not found:
+        return None
+    return min(found, key=lambda e: (e.region["end"] - e.region["start"]) / e.region["rate"])
+
+
+def request_path(root: Path, key: str) -> Path:
+    """Where the request for one key is filed: `requests/<key hex>.json`."""
+    if not isinstance(key, str) or not KEY.fullmatch(key):
+        raise BankError(f"not an entry key: {key!r}")
+    return Path(root) / REQUESTS / (key.removeprefix("sha256:") + ".json")
+
+
+def check_request(request: Any, where: str = "bank request") -> dict[str, Any]:
+    """A bank request as `ask` writes it; the scheduler refuses another shape."""
+    fields = {"contract", "key", "content", "extractor", "region", "feature", "asked_by"}
+    _require(isinstance(request, dict) and request.get("contract") == BANK_REQUEST_CONTRACT,
+             f"{where}: contract must be {BANK_REQUEST_CONTRACT}")
+    _require(set(request) == fields, f"{where}: fields must be {sorted(fields)}")
+    _require(isinstance(request["key"], str) and KEY.fullmatch(request["key"]) is not None, f"{where}: key")
+    _require(derived.is_digest(request["content"]), f"{where}: content")
+    extractor = request["extractor"]
+    _require(isinstance(extractor, dict) and set(extractor) == {"id", "version"}
+             and isinstance(extractor["id"], str) and ID.fullmatch(extractor["id"]) is not None
+             and isinstance(extractor["version"], str) and VERSION.fullmatch(extractor["version"]) is not None,
+             f"{where}: extractor is {{id, version}}")
+    if request["region"] is not None:
+        check_region(request["region"], f"{where}: region")
+    _require(request["feature"] is None or (isinstance(request["feature"], str)
+                                            and FEATURE.fullmatch(request["feature"]) is not None),
+             f"{where}: feature is null or <extractor>/<output>")
+    _require(isinstance(request["asked_by"], str) and 0 < len(request["asked_by"]) <= 200, f"{where}: asked_by")
+    return request
+
+
+def ask(reader: Bank, content: str, extractor_id: str, asked_by: str, region: Mapping[str, int] | None = None,
+        feature: str | None = None) -> tuple[Path, str, bool]:
+    """Ask for the entry the installed extractor would make of this content
+    (or of `region` of it): write a bank request named by that key, unless
+    one is there. Returns its path, the key, and whether this call wrote it.
+    Asking again is the same file, and the first asker's request stands.
+    `feature` names the file feature measured when the content is a preferred
+    input (the vocal stem `melody` measures), for the scheduler to find it."""
+    catalog = reader.catalog.within(content, region)
+    parameters = reader.parameters if feature is None else catalog.overrides_for(feature, reader.parameters)
+    key = catalog.keys(content, [extractor_id], parameters)[extractor_id]
+    extractor = reader.catalog[extractor_id]
+    request = check_request({"contract": BANK_REQUEST_CONTRACT, "key": key, "content": content,
+                             "extractor": {"id": extractor.id, "version": extractor.version},
+                             "region": None if region is None else check_region(region), "feature": feature,
+                             "asked_by": asked_by})
+    path = request_path(reader.root, key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.stem}.{os.getpid()}.{id(request):x}.partial")
+    try:
+        temporary.write_bytes(canonical(request))
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            return path, key, False
+        return path, key, True
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def requests(root: Path) -> list[dict[str, Any]]:
+    """Every bank request filed, in key order; one whose file is damaged or
+    misnamed is refused, not skipped (the scheduler would otherwise lose it)."""
+    directory = Path(root) / REQUESTS
+    try:
+        paths = sorted(p for p in directory.iterdir() if p.suffix == ".json" and not p.name.startswith("."))
+    except FileNotFoundError:
+        return []
+    found = []
+    for path in paths:
+        try:
+            request = check_request(json.loads(path.read_text(encoding="utf-8")), str(path))
+        except ValueError as exc:
+            raise BankError(f"{path}: unreadable: {exc}") from exc
+        if request_path(root, request["key"]) != path:
+            raise BankError(f"{path} holds the request for {request['key']}, not its own name")
+        found.append(request)
+    return found
 
 
 def environment_root() -> Path | None:

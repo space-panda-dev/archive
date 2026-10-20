@@ -5,7 +5,7 @@
     extract.py run <extractor|all> --content <file> [--digest sha256:<hex>] [--media-type <type>]
                    --bank <dir> [--from <extractor>/<output>] [--jobs <n>] [--config <file>]
                    [--program <name>=<path>]... [--extractors <dir>]... [--timeout <seconds>] [--dry-run]
-                   [--no-prefer]
+                   [--no-prefer] [--region <start>:<end>:<rate>]
 
 `run` resolves what the named extractor needs as a graph over the bank, runs
 only the extractors whose entries are missing, each once, upstream first and
@@ -50,6 +50,16 @@ makes the feature, and an extractor run only because another needs it always
 measures the content. `--no-prefer` measures the content regardless.
 `Bank.default_entry` reads back what this made.
 
+With `--region <start>:<end>:<rate>` (samples at the content's stream rate),
+the run is limited to that region of the content (ADR 0112): the runner cuts
+it once to a FLAC file with pinned arguments, checks the cut holds exactly
+that many samples at that rate, and runs every extractor over the cut as over
+any content. Entries are region entries (`archive-feature-bank-entry/2`,
+keyed by `archive-feature-bank-key/2`), filed under the content's directory
+with the region and the cut's digest; an extractor's needs are made over the
+same region. Their times are on the cut's timeline; a reader adds `start`.
+A stem made over a region is content of its own, measured whole.
+
 The runner uses only Python's standard library. It never reads or writes an
 archive and proposes nothing: features are not claims.
 """
@@ -79,6 +89,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bank  # noqa: E402
 
 RUNNER = {"name": "archive-enrich-extract", "version": "1"}
+CUT_MEDIA_TYPE = "audio/flac"
 LOG_TAIL = 4000
 # After SIGTERM, how long an extractor's process group has before SIGKILL (as Spool's workers wait).
 KILL_GRACE = 5.0
@@ -285,6 +296,57 @@ def place_entry(output_dir: Path, manifest: dict[str, Any], final: Path) -> bool
     return True
 
 
+def parse_region(text: str) -> dict[str, int]:
+    """`<start>:<end>:<rate>`, in samples at the content's stream rate."""
+    parts = text.split(":")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        raise RunError(f"--region takes <start>:<end>:<rate> in samples, not {text!r}")
+    return bank.check_region({"start": int(parts[0]), "end": int(parts[1]), "rate": int(parts[2])}, "--region")
+
+
+def cut_arguments(source: Path, region: dict[str, int], target: Path) -> list[str]:
+    """The pinned ffmpeg arguments of a region's cut: the first audio stream,
+    trimmed by sample, as bit-exact FLAC without metadata, so cutting again
+    gives the same bytes on the same ffmpeg."""
+    return ["-nostdin", "-hide_banner", "-nostats", "-loglevel", "error", "-i", str(source), "-map", "0:a:0",
+            "-af", f"atrim=start_sample={region['start']}:end_sample={region['end']},asetpts=PTS-STARTPTS",
+            "-map_metadata", "-1", "-fflags", "+bitexact", "-flags:a", "+bitexact", "-c:a", "flac",
+            "-compression_level", "5", "-f", "flac", "-y", str(target)]
+
+
+def flac_stream_info(path: Path) -> tuple[int, int]:
+    """A FLAC file's sample rate and total samples per channel, from its
+    STREAMINFO block."""
+    with open(path, "rb") as handle:
+        head = handle.read(42)
+    if len(head) < 42 or head[:4] != b"fLaC" or head[4] & 0x7F != 0:
+        raise RunError(f"{path} is not a FLAC file that begins with its STREAMINFO")
+    packed = int.from_bytes(head[18:26], "big")
+    return packed >> 44, packed & ((1 << 36) - 1)
+
+
+def cut_region(ffmpeg: str, source: Path, region: dict[str, int], target: Path,
+               timeout: float | None = None) -> str:
+    """Cut a region of the content to `target` and return the cut's digest.
+    A region past the content's end, or at another rate than the stream's,
+    is refused rather than cut short."""
+    try:
+        completed = subprocess.run([ffmpeg, *cut_arguments(source, region, target)], capture_output=True,
+                                   text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RunError(f"the region could not be cut: {exc}") from exc
+    if completed.returncode != 0:
+        raise RunError(f"the region could not be cut: ffmpeg exited {completed.returncode}: "
+                       f"{completed.stderr.strip()[-300:]}")
+    rate, samples = flac_stream_info(target)
+    if rate != region["rate"]:
+        raise RunError(f"the region is at {region['rate']} Hz but the content's first audio stream is at {rate} Hz")
+    if samples != region["end"] - region["start"]:
+        raise RunError(f"the region holds {region['end'] - region['start']} samples but the cut holds {samples}; "
+                       f"it runs past the content's end")
+    return bank.file_digest(target)
+
+
 class Run:
     """One `run`: the content, the catalog, the bank, and what happened."""
 
@@ -301,6 +363,8 @@ class Run:
         self.optional = optional
         self.lock = threading.Lock()
         self.scratch: Path | None = None
+        # A region run's cut and its digest, made once before the first extractor runs.
+        self.cut: tuple[Path, str] | None = None
 
     # -- the content's digest --------------------------------------------
 
@@ -311,6 +375,29 @@ class Run:
 
     def directory_digest(self) -> str:
         return self.filed_under or self.content_digest()
+
+    @property
+    def region(self) -> dict[str, int] | None:
+        """The region of the content this run is limited to (ADR 0112), from
+        the catalog's view (`Catalog.within`); None for the whole content."""
+        if self.catalog.region is None:
+            return None
+        return self.catalog.region_of(self.content_digest())
+
+    def input_media_type(self) -> str:
+        return CUT_MEDIA_TYPE if self.region is not None else self.media_type
+
+    def make_cut(self) -> None:
+        """Cut the region once, into this run's scratch directory."""
+        with self.lock:
+            if self.cut is not None or self.region is None:
+                return
+            assert self.scratch is not None
+            ffmpeg = self.programs.get("ffmpeg") or shutil.which("ffmpeg")
+            if ffmpeg is None:
+                raise RunError("a region run cuts with ffmpeg; pass --program ffmpeg=<path>")
+            target = self.scratch / "cut.flac"
+            self.cut = (target, cut_region(ffmpeg, self.content, self.region, target, self.timeout))
 
     def verify_digest(self) -> None:
         """Hash the content once, before anything is filed under its digest."""
@@ -332,8 +419,8 @@ class Run:
         unusable: dict[str, str] = {}
         for extractor_id in order:
             extractor = self.catalog[extractor_id]
-            if not extractor.accepts(self.media_type):
-                unusable[extractor_id] = f"does not accept {self.media_type}"
+            if not extractor.accepts(self.input_media_type()):
+                unusable[extractor_id] = f"does not accept {self.input_media_type()}"
             elif self.optional and (missing := unconfigured(extractor, self.programs)):
                 unusable[extractor_id] = (f"runs ${{{missing}}}, which is not configured here; "
                                           f"pass --program {missing}=<path> to run it")
@@ -365,9 +452,15 @@ class Run:
                 "extractor": {"id": extractor.id, "version": extractor.version},
                 "key": keys[extractor_id],
                 "parameters": self.catalog.parameters(extractor_id, self.parameters),
-                "input": {"path": str(self.content.resolve()), "digest": self.content_digest(),
-                          "media_type": self.media_type},
+                "input": self.input(),
                 "needs": needs, "output_dir": str(output_dir)}
+
+    def input(self) -> dict[str, str]:
+        """What an extractor reads: the content, or a region run's cut."""
+        if self.region is not None:
+            assert self.cut is not None
+            return {"path": str(self.cut[0].resolve()), "digest": self.cut[1], "media_type": CUT_MEDIA_TYPE}
+        return {"path": str(self.content.resolve()), "digest": self.content_digest(), "media_type": self.media_type}
 
     # -- running one extractor ---------------------------------------------
 
@@ -419,9 +512,12 @@ class Run:
             manifest = {"contract": bank.ENTRY_CONTRACT, "key": key,
                         "extractor": {"id": extractor.id, "version": extractor.version},
                         "parameters": request["parameters"], "content": self.content_digest(),
-                        "media_type": self.media_type,
+                        "media_type": self.input_media_type(),
                         "needs": {need: keys[need.split("/", 1)[0]] for need in extractor.needs},
                         **checked, "started_at": started, "ended_at": now(), "runner": RUNNER}
+            if self.region is not None:
+                assert self.cut is not None
+                manifest.update(contract=bank.REGION_ENTRY_CONTRACT, region=self.region, cut=self.cut[1])
             bank.check_entry(manifest, f"{extractor_id} entry")
             if not place_entry(output_dir, manifest, final):
                 return {"status": "hit", "key": key, "entry": str(final), "raced": True}
@@ -492,13 +588,17 @@ class Run:
                              "requires": extractor.manifest.get("requires", []),
                              "after": [keys[s] for s in self.catalog.upstream(extractor_id)],
                              "parameters": self.catalog.parameters(extractor_id, self.parameters),
-                             "input": {"digest": self.content_digest(), "media_type": self.media_type,
-                                       **({"filed_under": self.filed_under} if self.filed_under else {})}}}
+                             "input": {"digest": self.content_digest(), "media_type": self.input_media_type(),
+                                       **({"filed_under": self.filed_under} if self.filed_under else {}),
+                                       **({"region": self.region} if self.region is not None else {})}}}
             return self.answer(order, outcome)
         if pending:
             (self.root / "tmp").mkdir(parents=True, exist_ok=True)
             self.scratch = Path(tempfile.mkdtemp(prefix=f"run-{os.getpid()}-", dir=self.root / "tmp"))
         try:
+            if pending and self.region is not None:
+                self.verify_digest()
+                self.make_cut()
             with ThreadPoolExecutor(max_workers=jobs) as pool:
                 running: dict[Future, str] = {}
                 while pending or running:
@@ -532,6 +632,10 @@ class Run:
                   "extractors": {e: outcome[e] for e in order}}
         if self.filed_under is not None:
             answer["filed_under"] = self.filed_under
+        if self.region is not None:
+            answer["region"] = self.region
+            if self.cut is not None:
+                answer["cut"] = self.cut[1]
         return answer
 
 
@@ -699,6 +803,7 @@ def main(argv: list[str] | None = None) -> int:
     running.add_argument("--from", dest="source", metavar="EXTRACTOR/OUTPUT")
     running.add_argument("--no-prefer", action="store_true",
                          help="measure the content itself, even where an extractor prefers a feature of it")
+    running.add_argument("--region", help="limit the run to [start, end) samples at rate: <start>:<end>:<rate>")
     arguments = parser.parse_args(argv)
     try:
         config = load_config(arguments.config)
@@ -730,6 +835,11 @@ def main(argv: list[str] | None = None) -> int:
             catalog[target]
         root = Path(arguments.bank).resolve()
         media_type = arguments.media_type or media_type_of(content)
+        if arguments.region is not None:
+            region = parse_region(arguments.region)
+            if arguments.digest is None:
+                arguments.digest = bank.file_digest(content)
+            catalog = catalog.within(arguments.digest, region)
         if arguments.source is not None:
             if everything:
                 # Everything that can measure the feature; not what makes it,

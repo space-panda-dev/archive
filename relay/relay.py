@@ -99,6 +99,7 @@ CONFIG_FIELDS = {
     "writes", "role", "origins", "callers", "query_timeout_seconds", "max_rows",
     "query_workers", "cache_bytes", "media_root", "circle", "bank_root", "bank_parameters",
     "practice_features", "renderers", "exporters", "render_timeout_seconds", "export_timeout_seconds",
+    "bank_scheduler",
 }
 # Answers smaller than this go out uncompressed: gzip would not pay for itself.
 GZIP_MIN_BYTES = 1024
@@ -134,6 +135,10 @@ class Config:
     bank_root: Path | None = None
     bank_parameters: dict[str, Any] | None = None
     practice_features: tuple[str, ...] = ()
+    # Whether a scheduler (`enrich backfill --follow`) makes the bank's
+    # requests (ADR 0112): a feature not made is then asked for and answered
+    # as queued; without one it stays not made.
+    bank_scheduler: bool = False
     renderers: dict[str, Any] = field(default_factory=dict)
     exporters: dict[str, Any] = field(default_factory=dict)
     render_timeout_seconds: float = 3600.0
@@ -174,6 +179,10 @@ def load_config(path: Path) -> Config:
         raise ValueError("practice_features must list feature names, <extractor>/<output>")
     if "bank_parameters" in data and not isinstance(data["bank_parameters"], dict):
         raise ValueError("bank_parameters must map extractors to their parameters")
+    if not isinstance(data.get("bank_scheduler", False), bool):
+        raise ValueError("bank_scheduler must be true or false")
+    if data.get("bank_scheduler") and "bank_root" not in data:
+        raise ValueError("bank_scheduler needs a bank_root whose requests it makes")
     practice.Features(Path(data["bank_root"]) if "bank_root" in data else None, tuple(features),
                       data.get("bank_parameters"))
     renderers = practice.check_renderers(data.get("renderers"), "renderers")
@@ -199,6 +208,7 @@ def load_config(path: Path) -> Config:
         bank_root=Path(data["bank_root"]) if "bank_root" in data else None,
         bank_parameters=data.get("bank_parameters"),
         practice_features=tuple(features),
+        bank_scheduler=data.get("bank_scheduler", False),
         renderers=renderers,
         exporters=exporters,
         render_timeout_seconds=_seconds(data, "render_timeout_seconds", 3600.0),

@@ -187,6 +187,13 @@ scheduler has added it.
   is the same file; the relay answers `queued`, never an empty result.
   Measure on shadow copies how much of the audio song regions cover, with
   and without detector spans.
+  *Built (branch `bulk/triage`):* region keys and entries with their
+  validator, `extract.py run --region`, `bank.covering`, bank requests
+  (`bank.ask`, `bank.requests`), `enrich/regions.py` (span precedence,
+  `regions_for`, `plan` per mode from recorded costs), and the relay's
+  `bank_scheduler` with `queued` and `feature_queued`. *Left:* `remote.py`
+  task `/2`; requests from `enrich propose` and region offsets in the
+  proposers; the coverage measurement on shadow copies.
 - **melody.** Decide before `melody`'s mix pass, cheaply, whether the vocal
   stem will fall short, so the extractor runs once rather than twice (the
   profile: the vocal pass falls short and the 151 s mix pass follows it on
