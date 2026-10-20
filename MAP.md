@@ -172,6 +172,10 @@ Rules: enrichment never changes its inputs (INV-9); every claim carries its
 run and provenance (ADR 0064, [provenance](docs/provenance.md)); an
 extractor's version changes whenever its outputs can (ADR 0074); stems are
 content (ADR 0075); preferred inputs ADR 0076.
+Decided, not built: stand-in stems by a measured tolerance (ADR 0090's
+amendment) and bulk import (`enrich backfill`, region entries, bank
+requests, the cost gate; ADR 0112); the build work is step 0 of
+[docs/backlog.md](docs/backlog.md).
 Find: extractors in `enrich/extractors/<id>/extractor.json`; SHIPPED digest
 pins in `enrich/test_bank.py` (`SHIPPED = {`, line 115); byte format in
 [docs/feature-bank.md](docs/feature-bank.md) (444; shipped table at "The
