@@ -130,6 +130,16 @@ program in any language, with a manifest, that *extracts* features into the
 bank under the extractor contract. (Proposed:
 [ADR 0073](decisions/0073-feature-bank.md),
 [ADR 0074](decisions/0074-extractor-contract.md).)
+**Streaming mode**: an extractor run over an unbounded stream of audio
+instead of one content, under the same manifest, id and version; a way to
+*extract*, never writing the bank. Its "frames" are audio sample frames (one
+sample per channel), not the `frames` extractor or its analysis frames. A
+**stream event** is one line of streamed output: a row of a series, an item
+of an events or spans output, or a scalar's running estimate. It is broader
+than the `events` feature kind, which one stream event may carry, and it is
+never admitted. The **live runner** (`enrich/live.py`) runs streaming
+extractors and live tools over one stream for a rehearsal node and proposes
+nothing. ([ADR 0108](decisions/0108-live-analysis.md))
 
 ## Deletion
 
@@ -459,7 +469,11 @@ release nor a session. Its members are asserted by **membership claims**,
 each optionally with a **slot** (a pad or bank position); a sample pack is a
 release. A **source-path claim** keeps the path a file was found at, as
 history, never as a location. A **bank grammar** reads one sampler's card
-layout. ([ADR 0100](decisions/0100-packs-and-collections.md))
+layout. ([ADR 0100](decisions/0100-packs-and-collections.md)) A **pad map** is a
+claim on a sampler-bank collection saying, as one device was set up at one
+time, which sample each pad holds, which bank it is in, what MIDI note fires
+it, and how it plays; a proposer reads a session's MIDI through it into
+lineage. ([ADR 0111](decisions/0111-pad-maps.md))
 
 **DAW project**: an Entity of kind `daw_project`, one production across its
 saves. A **project snapshot** is a claim that a **snapshot pack** (a
@@ -510,12 +524,17 @@ or a MIDI clock, and asserts its own meter claim. A matcher run's **prior** is
 the set list it used to widen its candidates. ([ADR 0106](decisions/0106-set-lists-and-clocks.md))
 
 **MIDI stream**: a claim giving a MIDI file a sample timeline and bounds,
-beside `audio_stream`. **Rehearsal node**: a client program, like the review
-app, that records at a rehearsal and holds the operator's **live responses**
+beside `audio_stream`. **Rehearsal node**: a client program, a sibling
+application in its own repository like the review app, never Archive code
+([ADR 0109](decisions/0109-rehearsal-node.md)), that records at a rehearsal and holds the operator's **live responses**
 (ordinary claim drafts) in an **outbox** of **response groups** anchored to a
 recording not yet admitted; the importer flushes it. A **practice take** is an
 Artifact with a capture origin and lineage to what it was played over.
-([ADR 0107](decisions/0107-multi-device-and-live.md))
+([ADR 0107](decisions/0107-multi-device-and-live.md)) A **clock track** is the
+first track of a rehearsal node's MIDI capture, carrying the tempo map of the
+node's clock (tempo, time signature and start and stop markers) in MIDI's own
+terms; the clock's meter claim is read from it.
+([ADR 0110](decisions/0110-shared-clock.md))
 
 ## Naming discipline
 

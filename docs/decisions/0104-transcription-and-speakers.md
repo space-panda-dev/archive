@@ -1,7 +1,8 @@
 # 0104. Transcripts come from local ASR runs, and speaker spans name consenting people
 
 Status: accepted (operator, 2026-10-19); proposed in wave 2 and its open
-questions settled the same day
+questions settled the same day; its last open question settled 2026-10-19
+(R7.14)
 
 Talk is half of what a rehearsal holds that the music does not: "take it
 from the bridge", "that was the one", a count, an argument about the ending.
@@ -298,7 +299,7 @@ records the caller, under R5.3's condition (the operator asserted or
 affirmed the claim, or it arrived in the same admission as the content). A
 limit only narrows (INV-26); being named in talk makes nobody a participant.
 A machine claim never arrives with its content, so in practice the
-operator's affirmation is what makes a span select; see Still open 1.
+operator's affirmation is what makes a span select (Settled 13).
 
 ### World and the relay
 
@@ -464,17 +465,11 @@ operator's affirmation is what makes a span select; see Still open 1.
     `talk` in views; policy chooses which content (R6.16).
 12. **Can a person assert speaker spans?** Not in version 1; a span
     annotation `note` covers it (R6.16).
-
-## Still open
-
-1. **What meets R5.3's condition for a speaker span.** Speaker spans are
-   machine claims and never arrive in the same admission as their content,
-   so under R6.11's condition a span selects only once the operator affirms
-   the claim (or the span). *Recommend:* accept that literally; a person who
-   is named but not yet affirmed can still limit the content through their
-   participation or a part credit they assert themselves (R4.3, R5.2), so
-   nothing is lost, and the operator's affirmation keeps a machine's guess
-   from selecting.
-
-   The operator accepted this record with the question still open; it is
-   kept in the [open questions](../open-questions.md#claims-and-provenance).
+13. **What meets R5.3's condition for a speaker span.** Settled after
+    acceptance, by its recommendation (R7.14): speaker spans are machine
+    claims and never arrive in the same admission as their content, so a
+    machine speaker span selects content for a person's limits only after
+    the operator affirms it (the claim or the span). A person named but not
+    yet affirmed can still limit the content through their participation or
+    a part credit they assert themselves (R4.3, R5.2), and the operator's
+    affirmation keeps a machine's guess from selecting.

@@ -303,15 +303,6 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
   may limit because the content records them (a session their participation
   names, its parts, and what their credits are about), but each limit still
   names its subjects.
-- What meets R5.3's condition for a speaker span
-  ([ADR 0104](decisions/0104-transcription-and-speakers.md))? A speaker span
-  selects content for the named person's limits under the condition that the
-  claim was asserted or affirmed by the operator or arrived in the same
-  admission as the content. Speaker spans are machine claims that never
-  arrive with their content, so a span would select only once the operator
-  affirms it (the claim or the span). Recommended: accept that literally; a
-  person named but not yet affirmed can still limit the content through
-  their own participation or part credit.
 - Is [ADR 0085](decisions/0085-documents-lyrics-rights.md)'s rights permit table right: `InC` held by the operator permits
   distribution, `NoC-US` distribution, `NoC-NC` open, everything else (and no
   rights claim) service, and the strictest claim wins whoever asserted it?

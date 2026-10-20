@@ -1,7 +1,9 @@
 # 0107. Many devices capture one moment, MIDI is a source, and live responses wait on the node
 
 Status: accepted (operator, 2026-10-19); proposed in wave 2 and its open
-questions settled the same day
+questions settled the same day; amended 2026-10-19 by
+[ADR 0111](0111-pad-maps.md) (pad notes are unpitched when a pad map is
+named; accepted by the operator, 2026-10-19)
 
 ## Context
 
@@ -545,3 +547,15 @@ advice and need no contract.
 9. **Admitted files as session parts.** A parts-only path, `capture parts
    --into`, lists already-admitted Artifacts as a source of a session
    (R6.17).
+
+## Amendment, 2026-10-19: pad notes are unpitched when a pad map is named
+
+Made on the acceptance of [ADR 0111](0111-pad-maps.md) (R7.11), which gives
+the reasons. The text above is left as it was accepted; where it disagrees
+with this section, this section holds. The notes proposer
+(`enrich/midi_notes.py`) may be run naming a pad map revision, which its
+`run` then lists in `used`. Notes on a pad's trigger in that map become
+`unpitched`, with `part` the pad's bank and pad rather than the track's name
+or channel, so a pad struck on channel 1 no longer reads as a pitch;
+key-range pads, played chromatically across keys, stay pitched. Without a
+named pad map the proposer reads MIDI as above.
