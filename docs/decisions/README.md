@@ -114,3 +114,4 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0097](0097-rights-by-use.md) | Rights say which use they permit, and a clearance permits one use (proposed) |
 | [0098](0098-content-lineage.md) | Content lineage: an Artifact can say what it was made from (proposed) |
 | [0099](0099-samples.md) | A sample is a selection with a stem, a recipe and kinds, rendered on demand (proposed) |
+| [0100](0100-packs-and-collections.md) | Sample packs are releases, libraries are collections, and source paths are kept (proposed) |
