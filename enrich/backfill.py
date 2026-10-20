@@ -1328,7 +1328,10 @@ class Proposals:
     tier is all made (every recording usable), then in batches as background
     units land, at most every `propose_every_seconds`; one at a time, each in
     a thread of its own so the pool goes on. With no proposers, a proposal
-    is nothing, and usable is when the fast tier is made."""
+    is nothing, and usable is when the fast tier is made. A usable proposal
+    that fails makes nothing usable: the background goes on, and the next
+    proposal that succeeds (a batch, at most every `propose_every_seconds`,
+    or the last) is the usable one."""
 
     def __init__(self, steps: "Steps", args: argparse.Namespace, note: Callable[..., None], started: float,
                  every: float, enabled: bool):
@@ -1341,6 +1344,7 @@ class Proposals:
         self.background_made = False
         self.last = time.monotonic()
         self.usable_s: float | None = None
+        self.usable_pending = False  # the usable proposal failed: the next good one is usable
         self.lock = threading.Lock()
 
     def settled(self, job: Job) -> None:
@@ -1370,7 +1374,7 @@ class Proposals:
             return
         if self.fast_made and not self.fast_left():
             self.begin("usable")
-        elif self.background_made and time.monotonic() - self.last >= self.every:
+        elif (self.background_made or self.usable_pending) and time.monotonic() - self.last >= self.every:
             self.begin("background")
 
     def begin(self, kind: str) -> None:
@@ -1384,6 +1388,7 @@ class Proposals:
         self.thread.start()
 
     def propose(self, kind: str) -> None:
+        failures = self.steps.failures
         try:
             if self.enabled:
                 self.steps.propose(f"propose --all ({'usable' if kind == 'usable' else 'background batch'})")
@@ -1393,7 +1398,12 @@ class Proposals:
             with self.lock:
                 self.last = time.monotonic()
                 self.kind = None
-                if kind == "usable":
+                good = self.steps.failures == failures
+                if (kind == "usable" or self.usable_pending) and not good:
+                    self.usable_pending = True
+                    self.note(step="usable proposal failed", s=round(time.monotonic() - self.started, 1))
+                elif kind == "usable" or self.usable_pending:
+                    self.usable_pending = False
                     first = self.usable_s is None
                     if first:
                         self.usable_s = round(time.monotonic() - self.started, 1)
@@ -1625,7 +1635,8 @@ def main(args: argparse.Namespace, env: dict[str, str] | None = None,
         steps.world()
     failures += steps.failures
     finished = round(time.monotonic() - started, 1)
-    usable = proposals.usable_s if proposals.usable_s is not None else finished if commit else None
+    usable = proposals.usable_s if proposals.usable_s is not None or proposals.usable_pending \
+        else finished if commit else None
     note(step="done", failures=failures, mode=args.mode, commit=commit, s=finished,
          time_to_usable_s=usable, time_to_done_s=finished if commit else None)
     return 1 if failures else 0

@@ -165,6 +165,35 @@ class SlotsAndThreads(unittest.TestCase):
         self.assertFalse(schedule(expensive_above=2.0).expensive("stems"))
 
 
+class UsableProposal(unittest.TestCase):
+    """A usable proposal that fails makes nothing usable; the next good one does."""
+
+    def test_a_failed_usable_proposal_is_not_usable_and_the_next_good_one_is(self) -> None:
+        class Steps:
+            failures, calls = 0, []
+
+            def propose(self, label: str) -> None:
+                self.calls.append(label)
+                if len(self.calls) == 1:
+                    self.failures += 1  # `enrich propose` exited 1, as `Steps.run` counts it
+
+        notes: list[dict] = []
+        steps = Steps()
+        args = argparse.Namespace(world_store=None)
+        proposals = backfill.Proposals(steps, args, lambda **e: notes.append(e), time.monotonic(), 0.0, True)
+        proposals.begin("usable")
+        proposals.finish()
+        self.assertEqual([n["step"] for n in notes], ["usable proposal failed"])
+        self.assertIsNone(proposals.usable_s)
+        self.assertFalse(proposals.hold_background())  # the background is not held for ever
+        proposals.tick()  # the next proposal, at the background interval, though no background unit landed
+        proposals.finish()
+        self.assertEqual(steps.calls, ["propose --all (usable)", "propose --all (background batch)"])
+        self.assertEqual([n["step"] for n in notes], ["usable proposal failed", "usable"])
+        self.assertIsNotNone(proposals.usable_s)
+        self.assertFalse(proposals.usable_pending)
+
+
 class Plans(unittest.TestCase):
     def plan(self, recordings, mode, planner=None, sched=None, spool=False):
         sched = sched or schedule()
