@@ -657,6 +657,75 @@ proposer fails the command once the proposers before it have finished: what
 they made is kept, and stderr's `{"status": "failed", "detail", ...}` lists
 them.
 
+## `enrich backfill`
+
+```sh
+enrich/enrich.py backfill --archive <dir> --bank <root> [--config <file>] [--mode songs|eager | --songs | --eager]
+    [--cores <n>] [--memory-gb <n>] [--spool "<spool> --dir <dir>"] [--commit] [--retry-failed]
+    [--proposers <name,...>] [--world-store <dir> [--world-python <python>] [--conformance-python <python>]]
+    [--log <file>] [--staging <annex>] [--door door] [--archive-command archive]
+```
+
+Fills the feature bank for every recording and proposes what it holds
+([ADR 0112](../docs/decisions/0112-bulk-import-at-scale.md); the code is
+`backfill.py`). It is a dry run unless `--commit`. With `--commit` it
+probes the audio and video Artifacts `propose --all` lists as unprobed,
+plans, runs the plan, proposes `--all` (dry run, commit, and a rerun that
+must answer `unchanged`), and, with `--world-store`, refreshes World and
+checks its conformance. A dry run probes and proposes with `--dry-run` and
+runs no extractor.
+
+**The plan.** For every Artifact with an audio stream claim whose content
+is here, each unit of the configuration (an extractor on the content, or
+`--from` a file feature of it; by default the 0.0.10 set: `stems`,
+`rhythm`, `tonal`, `chords-jiang`, `chords-chordino`, `structure`,
+`melody`, then `tonal` on `stems/bass`, `f0-pesto` on both stems and
+`notes-basic-pitch` on `stems/bass`) that the bank lacks, read through
+`bank.Bank` as every reader reads it. The bank is the ledger: a rerun over
+an unchanged archive and bank plans nothing. A unit that failed before (its
+failure record is beside the entry) is held until `--retry-failed`; one
+whose program is not configured here is held and said to be. What
+measures a feature, or prefers one (`melody`), waits for the job that makes
+it.
+
+**Modes.** `eager` makes every unit of every recording. `songs` makes an
+expensive unit (recorded cost above `expensive_above`, 0.04 seconds per
+audio-second) only on recordings a song occurrence's selection takes a
+piece of, and leaves it and what measures its output for on demand on the
+rest; until region entries land, a recording with a song is made whole.
+
+**The pool.** Each extractor runs in copies of `threads` each (its own
+fixed `threads` parameter where it has one, as `chords-jiang` does), as
+many as the cores hold and bounded by `memory_gb` per copy (`layout`);
+every copy is an `extract.py run` of its own with `OMP_NUM_THREADS` and
+its kin set to its threads. The earliest ready job holds the queue when
+it does not fit, so narrow jobs never starve a wide one; jobs that make
+what others wait for (`stems`) go first.
+
+**Spool.** With `--spool`, a unit whose extractor is routed there
+(`"route": "spool"`) and needs no other feature is put with `remote.py put`
+and collected every `poll_seconds`; its dependents start once it is filed.
+A task the spool fails for good, or that could not be put, runs here; under
+`eager`, so does one no worker has taken within `local_when_away_seconds`
+(900; never under `songs`).
+
+**The configuration** is `extract.py`'s file; its optional `backfill`
+object holds `units` (a list of `[extractor]` or `[extractor, feature]`),
+`extractors` (per extractor `threads`, `memory_gb`, `cost`, `remote_cost`,
+`route`), `expensive_above`, `parallel_gain`, `poll_seconds`,
+`memory_reserve_gb`, and `local_when_away_seconds`. The recorded costs
+default to the backfill profile of 2026-10-19 on the x86-64 laptop. The
+runner ignores the object.
+
+**Output.** One JSON line per event on standard output (cut at 400
+characters) and, whole, appended to `--log`: the plan (jobs by unit, what
+is already made, held, and deferred, and the projection: audio hours,
+compute hours here and on workers, projected wall hours and seconds per
+audio-second), each job as it is `ran` or `failed`, and `made` (audio
+seconds made per wall second, CPU seconds per audio second by extractor).
+The last line is `done`. It exits 0 when nothing failed and 1 otherwise.
+Run it as a low-priority unit ([the shadow runbook](../docs/shadow-runbook.md#filling-the-feature-bank)).
+
 ## The adapter interface
 
 A new tool (a detector, a matcher) uses the adapter like this:

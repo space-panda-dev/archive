@@ -157,6 +157,7 @@ command, `rg -n '^##' enrich/README.md`).
 | `enrich/extract.py` | 756 | feature-bank runner: `main` (`list`, `run`), `run_default`, `run_from` |
 | `enrich/bank.py` | 819 | `Catalog` (326), `Bank` (704): the bank format |
 | `enrich/remote.py` | 494 | extractor runs through Spool: `put`, `work`, `collect` (ADR 0090) |
+| `enrich/backfill.py` | 836 | `enrich backfill` (ADR 0112): `plan`, `Planner.state` (reads the bank through `Bank`), `layout`/`copies` (slots and threads), `Runner` (the pool and the Spool fan-out); tests `enrich/test_backfill.py` |
 | `enrich/media.py`, `waveform.py`, `derived.py` | 193, 161, 62 | derived media (ADR 0069) |
 | `enrich/support.py` | 291 | test support: synthetic audio, scratch archives |
 | `enrich/extractors/<id>/` | | `extractor.json` + program; longest: `quality/quality.py` 1317, `tonal/tonal.py` 986, `structure/structure.py` 871, `rhythm/meter.py` 821 |
@@ -172,10 +173,12 @@ Rules: enrichment never changes its inputs (INV-9); every claim carries its
 run and provenance (ADR 0064, [provenance](docs/provenance.md)); an
 extractor's version changes whenever its outputs can (ADR 0074); stems are
 content (ADR 0075); preferred inputs ADR 0076.
-Decided, not built: stand-in stems by a measured tolerance (ADR 0090's
-amendment) and bulk import (`enrich backfill`, region entries, bank
-requests, the cost gate; ADR 0112); the build work is step 0 of
-[docs/backlog.md](docs/backlog.md).
+Bulk import (ADR 0112): `enrich backfill` is built over whole content;
+decided, not built: stand-in stems by a measured tolerance (ADR 0090's
+amendment), region entries, bank requests (`--follow`), and the cost gate;
+the build work is step 0 of [docs/backlog.md](docs/backlog.md).
+Pitfall: the backfill's job events are `ran`/`failed`; `done` is only its
+last line.
 Find: extractors in `enrich/extractors/<id>/extractor.json`; SHIPPED digest
 pins in `enrich/test_bank.py` (`SHIPPED = {`, line 115); byte format in
 [docs/feature-bank.md](docs/feature-bank.md) (444; shipped table at "The
