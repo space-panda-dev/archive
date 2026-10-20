@@ -191,6 +191,20 @@ class Served:
         path, described, key = found
         return FileAnswer(path, described["media_type"], f'"{key}/{output}"', f"{name} has not been made for this content")
 
+    def bank_file_keyed(self, digest: str, extractor: str, output: str, key: str, caller: Caller) -> FileAnswer:
+        """A served feature from the entry with this key: the whole entry or
+        a region entry (ADR 0112), as the listing names them."""
+        _digest(digest)
+        _key(key)
+        name = f"{extractor}/{output}"
+        self.features.served(name)
+        self.media_gate(digest, caller)
+        found = self.features.keyed(digest, name, key)
+        if found is None:
+            raise Refused("feature_not_made", f"the bank holds no current entry {key} with {name} for this content")
+        path, described, _ = found
+        return FileAnswer(path, described["media_type"], f'"{key}/{output}"', f"{name} has not been made for this content")
+
     def practice(self, digest: str, body: Any, caller: Caller) -> dict[str, Any]:
         _digest(digest)
         try:

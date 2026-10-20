@@ -262,6 +262,26 @@ class RegionRuns(unittest.TestCase):
         self.assertEqual(fixture.run("a", "--no-prefer")[0], 0)
         self.assertIsNone(bank.covering(fixture.reader(), fixture.digest, "a", RATE, 7 * RATE, RATE).region)
 
+    def test_a_region_view_reads_whole_entries_first_then_the_regions(self) -> None:
+        fixture = self.fixture()
+        self.assertEqual(fixture.run("b", "--region", f"{4 * RATE}:{9 * RATE}:{RATE}")[0], 0)
+        self.assertEqual(fixture.run("a", "--region", f"{RATE}:{4 * RATE}:{RATE}")[0], 0)
+        reader = fixture.reader()
+        region = {"start": 4 * RATE, "end": 9 * RATE, "rate": RATE}
+        self.assertEqual(bank.regions(reader, fixture.digest),
+                         [{"start": RATE, "end": 4 * RATE, "rate": RATE}, region])
+        view = bank.RegionView(reader, fixture.digest, region)
+        found = view.entry(fixture.digest, "b")
+        self.assertEqual((found.region, found.offset, found.shift(RATE), found.shift(2 * RATE)),
+                         (region, 4.0, 4 * RATE, 8 * RATE))
+        self.assertEqual(view.entry(fixture.digest, "a").region, region)  # its need, over the same region
+        self.assertIsNone(reader.entry(fixture.digest, "b"))  # the plain reader finds only whole entries
+        # Once a whole entry exists the view prefers it.
+        self.assertEqual(fixture.run("a", "--no-prefer")[0], 0)
+        self.assertIsNone(bank.RegionView(fixture.reader(), fixture.digest, region).entry(fixture.digest, "a").region)
+        # Other content is keyed whole, as the runner keys a stem made over a region.
+        self.assertIsNone(view.entry("sha256:" + "ab" * 32, "a"))
+
     def test_a_region_the_content_does_not_hold_is_refused(self) -> None:
         fixture = self.fixture()
         for region, message in ((f"{18 * RATE}:{21 * RATE}:{RATE}", "runs past the content's end"),

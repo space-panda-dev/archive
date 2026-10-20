@@ -17,6 +17,13 @@ that is not made is asked for: the relay files a bank request for the entry
 the installed extractors would make of the whole recording, and answers that
 it is queued, never an empty result (INV-24). The request is the only thing
 the relay writes in the bank, and asking again is the same file.
+
+A recording made under `enrich backfill --songs` has its stems as region
+entries, made over its song regions only (ADR 0112). Where a served feature
+has no whole entry, the listing names each current region entry's file with
+its region and the seconds its file starts at on the recording, a client
+fetches one by its entry's key, and a practice request may name that key.
+The whole entry is preferred wherever it exists.
 """
 
 from __future__ import annotations
@@ -119,6 +126,31 @@ class Features:
             raise Refused("feature_not_served", f"{name} is not a file")
         return entry.path / described["file"], described, entry.manifest["key"]
 
+    def regional(self, digest: str, name: str) -> list[tuple[Path, dict[str, Any], str, dict[str, int]]]:
+        """A served feature of this content in each current region entry
+        (ADR 0112), by region: file, description, key, and region."""
+        extractor, output = name.split("/", 1)
+        try:
+            entries = bank.region_entries(self.bank, digest, extractor)
+        except bank.BankError as exc:
+            raise Refused("internal_error", f"the feature bank could not be read: {exc}") from None
+        found = []
+        for entry in entries:
+            described = entry.manifest["outputs"].get(output)
+            if described is None or described.get("kind") != "file":
+                continue
+            found.append((entry.path / described["file"], described, entry.manifest["key"], dict(entry.region)))
+        return found
+
+    def keyed(self, digest: str, name: str, key: str) -> tuple[Path, dict[str, Any], str] | None:
+        """A served feature from the entry with this key: the whole entry,
+        or a current region entry; None when neither has that key."""
+        found = self.find(digest, name)
+        if found is not None and found[2] == key:
+            return found
+        return next(((path, described, at) for path, described, at, _ in self.regional(digest, name) if at == key),
+                    None)
+
     def ask(self, digest: str, extractor: str) -> str | None:
         """With a scheduler, ask for the extractor's entry of the whole
         recording and return its key; None without one."""
@@ -134,11 +166,15 @@ class Features:
         """Which configured features exist for this content; with a
         scheduler, those not made are asked for and listed as `queued`, each
         with the key its entry will have."""
-        features, missing, queued = [], [], []
+        features, missing, queued, regions = [], [], [], []
         for name in sorted(self.names):
             found = self.find(digest, name)
             if found is None:
                 missing.append(name)
+                for _, described, key, region in self.regional(digest, name):
+                    regions.append({"name": name, "media_type": described["media_type"], "bytes": described["bytes"],
+                                    "sha256": described["sha256"], "key": key, "region": region,
+                                    "offset_seconds": region["start"] / region["rate"]})
                 key = self.ask(digest, name.split("/", 1)[0])
                 if key is not None:
                     queued.append({"name": name, "key": key})
@@ -147,6 +183,8 @@ class Features:
             features.append({"name": name, "media_type": described["media_type"], "bytes": described["bytes"],
                              "sha256": described["sha256"], "key": key})
         answer = {"content": digest, "features": features, "missing": missing}
+        if regions:
+            answer["regions"] = regions
         if self.scheduler:
             answer["queued"] = queued
         return answer
@@ -160,7 +198,7 @@ class Features:
         extractor, key = request["stems"]["extractor"], request["stems"]["key"]
         inputs = {}
         for output in sorted(request["gains"]):
-            found = self.find(request["content"], f"{extractor}/{output}")
+            found = self.keyed(request["content"], f"{extractor}/{output}", key)
             if found is None and self.scheduler and self.ask(request["content"], extractor) == key:
                 return None
             if found is None or found[2] != key:

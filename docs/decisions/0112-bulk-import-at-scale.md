@@ -115,6 +115,21 @@ every span; otherwise any region entry whose region contains the span. A
 span that nothing covers is a request (below). Region entries are never
 stitched into a whole one.
 
+**Readers read regions as they read the whole** (2026-10-20). `bank.RegionView`
+reads one region of a recording: each lookup finds the whole entry first,
+else the entry made over that region, so cheap features made whole and
+expensive ones made over the region are read together; a stem made over a
+region is content of its own, measured whole, and its measures are placed on
+the region (`Entry.placed`, `Entry.offset`, `Entry.shift`). `enrich propose`
+runs a proposer per region (`bank.regions`) only where its whole read lacks a
+feature, one run per region whose settings name the region, its times placed
+by the region's start and clamped to it, so a song recording made under
+`--songs` gets the claims a whole-made one gets over that span. The relay's
+bank listing names each region entry's file with its region and
+`offset_seconds` (`regions`), serves it by entry key
+(`/media/{digest}/bank/{extractor}/{output}/{key}`), and a practice request
+may name that key. Whole entries are preferred wherever they exist.
+
 ### On demand: the first request queues it
 
 **A request is a file, named by the key it asks for.** When a reader finds

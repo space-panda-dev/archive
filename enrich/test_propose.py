@@ -21,6 +21,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import numpy
@@ -546,6 +547,154 @@ class FromTheBank(unittest.TestCase):
         self.assertIsNotNone(how["eighth_s"])
         self.assertEqual(how["counts"]["notes"], len(notes))
         self.assertEqual([f["feature"] for f in found.features][:2], ["f0-pesto/f0", "f0-pesto/level_db"])
+
+
+def fill_region_bank(directory: Path, content: Path, region: str) -> Path:
+    """The bank `enrich backfill --songs` leaves (ADR 0112): the cheap
+    extractors whole, the expensive ones and every measure of their stems
+    over one region, each by the real runner with `--region`."""
+    root = directory / "bank"
+    common = ["--content", str(content), "--bank", str(root)]
+    over = [*common, "--region", region]
+    programs = stand_in_programs(directory)
+    stems = ["--program", f"demucs-python={fake_python(directory)}"]
+    run_extract("chords-chordino", *common, *programs)
+    for target in ("rhythm", "tonal", "structure"):
+        run_extract(target, *common)
+    run_extract("chords-jiang", *over, *programs)
+    run_extract("stems", *over, *stems)
+    run_extract("tonal", *over, "--from", "stems/bass", *stems)
+    run_extract("notes-basic-pitch", *over, "--from", "stems/bass", *stems,
+                "--program", f"basic-pitch-python={basic_pitch_python(directory)}")
+    for stem in ("stems/vocals", "stems/bass"):
+        run_extract("f0-pesto", *over, "--from", stem, *stems, "--program", f"f0-python={f0_python(directory)}")
+    run_extract("melody", *over, *stems)
+    return root
+
+
+def at_middles(spans: list[dict], low: int, high: int) -> dict[int, Any]:
+    """Each span's first reading by the sample at its middle, for spans
+    wholly inside [low, high)."""
+    return {(s["start_sample"] + s["end_sample"]) // 2: s["readings"][0] for s in spans
+            if low <= s["start_sample"] and s["end_sample"] <= high}
+
+
+def reading_at(spans: list[dict], sample: int) -> Any:
+    return next((s["readings"][0] for s in spans if s["start_sample"] <= sample < s["end_sample"]), None)
+
+
+def note_f1(first: list[dict], second: list[dict], rate: int = RATE) -> float:
+    """Onsets within 50 ms on the same pitch, each matched once."""
+    unmatched = list(second)
+    hits = 0
+    for note in first:
+        match = next((n for n in unmatched if n["pitch"] == note["pitch"]
+                      and abs(n["onset_sample"] - note["onset_sample"]) <= 0.05 * rate), None)
+        if match is not None:
+            unmatched.remove(match)
+            hits += 1
+    return 2 * hits / (len(first) + len(second)) if first or second else 1.0
+
+
+class FromRegions(unittest.TestCase):
+    """A recording made under `--songs` (ADR 0112): the proposers find what
+    they lack whole over each region, through `bank.RegionView`, and claim
+    the same samples a whole bank gives over that span."""
+
+    # Frame-aligned for every grid the extractors use (4,096-sample hops),
+    # away from the edges of the 32 s take.
+    START, END = 86 * 4096, 302 * 4096
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.directory = Path(tempfile.mkdtemp(prefix="propose-regions-"))
+        cls.wav = music(cls.directory / "take.wav")
+        cls.region = {"start": cls.START, "end": cls.END, "rate": RATE}
+        for name in ("whole", "songs"):
+            (cls.directory / name).mkdir()
+        with patch.dict(os.environ):
+            whole = fill_bank(cls.directory / "whole", cls.wav)
+            songs = fill_region_bank(cls.directory / "songs", cls.wav, f"{cls.START}:{cls.END}:{RATE}")
+        cls.count = SECONDS * RATE
+        cls.digest = bank.file_digest(cls.wav)
+        cls.whole = proposers.Context(bank.Bank(whole), cls.digest, RATE, cls.count)
+        cls.songs = bank.Bank(songs)
+        cls.flat = proposers.Context(cls.songs, cls.digest, RATE, cls.count)
+        cls.over = proposers.Context(bank.RegionView(cls.songs, cls.digest, cls.region), cls.digest, RATE, cls.count,
+                                     cls.region)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        shutil.rmtree(cls.directory, True)
+
+    def both(self, name: str) -> tuple[proposers.Proposal, proposers.Proposal]:
+        found = []
+        for context in (self.whole, self.over):
+            proposal = proposers.PROPOSERS[name].propose(context)
+            self.assertIsInstance(proposal, proposers.Proposal, (name, proposal))
+            for planned in proposal.outputs:
+                check(planned, self.count)
+            found.append(proposal)
+        return found[0], found[1]
+
+    def inside(self, planned: proposers.Planned, field: str, start: str, end: str) -> None:
+        items = planned.payload[field]
+        self.assertTrue(items)
+        self.assertTrue(all(self.START <= item[start] and item[end] <= self.END for item in items), items[:3])
+
+    def test_the_region_is_found_and_a_whole_read_lacks_what_was_made_over_it(self) -> None:
+        self.assertEqual(bank.regions(self.songs, self.digest), [self.region])
+        for name in ("chords-jiang", "bass", "bass-line"):
+            with self.subTest(name=name):
+                lacking = proposers.PROPOSERS[name].propose(self.flat)
+                self.assertIsInstance(lacking, proposers.Lacking)
+                self.assertTrue(lacking.missing)
+        # Cheap extractors were made whole: the region view finds those whole.
+        rhythm = self.over.bank.entry(self.digest, "rhythm")
+        self.assertIsNone(rhythm.region)
+        self.assertEqual(self.over.bank.entry(self.digest, "stems").region, self.region)
+
+    def test_a_measure_of_a_region_stem_is_placed_on_the_region(self) -> None:
+        [(stems, measures)] = self.over.bank.measured_over(self.digest, "stems/bass", ["tonal", "f0-pesto"])
+        self.assertEqual(stems.region, self.region)
+        for name, measured in measures.items():
+            with self.subTest(measure=name):
+                self.assertIsNone(measured.region)  # the stem is content of its own, measured whole
+                self.assertEqual((measured.timeline, measured.shift(RATE)), (self.region, self.START))
+                self.assertAlmostEqual(measured.offset, self.START / RATE)
+
+    def test_region_chords_are_placed_at_the_regions_start(self) -> None:
+        # The stand-in names the same chords at the same times of whatever it
+        # reads, so a region's are the whole's moved by the region's start.
+        whole, region = self.both("chords-jiang")
+        [planned] = region.outputs
+        self.inside(planned, "spans", "start_sample", "end_sample")
+        moved = [{**s, "start_sample": s["start_sample"] + self.START, "end_sample": s["end_sample"] + self.START}
+                 for s in whole.outputs[0].payload["spans"]]
+        self.assertTrue(moved)
+        self.assertEqual(planned.payload["spans"], moved)
+        self.assertEqual([f["entry"] for f in region.features],
+                         [self.over.bank.entry(self.digest, "chords-jiang").manifest["key"]] * 2)
+
+    def test_region_bass_is_the_whole_bass_over_the_region(self) -> None:
+        whole, region = self.both("bass")
+        [planned] = region.outputs
+        self.inside(planned, "spans", "start_sample", "end_sample")
+        self.assertEqual(planned.payload["stem"]["key"], self.over.bank.entry(self.digest, "stems").manifest["key"])
+        expected = at_middles(whole.outputs[0].payload["spans"], self.START + 2 * RATE, self.END - 2 * RATE)
+        self.assertGreater(len(expected), 3)
+        agree = sum((reading_at(planned.payload["spans"], m) or {}).get("bass") == r["bass"] for m, r in expected.items())
+        self.assertGreaterEqual(agree / len(expected), 0.9, (expected, planned.payload["spans"][:6]))
+
+    def test_region_bass_line_is_the_whole_bass_line_over_the_region(self) -> None:
+        whole, region = self.both("bass-line")
+        [planned] = region.outputs
+        self.inside(planned, "notes", "onset_sample", "offset_sample")
+        low, high = self.START + 2 * RATE, self.END - 2 * RATE
+        a = [n for n in whole.outputs[0].payload["notes"] if low <= n["onset_sample"] < high]
+        b = [n for n in planned.payload["notes"] if low <= n["onset_sample"] < high]
+        self.assertGreater(len(a), 3)
+        self.assertGreaterEqual(note_f1(a, b), 0.9, (a[:5], b[:5]))
 
 
 if __name__ == "__main__":

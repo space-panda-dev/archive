@@ -19,7 +19,10 @@ stream, the first audio stream, which the pinned stream claim describes. A
 time `t` is the sample `round(t * sample_rate)` of that stream, half to even,
 computed exactly from the decimal text the bank wrote, and clamped to 0 and
 `sample_count`. A span that becomes empty is dropped; events that land on
-one sample are one.
+one sample are one. A region entry's times, and those of a measure of a stem
+made over a region, are on the region's cut (ADR 0112): each is placed on the
+stream by adding the region's start (`Entry.shift`, exact in samples), so a
+claim made from region entries says the same samples as one made whole.
 
 Only `bass`, `bass-line`, and `notes` need numpy, to average the stem's
 chroma and levels and to build notes from a pitch track (`note_builder`);
@@ -85,6 +88,24 @@ class Context:
     content: str        # the mix Artifact's content digest, which every entry is filed under
     sample_rate: int
     sample_count: int
+    # The region a region pass reads (ADR 0112, `bank.RegionView`), or None
+    # for the whole recording; reported in the run's settings.
+    region: dict[str, int] | None = None
+
+    @property
+    def bounds(self) -> tuple[int, int]:
+        """The samples a claim may say: the stream, or a region pass's region
+        on it (rounded outward), so nothing is claimed beyond what was read."""
+        if self.region is None:
+            return 0, self.sample_count
+        start, end, rate = self.region["start"], self.region["end"], self.region["rate"]
+        return max(0, start * self.sample_rate // rate), min(self.sample_count, -(-end * self.sample_rate // rate))
+
+    def sample(self, seconds: Any, shift: int = 0) -> int:
+        """A bank time as a sample of the stream, `shift` samples later,
+        clamped to `bounds` (see the module)."""
+        low, high = self.bounds
+        return min(max(sample_of(seconds, self.sample_rate, self.sample_count, shift), low), high)
 
 
 @dataclass(frozen=True)
@@ -132,12 +153,18 @@ class Proposer:
 
 # -- shared ----------------------------------------------------------------
 
-def sample_of(seconds: Any, rate: int, count: int) -> int:
-    """A bank time in seconds as a sample of the stream (see the module)."""
+def sample_of(seconds: Any, rate: int, count: int, shift: int = 0) -> int:
+    """A bank time in seconds as a sample of the stream (see the module),
+    `shift` samples later: the start of the region the time is on."""
     if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
         raise ProposerError(f"a bank time must be a number, not {seconds!r}")
     value = (Decimal(repr(seconds)) * rate).quantize(Decimal(1), rounding=ROUND_HALF_EVEN)
-    return min(max(int(value), 0), count)
+    return min(max(int(value) + shift, 0), count)
+
+
+def shift_of(entry: bank.Entry, context: Context) -> int:
+    """Samples of the stream to add to an entry's times (see the module)."""
+    return entry.shift(context.sample_rate)
 
 
 def decimal_text(value: Any, places: int | None = None) -> str:
@@ -192,13 +219,14 @@ def split(name: str, contract: tuple[str, str], payload: dict[str, Any], spans: 
             for number, start in enumerate(range(0, len(spans), cap))]
 
 
-def timed_spans(items: list[dict[str, Any]], context: Context, what: str) -> list[tuple[int, int, dict[str, Any]]]:
-    """Bank spans as (start, end, span) samples, empty ones dropped, refused
-    when two overlap: a claim's spans never do."""
+def timed_spans(items: list[dict[str, Any]], context: Context, what: str,
+                shift: int = 0) -> list[tuple[int, int, dict[str, Any]]]:
+    """Bank spans as (start, end, span) samples, `shift` later, empty ones
+    dropped, refused when two overlap: a claim's spans never do."""
     found, previous = [], 0
     for item in items:
-        start = sample_of(item["start"], context.sample_rate, context.sample_count)
-        end = sample_of(item["end"], context.sample_rate, context.sample_count)
+        start = context.sample(item["start"], shift)
+        end = context.sample(item["end"], shift)
         if end <= start:
             continue
         if start < previous:
@@ -246,7 +274,7 @@ def propose_jiang(context: Context) -> Proposal | Lacking:
     read(proposal, context, entry, "readings")
     order = {id(item): index for index, item in enumerate(labelled)}
     spans = []
-    for start, end, item in timed_spans(labelled, context, "chords-jiang/chords"):
+    for start, end, item in timed_spans(labelled, context, "chords-jiang/chords", shift_of(entry, context)):
         found = []
         for pair in candidates[order[id(item)]].get("top", []):
             if not (isinstance(pair, list) and len(pair) == 2 and isinstance(pair[0], str)):
@@ -272,7 +300,8 @@ def propose_chordino(context: Context) -> Proposal | Lacking:
                                          "is text only", "times": TIMES})
     read(proposal, context, entry, "chords")
     spans = [{"start_sample": start, "end_sample": end, "readings": [chord_labels.chordino_reading(item["label"])]}
-             for start, end, item in timed_spans(entry.items("chords"), context, "chords-chordino/chords")
+             for start, end, item in timed_spans(entry.items("chords"), context, "chords-chordino/chords",
+                                                     shift_of(entry, context))
              if isinstance(item.get("label"), str)]
     if not spans:
         return Lacking(detail="chords-chordino found no chord span to claim")
@@ -286,14 +315,15 @@ METER = re.compile(r"([1-9][0-9]?)/([1-9][0-9]?)\Z")
 DENOMINATORS = (1, 2, 4, 8, 16, 32, 64)
 
 
-def bars_of(pulse: list[dict[str, Any]], downbeats: list[dict[str, Any]], context: Context) -> list[dict[str, Any]]:
+def bars_of(pulse: list[dict[str, Any]], downbeats: list[dict[str, Any]], context: Context,
+            shift: int = 0) -> list[dict[str, Any]]:
     """A bar from each published downbeat to the pulse its value of beats
     later, in the meter its label states, holding the pulses inside it as
     its beats when their count is the numerator or divides it evenly (as
     equal groups), and no beats otherwise. A downbeat that is not a pulse,
     whose bar would run past the last pulse, overlap the bar before, or whose
     label is not a meter makes no bar."""
-    samples = [sample_of(event["time"], context.sample_rate, context.sample_count) for event in pulse]
+    samples = [context.sample(event["time"], shift) for event in pulse]
     index_of: dict[float, int] = {}
     for index, event in enumerate(pulse):
         index_of.setdefault(event["time"], index)
@@ -337,14 +367,15 @@ def propose_beats(context: Context) -> Proposal | Lacking:
                              "times": TIMES})
     read(proposal, context, entry, "pulse")
     read(proposal, context, entry, "downbeats")
-    beats = sorted({sample_of(event["time"], context.sample_rate, context.sample_count) for event in pulse}
-                   - {context.sample_count})
+    beats = sorted({context.sample(event["time"], shift_of(entry, context))
+                    for event in pulse}
+                   - {context.bounds[1]})
     if not beats:
         return Lacking(detail="rhythm/pulse holds no pulse inside the stream")
     if len(beats) > MAX_BEATS:
         raise ProposerError(f"rhythm/pulse holds {len(beats)} beats; a layer holds at most {MAX_BEATS}")
     layers: list[dict[str, Any]] = [{"beats": beats}]
-    bars = bars_of(pulse, downbeats, context)
+    bars = bars_of(pulse, downbeats, context, shift_of(entry, context))
     if len(bars) > MAX_BARS:
         raise ProposerError(f"rhythm/downbeats make {len(bars)} bars; a layer holds at most {MAX_BARS}")
     if bars:
@@ -369,20 +400,23 @@ BASS_SCALE = "lead of the strongest bass class over the next, bank bass proposer
 
 
 def bass_spans(chroma: Any, pitched: Any, grid: dict[str, int], pulse_times: list[float],
-               context: Context) -> list[dict[str, Any]]:
-    """The bass of each interval between two pulses (see BASS_SETTINGS)."""
+               context: Context, chroma_offset: float = 0.0, pulse_shift: int = 0) -> list[dict[str, Any]]:
+    """The bass of each interval between two pulses (see BASS_SETTINGS).
+    `chroma_offset` (seconds) places the stem's frames on the stream, and
+    `pulse_shift` (samples) the pulses, as `Entry.offset` and `shift` give."""
     import numpy
     chroma = numpy.asarray(chroma, dtype=numpy.float64)
     pitched = numpy.asarray(pitched, dtype=numpy.float64).reshape(-1)
     if chroma.ndim != 2 or chroma.shape[1] != 12 or len(pitched) != chroma.shape[0]:
         raise ProposerError("tonal/bass_chroma and tonal/pitched of the bass stem are not one frame grid of 12 classes")
-    centres = (grid["first_centre"] + numpy.arange(chroma.shape[0]) * grid["hop"]) / grid["sample_rate"]
+    centres = (grid["first_centre"] + numpy.arange(chroma.shape[0]) * grid["hop"]) / grid["sample_rate"] \
+        + chroma_offset - pulse_shift / context.sample_rate
     min_share, min_lead = Decimal(BASS_SETTINGS["min_pitched_share"]), Decimal(BASS_SETTINGS["min_lead"])
     times = sorted(set(pulse_times))
     found: list[tuple[int, int, int, Decimal]] = []
     for a, b in zip(times, times[1:]):
-        start = sample_of(a, context.sample_rate, context.sample_count)
-        end = sample_of(b, context.sample_rate, context.sample_count)
+        start = context.sample(a, pulse_shift)
+        end = context.sample(b, pulse_shift)
         frames = numpy.nonzero((centres >= a) & (centres < b))[0]
         if end <= start or len(frames) == 0:
             continue
@@ -435,7 +469,8 @@ def propose_bass(context: Context) -> Proposal | Lacking:
     if grid is None or grid != measured.grid("pitched"):
         raise ProposerError("tonal/bass_chroma and tonal/pitched of the bass stem do not share a frame grid")
     spans = bass_spans(measured.series("bass_chroma"), measured.series("pitched"), grid,
-                       [event["time"] for event in rhythm.items("pulse")], context)
+                       [event["time"] for event in rhythm.items("pulse")], context, measured.offset,
+                       shift_of(rhythm, context))
     if not spans:
         return Lacking(detail="no interval between pulses has a pitched bass that leads by the margin")
     payload = {"sample_rate": context.sample_rate, "stem": stem_citation(stems, "bass"), "weight_scale": BASS_SCALE}
@@ -467,9 +502,10 @@ BASS_LINE_SETTINGS = {
 
 
 def bass_line(rows: list[list[Any]], chroma: Any, pitched: Any, grid: dict[str, int],
-              context: Context) -> list[dict[str, int]]:
+              context: Context, shift: int = 0, chroma_offset: float = 0.0) -> list[dict[str, int]]:
     """The bass stem's notes-basic-pitch rows (onset_s, offset_s, midi, ...)
-    as one line (see BASS_LINE_SETTINGS)."""
+    as one line (see BASS_LINE_SETTINGS), the rows `shift` samples later and
+    the chroma's frames `chroma_offset` seconds later on the stream."""
     candidates = []
     for row in rows:
         if not isinstance(row, list) or len(row) < 3:
@@ -477,27 +513,29 @@ def bass_line(rows: list[list[Any]], chroma: Any, pitched: Any, grid: dict[str, 
         midi = row[2]
         if isinstance(midi, bool) or not isinstance(midi, (int, float)):
             continue
-        candidates.append({"onset_sample": sample_of(row[0], context.sample_rate, context.sample_count),
-                           "offset_sample": sample_of(row[1], context.sample_rate, context.sample_count),
+        candidates.append({"onset_sample": context.sample(row[0], shift),
+                           "offset_sample": context.sample(row[1], shift),
                            "pitch": int(Decimal(repr(midi)).quantize(Decimal(1), ROUND_HALF_EVEN))})
-    return keep_line(candidates, chroma, pitched, grid, context)
+    return keep_line(candidates, chroma, pitched, grid, context, chroma_offset)
 
 
 def keep_line(candidates: list[dict[str, int]], chroma: Any, pitched: Any, grid: dict[str, int],
-              context: Context) -> list[dict[str, int]]:
+              context: Context, chroma_offset: float = 0.0) -> list[dict[str, int]]:
     """Notes kept by the bass stem's chroma and made one line (see
-    BASS_LINE_SETTINGS `keep` and `line`)."""
+    BASS_LINE_SETTINGS `keep` and `line`); the chroma's frames are
+    `chroma_offset` seconds later on the stream."""
     import numpy
     chroma = numpy.asarray(chroma, dtype=numpy.float64)
     pitched = numpy.asarray(pitched, dtype=numpy.float64).reshape(-1)
     if chroma.ndim != 2 or chroma.shape[1] != 12 or len(pitched) != chroma.shape[0]:
         raise ProposerError("tonal/bass_chroma and tonal/pitched of the bass stem are not one frame grid of 12 classes")
-    centres = (grid["first_centre"] + numpy.arange(chroma.shape[0]) * grid["hop"]) / grid["sample_rate"]
+    centres = (grid["first_centre"] + numpy.arange(chroma.shape[0]) * grid["hop"]) / grid["sample_rate"] \
+        + chroma_offset
     min_share, min_lead = Decimal(BASS_SETTINGS["min_pitched_share"]), Decimal(BASS_SETTINGS["min_lead"])
     kept: list[dict[str, int]] = []
     for note in candidates:
         onset, offset, pitch = note["onset_sample"], note["offset_sample"], note["pitch"]
-        if not 0 <= pitch <= 127 or offset <= onset or onset >= context.sample_count:
+        if not 0 <= pitch <= 127 or offset <= onset or onset >= context.bounds[1]:
             continue
         frames = numpy.nonzero((centres >= onset / context.sample_rate) & (centres < offset / context.sample_rate))[0]
         if len(frames) == 0 or Decimal(repr(float(pitched[frames].mean()))) < min_share:
@@ -563,11 +601,13 @@ def read_bass_line(proposal: Proposal, context: Context,
         raise ProposerError("tonal/bass_chroma and tonal/pitched of the bass stem do not share a frame grid")
     if pesto is None:
         assert reference is not None
-        return (bass_line(reference, measured.series("bass_chroma"), measured.series("pitched"), grid, context),
+        return (bass_line(reference, measured.series("bass_chroma"), measured.series("pitched"), grid, context,
+                          shift_of(notes, context), measured.offset),
                 {"source": "notes-basic-pitch/notes: f0-pesto of the bass stem is not in the bank"})
     built, how = build_line(proposal, context, pesto, note_builder.BASS)
     how["source"] = "f0-pesto"
-    line = keep_line(built, measured.series("bass_chroma"), measured.series("pitched"), grid, context)
+    line = keep_line(built, measured.series("bass_chroma"), measured.series("pitched"), grid, context,
+                     measured.offset)
     return line, how
 
 
@@ -593,12 +633,13 @@ def propose_bass_line(context: Context) -> Proposal | Lacking:
 
 # -- a line built from a pitch track (ADR 0086) -----------------------------
 
-def row_sample(row: int, grid: dict[str, int], context: Context) -> int:
+def row_sample(row: int, grid: dict[str, int], context: Context, shift: int = 0) -> int:
     """Row `row` of a bank grid as a sample of the stream, exactly, half to
-    even, clamped to the stream."""
+    even, `shift` samples later, clamped to the stream."""
     seconds = Decimal(grid["first_centre"] + row * grid["hop"]) / Decimal(grid["sample_rate"])
     value = (seconds * context.sample_rate).quantize(Decimal(1), ROUND_HALF_EVEN)
-    return min(max(int(value), 0), context.sample_count)
+    low, high = context.bounds
+    return min(max(int(value) + shift, low), high)
 
 
 def tuning_of(proposal: Proposal, context: Context) -> tuple[Decimal, str]:
@@ -652,7 +693,9 @@ def build_line(proposal: Proposal, context: Context, pesto: bank.Entry, settings
     notes = []
     for note in found:
         pitch = int(Decimal(repr(note["pitch"])).quantize(Decimal(1), ROUND_HALF_EVEN))
-        onset, offset = row_sample(note["first_row"], grid, context), row_sample(note["end_row"], grid, context)
+        shift = shift_of(pesto, context)
+        onset, offset = row_sample(note["first_row"], grid, context, shift), row_sample(note["end_row"], grid, context,
+                                                                                         shift)
         if 0 <= pitch <= 127 and onset < offset:
             notes.append({"onset_sample": onset, "offset_sample": offset, "pitch": pitch})
     how: dict[str, Any] = {"tuning_cents": format(tuning, "f"), "tuning_from": tuning_from}
@@ -683,9 +726,11 @@ BLEED_SETTINGS = {
 
 
 def drop_bleed(notes: list[dict[str, int]], levels: Any, grid: dict[str, int] | None, loud_db: Any,
-               bass: list[dict[str, int]] | None, rate: int) -> tuple[list[dict[str, int]], dict[str, int]]:
+               bass: list[dict[str, int]] | None, rate: int,
+               levels_offset: float = 0.0) -> tuple[list[dict[str, int]], dict[str, int]]:
     """A vocal line without separation bleed (see BLEED_SETTINGS), and how
-    many notes each rule dropped. `bass` None: no bass line to compare."""
+    many notes each rule dropped. `bass` None: no bass line to compare. The
+    levels' rows are `levels_offset` seconds later on the stream."""
     import numpy
     dropped = {"below_range": 0, "bass_match": 0}
     octave = int(BLEED_SETTINGS["bass_octave_semitones"])
@@ -709,7 +754,7 @@ def drop_bleed(notes: list[dict[str, int]], levels: Any, grid: dict[str, int] | 
                          for b in bass if b["pitch"] % 12 == note["pitch"] % 12
                          and abs(b["pitch"] - note["pitch"]) <= octave)
             if 2 * shared >= offset - onset:
-                first = grid["first_centre"] / grid["sample_rate"]
+                first = grid["first_centre"] / grid["sample_rate"] + levels_offset
                 step = grid["hop"] / grid["sample_rate"]
                 low = max(0, int(numpy.ceil((onset / rate - first) / step)))
                 high = min(len(levels), int(numpy.ceil((offset / rate - first) / step)))
@@ -764,7 +809,8 @@ def propose_key(context: Context) -> Proposal | Lacking:
     read(proposal, context, entry, "key_regions")
     regions = [{"start_sample": start, "end_sample": end,
                 "readings": [{**key_reading(item.get("label", "")), "weight": decimal_text(item.get("value", 0), 4)}]}
-               for start, end, item in timed_spans(entry.items("key_regions"), context, "tonal/key_regions")
+               for start, end, item in timed_spans(entry.items("key_regions"), context, "tonal/key_regions",
+                                                   shift_of(entry, context))
                if item.get("label")]
     if not regions:
         return Lacking(detail="tonal/key_regions holds no region")
@@ -819,8 +865,8 @@ def propose_tuning(context: Context) -> Proposal | Lacking:
         cents = Decimal(decimal_text(item.get("value", 0)))
         if abs(cents - reference) <= minimum:
             continue
-        start = sample_of(item["start"], context.sample_rate, context.sample_count)
-        end = sample_of(item["end"], context.sample_rate, context.sample_count)
+        start = context.sample(item["start"], shift_of(entry, context))
+        end = context.sample(item["end"], shift_of(entry, context))
         if end <= start:
             continue
         window = (start, end, cents, Decimal(repr(float(concentration))))
@@ -908,9 +954,9 @@ def propose_notes(context: Context) -> Proposal | Lacking:
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 continue
             pitch = int(Decimal(repr(value)).quantize(Decimal(1), ROUND_HALF_EVEN))
-            onset = sample_of(item["start"], context.sample_rate, context.sample_count)
-            offset = sample_of(item["end"], context.sample_rate, context.sample_count)
-            if not 0 <= pitch <= 127 or offset <= onset or onset >= context.sample_count:
+            onset = context.sample(item["start"], shift_of(entry, context))
+            offset = context.sample(item["end"], shift_of(entry, context))
+            if not 0 <= pitch <= 127 or offset <= onset or onset >= context.bounds[1]:
                 continue
             notes.setdefault((onset, pitch), {"onset_sample": onset, "offset_sample": offset, "pitch": pitch})
         if not notes:
@@ -931,7 +977,8 @@ def propose_notes(context: Context) -> Proposal | Lacking:
             read(proposal, context, levels_from, "loud_db")
         found, dropped = drop_bleed(found, None if bass is None else levels_from.series("level_db"),
                                     levels_from.grid("level_db"),
-                                    None if bass is None else levels_from.scalar("loud_db"), bass, context.sample_rate)
+                                    None if bass is None else levels_from.scalar("loud_db"), bass, context.sample_rate,
+                                    levels_from.offset)
         bleed["dropped"] = dropped
         proposal.settings["bleed"] = bleed
         if not found:
@@ -949,7 +996,8 @@ def propose_sections(context: Context) -> Proposal | Lacking:
     proposal = Proposal([], {"spans": "structure/sections with the extractor's labels", "times": TIMES})
     read(proposal, context, entry, "sections")
     spans = [{"start_sample": start, "end_sample": end, "label": item["label"]}
-             for start, end, item in timed_spans(entry.items("sections"), context, "structure/sections")
+             for start, end, item in timed_spans(entry.items("sections"), context, "structure/sections",
+                                                   shift_of(entry, context))
              if isinstance(item.get("label"), str) and 0 < len(item["label"]) <= 100]
     if not spans:
         return Lacking(detail="structure/sections holds no section")

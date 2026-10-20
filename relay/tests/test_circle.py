@@ -89,16 +89,17 @@ def circle_plan() -> dict:
     return plan
 
 
-def stems_entry(bank_root: Path, digest: str) -> tuple[str, dict[str, bytes]]:
+def stems_entry(bank_root: Path, digest: str, region: dict | None = None) -> tuple[str, dict[str, bytes]]:
     """A complete stems entry of the bank for this content, as the runner
-    leaves one, with stand-in FLAC bytes."""
+    leaves one, with stand-in FLAC bytes; over `region`, a region entry
+    (ADR 0112)."""
     catalog = bank.Catalog.load()
-    key = catalog.keys(digest, ["stems"])["stems"]
+    key = catalog.within(digest, region).keys(digest, ["stems"])["stems"]
     directory = bank.entry_directory(bank_root, digest, "stems", key)
     directory.mkdir(parents=True)
     files, outputs = {}, {}
     for output in ("vocals", "drums", "bass", "other"):
-        data = b"fLaC" + output.encode() * 64
+        data = b"fLaC" + output.encode() * 64 + json.dumps(region).encode()
         (directory / f"{output}.flac").write_bytes(data)
         files[output] = data
         outputs[output] = {"kind": "file", "media_type": "audio/flac", "suffix": ".flac", "file": f"{output}.flac",
@@ -108,7 +109,9 @@ def stems_entry(bank_root: Path, digest: str) -> tuple[str, dict[str, bytes]]:
         "contract": bank.ENTRY_CONTRACT, "key": key, "extractor": {"id": "stems", "version": extractor.version},
         "parameters": catalog.parameters("stems"), "content": digest, "media_type": "audio/wav", "needs": {},
         "software": [], "grids": {}, "outputs": outputs, "started_at": "2026-01-01T00:00:00Z",
-        "ended_at": "2026-01-01T00:00:01Z", "runner": "relay-test"}))
+        "ended_at": "2026-01-01T00:00:01Z", "runner": "relay-test",
+        **({} if region is None else {"contract": bank.REGION_ENTRY_CONTRACT, "region": region,
+                                      "cut": "sha256:" + "c" * 64, "media_type": "audio/flac"})}))
     return key, files
 
 
@@ -429,6 +432,37 @@ class CircleChecks(unittest.TestCase):
 
     def filed(self, root: Path) -> list[dict]:
         return [json.loads(p.read_text()) for p in sorted((root / bank.REQUESTS).glob("*.json"))]
+
+    def test_region_stems_are_listed_with_their_offset_and_served_by_key(self) -> None:
+        # A recording made under --songs (ADR 0112): its stems over a region only.
+        root = private(self.work / "bank")
+        region = {"start": 35 * 48000, "end": 520 * 48000, "rate": 48000}
+        key, files = stems_entry(root, self.take, region)
+        call = self.relay(bank_root=root, practice_features=("stems/bass", "stems/drums"))
+        status, _, answer = call("GET", f"/media/{self.take}/bank")
+        self.assertEqual(status, 200, answer)
+        self.assertEqual((answer["result"]["features"], answer["result"]["missing"]), ([], ["stems/bass", "stems/drums"]))
+        self.assertEqual([(r["name"], r["key"], r["region"], r["offset_seconds"]) for r in answer["result"]["regions"]],
+                         [("stems/bass", key, region, 35.0), ("stems/drums", key, region, 35.0)])
+        status, headers, body = call("GET", f"/media/{self.take}/bank/stems/bass/{key}")
+        self.assertEqual((status, body, headers["ETag"]), (200, files["bass"], f'"{key}/bass"'))
+        # The whole entry's route still says the whole is not made.
+        status, _, answer = call("GET", f"/media/{self.take}/bank/stems/bass")
+        self.assertEqual((status, answer["error"]["code"]), (404, "feature_not_made"))
+        other = "sha256:" + "d" * 64
+        status, _, answer = call("GET", f"/media/{self.take}/bank/stems/bass/{other}")
+        self.assertEqual((status, answer["error"]["code"]), (404, "feature_not_made"))
+        status, _, answer = call("GET", f"/media/{self.take}/bank/stems/bass/{key}", login=MEMBER_LOGIN)
+        self.assertEqual((status, answer["error"]["code"]), (403, "media_forbidden"))
+        # The whole recording's entry is listed whole, with no regions, when it exists.
+        stems_entry(root, self.recording)
+        status, _, answer = call("GET", f"/media/{self.recording}/bank")
+        self.assertNotIn("regions", answer["result"])
+        # A practice request may name the region entry's key.
+        inputs = call.harness.relay.features.stems(self.practice(content=self.take, gains={"bass": 100, "drums": 50},
+                                                                 stems={"extractor": "stems", "key": key}))
+        self.assertEqual({name: path.read_bytes() for name, path in inputs.items()},
+                         {"bass": files["bass"], "drums": files["drums"]})
 
     def test_without_a_scheduler_nothing_is_asked_for(self) -> None:
         call = self.relay()
