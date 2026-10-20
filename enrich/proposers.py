@@ -410,8 +410,11 @@ def bass_spans(chroma: Any, pitched: Any, grid: dict[str, int], pulse_times: lis
 
 
 def propose_bass(context: Context) -> Proposal | Lacking:
-    stems = context.bank.entry(context.content, "stems")
-    measured = None if stems is None else context.bank.entry_from(context.content, "stems/bass", "tonal")
+    # The stems entry and its bass stem's measure, over one entry: the first
+    # that answers (ADR 0090's amendment) whose stem is measured, else the first.
+    over = context.bank.measured_over(context.content, "stems/bass", ["tonal"])
+    stems, found = next(((s, m) for s, m in over if m["tonal"] is not None), over[0] if over else (None, {}))
+    measured = found.get("tonal")
     rhythm = context.bank.entry(context.content, "rhythm")
     missing = []
     if stems is None:
@@ -523,11 +526,16 @@ def keep_line(candidates: list[dict[str, int]], chroma: Any, pitched: Any, grid:
 def bass_line_entries(context: Context) -> tuple[dict[str, bank.Entry | None], list[str]]:
     """The stems entry, f0-pesto, notes-basic-pitch and tonal from stems/bass,
     and what is missing: the stem, tonal, and one of the two note sources."""
-    stems = context.bank.entry(context.content, "stems")
-    found: dict[str, bank.Entry | None] = {"stems": stems, "f0-pesto": None, "notes-basic-pitch": None, "tonal": None}
-    if stems is not None:
-        for extractor_id in ("f0-pesto", "notes-basic-pitch", "tonal"):
-            found[extractor_id] = context.bank.entry_from(context.content, "stems/bass", extractor_id)
+    # Every measure over one stems entry, so the stem cited is the stem read:
+    # the first that answers (ADR 0090's amendment) holding what the line
+    # needs, else the first.
+    over = context.bank.measured_over(context.content, "stems/bass", ["f0-pesto", "notes-basic-pitch", "tonal"])
+    stems, measures = next(((s, m) for s, m in over if m["tonal"] is not None
+                            and (m["f0-pesto"] is not None or m["notes-basic-pitch"] is not None)),
+                           over[0] if over else (None, {}))
+    found: dict[str, bank.Entry | None] = {"stems": stems, "f0-pesto": measures.get("f0-pesto"),
+                                           "notes-basic-pitch": measures.get("notes-basic-pitch"),
+                                           "tonal": measures.get("tonal")}
     missing = []
     if stems is None:
         missing.append("stems/bass")
@@ -870,7 +878,11 @@ def propose_notes(context: Context) -> Proposal | Lacking:
     payload: dict[str, Any] = {"sample_rate": context.sample_rate, "part": "mix"}
     if feature is not None:
         stems_id, output = feature.split("/", 1)
-        stems = context.bank.entry(context.content, stems_id)
+        # The stems entry whose stem was read: another device's may stand in
+        # (ADR 0090's amendment), and the claim cites the one measured.
+        read_from = (pesto if pesto is not None else entry).manifest["content"]  # type: ignore[union-attr]
+        stems = next((s for s in context.bank.candidates(context.content, stems_id)
+                      if s.output(output)["sha256"] == read_from), None)
         if stems is None:
             raise ProposerError(f"{feature} was measured but its entry is gone")
         read(proposal, context, stems, output)

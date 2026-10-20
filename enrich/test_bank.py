@@ -173,12 +173,14 @@ SHIPPED = {
     # The code was made to serve stems-6s too (a Separation names the model and stems); no output changed.
     # Version 1 also runs on Apple's GPU when `apply.device` is "mps": another
     # parameter, so another key; the CPU's stems are the same bits as before.
-    "stems": {"version": "1", "code": "sha256:df389c5a797d6d7d79ee57d34d17f2a99ae9fb1a68e62c93dd82e5f7c51042b4", "outside": {}},
+    # The manifest declares cpu and mps interchangeable (ADR 0090's amendment):
+    # lookup changes, no output does.
+    "stems": {"version": "1", "code": "sha256:1016d2305b3597731d357bcaa468f6a95e65bb23d9cb97acc7ea88d32db7a065", "outside": {}},
     # stems-6s is the stems program with another model and six stems.
     "stems-6s": {"version": "1",
                  "code": "sha256:23494ee6838986398b491f243a017b1687921f655db1c51693275931ebf892a2",
                  "outside": {"extractors/stems/stems.py":
-                                 "sha256:649708bb68316a9c33b94a9fa273ca3bfb45c2e1dcc6b310a960371fe0191586"}},
+                                 "sha256:545f232db757534feaacc7e541b7437ca5877ec6ba15725194906b95dc6a4738"}},
     "notes-basic-pitch": {"version": "1",
                           "code": "sha256:b81ad3ab4528b6c557e4a3ad254c5262754689efcbd157ac5bff976f28d40133",
                           "outside": {}},

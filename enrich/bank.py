@@ -39,6 +39,7 @@ REQUEST_CONTRACT = "archive-extractor-request/1"
 RESULT_CONTRACT = "archive-extractor-result/1"
 ENTRY_CONTRACT = "archive-feature-bank-entry/1"
 KEY_CONTRACT = "archive-feature-bank-key/1"
+EQUIVALENCE_CONTRACT = "archive-feature-bank-equivalence/1"
 
 EXTRACTORS = Path(__file__).resolve().parent / "extractors"
 MANIFEST = "extractor.json"
@@ -65,6 +66,13 @@ DTYPES = {"f32": 4, "f64": 8, "i16": 2, "i32": 4, "i64": 8, "u8": 1}
 _ARRAY_CODES = {"f32": "f", "f64": "d"}  # the float types, checked for finite values
 KINDS = ("series", "scalar", "events", "spans", "file")
 MAX_SOFTWARE = 32
+# Where equivalence records live under a bank root (ADR 0090's amendment).
+EQUIVALENCE = "equivalence"
+# The downstream measures an `interchangeable` declaration may name, and the
+# extractor whose entries each compares; enrich/equivalence.py implements
+# them, and a test holds the two lists equal.
+MEASURES = {"note-f1": "notes-basic-pitch", "f0-cents-p99": "f0-pesto", "voicing-agreement": "f0-pesto"}
+PARAMETER_PATH = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,62}(\.[A-Za-z_][A-Za-z0-9_]{0,62}){0,7}")
 
 
 class BankError(Exception):
@@ -223,6 +231,12 @@ class Extractor:
         and the minimums its measure there must reach to be the default."""
         return [{"parameters": {}, "at_least": {}, **preference} for preference in self.manifest.get("prefers", [])]
 
+    @property
+    def interchangeable(self) -> dict[str, Any] | None:
+        """The parameter whose declared values make entries that may stand
+        in for each other under a passing equivalence record, or None."""
+        return self.manifest.get("interchangeable")
+
     def accepts(self, media_type: str) -> bool:
         kind, _, sub = media_type.partition("/")
         for pattern in self.manifest["accepts"]:
@@ -264,12 +278,72 @@ def check_output_declaration(where: str, name: str, declared: Any) -> None:
     _require(not extra, f"{where}: output {name} has unknown fields {sorted(extra)}")
 
 
+def parameter_at(parameters: Mapping[str, Any], path: str) -> Any:
+    """The value at a dotted path of parameters (`apply.device`), or None."""
+    value: Any = parameters
+    for part in path.split("."):
+        if not isinstance(value, dict) or part not in value:
+            return None
+        value = value[part]
+    return value
+
+
+def with_parameter(parameters: Mapping[str, Any], path: str, value: Any) -> dict[str, Any]:
+    """A copy of parameters with the dotted path set to value."""
+    copy = json.loads(json.dumps(parameters))
+    target = copy
+    *parents, last = path.split(".")
+    for part in parents:
+        target = target[part]
+    target[last] = value
+    return copy
+
+
+def check_interchangeable(declared: Any, manifest: Mapping[str, Any], where: str) -> None:
+    """`interchangeable` (ADR 0090's amendment): one parameter, the values of
+    it whose entries may stand in for each other once an equivalence record
+    passes, the software a record must match, and the downstream agreement
+    that decides it."""
+    _require(isinstance(declared, dict) and set(declared) == {"parameter", "values", "software", "agree"},
+             f"{where}: interchangeable is {{parameter, values, software, agree}}")
+    path = declared["parameter"]
+    _require(isinstance(path, str) and PARAMETER_PATH.fullmatch(path) is not None,
+             f"{where}: interchangeable.parameter is a dotted path of the parameters, such as apply.device")
+    values = declared["values"]
+    _require(isinstance(values, list) and len(values) >= 2 and len(set(map(str, values))) == len(values)
+             and all(isinstance(v, str) and ID.fullmatch(v) for v in values),
+             f"{where}: interchangeable.values lists at least two distinct names, such as cpu and mps")
+    _require(parameter_at(manifest.get("parameters", {}), path) in values,
+             f"{where}: the parameter {path} must be declared, with one of {values}")
+    software = declared["software"]
+    _require(isinstance(software, list) and software and len(set(software)) == len(software)
+             and all(isinstance(name, str) and 0 < len(name) <= 200 for name in software),
+             f"{where}: interchangeable.software lists the software names a record must match")
+    agree = declared["agree"]
+    _require(isinstance(agree, list) and agree, f"{where}: interchangeable.agree lists at least one measure")
+    outputs = manifest.get("outputs") if isinstance(manifest.get("outputs"), dict) else {}
+    seen = set()
+    for item in agree:
+        _require(isinstance(item, dict) and set(item) in ({"measure", "outputs", "at_least"},
+                                                          {"measure", "outputs", "at_most"}),
+                 f"{where}: each agreement is {{measure, outputs, at_least or at_most}}")
+        _require(item["measure"] in MEASURES, f"{where}: no measure {item['measure']!r}; known: {sorted(MEASURES)}")
+        _require(item["measure"] not in seen, f"{where}: the measure {item['measure']} is named twice")
+        seen.add(item["measure"])
+        _require(isinstance(item["outputs"], list) and item["outputs"]
+                 and all(outputs.get(name, {}).get("kind") == "file" for name in item["outputs"]),
+                 f"{where}: {item['measure']} names file outputs this extractor declares")
+        bound = item.get("at_least", item.get("at_most"))
+        _require(isinstance(bound, str) and DECIMAL.fullmatch(bound) is not None,
+                 f"{where}: {item['measure']}'s threshold is decimal text, such as \"0.98\"")
+
+
 def check_manifest(manifest: Any, where: str) -> dict[str, Any]:
     """An extractor manifest, refused unless it is exactly the contract's shape."""
     _require(isinstance(manifest, dict), f"{where}: not a JSON object")
     _require(manifest.get("contract") == EXTRACTOR_CONTRACT, f"{where}: contract must be {EXTRACTOR_CONTRACT}")
     known = {"contract", "id", "version", "description", "command", "accepts", "requires", "needs", "prefers",
-             "parameters", "outputs"}
+             "parameters", "outputs", "interchangeable"}
     extra = set(manifest) - known
     _require(not extra, f"{where}: unknown fields {sorted(extra)}")
     _require(isinstance(manifest.get("id"), str) and ID.fullmatch(manifest["id"]) is not None,
@@ -320,6 +394,9 @@ def check_manifest(manifest: Any, where: str) -> dict[str, Any]:
     files = [f for f in files if f is not None]
     _require(len(set(files)) == len(files) and RESULT not in files and ENTRY not in files,
              f"{where}: two outputs would share a file name")
+    if "interchangeable" in manifest:
+        check_interchangeable(manifest["interchangeable"], manifest, where)
+        _require(not needs, f"{where}: an extractor whose entries stand in for each other needs nothing")
     return manifest
 
 
@@ -447,6 +524,22 @@ class Catalog:
         merged = {**self[extractor_id].manifest.get("parameters", {}), **((overrides or {}).get(extractor_id, {}))}
         check_parameters(merged, f"{extractor_id} parameters")
         return merged
+
+    def alternatives(self, extractor_id: str,
+                     overrides: Mapping[str, Mapping[str, Any]] | None = None) -> list[tuple[str, dict[str, Any]]]:
+        """The parameters whose entries may stand in for the configured
+        ones', each with its declared value, in the manifest's order: the
+        configured parameters with the interchangeable field set to each
+        other declared value. None when the extractor declares nothing
+        interchangeable or is configured with a value it does not declare."""
+        declared = self[extractor_id].interchangeable
+        if declared is None:
+            return []
+        configured = self.parameters(extractor_id, overrides)
+        if parameter_at(configured, declared["parameter"]) not in declared["values"]:
+            return []
+        return [(value, with_parameter(configured, declared["parameter"], value)) for value in declared["values"]
+                if value != parameter_at(configured, declared["parameter"])]
 
 
 # -- results and entries -----------------------------------------------------
@@ -621,6 +714,162 @@ def check_entry(manifest: Any, where: str) -> dict[str, Any]:
     return manifest
 
 
+# -- equivalence records (ADR 0090's amendment) ----------------------------------
+
+def pair_digest(extractor_id: str, version: str, first: Mapping[str, Any], second: Mapping[str, Any]) -> str:
+    """What names a pair of an extractor's parameters, in either order."""
+    digests = sorted([digest_of(canonical(first)), digest_of(canonical(second))])
+    return digest_of(canonical({"contract": EQUIVALENCE_CONTRACT, "extractor": extractor_id, "version": version,
+                                "parameters": digests}))
+
+
+def equivalence_directory(root: Path, extractor_id: str, pair: str) -> Path:
+    """Where the records of one pair live: one file a software pairing."""
+    if not KEY.fullmatch(pair) or not ID.fullmatch(extractor_id):
+        raise BankError(f"not a pair digest and extractor: {pair!r}, {extractor_id!r}")
+    return Path(root) / EQUIVALENCE / extractor_id / pair.removeprefix("sha256:")
+
+
+def named_software(software: Iterable[Mapping[str, str]], names: Iterable[str]) -> list[dict[str, str]]:
+    """The named software of an entry, by name: what a record must match."""
+    wanted = set(names)
+    return sorted(({"name": item["name"], "version": item["version"]} for item in software
+                   if item["name"] in wanted), key=lambda item: (item["name"], item["version"]))
+
+
+def decided_value(measure: str, values: list[tuple[float, Mapping[str, Any]]]) -> float | None:
+    """The value a measure of one output is decided by, over every input
+    that measured it (value and detail): `note-f1` pooled over all their
+    notes, `voicing-agreement` over all their voiced rows, and
+    `f0-cents-p99` the worst input's. Pooling keeps one borderline note of a
+    short clip from deciding alone; every input's own value is recorded
+    beside it. None when no input measured it."""
+    if not values:
+        return None
+    if measure == "note-f1":
+        matched = sum(int(detail["matched"]) for _, detail in values)
+        notes = sum(int(detail["notes"][0]) + int(detail["notes"][1]) for _, detail in values)
+        return 2 * matched / notes if notes else None
+    if measure == "voicing-agreement":
+        agreeing = sum(int(detail["agreeing"]) for _, detail in values)
+        either = sum(int(detail["voiced_in_either"]) for _, detail in values)
+        return agreeing / either if either else None
+    if measure == "f0-cents-p99":
+        return max(value for value, _ in values)
+    raise BankError(f"no measure {measure!r}")
+
+
+def decisions(agree: list[dict[str, Any]], inputs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each declared measure of each output it names: the value it is
+    decided by (`decided_value`), how many inputs measured it, and whether
+    it is within its threshold. A measure measured on no input fails: an
+    empty comparison (a stem with no confident pitch) is no evidence."""
+    found = []
+    for item in agree:
+        for output in item["outputs"]:
+            values = [(m["value"], m["detail"]) for i in inputs for m in i["measured"]
+                      if m["measure"] == item["measure"] and m["output"] == output and m["value"] is not None]
+            try:
+                value = decided_value(item["measure"], values)
+            except (KeyError, IndexError, TypeError, ValueError) as exc:
+                raise BankError(f"{item['measure']} of {output}: a detail lacks what decides it ({exc})") from exc
+            within = value is not None and (
+                Decimal(repr(value)) >= Decimal(item["at_least"]) if "at_least" in item
+                else Decimal(repr(value)) <= Decimal(item["at_most"]))
+            found.append({"measure": item["measure"], "output": output, "value": value,
+                          "measured_on": len(values), "pass": within})
+    return found
+
+
+def agreement_passes(agree: list[dict[str, Any]], inputs: list[dict[str, Any]]) -> bool:
+    """Whether every declared measure of every output passes (`decisions`)."""
+    return all(decision["pass"] for decision in decisions(agree, inputs))
+
+
+def check_equivalence(record: Any, where: str) -> dict[str, Any]:
+    """An equivalence record as `extract.py equivalence` writes it; a reader
+    refuses another shape, and a `pass` that its own values do not give."""
+    _require(isinstance(record, dict) and record.get("contract") == EQUIVALENCE_CONTRACT,
+             f"{where}: contract must be {EQUIVALENCE_CONTRACT}")
+    fields = {"contract", "extractor", "parameter", "sides", "agree", "inputs", "pass", "made_at"}
+    _require(set(record) == fields, f"{where}: fields must be {sorted(fields)}")
+    extractor = record["extractor"]
+    _require(isinstance(extractor, dict) and set(extractor) == {"id", "version"}
+             and isinstance(extractor["id"], str) and ID.fullmatch(extractor["id"]) is not None
+             and isinstance(extractor["version"], str), f"{where}: extractor")
+    _require(isinstance(record["parameter"], str) and PARAMETER_PATH.fullmatch(record["parameter"]) is not None,
+             f"{where}: parameter")
+    sides = record["sides"]
+    _require(isinstance(sides, list) and len(sides) == 2 and all(
+        isinstance(side, dict) and set(side) == {"value", "parameters", "software"}
+        and isinstance(side["value"], str) and isinstance(side["parameters"], str)
+        and KEY.fullmatch(side["parameters"]) is not None for side in sides)
+        and sides[0]["parameters"] != sides[1]["parameters"], f"{where}: two sides of other parameters")
+    for side in sides:
+        _software(side["software"], f"{where}: side {side['value']}")
+    agree = record["agree"]
+    _require(isinstance(agree, list) and agree and all(
+        isinstance(item, dict) and item.get("measure") in MEASURES and isinstance(item.get("outputs"), list)
+        and set(item) in ({"measure", "outputs", "at_least"}, {"measure", "outputs", "at_most"})
+        and DECIMAL.fullmatch(str(item.get("at_least", item.get("at_most")))) is not None for item in agree),
+             f"{where}: agree")
+    inputs = record["inputs"]
+    _require(isinstance(inputs, list) and inputs, f"{where}: inputs")
+    for index, item in enumerate(inputs):
+        _require(isinstance(item, dict) and set(item) == {"content", "entries", "measured", "evidence"}
+                 and derived.is_digest(item["content"]) and isinstance(item["entries"], list)
+                 and len(item["entries"]) == 2 and all(isinstance(k, str) and KEY.fullmatch(k) for k in item["entries"])
+                 and isinstance(item["evidence"], dict), f"{where}: inputs[{index}]")
+        _require(isinstance(item["measured"], list) and all(
+            isinstance(m, dict) and set(m) == {"measure", "output", "value", "detail"}
+            and isinstance(m["output"], str) and isinstance(m["detail"], dict)
+            and (m["value"] is None or (isinstance(m["value"], (int, float)) and not isinstance(m["value"], bool)
+                                        and math.isfinite(m["value"]))) for m in item["measured"]),
+                 f"{where}: inputs[{index}].measured")
+    _require(isinstance(record["pass"], bool), f"{where}: pass")
+    _require(record["pass"] == agreement_passes(agree, inputs),
+             f"{where}: pass is {record['pass']}, which its measured values do not give")
+    _require(isinstance(record["made_at"], str), f"{where}: made_at")
+    return record
+
+
+def read_equivalences(directory: Path) -> list[dict[str, Any]]:
+    """Every record of one pair. A record that is unreadable or the wrong
+    shape is refused, never read as absent or as failing."""
+    try:
+        paths = sorted(directory.glob("*.json"))
+    except OSError as exc:
+        raise BankError(f"{directory}: cannot list its records: {exc}") from exc
+    records = []
+    for path in paths:
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise BankError(f"{path}: unreadable: {exc}") from exc
+        records.append(check_equivalence(record, str(path)))
+    return records
+
+
+def write_equivalence(root: Path, record: dict[str, Any], first: Mapping[str, Any],
+                      second: Mapping[str, Any]) -> Path:
+    """File a record under its pair, named by its sides' software; a record
+    for the same software replaces the last, by one rename."""
+    check_equivalence(record, "the equivalence record")
+    extractor = record["extractor"]
+    directory = equivalence_directory(root, extractor["id"],
+                                      pair_digest(extractor["id"], extractor["version"], first, second))
+    sides = {side["parameters"] for side in record["sides"]}
+    _require(sides == {digest_of(canonical(first)), digest_of(canonical(second))},
+             "the record's sides are not the parameters it is filed under")
+    name = digest_of(canonical(sorted([[s["parameters"], s["software"]] for s in record["sides"]])))
+    directory.mkdir(parents=True, exist_ok=True)
+    final = directory / (name.removeprefix("sha256:") + ".json")
+    temporary = final.with_name(final.name + f".{os.getpid()}.tmp")
+    temporary.write_bytes(json.dumps(record, indent=1, sort_keys=True).encode("utf-8") + b"\n")
+    os.replace(temporary, final)
+    return final
+
+
 # -- reading -----------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -706,10 +955,12 @@ class Bank:
     the key the installed extractors would give it."""
 
     def __init__(self, root: Path, catalog: Catalog | None = None,
-                 parameters: Mapping[str, Mapping[str, Any]] | None = None):
+                 parameters: Mapping[str, Mapping[str, Any]] | None = None, exact: bool = False):
         self.root = Path(root)
         self.catalog = catalog if catalog is not None else Catalog.load()
         self.parameters = parameters
+        # Exact: the configured key alone, never an entry that stands in for it.
+        self.exact = exact
 
     def entry(self, content: str, extractor_id: str, filed_under: str | None = None,
               feature: str | None = None) -> Entry | None:
@@ -723,12 +974,56 @@ class Bank:
                 p["parameters"] for p in self.catalog[extractor_id].prefers):
             raise BankError(f"{extractor_id} takes other parameters on a feature it prefers; "
                             f"say which feature {content} is")
+        return next(self.candidates(content, extractor_id, filed_under, feature), None)
+
+    def candidates(self, content: str, extractor_id: str, filed_under: str | None = None,
+                   feature: str | None = None) -> Iterable[Entry]:
+        """The entries that answer for one extractor and content, best
+        first: the configured parameters' entry, then, unless the bank is
+        exact, each entry of another interchangeable value in the manifest's
+        order that a passing equivalence record lets stand in (ADR 0090's
+        amendment). Without such a record there is only the first."""
+        if filed_under is not None and feature is None and any(
+                p["parameters"] for p in self.catalog[extractor_id].prefers):
+            raise BankError(f"{extractor_id} takes other parameters on a feature it prefers; "
+                            f"say which feature {content} is")
         parameters = self.parameters if feature is None else self.catalog.overrides_for(feature, self.parameters)
+        found = self._at(content, extractor_id, filed_under, parameters)
+        if found is not None:
+            yield found
+        if self.exact:
+            return
+        extractor = self.catalog[extractor_id]
+        configured = self.catalog.parameters(extractor_id, parameters)
+        for _value, other in self.catalog.alternatives(extractor_id, parameters):
+            standing = self._at(content, extractor_id, filed_under, {**(parameters or {}), extractor_id: other})
+            if standing is not None and self.stands_in(extractor, configured, standing):
+                yield standing
+
+    def _at(self, content: str, extractor_id: str, filed_under: str | None,
+            parameters: Mapping[str, Mapping[str, Any]] | None) -> Entry | None:
         key = self.catalog.keys(content, [extractor_id], parameters)[extractor_id]
         found = read_entry(entry_directory(self.root, filed_under or content, extractor_id, key))
         if found is not None and found.manifest["key"] != key:
             raise BankError(f"{found.path} holds key {found.manifest['key']}, not {key}")
         return found
+
+    def stands_in(self, extractor: Extractor, configured: Mapping[str, Any], standing: Entry) -> bool:
+        """Whether a passing record of this pair names the software the
+        standing entry was made with. A record for other software, a failing
+        record, or none, answers no; a damaged one is refused."""
+        declared = extractor.interchangeable
+        assert declared is not None
+        other = standing.manifest["parameters"]
+        directory = equivalence_directory(self.root, extractor.id,
+                                          pair_digest(extractor.id, extractor.version, configured, other))
+        made_with = named_software(standing.manifest["software"], declared["software"])
+        other_digest = digest_of(canonical(other))
+        for record in read_equivalences(directory):
+            side = next((s for s in record["sides"] if s["parameters"] == other_digest), None)
+            if record["pass"] and side is not None and side["software"] == made_with:
+                return True
+        return False
 
     def feature(self, content: str, feature: str, filed_under: str | None = None) -> tuple[Entry, str] | None:
         """The entry holding `<extractor>/<output>`, and the output's name."""
@@ -762,10 +1057,28 @@ class Bank:
         """The entry an extractor made of a file feature of this content (the
         melody of a recording's vocal stem), or None when the feature or the
         measure of it is not in the bank."""
-        found = self.input_of(content, feature)
-        if found is None:
-            return None
-        return self.entry(found[1], extractor_id, filed_under=content, feature=feature)
+        return next((measured for _, measured in self.measured_over(content, feature, [extractor_id])
+                     if measured[extractor_id] is not None), {extractor_id: None})[extractor_id]
+
+    def measured_over(self, content: str, feature: str,
+                      extractor_ids: Iterable[str]) -> list[tuple[Entry, dict[str, Entry | None]]]:
+        """For each entry that answers for the feature's extractor, best
+        first (`candidates`), that entry and each extractor's measure of its
+        file feature, or None. A reader that combines measures takes them
+        over one entry, so what it cites is what it read."""
+        match = FEATURE.fullmatch(feature)
+        if match is None:
+            raise BankError(f"not a feature name: {feature!r}")
+        source, output = match.groups()
+        extractor_ids = list(extractor_ids)
+        found = []
+        for entry in self.candidates(content, source):
+            described = entry.output(output)
+            if described["kind"] != "file":
+                raise BankError(f"{feature} is a {described['kind']}, not a file; only a file can be content")
+            found.append((entry, {extractor_id: self.entry(described["sha256"], extractor_id, filed_under=content,
+                                                           feature=feature) for extractor_id in extractor_ids}))
+        return found
 
     def default_input(self, content: str, extractor_id: str) -> str | None:
         """The file feature an extractor measures by default for this

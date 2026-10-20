@@ -290,7 +290,7 @@ class Run:
 
     def __init__(self, catalog: bank.Catalog, root: Path, content: Path, media_type: str, digest: str | None,
                  programs: dict[str, str], parameters: dict[str, dict[str, Any]], timeout: float | None,
-                 filed_under: str | None = None, optional: bool = False):
+                 filed_under: str | None = None, optional: bool = False, exact: bool = False):
         self.catalog, self.root, self.content, self.media_type = catalog, root, content, media_type
         self.digest, self.digest_checked = digest, digest is None
         self.programs, self.parameters, self.timeout = programs, parameters, timeout
@@ -299,6 +299,13 @@ class Run:
         self.filed_under = filed_under
         # Whether an extractor whose program is not configured is skipped (`all`) rather than failed.
         self.optional = optional
+        # Exact: an entry counts only under the configured key, never one
+        # that stands in for it (ADR 0090's amendment).
+        self.exact = exact
+        # The configured key of each extractor answered by a stand-in, and
+        # why a stand-in could not be looked up.
+        self.stands_in_for: dict[str, str] = {}
+        self.lookup_errors: dict[str, str] = {}
         self.lock = threading.Lock()
         self.scratch: Path | None = None
 
@@ -329,6 +336,8 @@ class Run:
         any is not applicable to this content."""
         order = self.catalog.order(targets)
         keys = self.catalog.keys(self.content_digest(), order, self.parameters)
+        if not self.exact:
+            keys = self.stand_in(order, keys)
         unusable: dict[str, str] = {}
         for extractor_id in order:
             extractor = self.catalog[extractor_id]
@@ -343,6 +352,28 @@ class Run:
                         unusable[extractor_id] = f"needs {source}, which {unusable[source]}"
                         break
         return order, keys, unusable
+
+    def stand_in(self, order: list[str], keys: dict[str, str]) -> dict[str, str]:
+        """Where the bank holds no entry under an interchangeable extractor's
+        configured key but one that stands in for it, take that entry's
+        parameters for this run, so it is a hit and what needs it keys on
+        it. A record that cannot be read fails that extractor, never reads
+        as no stand-in."""
+        reader = bank.Bank(self.root, self.catalog, self.parameters)
+        for extractor_id in order:
+            if self.catalog[extractor_id].interchangeable is None:
+                continue
+            try:
+                found = reader.entry(self.content_digest(), extractor_id, self.filed_under)
+            except bank.BankError as exc:
+                self.lookup_errors[extractor_id] = str(exc)
+                continue
+            if found is not None and found.manifest["key"] != keys[extractor_id]:
+                self.stands_in_for[extractor_id] = keys[extractor_id]
+                self.parameters = {**self.parameters, extractor_id: found.manifest["parameters"]}
+                keys = self.catalog.keys(self.content_digest(), order, self.parameters)
+                reader = bank.Bank(self.root, self.catalog, self.parameters)
+        return keys
 
     def request(self, extractor_id: str, keys: dict[str, str], output_dir: Path) -> dict[str, Any]:
         """The request an extractor receives: everything it may read, by path
@@ -471,6 +502,8 @@ class Run:
                                          "reason": unusable[extractor_id]}
                 continue
             try:
+                if extractor_id in self.lookup_errors:
+                    raise bank.BankError(self.lookup_errors[extractor_id])
                 entry = bank.read_entry(bank.entry_directory(self.root, self.directory_digest(), extractor_id,
                                                              keys[extractor_id]))
             except bank.BankError as exc:
@@ -481,6 +514,8 @@ class Run:
                 continue
             if entry is not None:
                 outcome[extractor_id] = {"status": "hit", "key": keys[extractor_id], "entry": str(entry.path)}
+                if extractor_id in self.stands_in_for:
+                    outcome[extractor_id]["stands_in_for"] = self.stands_in_for[extractor_id]
             else:
                 pending.append(extractor_id)
         if dry_run:
@@ -537,7 +572,8 @@ class Run:
 
 def run_from(catalog: bank.Catalog, root: Path, content: Path, media_type: str, digest: str | None,
              programs: dict[str, str], parameters: dict[str, dict[str, Any]], timeout: float | None,
-             feature: str, targets: list[str], jobs: int, dry_run: bool, optional: bool) -> dict[str, Any]:
+             feature: str, targets: list[str], jobs: int, dry_run: bool, optional: bool,
+             exact: bool = False) -> dict[str, Any]:
     """Run `targets` on a file feature of the content, as content (ADR 0075).
 
     The feature's extractor runs first, on the content, if its entry is
@@ -556,7 +592,7 @@ def run_from(catalog: bank.Catalog, root: Path, content: Path, media_type: str, 
     for target in targets:
         if source in catalog.order([target]):
             raise RunError(f"{target} would measure {feature}, which it makes or needs; it cannot be its own input")
-    first = Run(catalog, root, content, media_type, digest, programs, parameters, timeout)
+    first = Run(catalog, root, content, media_type, digest, programs, parameters, timeout, exact=exact)
     # The source is made with the operator's parameters; what measures it, with those an extractor prefers there.
     measuring = catalog.overrides_for(feature, parameters)
     made = first.execute([source], jobs, dry_run)
@@ -568,13 +604,18 @@ def run_from(catalog: bank.Catalog, root: Path, content: Path, media_type: str, 
         ok = dry_run and status == "would_run"
         return {"status": "ok" if ok else "failed", "content": None, "media_type": declared["media_type"],
                 "bank": str(root), "extractors": {}, "from": origin}
-    found = bank.Bank(root, catalog, parameters).input_of(made["content"], feature)
-    if found is None:
+    # Of the entries that answer for the feature (another device's may stand
+    # in, ADR 0090's amendment), the first over whose file every target is
+    # measured already, else the best: nothing is measured twice.
+    over = bank.Bank(root, catalog, parameters, exact=exact).measured_over(made["content"], feature, targets)
+    if not over:
         raise RunError(f"{feature} was made but its entry cannot be found")
-    path, stem_digest, stem_type = found
-    origin["entry"] = made["extractors"][source]["key"]
+    chosen = next((entry for entry, measures in over if all(measures.values())), over[0][0])
+    described = chosen.output(output)
+    path, stem_digest, stem_type = chosen.path / described["file"], described["sha256"], described["media_type"]
+    origin["entry"] = chosen.manifest["key"]
     second = Run(catalog, root, path, stem_type, stem_digest, programs, measuring, timeout,
-                 filed_under=made["content"], optional=optional)
+                 filed_under=made["content"], optional=optional, exact=exact)
     answer = second.execute(targets, jobs, dry_run)
     answer["from"] = origin
     return answer
@@ -582,7 +623,7 @@ def run_from(catalog: bank.Catalog, root: Path, content: Path, media_type: str, 
 
 def run_default(catalog: bank.Catalog, root: Path, content: Path, media_type: str, digest: str | None,
                 programs: dict[str, str], parameters: dict[str, dict[str, Any]], timeout: float | None,
-                targets: list[str], jobs: int, dry_run: bool, optional: bool) -> dict[str, Any]:
+                targets: list[str], jobs: int, dry_run: bool, optional: bool, exact: bool = False) -> dict[str, Any]:
     """Run `targets` on the content, each on its default input.
 
     The targets that prefer no feature run first, with everything they need.
@@ -594,13 +635,14 @@ def run_default(catalog: bank.Catalog, root: Path, content: Path, media_type: st
     target's answer says which feature it measured (`input`) and the keys of
     the measures it passed over (`passed_over`); what was run to measure a
     feature is under `inputs`."""
-    run = Run(catalog, root, content, media_type, digest, programs, parameters, timeout, optional=optional)
+    run = Run(catalog, root, content, media_type, digest, programs, parameters, timeout, optional=optional,
+              exact=exact)
     preferring = [t for t in targets if catalog[t].prefers and catalog[t].accepts(media_type)]
     plain = [t for t in targets if t not in preferring]
     answer = run.execute(plain, jobs, dry_run) if plain else {
         "status": "ok", "content": run.content_digest(), "media_type": media_type, "bank": str(root),
         "extractors": {}}
-    reader = bank.Bank(root, catalog, parameters)
+    reader = bank.Bank(root, catalog, parameters, exact=exact)
     passed_over: dict[str, dict[str, str]] = {}
     pending = list(preferring)
     while pending:
@@ -616,7 +658,7 @@ def run_default(catalog: bank.Catalog, root: Path, content: Path, media_type: st
         pending = []
         for feature, group in by_feature.items():
             made = run_from(catalog, root, content, media_type, run.content_digest(), programs, parameters,
-                            timeout, feature, group, jobs, dry_run, optional)
+                            timeout, feature, group, jobs, dry_run, optional, exact)
             answer.setdefault("inputs", {})[feature] = {"content": made["content"],
                                                         "extractors": made["extractors"], "from": made["from"]}
             for target in group:
@@ -654,6 +696,41 @@ def unconfigured(extractor: bank.Extractor, programs: dict[str, str]) -> str | N
 
 
 # -- the command line ----------------------------------------------------------
+
+def programs_of(arguments: argparse.Namespace, config: dict[str, Any]) -> dict[str, str]:
+    programs = {"python": sys.executable, "sh": "/bin/sh", **config.get("programs", {})}
+    for item in arguments.program:
+        name, separator, value = item.partition("=")
+        if not separator or not bank.ID.fullmatch(name) or not value:
+            raise RunError(f"--program takes <name>=<path>, not {item!r}")
+        programs[name] = value
+    return programs
+
+
+def main_equivalence(arguments: argparse.Namespace) -> int:
+    """Exit 0 when the record passes, 1 when it fails (it is filed either
+    way), 2 when no record could be made."""
+    import equivalence
+    try:
+        if arguments.jobs < 1:
+            raise RunError("--jobs must be at least 1")
+        config = load_config(arguments.config)
+        catalog = catalog_of(arguments, config)
+        parameters = config.get("parameters", {})
+        catalog.check_overrides(parameters, f"configuration {arguments.config}")
+        contents = [Path(c) for c in arguments.content]
+        for content in contents:
+            if not content.is_file():
+                raise RunError(f"no content file at {content}")
+        record, path = equivalence.measure(catalog, Path(arguments.bank).resolve(), contents,
+                                           programs_of(arguments, config), parameters, arguments.extractor,
+                                           arguments.against, arguments.jobs, arguments.timeout)
+    except (RunError, bank.BankError, equivalence.EquivalenceError, OSError) as exc:
+        print(json.dumps({"status": "failed", "detail": str(exc)}), file=sys.stderr)
+        return 2
+    print(json.dumps({**equivalence.summary(record), "record": str(path)}, indent=1))
+    return 0 if record["pass"] else 1
+
 
 def load_config(path: str | None) -> dict[str, Any]:
     """Configuration: `{"programs": {name: path}, "parameters": {extractor:
@@ -699,7 +776,22 @@ def main(argv: list[str] | None = None) -> int:
     running.add_argument("--from", dest="source", metavar="EXTRACTOR/OUTPUT")
     running.add_argument("--no-prefer", action="store_true",
                          help="measure the content itself, even where an extractor prefers a feature of it")
+    running.add_argument("--exact", action="store_true",
+                         help="count only the configured key's entry, never one that stands in for it")
+    comparing = commands.add_parser("equivalence", help="measure whether interchangeable entries agree downstream "
+                                                        "and file the record (ADR 0090's amendment)")
+    comparing.add_argument("extractor")
+    comparing.add_argument("--content", action="append", required=True, help="a test input; give several")
+    comparing.add_argument("--against", required=True, help="the other value of the interchangeable parameter")
+    comparing.add_argument("--bank", required=True)
+    comparing.add_argument("--jobs", type=int, default=1)
+    comparing.add_argument("--config")
+    comparing.add_argument("--program", action="append", default=[])
+    comparing.add_argument("--extractors", action="append")
+    comparing.add_argument("--timeout", type=float)
     arguments = parser.parse_args(argv)
+    if arguments.command == "equivalence":
+        return main_equivalence(arguments)
     try:
         config = load_config(arguments.config)
         catalog = catalog_of(arguments, config)
@@ -717,12 +809,7 @@ def main(argv: list[str] | None = None) -> int:
             raise RunError(f"no content file at {content}")
         if arguments.digest is not None and not bank.derived.is_digest(arguments.digest):
             raise RunError(f"--digest must be sha256:<64 hex>, not {arguments.digest!r}")
-        programs = {"python": sys.executable, "sh": "/bin/sh", **config.get("programs", {})}
-        for item in arguments.program:
-            name, separator, value = item.partition("=")
-            if not separator or not bank.ID.fullmatch(name) or not value:
-                raise RunError(f"--program takes <name>=<path>, not {item!r}")
-            programs[name] = value
+        programs = programs_of(arguments, config)
         catalog.check_overrides(config.get("parameters", {}), f"configuration {arguments.config}")
         everything = arguments.extractor == "all"
         targets = sorted(catalog.extractors) if everything else [arguments.extractor]
@@ -739,15 +826,15 @@ def main(argv: list[str] | None = None) -> int:
                 targets = [t for t in targets if source not in catalog.order([t]) and not makes_content(catalog[t])]
             answer = run_from(catalog, root, content, media_type, arguments.digest, programs,
                               config.get("parameters", {}), arguments.timeout, arguments.source, targets,
-                              arguments.jobs, arguments.dry_run, everything)
+                              arguments.jobs, arguments.dry_run, everything, arguments.exact)
         elif arguments.no_prefer:
             run = Run(catalog, root, content, media_type, arguments.digest, programs, config.get("parameters", {}),
-                      arguments.timeout, optional=everything)
+                      arguments.timeout, optional=everything, exact=arguments.exact)
             answer = run.execute(targets, arguments.jobs, arguments.dry_run)
         else:
             answer = run_default(catalog, root, content, media_type, arguments.digest, programs,
                                  config.get("parameters", {}), arguments.timeout, targets, arguments.jobs,
-                                 arguments.dry_run, everything)
+                                 arguments.dry_run, everything, arguments.exact)
     except (RunError, bank.BankError) as exc:
         print(json.dumps({"status": "failed", "detail": str(exc)}), file=sys.stderr)
         return 1

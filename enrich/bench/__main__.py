@@ -1,4 +1,4 @@
-"""python -m enrich.bench validate SET | run SET --variant NAME | check SET
+"""python -m enrich.bench validate SET | run SET --variant NAME | check SET | equivalence
 
 Exit status: 0 passed, 1 a mean regressed beyond the tolerance, 2 the run
 could not happen (a missing or changed file, a bad manifest or config, a
@@ -11,7 +11,7 @@ import argparse
 import json
 import sys
 
-from . import variants
+from . import equivalence, variants
 from .run import (DEFAULT_TOLERANCE, baseline_path, compare, record_baseline, run_set, summary,
                   write_result)
 from .sets import BenchError, bench_root, load_set, verify
@@ -50,9 +50,13 @@ def main(argv: list[str] | None = None) -> int:
     c = commands.add_parser("check", help="rerun every baseline of a set and fail on a regression")
     c.add_argument("set")
     c.add_argument("--tolerance", type=float, default=DEFAULT_TOLERANCE)
+    commands.add_parser("equivalence", help="measure the stem equivalence record over the root's clips "
+                                            "(see enrich/bench/equivalence.py)")
     args = parser.parse_args(argv)
     try:
         root = bench_root(args.root)
+        if args.command == "equivalence":
+            return equivalence.check(root)
         bench_set = load_set(root, args.set)
         if args.command == "validate":
             verify(root, bench_set)

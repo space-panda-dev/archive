@@ -111,6 +111,41 @@
    "measure": "RMS over both channels of the float stem, zero outside it"
   }
  },
+ "interchangeable": {
+  "parameter": "apply.device",
+  "values": [
+   "cpu",
+   "mps"
+  ],
+  "software": [
+   "demucs",
+   "torch"
+  ],
+  "agree": [
+   {
+    "measure": "note-f1",
+    "outputs": [
+     "vocals",
+     "bass"
+    ],
+    "at_least": "0.98"
+   },
+   {
+    "measure": "f0-cents-p99",
+    "outputs": [
+     "vocals"
+    ],
+    "at_most": "5"
+   },
+   {
+    "measure": "voicing-agreement",
+    "outputs": [
+     "vocals"
+    ],
+    "at_least": "0.99"
+   }
+  ]
+ },
  "outputs": {
   "vocals": {
    "kind": "file",
