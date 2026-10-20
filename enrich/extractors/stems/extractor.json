@@ -115,7 +115,8 @@
   "parameter": "apply.device",
   "values": [
    "cpu",
-   "mps"
+   "mps",
+   "cpu-inductor"
   ],
   "software": [
    "demucs",

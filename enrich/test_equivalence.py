@@ -220,18 +220,20 @@ class Manifest(unittest.TestCase):
             {"measure": "note-f1", "outputs": ["voice"], "at_least": "1", "at_most": "2"}]}), "each agreement")
         self.refused(sep_manifest(needs=["x/y"]), "needs nothing")
 
-    def test_the_shipped_stems_declare_cpu_and_mps_and_differ_only_in_the_device(self) -> None:
+    def test_the_shipped_stems_declare_three_devices_and_differ_only_in_the_device(self) -> None:
         catalog = bank.Catalog.load()
         declared = catalog["stems"].interchangeable
-        self.assertEqual((declared["parameter"], declared["values"]), ("apply.device", ["cpu", "mps"]))
+        self.assertEqual((declared["parameter"], declared["values"]),
+                         ("apply.device", ["cpu", "mps", "cpu-inductor"]))
         self.assertEqual({item["measure"] for item in declared["agree"]}, set(bank.MEASURES))
-        (value, mps), = catalog.alternatives("stems")
+        (value, mps), (other, compiled) = catalog.alternatives("stems")
         cpu = catalog.parameters("stems")
         self.assertNotEqual(cpu, mps)  # anchor
         self.assertEqual((value, bank.with_parameter(mps, "apply.device", "cpu")), ("mps", cpu))
-        # Configured for mps, the cpu's stems are the alternative.
+        self.assertEqual((other, bank.with_parameter(compiled, "apply.device", "cpu")), ("cpu-inductor", cpu))
+        # Configured for mps, the cpu's stems come first, then the compiled cpu's.
         overrides = {"stems": {"apply": {**cpu["apply"], "device": "mps"}}}
-        self.assertEqual([v for v, _ in catalog.alternatives("stems", overrides)], ["cpu"])
+        self.assertEqual([v for v, _ in catalog.alternatives("stems", overrides)], ["cpu", "cpu-inductor"])
 
 
 class StandIn(unittest.TestCase):

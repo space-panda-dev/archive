@@ -1020,7 +1020,7 @@ request for an entry nothing holds yet.
 
 ### A stem is a stem: `equivalence` and `--exact`
 
-`stems` declares `apply.device` `cpu` and `mps` interchangeable
+`stems` declares `apply.device` `cpu`, `mps` and `cpu-inductor` interchangeable
 ([ADR 0090's amendment](../docs/decisions/0090-extractor-runs-travel-through-spool.md#amendment-2026-10-19-a-stem-is-a-stem);
 [format](../docs/feature-bank.md#interchangeable-entries)). Each device's
 stems keep their own key; where the configured device's are missing, the
@@ -1048,6 +1048,18 @@ passed 0.13, so the note builder voices no bass row and there is nothing to
 compare. An
 upgrade of torch or demucs on either side is a reason to measure again:
 lookup honours only a record naming the software the entry was made with.
+
+`cpu-inductor` runs htdemucs's network (`stems.htdemucs_core`, everything
+between the spectrogram and the mask) compiled by PyTorch's inductor on the
+CPU; the spectrogram, mask and inverse stay in eager PyTorch. It needs a C++
+compiler where it runs (`CXX`, else `g++`), whose version its entries record
+as `c++`, and compiles once per process (seconds after the first, from
+inductor's cache). It is the laptop's cheapest way to separate (round 2 of
+[ADR 0112](../docs/decisions/0112-bulk-import-at-scale.md)):
+configure `{"stems": {"apply": {..., "device": "cpu-inductor"}}}` and run
+`equivalence stems --against cpu` (and `--against mps`) so the entries
+already made stand in.
+
 ### The model extractors' interpreters
 
 Each is a virtual environment of its own, never the archive's. The versions

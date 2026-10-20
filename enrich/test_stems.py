@@ -48,7 +48,7 @@ DEMUCS_PYTHON = os.environ.get("ARCHIVE_TEST_DEMUCS_PYTHON")
 # seconds. stems6s.py runs stems.py's code, so the stand-in replaces them
 # there too. A program of six stems gets a model of six sources.
 FAKE = r'''#!{python}
-import functools, importlib.util, os, sys
+import functools, importlib.util, json, os, sys
 import numpy
 spec = importlib.util.spec_from_file_location("stems_program", sys.argv[1])
 program = importlib.util.module_from_spec(spec)
@@ -85,8 +85,13 @@ class Gains:
             out[self.sources.index("vocals"), ..., out.shape[-1] // 10:] = 0
         return out
 
+def load(settings, apply):
+    if os.environ.get("STEMS_FAKE_APPLY"):
+        open(os.environ["STEMS_FAKE_APPLY"], "w").write(json.dumps(apply))
+    return Gains()
+
 for module in modules:
-    module.load_model = lambda settings, apply: Gains()
+    module.load_model = load
     if os.environ.get("STEMS_FAKE_CHUNK") and hasattr(module, "separate"):
         chunk, overlap = (int(v) * module.RATE for v in os.environ["STEMS_FAKE_CHUNK"].split(","))
         module.separate = functools.partial(module.separate, chunk=chunk, overlap=overlap)
@@ -151,6 +156,20 @@ class Manifest(unittest.TestCase):
         scalars = {name for name, out in extractor.outputs.items() if out["kind"] == "scalar"}
         self.assertEqual(scalars, {f"{s}_{m}" for s in stems.STEMS for m in ("rms_db", "peak_db", "clamped")}
                          | {"mix_rms_db", "samples", "seconds"})
+
+    def test_every_device_is_declared_interchangeable(self) -> None:
+        catalog = bank.Catalog.load()
+        declared = catalog["stems"].interchangeable
+        self.assertEqual(declared["values"], list(stems.DEVICES))
+        self.assertEqual(set(stems.TORCH_DEVICE), set(stems.DEVICES))
+        self.assertTrue(set(stems.COMPILED) <= set(stems.DEVICES))
+        alternatives = dict(catalog.alternatives("stems"))
+        self.assertEqual(set(alternatives), set(stems.DEVICES) - {"cpu"})  # anchor: every other device
+        for device, other in alternatives.items():
+            self.assertEqual(other, stems.parameters(stems.HTDEMUCS, device), device)
+        # Configured for another device, the manifest's cpu is among its alternatives, as the program makes it.
+        overrides = {"stems": stems.parameters(stems.HTDEMUCS, "cpu-inductor")}
+        self.assertEqual(dict(catalog.alternatives("stems", overrides))["cpu"], stems.parameters())
 
     def test_the_archive_side_never_imports_torch(self) -> None:
         # The program and the runner load without PyTorch; only load_model imports it.
@@ -433,6 +452,21 @@ class Separation(unittest.TestCase):
         code, answer = run(directory, audio, "stems", "--config", str(config), program=fake_python(directory))
         self.assertEqual(code, 1)
         self.assertIn("fixed settings", answer["extractors"]["stems"]["log"])
+
+    def test_each_device_is_run_with_its_settings(self) -> None:
+        directory = scratch(self)
+        audio = chord_with_clicks(directory / "take.flac", 1)
+        for device in stems.DEVICES:
+            config = directory / f"{device}.json"
+            config.write_text(json.dumps({"parameters": {"stems": stems.parameters(stems.HTDEMUCS, device)}}))
+            told = directory / f"{device}.apply.json"
+            code, answer = run(directory, audio, "stems", "--config", str(config), program=fake_python(directory),
+                               env={"STEMS_FAKE_APPLY": str(told)})
+            self.assertEqual(code, 0, answer)
+            self.assertEqual(json.loads(told.read_text()), stems.apply_on(device))
+            entry = bank.Bank(directory / "bank", None, {"stems": stems.parameters(stems.HTDEMUCS, device)},
+                              exact=True).entry(bank.file_digest(audio), "stems")
+            self.assertEqual(entry.manifest["parameters"]["apply"]["device"], device)
 
     def test_an_interpreter_without_demucs_says_so(self) -> None:
         # This interpreter has no PyTorch: the real model loader is reached and refuses.
@@ -747,6 +781,25 @@ class RealDemucs(unittest.TestCase):
         again = bank.Bank(directory / "bank").entry(bank.file_digest(audio), "stems")
         self.assertEqual({stem: again.output(stem)["sha256"] for stem in stems.STEMS}, first)
 
+
+    def test_the_compiled_network_gives_the_eager_stems(self) -> None:
+        # cpu-inductor runs htdemucs_core compiled: other bits, within a few 16-bit steps.
+        directory = scratch(self)
+        audio = chord_with_clicks(directory / "take.flac", 12)
+        self.assertEqual(run(directory, audio, program=Path(DEMUCS_PYTHON))[0], 0)
+        config = directory / "inductor.json"
+        config.write_text(json.dumps({"parameters": {"stems": stems.parameters(stems.HTDEMUCS, "cpu-inductor")}}))
+        code, answer = run(directory, audio, "stems", "--config", str(config), program=Path(DEMUCS_PYTHON))
+        self.assertEqual(code, 0, answer)
+        digest = bank.file_digest(audio)
+        eager = bank.Bank(directory / "bank", exact=True).entry(digest, "stems")
+        compiled = bank.Bank(directory / "bank", None, {"stems": stems.parameters(stems.HTDEMUCS, "cpu-inductor")},
+                             exact=True).entry(digest, "stems")
+        self.assertNotEqual(eager.manifest["key"], compiled.manifest["key"])
+        self.assertIn("c++", {item["name"] for item in compiled.manifest["software"]})
+        for stem in stems.STEMS:
+            steps = numpy.abs(decode(eager.file(stem)) - decode(compiled.file(stem))).max() * stems.SCALE
+            self.assertLessEqual(float(steps), 4, stem)
 
     def test_htdemucs_6s_separates_six_stems_that_sum_to_the_mix(self) -> None:
         directory = scratch(self)
