@@ -303,6 +303,54 @@ scheduler has added it.
   extractors on accuracy and core-seconds per audio-second, including the
   backbone pass itself.
 
+- **Open: experiment-floor spikes toward eager 10,000 h.** A literature
+  review (2026-10-20) of four levers found no order-of-magnitude gain
+  outside separation: chords, beats, key and sections are already the
+  cheap part (the fast tier), and stems are about three-quarters of the
+  cost and cannot be transferred between takes. Estimates from published
+  numbers on other hardware (none measured here): eager at 10,000 h from
+  66-89 days to about 15-25 days with no training (an MLX port of htdemucs
+  on the Mac, ONNX Runtime or a lighter separator on the laptop), about
+  7-12 days with a separator student distilled from htdemucs on the
+  archive's own audio, and about 3-4 days with stems on demand. Only
+  practice audio and stem transcriptions (bass spans and line, the vocal
+  stem's melody and notes) need stems; everything else reads the mix.
+  Spikes, in order, each scored with the bench (accuracy against today's
+  extractors, and core-seconds or wall-seconds per audio-second):
+  1. Label transfer: fully analyse about 10 takes each of 5 songs,
+     including takes known to be reharmonised or rearranged; align takes
+     (chroma DTW, a method that tolerates skipped or extra sections) and
+     transfer chords, sections, key and bars from a reference fused from
+     several takes. A transferred label is a hypothesis per take, never a
+     fact: check it cheaply per bar (the fast tier's chords, alignment
+     confidence) and send disagreement to full analysis, recording it as
+     a possible new arrangement. Measure how often the check catches the
+     known variants and how often it raises false alarms. The value is
+     accuracy and arrangement detection, and making stems on demand safe;
+     the direct compute saving is small.
+  2. The MLX port of htdemucs against PyTorch MPS on the Mac, at several
+     batch sizes, inside the stem-equivalence tolerance (ADR 0090's
+     amendment).
+  3. Separators on the laptop CPU: htdemucs under PyTorch, ONNX Runtime
+     and OpenVINO (OpenVINO already tried in round 2 with no gain), against
+     SCNet, Spleeter and Open-Unmix `umxhq`, judged by the downstream
+     measures (notes F1, f0 cents) on their stems, not SDR alone.
+  4. The fp16 Core ML htdemucs on the Neural Engine, run beside MLX on the
+     GPU as a second device; check parity on every segment.
+  5. A distilled separator student: have htdemucs label a few hundred
+     hours, train a small model (SCNet-sized, reduced sample rate, only the
+     stems the readers need), score it against the equivalence tolerance.
+     Training may need a GPU; a rented one is opt-in only.
+  6. A music foundation backbone with heads (the item above), on reference
+     takes only.
+  7. Last: the laptop's integrated GPU, which no current runtime supports
+     well.
+
+  Licences to keep in view: MERT and MuQ weights, madmom's models,
+  Open-Unmix `umxl` and the BTC chord weights are non-commercial (run
+  operator-local only, never ship); CoverHunter has no licence; the
+  licences of SCNet's, PESTO's and several ports' weights are unverified.
+
 ## People, samples, and rehearsals (ADRs 0092-0111)
 
 The operator accepted ADRs 0092 to 0111 on 2026-10-19 as decisions only:
