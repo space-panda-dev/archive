@@ -1017,8 +1017,8 @@ between the spectrogram and the mask) compiled by PyTorch's inductor on the
 CPU; the spectrogram, mask and inverse stay in eager PyTorch. It needs a C++
 compiler where it runs (`CXX`, else `g++`), whose version its entries record
 as `c++`, and compiles once per process (seconds after the first, from
-inductor's cache). It is the laptop's cheapest way to separate (ADR 0112's
-[round 2](../docs/decisions/0112-bulk-import-at-scale.md#amendment-2026-10-20-faster-stems-on-the-cpu)):
+inductor's cache). It is the laptop's cheapest way to separate (round 2 of
+[ADR 0112](../docs/decisions/0112-bulk-import-at-scale.md)):
 configure `{"stems": {"apply": {..., "device": "cpu-inductor"}}}` and run
 `equivalence stems --against cpu` (and `--against mps`) so the entries
 already made stand in.
