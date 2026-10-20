@@ -62,7 +62,12 @@ any content. Entries are region entries (`archive-feature-bank-entry/2`,
 keyed by `archive-feature-bank-key/2`), filed under the content's directory
 with the region and the cut's digest; an extractor's needs are made over the
 same region. Their times are on the cut's timeline; a reader adds `start`.
-A stem made over a region is content of its own, measured whole.
+A stem made over a region is content of its own, measured whole, but an
+extractor that frames its input (notes-basic-pitch, f0-pesto, melody) is
+told where the region lies (the input's `region`, with the content's
+`source` only for the cut itself) and lays its frames on the whole run's
+grid, so a region's measures are the whole's over the region up to the
+edges.
 
 The runner uses only Python's standard library. It never reads or writes an
 archive and proposes nothing: features are not claims.
@@ -356,8 +361,13 @@ class Run:
 
     def __init__(self, catalog: bank.Catalog, root: Path, content: Path, media_type: str, digest: str | None,
                  programs: dict[str, str], parameters: dict[str, dict[str, Any]], timeout: float | None,
-                 filed_under: str | None = None, optional: bool = False, exact: bool = False):
+                 filed_under: str | None = None, optional: bool = False, exact: bool = False,
+                 placed: dict[str, int] | None = None):
         self.catalog, self.root, self.content, self.media_type = catalog, root, content, media_type
+        # The region of the recording a file feature measured as content was
+        # made over (a stem made over a region): its measures lay their
+        # frames on the whole recording's grid from there (ADR 0112).
+        self.placed = placed
         self.digest, self.digest_checked = digest, digest is None
         self.programs, self.parameters, self.timeout = programs, parameters, timeout
         # The digest whose directory holds the entries: the content's own,
@@ -496,11 +506,20 @@ class Run:
             assert self.cut is not None
             # The region and the content it was cut from, for an extractor
             # whose output over a region depends on what lies around it
-            # (stems: Demucs's segment grid); the others read the cut alone.
+            # (stems: Demucs's segment grid); the extractors that frame
+            # their input (notes-basic-pitch, f0-pesto, melody) lay their
+            # frames on the whole run's grid from the region's start.
             return {"path": str(self.cut[0].resolve()), "digest": self.cut[1], "media_type": CUT_MEDIA_TYPE,
                     "region": dict(self.region),
                     "source": {"path": str(self.content.resolve()), "digest": self.content_digest(),
                                "media_type": self.media_type}}
+        if self.placed is not None:
+            # A stem made over a region: where its audio lies on the
+            # recording's timeline, so an extractor that frames its input
+            # lays the frames on the whole run's grid (no source: the stem
+            # around the region was never made).
+            return {"path": str(self.content.resolve()), "digest": self.content_digest(),
+                    "media_type": self.media_type, "region": dict(self.placed)}
         return {"path": str(self.content.resolve()), "digest": self.content_digest(), "media_type": self.media_type}
 
     # -- running one extractor ---------------------------------------------
@@ -729,7 +748,7 @@ def run_from(catalog: bank.Catalog, root: Path, content: Path, media_type: str, 
     path, stem_digest, stem_type = chosen.path / described["file"], described["sha256"], described["media_type"]
     origin["entry"] = chosen.manifest["key"]
     second = Run(catalog, root, path, stem_type, stem_digest, programs, measuring, timeout,
-                 filed_under=made["content"], optional=optional, exact=exact)
+                 filed_under=made["content"], optional=optional, exact=exact, placed=chosen.timeline)
     answer = second.execute(targets, jobs, dry_run)
     answer["from"] = origin
     return answer
@@ -869,6 +888,38 @@ def main_equivalence(arguments: argparse.Namespace) -> int:
     return 0 if record["pass"] else 1
 
 
+def main_region_equivalence(arguments: argparse.Namespace) -> int:
+    """Exit 0 when every input's region agrees with its whole run, 1 when one
+    does not, 2 when the comparison could not be made."""
+    import equivalence
+    try:
+        if arguments.jobs < 1:
+            raise RunError("--jobs must be at least 1")
+        start, separator, end = arguments.seconds.partition(":")
+        try:
+            seconds = (float(start), float(end))
+        except ValueError:
+            seconds = (0.0, 0.0)
+        if not separator or not 0 <= seconds[0] < seconds[1]:
+            raise RunError(f"--seconds takes <start>:<end>, not {arguments.seconds!r}")
+        config = load_config(arguments.config)
+        catalog = catalog_of(arguments, config)
+        parameters = config.get("parameters", {})
+        catalog.check_overrides(parameters, f"configuration {arguments.config}")
+        contents = [Path(c) for c in arguments.content]
+        for content in contents:
+            if not content.is_file():
+                raise RunError(f"no content file at {content}")
+        record = equivalence.region_measure(catalog, Path(arguments.bank).resolve(), contents,
+                                            programs_of(arguments, config), parameters, seconds, arguments.jobs,
+                                            arguments.timeout)
+    except (RunError, bank.BankError, equivalence.EquivalenceError, OSError) as exc:
+        print(json.dumps({"status": "failed", "detail": str(exc)}), file=sys.stderr)
+        return 2
+    print(json.dumps(record, indent=1))
+    return 0 if record["pass"] else 1
+
+
 def load_config(path: str | None) -> dict[str, Any]:
     """Configuration: `{"programs": {name: path}, "parameters": {extractor:
     {field: value}}, "extractors": [directory, ...], "backfill": {...}}`, all
@@ -928,10 +979,23 @@ def main(argv: list[str] | None = None) -> int:
     comparing.add_argument("--program", action="append", default=[])
     comparing.add_argument("--extractors", action="append")
     comparing.add_argument("--timeout", type=float)
+    regional = commands.add_parser("region-equivalence",
+                                   help="compare stems and their measures over a region with the whole run's "
+                                        "(ADR 0112); files the entries, prints the comparison")
+    regional.add_argument("--content", action="append", required=True, help="a test input; give several")
+    regional.add_argument("--seconds", default="15:45", help="the region, <start>:<end> in seconds")
+    regional.add_argument("--bank", required=True)
+    regional.add_argument("--jobs", type=int, default=1)
+    regional.add_argument("--config")
+    regional.add_argument("--program", action="append", default=[])
+    regional.add_argument("--extractors", action="append")
+    regional.add_argument("--timeout", type=float)
     running.add_argument("--region", help="limit the run to [start, end) samples at rate: <start>:<end>:<rate>")
     arguments = parser.parse_args(argv)
     if arguments.command == "equivalence":
         return main_equivalence(arguments)
+    if arguments.command == "region-equivalence":
+        return main_region_equivalence(arguments)
     try:
         config = load_config(arguments.config)
         catalog = catalog_of(arguments, config)

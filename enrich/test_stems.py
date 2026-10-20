@@ -502,6 +502,39 @@ class Separation(unittest.TestCase):
                     # Anchor: the cut separated alone is other stems.
                     self.assertGreater(numpy.abs(found["cut"][stem] - expected).max(), 0.01, stem)
 
+    def test_a_region_stems_measure_is_the_whole_stems_measure_over_the_region(self) -> None:
+        # ADR 0112: a stem made over a region is measured as content, laid on
+        # the whole run's grid from the region's start (extract.py passes
+        # the stem's region), so its f0 rows are the whole stem's.
+        import test_f0
+        directory = scratch(self)
+        audio = chord_with_clicks(directory / "take.flac", 13)
+        fake, tracker = fake_python(directory), test_f0.fake_python(directory)
+        env = {"STEMS_FAKE": "grid", "STEMS_FAKE_CHUNK": "4,1", "F0_FAKE": "chunked"}
+        measure = ("f0-pesto", "--from", "stems/vocals", "--program", f"f0-python={tracker}")
+        code, answer = run(directory / "whole", audio, *measure, program=fake, env=env)
+        self.assertEqual(code, 0, answer)
+        digest = bank.file_digest(audio)
+        reader = bank.Bank(directory / "whole" / "bank")
+        whole = reader.entry(reader.entry(digest, "stems").output("vocals")["sha256"], "f0-pesto", filed_under=digest)
+        start, end = 241440, 432480  # 5.03 s to 9.01 s at 48 kHz
+        code, answer = run(directory / "region", audio, *measure, "--region", f"{start}:{end}:48000", program=fake,
+                           env=env)
+        self.assertEqual(code, 0, answer)
+        reader = bank.Bank(directory / "region" / "bank")
+        stem = bank.covering(reader, digest, "stems", start, end, 48000)
+        region = reader.entry(stem.output("vocals")["sha256"], "f0-pesto", filed_under=digest)
+        self.assertIsNotNone(region)
+        offset = start // 3  # at 16 kHz
+        grid = region.grid("f0")
+        self.assertEqual(grid["first_centre"], -offset % 160)
+        first = (offset + grid["first_centre"]) // 160
+        mine, theirs = region.series("f0"), whole.series("f0")[first:first + len(region.series("f0"))]
+        inside = slice(4, len(mine) - 4)
+        self.assertGreater(float(numpy.mean(mine[inside, 0] > 0)), 0.9)  # anchor: pitched rows
+        numpy.testing.assert_allclose(mine[inside], theirs[inside], rtol=0, atol=0.5)
+        self.assertLess(float(numpy.median(numpy.abs(mine[inside, 0] - theirs[inside, 0]))), 0.01)
+
     def test_a_region_window_starts_on_the_whole_runs_grid(self) -> None:
         class Grid:
             segment_samples, stride = 8820, 6615

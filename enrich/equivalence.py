@@ -23,6 +23,7 @@ import json
 import math
 import subprocess
 from datetime import datetime, timezone
+from fractions import Fraction
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -260,3 +261,179 @@ def summary(record: dict[str, Any]) -> dict[str, Any]:
             "measured_on": decision["measured_on"], "worst_input": pick(values) if values else None}
     return {"pass": record["pass"], "sides": [s["value"] for s in record["sides"]], "measures": measures,
             "inputs": len(record["inputs"])}
+
+
+# -- a region against the whole (ADR 0112) -------------------------------------
+#
+# Under `--songs` the expensive extractors run over song regions, and a
+# region's entries must be the whole run's over the region within the
+# tolerance a stand-in is held to (the agreement `stems` declares): the
+# region's stems, and what measures them, laid on the whole run's grid.
+# `region_measure` makes both sides of each test input and compares them
+# over the region; nothing is filed but the entries.
+
+REGION_MEASURES = {"notes-basic-pitch": ("note-f1",), "f0-pesto": ("f0-cents-p99", "voicing-agreement"),
+                   "melody": ("melody-cents-p99", "melody-voicing")}
+REGION_FEATURES = {"stems/vocals": ("notes-basic-pitch", "f0-pesto", "melody"),
+                   "stems/bass": ("notes-basic-pitch", "f0-pesto")}
+
+
+def first_row(whole: bank.Entry, region: bank.Entry, grid: str) -> int:
+    """The whole entry's row that is the region entry's first, by the
+    region's offset at the grid's rate and the region's `first_centre`."""
+    placed = region.timeline
+    shape = region.grid(grid)
+    if placed is None or shape is None or whole.grid(grid) is None:
+        raise EquivalenceError(f"{region.manifest['extractor']} over a region has no {grid} grid or region")
+    rate, hop = shape["sample_rate"], shape["hop"]
+    offset = round(Fraction(placed["start"] * rate, placed["rate"]))
+    row, rest = divmod(offset + shape["first_centre"] - whole.grid(grid)["first_centre"], hop)
+    if rest:
+        raise EquivalenceError(f"the region's {grid} rows are not on the whole run's ({rest} samples off)")
+    return row
+
+
+def _over(whole: Any, region: Any, row: int) -> tuple[Any, Any]:
+    """The whole's rows over the region's, and the region's rows the whole
+    has (a whole run may stop a row short, or drop its last frames)."""
+    count = max(0, min(len(region), len(whole) - row))
+    return whole[row:row + count], region[:count]
+
+
+def _cents_p99(a_pitch: Any, a_voiced: Any, b_pitch: Any, b_voiced: Any, scale: float) -> tuple[float | None, dict]:
+    import numpy
+    both = a_voiced & b_voiced
+    detail = {"rows": int(len(a_pitch)), "voiced_in_both": int(both.sum())}
+    if not both.any():
+        return None, detail
+    cents = numpy.abs(a_pitch[both] - b_pitch[both]) * scale
+    detail["median_cents"] = round(float(numpy.median(cents)), 3)
+    return round(float(numpy.percentile(cents, 99)), 3), detail
+
+
+def _voicing(a_voiced: Any, b_voiced: Any) -> tuple[float | None, dict]:
+    either = a_voiced | b_voiced
+    agreeing = int((a_voiced == b_voiced)[either].sum())
+    detail = {"rows": int(len(a_voiced)), "voiced_in_either": int(either.sum()), "agreeing": agreeing}
+    if not either.any():
+        return None, detail
+    return round(agreeing / int(either.sum()), 6), detail
+
+
+def region_agreement(measure: str, whole: bank.Entry, region: bank.Entry, output: str) -> tuple[float | None, dict]:
+    """One measure of a region entry against the whole entry over the
+    region: notes by onset in the region, rows from the region's first."""
+    import numpy
+    placed = region.timeline
+    assert placed is not None
+    start, end = placed["start"] / placed["rate"], placed["end"] / placed["rate"]
+    if measure == "note-f1":
+        mine = [(onset + start, midi) for onset, midi in notes_of(region)]
+        theirs = [(onset, midi) for onset, midi in notes_of(whole) if start <= onset < end]
+        return note_agreement(theirs, mine)
+    if measure in ("f0-cents-p99", "voicing-agreement"):
+        a_midi, a_voiced = voiced_pitch(whole, output)
+        b_midi, b_voiced = voiced_pitch(region, output)
+        row = first_row(whole, region, "f0")
+        (a_midi, b_midi), (a_voiced, b_voiced) = (_over(a_midi, b_midi, row), _over(a_voiced, b_voiced, row))
+        if measure == "voicing-agreement":
+            return _voicing(a_voiced, b_voiced)
+        return _cents_p99(a_midi, a_voiced, b_midi, b_voiced, 100)
+    if measure in ("melody-cents-p99", "melody-voicing"):
+        row = first_row(whole, region, "melody")
+        a, b = _over(whole.series("pitch")[:, 0], region.series("pitch")[:, 0], row)
+        a_voiced, b_voiced = a > 0, b > 0
+        if measure == "melody-voicing":
+            return _voicing(a_voiced, b_voiced)
+        safe = numpy.where(a_voiced, a, 1.0), numpy.where(b_voiced, b, 1.0)
+        return _cents_p99(numpy.log2(safe[0]), a_voiced, numpy.log2(safe[1]), b_voiced, 1200)
+    raise EquivalenceError(f"no region measure {measure!r}")
+
+
+def region_bounds(catalog: bank.Catalog) -> dict[str, tuple[str, float]]:
+    """Each measure's bound: those `stems` declares for a stand-in, and the
+    melody's, held to the f0 track's."""
+    bounds: dict[str, tuple[str, float]] = {}
+    for item in (catalog["stems"].interchangeable or {}).get("agree", []):
+        bound = "at_least" if "at_least" in item else "at_most"
+        bounds[item["measure"]] = (bound, float(item[bound]))
+    bounds["melody-cents-p99"] = bounds.get("f0-cents-p99", ("at_most", 5.0))
+    bounds["melody-voicing"] = bounds.get("voicing-agreement", ("at_least", 0.99))
+    return bounds
+
+
+def region_measure(catalog: bank.Catalog, root: Path, contents: list[Path], programs: dict[str, str],
+                   parameters: dict[str, dict[str, Any]], seconds: tuple[float, float], jobs: int = 1,
+                   timeout: float | None = None) -> dict[str, Any]:
+    """Each content's stems and their measures whole and over the region
+    [seconds), compared over the region; the stems' sample differences are
+    evidence. Every value is checked against `region_bounds`."""
+    bounds = region_bounds(catalog)
+    inputs = []
+    for content in contents:
+        media_type = extract.media_type_of(content)
+        digest = bank.file_digest(content)
+        rate = _stream_rate(content)
+        region = {"start": round(seconds[0] * rate), "end": round(seconds[1] * rate), "rate": rate}
+        sides = {"whole": catalog, "region": catalog.within(digest, region)}
+        found: dict[str, dict[str, Any]] = {"whole": {}, "region": {}}
+        for side, view in sides.items():
+            for feature, targets in REGION_FEATURES.items():
+                answer = extract.run_from(view, root, content, media_type, digest, programs, parameters, timeout,
+                                          feature, list(targets), jobs, False, False)
+                failed = {t: a for t, a in answer["extractors"].items() if a["status"] not in ("hit", "ran")}
+                if answer["status"] != "ok" or failed:
+                    raise EquivalenceError(f"{feature} of {content} over the {side} was not made: "
+                                           f"{json.dumps(failed or answer.get('from'))[:400]}")
+                reader = bank.Bank(root, view, parameters)
+                for entry, measures in reader.measured_over(digest, feature, targets):
+                    if side == "region" and entry.region != region:
+                        continue
+                    found[side][feature] = (entry, measures)
+                    break
+        measured = []
+        for feature, targets in REGION_FEATURES.items():
+            output = feature.split("/", 1)[1]
+            (whole_stem, whole), (region_stem, mine) = found["whole"][feature], found["region"][feature]
+            for name in targets:
+                if whole[name] is None or mine[name] is None:
+                    raise EquivalenceError(f"{name} of {feature} was made but cannot be found")
+                for measure in REGION_MEASURES[name]:
+                    value, detail = region_agreement(measure, whole[name], mine[name], output)
+                    bound, limit = bounds[measure]
+                    passed = value is None or (value >= limit if bound == "at_least" else value <= limit)
+                    measured.append({"measure": measure, "output": output, "value": value, bound: limit,
+                                     "pass": passed, "detail": detail})
+        evidence = {}
+        for feature in REGION_FEATURES:
+            output = feature.split("/", 1)[1]
+            whole_stem, region_stem = found["whole"][feature][0], found["region"][feature][0]
+            evidence[output] = region_samples(whole_stem.file(output), region_stem.file(output), region)
+        inputs.append({"content": str(content), "region": region, "measured": measured, "stems": evidence,
+                       "pass": all(m["pass"] for m in measured)})
+    if not inputs:
+        raise EquivalenceError("no test input given")
+    return {"seconds": list(seconds), "inputs": inputs, "pass": all(i["pass"] for i in inputs)}
+
+
+def region_samples(whole: Path, region: Path, placed: Mapping[str, int]) -> dict[str, Any]:
+    """Evidence: a region's stem against the whole stem over the region, as
+    `sample_difference` gives (stereo 16-bit at 44,100 Hz)."""
+    import numpy
+    a, b = samples_of(whole).astype(numpy.float64), samples_of(region).astype(numpy.float64)
+    first = round(Fraction(placed["start"] * 44100, placed["rate"])) * 2
+    a = a[first:first + len(b)]
+    if len(a) != len(b):
+        return {"samples": [len(a), len(b)], "max_abs_steps": None, "snr_db": None}
+    difference = a - b
+    power, noise = float((a * a).sum()), float((difference * difference).sum())
+    return {"samples": int(len(a) // 2), "max_abs_steps": int(numpy.abs(difference).max()) if len(a) else 0,
+            "snr_db": round(10 * math.log10(power / noise), 2) if noise > 0 and power > 0 else None}
+
+
+def _stream_rate(path: Path) -> int:
+    done = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=sample_rate",
+                           "-of", "csv=p=0", str(path)], capture_output=True, text=True)
+    if done.returncode != 0 or not done.stdout.strip().isdigit():
+        raise EquivalenceError(f"ffprobe cannot read the rate of {path}: {done.stderr.strip()[-200:]}")
+    return int(done.stdout.strip())
