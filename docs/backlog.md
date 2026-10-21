@@ -351,6 +351,20 @@ scheduler has added it.
   operator-local only, never ship); CoverHunter has no licence; the
   licences of SCNet's, PESTO's and several ports' weights are unverified.
 
+## Lead-sheet editor (ADR 0113)
+
+- **First build** (operator, 2026-10-20), in the next specification
+  release: melody version 2 (sketches), underlay version 1, form and form
+  spans version 2 (open repeats, passes, departures), meter layers version
+  3, lead sheet version 2, the `folded_chart` and `stale_lyric_links` views, the exporters' open
+  repeats and stacked verses, and the relay's end-to-end save test (one
+  admission; a stale save writes nothing; an identical retry writes
+  nothing).
+- **Then:** passage alignment, the `aligned_by` versions of chord stacks,
+  notes, timed lyrics (with `derived_from`), form spans and timed meter
+  layers, and lead sheet version 3 (refusing rough copies); applying a correction to
+  every mapped pass; members' lyric documents once ADR 0094 is built.
+
 ## People, samples, and rehearsals (ADRs 0092-0111)
 
 The operator accepted ADRs 0092 to 0111 on 2026-10-19 as decisions only:

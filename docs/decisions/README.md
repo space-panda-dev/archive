@@ -97,18 +97,18 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0080](0080-key-and-tuning.md) | Key regions and tuning are claims |
 | [0081](0081-judgments-and-annotations.md) | Judgments can scope to a span or reading; people can annotate spans |
 | [0082](0082-views-and-current.md) | Named views: the first current rule, correction overlay, differences, and chord names over the relay |
-| [0083](0083-form-and-work-meter.md) | Form is a claim, and a Work can have meter without a recording |
-| [0084](0084-lead-sheets.md) | A lead sheet is a claim that pins the parts it chose |
-| [0085](0085-documents-lyrics-rights.md) | Documents arrive through the relay; lyrics are timed by reference; sensitivity and rights are claims (amended 2026-10-19: syllables and their notes; Door checks an approval beyond the circle, World's `may_publish`; by 0092: the "circle" setting writes `GREEN`) |
-| [0086](0086-notes-and-melody.md) | Note events per part, and melody at two levels (amended 2026-10-19: articulation, written rhythm, the bass line) |
+| [0083](0083-form-and-work-meter.md) | Form is a claim, and a Work can have meter without a recording (amended 2026-10-20 by 0113, pending: open repeats, passes, departures) |
+| [0084](0084-lead-sheets.md) | A lead sheet is a claim that pins the parts it chose (amended 2026-10-20 by 0113, pending: lead sheet version 2) |
+| [0085](0085-documents-lyrics-rights.md) | Documents arrive through the relay; lyrics are timed by reference; sensitivity and rights are claims (amended 2026-10-19: syllables and their notes; Door checks an approval beyond the circle, World's `may_publish`; by 0092: the "circle" setting writes `GREEN`; by 0113, pending: underlays, edited lyrics) |
+| [0086](0086-notes-and-melody.md) | Note events per part, and melody at two levels (amended 2026-10-19: articulation, written rhythm, the bass line; 2026-10-20 by 0113, pending: sketches) |
 | [0087](0087-tracklists-and-correspondence.md) | Releases list their tracks; artists, releases and recordings correspond to MusicBrainz and Discogs |
 | [0088](0088-bandmates.md) | Bandmates read their circle and assert their own claims (amended 2026-10-19 by 0092, 0093 and 0094: internet members, audiences, members' writes) |
-| [0089](0089-practice-audio-and-exports.md) | Practice audio from the stems, transposition, and exports that are views until shared |
+| [0089](0089-practice-audio-and-exports.md) | Practice audio from the stems, transposition, and exports that are views until shared (amended 2026-10-20 by 0113, pending: open repeats, stacked verses) |
 | [0090](0090-extractor-runs-travel-through-spool.md) | An extractor run travels through Spool, and its files come back as result attachments (amended 2026-10-19: a stem is a stem; equivalence by a measured tolerance, the device as provenance) |
 | [0091](0091-talk-needs-level.md) | Talk needs level, and a studio preset never says talk (amends 0066's presets) |
 | [0092](0092-internet-exposure.md) | Internet exposure through Cloudflare Access; internet logins are members |
 | [0093](0093-audiences.md) | A relay has several named audiences |
-| [0094](0094-peoples-writes.md) | People's writes: grants are transitions, and members set their own limits |
+| [0094](0094-peoples-writes.md) | People's writes: grants are transitions, and members set their own limits (amended 2026-10-20 by 0113, pending: editing lead sheets) |
 | [0095](0095-participation.md) | Participation is a contribution at session scope, and only the operator counts it |
 | [0096](0096-origin-of-recordings.md) | Recordings and Artifacts have an origin |
 | [0097](0097-rights-by-use.md) | Rights say which use they permit, and a clearance permits one use |
@@ -127,3 +127,4 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0110](0110-shared-clock.md) | The node is tempo master, and its clock asserts the meter |
 | [0111](0111-pad-maps.md) | A pad map says what a sampler plays, and a proposer turns a session's MIDI into lineage |
 | [0112](0112-bulk-import-at-scale.md) | Bulk import at scale: song spans eagerly, the rest on demand, and eager everything as a fast mode |
+| [0113](0113-editing-lead-sheets.md) | Editing lead sheets: sketches, words under a Work's tune, open repeats, passages, and one save (proposed) |

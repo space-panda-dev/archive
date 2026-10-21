@@ -265,3 +265,24 @@ invariant, and hold no state outside the claims Door admits.
 - **Instrument tuning and capo on every chord claim.** They describe how a
   part is played from a sheet, often read from a transcription; a chord stack
   is the sounding pitches, which a capo does not change.
+
+## Amendment, 2026-10-20: lead sheet version 2
+
+Pending: this takes effect when [ADR 0113](0113-editing-lead-sheets.md),
+which gives the reasons, is accepted. The text above is left as it was
+accepted; once this takes effect, where it disagrees with this section,
+this section holds.
+
+- **`archive.claim/lead_sheet` version 2** pins melody version 1 or 2
+  (never a sketch, a melody with an unmeasured item), form and form spans
+  version 1 or 2, and gains an `underlay` role (0 to 8, only with `lyrics`,
+  each placing the pinned lyric document under a pinned melody).
+- Its `meter` role also accepts meter layers version 3. It refuses timed
+  lyrics whose `carried_by` names notes no pinned melody spans claim
+  selects. A later version 3, installed with passage alignment, refuses any
+  timed input `aligned_by` a `rough` passage alignment.
+- A save of a lead sheet and the claims it pins is one admission whose
+  precondition is ADR 0023's per-object expected heads; band adoption stays
+  a separate step after it.
+- Version 1 stays installed; a version 1 lead sheet's next revision may be
+  version 2.
