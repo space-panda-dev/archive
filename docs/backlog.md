@@ -379,9 +379,9 @@ scheduler has added it.
   layers, and lead sheet version 3 (refusing rough copies); applying a correction to
   every mapped pass; members' lyric documents once ADR 0094 is built.
 
-## People, samples, and rehearsals (ADRs 0092-0111)
+## People, samples, and rehearsals (ADRs 0092-0111) <!-- lens: allow stale -->
 
-The operator accepted ADRs 0092 to 0111 on 2026-10-19 as decisions only:
+The operator accepted ADRs 0092 to 0111 on 2026-10-19 as decisions only: <!-- lens: allow stale -->
 none of their contracts, routes, or commands is built, and each installs
 with its implementation in a later specification release.
 

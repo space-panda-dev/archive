@@ -47,7 +47,7 @@ importer.
    shadow:* the upgrade to 0.0.7, on 2026-10-16. *Not done:* its upgrade to
    0.0.8.
 3. **The deployed build is this one.** The shadow's relay and Door carry
-   ADRs 0064-0070 and specification 0.0.7, but not 0.0.8. *Not done:* the
+   ADRs 0064-0070 and specification 0.0.7, but not 0.0.8. *Not done:* the <!-- lens: allow stale -->
    [redeploy](../shadow-runbook.md#redeploying-door-world-and-the-relay)
    needs approval, and it must precede the 0.0.8 upgrade.
 4. **The importer is in place.** *Ready in code:* `capture import` hashes a

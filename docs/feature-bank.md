@@ -630,4 +630,4 @@ never read as a new one.
   `chords-chordino`'s matched 53%.
   `chords-jiang` (a learned large vocabulary, with weighted readings) and
   `chords-chordino` (a second opinion of another kind) replace it. Its last
-  source is `enrich/extractors/chords/` at the commit before its removal.
+  source is `enrich/extractors/chords/` at the commit before its removal. <!-- lens: allow stale -->

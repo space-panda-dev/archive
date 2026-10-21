@@ -205,7 +205,7 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
 
 - Should evidence that is original or asserted and evidence that is derived and
   kept remain two named classes, or become one class told apart by provenance?
-  ([state-model.md](state-model.md) currently treats them as one class that
+  ([state-model.md](state-model.md) currently treats them as one class that <!-- lens: allow stale -->
   arrives two ways.)
 - How is a person's Entity kept stable across name changes and successor
   operators? (Agent identity: [ADR 0012](decisions/0012-inherited-meaning.md).)

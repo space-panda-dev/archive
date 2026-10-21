@@ -2,7 +2,7 @@
 
 This is the temporary accounting ledger required by
 [ADR 0015](decisions/0015-porting-from-v2.md). It covers the V2 spike at commit
-`137af2ec8f76c5a039147de204ec040970a05690`. V2 is evidence about mechanisms,
+`137af2ec8f76c5a039147de204ec040970a05690`. V2 is evidence about mechanisms, <!-- lens: allow stale -->
 not semantic authority. This ledger is deleted when the port is complete.
 
 Each named unit has exactly one disposition:
@@ -39,8 +39,8 @@ is deliberately omitted from the one Cabal manifest and init-shim labels.
 | `SPEC.md` | Archive's specification replaces the V2 contract; candidate mechanisms are inventoried below (ADR 0015). |
 | `.gitignore` | Its ignored `derived/` and `views/` paths are covered by the open-layout rows. |
 | Sole V2 Cabal manifest | “Local orchestration, policy, and packaging inputs” covers names, executables, dependencies, and licence. |
-| `door/Door.hs` | “Door core” covers every coherent section. |
-| `door/test-canonicalize.sh`, `door/test-check.sh`, `door/test-door-large.sh`, `door/test-door.sh` | The four Door test sections cover every scenario. |
+| `door/Door.hs` | “Door core” covers every coherent section. | <!-- lens: allow stale -->
+| `door/test-canonicalize.sh`, `door/test-check.sh`, `door/test-door-large.sh`, `door/test-door.sh` | The four Door test sections cover every scenario. | <!-- lens: allow stale -->
 | `tools/ArchiveTypes.hs` | “Reading modules and contracts” covers every function group. |
 | `tools/PortableContracts.hs` | Its public `validateDraft`, `validateStored`, `selectCurrent`, `contractManifest`, and `contractCatalog`, plus helper/contract groups, are covered below. |
 | `tools/Rec.hs` | “Door and read commands” and “Reading modules” cover every command and whole-store-check group. |
@@ -50,15 +50,15 @@ is deliberately omitted from the one Cabal manifest and init-shim labels.
 | `policy.rules` | Both rules and the annex-metadata mechanism are covered below. |
 | Root `test.sh` | Every `check` label is assigned explicitly in “Root shell check labels.” |
 | Eight `bin/` shims: apply, V2 init, classify, ingest, policy, project, record, probe | The source-shim row accounts for all eight. |
-| `migration/Canonical.hs` | “Migration mechanism” covers the persistent canonicalizer. |
-| `migration/adoption.py` | Every helper family, draft family, accounting path, and CLI is covered below. |
+| `migration/Canonical.hs` | “Migration mechanism” covers the persistent canonicalizer. | <!-- lens: allow stale -->
+| `migration/adoption.py` | Every helper family, draft family, accounting path, and CLI is covered below. | <!-- lens: allow stale -->
 | `migration/census.py`, `contracts.py`, `disposition.py` | Every function group and CLI is covered below. |
-| `migration/gates.py` | Plumbing, current/view/retention deferrals, backup, aggregation, and CLI are each covered below. |
-| `migration/placement.py` | Path, key derivation, plan, apply, serialization, and CLI are each covered below. |
-| `migration/continuity.py` | Detector and deferred durable-output halves are separately covered below. |
-| `migration/scale.py`, `selection.py` | Isolation/reporting, Archive rewrites, and current-dependent deferrals are covered below. |
-| `migration/translate.py` | Every class, helper family, batch path, report, and CLI is covered by the delete row. |
-| `migration/run.sh` | Every safety/build/measurement step is listed under “Migration script steps.” |
+| `migration/gates.py` | Plumbing, current/view/retention deferrals, backup, aggregation, and CLI are each covered below. | <!-- lens: allow stale -->
+| `migration/placement.py` | Path, key derivation, plan, apply, serialization, and CLI are each covered below. | <!-- lens: allow stale -->
+| `migration/continuity.py` | Detector and deferred durable-output halves are separately covered below. | <!-- lens: allow stale -->
+| `migration/scale.py`, `selection.py` | Isolation/reporting, Archive rewrites, and current-dependent deferrals are covered below. | <!-- lens: allow stale -->
+| `migration/translate.py` | Every class, helper family, batch path, report, and CLI is covered by the delete row. | <!-- lens: allow stale -->
+| `migration/run.sh` | Every safety/build/measurement step is listed under “Migration script steps.” | <!-- lens: allow stale -->
 | Six `migration/fixtures/*.json` files | Each fixture has an individual row below. |
 | Fourteen `migration/test_*.py` files | All 238 named methods appear in “Migration unit tests.” |
 | Root Nix flake and the V2 package block in `nix/default.nix` | Every pin, derivation, install, exposure, and check piece is covered under packaging. |

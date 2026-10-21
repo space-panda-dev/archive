@@ -6,93 +6,21 @@ This repository holds Archive's architecture, its specification, and eventually
 its software. It does not hold an archive. The actual archive, the data, lives
 elsewhere and is governed by the specification kept here.
 
-> **Status.** The Haskell port is in progress. `archive init` creates the
-> accepted Git/git-annex layout and bootstrap records, and
-> `door admit --proposal <directory> --dry-run` validates retained proposal
-> metadata against one committed snapshot and predicts RFC 8785 revision
-> identities without transferring content. Persistent admission commits each
-> batch once. For content, Door obtains each declared key from its configured
-> staging remote with git-annex, has git-annex hash the local object, compares
-> SHA-256 and size with the proposal, and commits the records and content
-> locations together; exact retries return before git-annex runs.
-> Transition proposals validate exact
-> retire/destroy contracts, authorization, expected heads, and durable
-> version-2 batch order. Persistent transition writes the complete batch in one
-> Git commit without invoking git-annex; exact retries preserve the first
-> timestamp and create no commit. Both modes replay committed history
-> from its proven root, recover durable transition batches, and refuse changed
-> or incomplete normative history. `archive status`,
-> `doctor`, `ls`, and `show` read one pinned committed tree and report incomplete
-> evidence explicitly; `current` remains unsupported at its named open question.
-> `archive maintenance prune-packed` coordinates loose-object pruning under the
-> archive lock after verifying and synchronizing existing packs and ref-reachable
-> objects; it proves refs unchanged and synchronizes the result.
-> Admission and retire/destroy transitions are implemented,
-> but their persistent success responses do not yet meet the accepted
-> power-loss durability contract ([ADR 0031](docs/decisions/0031-power-loss-durability.md)).
-> Do not treat those responses as evidence that a commit survived power loss.
-> The V2 spike remains reference
-> material and is being translated into this repository's vocabulary
-> ([ADR 0015](docs/decisions/0015-porting-from-v2.md)).
-> An [experimental World projection](world/README.md) can rebuild a disposable
-> RDF store from a complete committed Archive export and answer local SPARQL
-> queries ([ADR 0041](docs/decisions/0041-world-v1-projection.md)). Work and
-> performance relations are defined in [ADR 0042](docs/decisions/0042-work-correspondence.md),
-> and exact audio selections and song occurrences in
-> [ADR 0045](docs/decisions/0045-audio-claim-contracts.md). Their contracts
-> are installed in specification 0.0.4. Specification 0.0.5 adds the review
-> application contracts of [ADR 0048](docs/decisions/0048-review-app-write-contracts.md)
-> (multi-source selections, drift-aware alignment, selection facts,
-> judgments, sessions) and the V2 migration route contracts of ADR 0049.
-> Door admits all of them; publication approval and withdrawal are committed
-> only through `door transition`, authorized by the active operator
-> ([ADR 0051](docs/decisions/0051-publication-transition-dispatch.md)).
-> Specification 0.0.7 adds derivation runs, audio stream facts, span
-> suggestions, and matches and alignments that pin their run
-> ([ADRs 0064](docs/decisions/0064-derivation-runs.md) to
-> [0067](docs/decisions/0067-matches-and-alignments-pin-runs.md); the bundles
-> as proposed are in [0064-contracts](docs/proposals/0064-contracts/)), which
-> Door admits and World projects, and the specification upgrade contract of
-> [ADR 0068](docs/decisions/0068-specification-upgrade.md), by which
-> `door transition` moves a 0.0.6 archive to 0.0.7 in one commit.
-> Specification 0.0.8 adds work matches over a window of suggested spans
-> ([ADR 0072](docs/decisions/0072-windowed-work-matches.md)), which Door
-> admits and World projects; a 0.0.7 archive adopts it by the same upgrade.
-> Specification 0.0.9 adds chord stacks, chord sequences, and meter layers
-> ([ADR 0077](docs/decisions/0077-chord-stacks-and-meter.md)) and
-> contributions and band membership, with the Entity kinds `release` and
-> `recording` ([ADR 0078](docs/decisions/0078-contributions.md)), which Door
-> admits and World projects; a 0.0.8 archive adopts it by the same upgrade.
-> Specification 0.0.10 installs harmony as claims with stems cited by bank
-> key ([ADR 0079](docs/decisions/0079-machine-harmony-claims.md)), keys and
-> tuning ([ADR 0080](docs/decisions/0080-key-and-tuning.md)), scoped
-> judgments and span annotations
-> ([ADR 0081](docs/decisions/0081-judgments-and-annotations.md)), form and a
-> Work's written meter ([ADR 0083](docs/decisions/0083-form-and-work-meter.md)),
-> lead sheets ([ADR 0084](docs/decisions/0084-lead-sheets.md)), documents,
-> timed lyrics, sensitivity, and rights
-> ([ADR 0085](docs/decisions/0085-documents-lyrics-rights.md)), notes and
-> melody ([ADR 0086](docs/decisions/0086-notes-and-melody.md)), tracklists
-> and catalogue correspondence
-> ([ADR 0087](docs/decisions/0087-tracklists-and-correspondence.md)), work
-> origins and sharing consents ([ADR 0088](docs/decisions/0088-bandmates.md)),
-> and exports ([ADR 0089](docs/decisions/0089-practice-audio-and-exports.md)),
-> each as a contract bundle; a 0.0.9 archive adopts it by the same upgrade.
-> Door admits all twenty-four under their profile rules, and the published
-> fixture archive holds a record of each.
-> [`enrich/`](enrich/README.md) proposes machine claims through `door admit`:
-> `enrich probe` (audio stream facts), `enrich detect` (span suggestions),
-> `enrich match` (work matches), each under a derivation run, and
-> `enrich propose` (machine chords, beats, bass, keys, tuning, notes, and
-> sections read from the feature bank, ADR 0079); `enrich/media.py`
-> makes waveform peaks and listening copies that the relay serves by digest
-> ([ADR 0069](docs/decisions/0069-derived-media.md)). `capture import`
-> ([capture/](capture/README.md), [ADR 0070](docs/decisions/0070-capture-import.md))
-> admits a recorder card's new recordings as sessions and runs that chain;
-> `capture send` sends a card read on another machine to it.
-> Per-kind current rules remain open.
-> Except where a command is explicitly implemented, the material below
-> describes commitments rather than running software.
+> **Status.** Door, the `archive` reader commands, [World](world/README.md),
+> the relay, [`enrich/`](enrich/README.md) and [`capture/`](capture/README.md)
+> are implemented for specification 0.0.10; what each specification version
+> adds is in its [release notes](docs/releases/0.0.10.md) and the decision
+> records they cite. Two limits matter: persistent admission and transitions
+> do not yet meet the accepted power-loss durability contract
+> ([ADR 0031](docs/decisions/0031-power-loss-durability.md)), so a success
+> response is not evidence that a commit survived power loss; and per-kind
+> current rules remain open (`archive current` is unsupported). The V2 spike
+> is reference material, translated into this vocabulary
+> ([ADR 0015](docs/decisions/0015-porting-from-v2.md)). What a deployment runs,
+> and at which commit, is not recorded here: the operator's `wf observe
+> archive` reads it from the services themselves. Except where a command is
+> explicitly implemented, the material below describes commitments rather
+> than running software.
 
 ## Executable configuration
 

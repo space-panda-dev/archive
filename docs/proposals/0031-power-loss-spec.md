@@ -1,6 +1,6 @@
 # Draft specification amendment: Door commit durability
 
-This is draft wording for a release after `archive/0.0.2`. It is not part of
+This is draft wording for a release after `archive/0.0.2`. It is not part of <!-- lens: allow stale -->
 any archive's current specification. It implements accepted
 [ADR 0031](../decisions/0031-power-loss-durability.md).
 

@@ -77,7 +77,7 @@ How evidence is stored. ([ADR 0003](decisions/0003-record-model.md))
 
 **Object**: the enduring thing records describe, with a stable identifier.
 **Content**: bytes, identified by their hash; several objects may share the same
-content. **Location**: where content currently sits; moving it changes no
+content. **Location**: where content currently sits; moving it changes no <!-- lens: allow stale -->
 record. **Occurrence**: one arrival of content; the same WAV imported twice is
 two occurrences of one content.
 
@@ -89,7 +89,7 @@ reference to an exact revision.
 and the person, model, or process that asserted it (`agent`).
 
 **Contract**: the versioned definition of a claim kind's payload.
-**Current**: the claim that currently counts for a question, computed from
+**Current**: the claim that currently counts for a question, computed from <!-- lens: allow stale -->
 claims and assessments by the contract's rule, never stored.
 
 ## Evidence and state
@@ -148,7 +148,7 @@ sample per channel), not the `frames` extractor or its analysis frames. A
 **stream event** is one line of streamed output: a row of a series, an item
 of an events or spans output, or a scalar's running estimate. It is broader
 than the `events` feature kind, which one stream event may carry, and it is
-never admitted. The **live runner** (`enrich/live.py`) runs streaming
+never admitted. The **live runner** (`enrich/live.py`) runs streaming <!-- lens: allow stale -->
 extractors and live tools over one stream for a rehearsal node and proposes
 nothing. ([ADR 0108](decisions/0108-live-analysis.md))
 
