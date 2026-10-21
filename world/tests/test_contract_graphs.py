@@ -73,9 +73,10 @@ class Projected(unittest.TestCase):
         missing = set()
         for kind, (predicates, classes) in conformance.declared(PROJECTION_VERSION).items():
             missing |= {p for p in predicates - report.predicates.get(kind, set())}
-        # Only the destroy roles the fixture cannot hold (test_conformance).
+        # Only the destroy roles the fixture cannot hold, and a span on a
+        # return, which it does not hold yet (test_conformance).
         self.assertEqual(missing, {ARCH + "dependent_destroy", ARCH + "dependent_source_gone",
-                                   ARCH + "external_survivor"})
+                                   ARCH + "external_survivor", ARCH + "played_on_return"})
 
     def test_each_new_claim_projects_in_its_own_graph(self):
         for record in self.new:

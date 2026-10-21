@@ -603,8 +603,9 @@ def enclosing(repeats: list[dict[str, Any]], section: int) -> list[int]:
 def _check_passes(span: dict[str, Any], section: int, repeats: list[dict[str, Any]] | None, where: str) -> None:
     """A span's passes: one positive integer per repeat around its section,
     each within a fixed repeat's `times`; in an ending, a pass that takes it."""
-    if "return" in span and not isinstance(span["return"], bool):
-        raise FormError(f"{where} return must be true or false")
+    # Only stated when true, as Door's bundle says (`return` is const true).
+    if "return" in span and span["return"] is not True:
+        raise FormError(f"{where} return, when given, must be true")
     if repeats is None:
         if "passes" in span:
             for number, item in enumerate(_list(span["passes"], f"{where} passes", 1, MAX_REPEATS)):

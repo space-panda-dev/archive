@@ -267,6 +267,8 @@ class FormSpansV2Test(unittest.TestCase):
             return spans_claim(played(*entries), ("form", FORM_REF), alignment=alignment or MANUAL)
         returned = claim((0, None))
         returned["payload"]["spans"][0]["return"] = "yes"
+        unreturned = claim((0, None))
+        unreturned["payload"]["spans"][0]["return"] = False
         labelled = claim((0, None))
         labelled["payload"]["spans"] = [timed(0, 1, label="Jam", passes=[1])]
         cases = {
@@ -280,6 +282,7 @@ class FormSpansV2Test(unittest.TestCase):
             "a numbered ending on another pass": (claim((2, [2])), first_ending()),
             "passes without a section": (labelled, jazz()),
             "return not a boolean": (returned, jazz()),
+            "return false, which Door refuses": (unreturned, jazz()),
             "unknown precision": (claim((0, None), method="manual", precision="close"), jazz()),
             "a pass of zero without the form": (claim((1, [0])), None),
         }

@@ -31,6 +31,10 @@ ARCH = "urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#"
 # fixture therefore cannot hold them.
 UNREACHABLE = {("records", ARCH + "dependent_destroy"), ("records", ARCH + "dependent_source_gone"),
                ("records", ARCH + "external_survivor")}
+# Declared but not yet held by the fixture: a span played on a D.C. or D.S.
+# return (form spans version 2) needs a form with a jump, and the fixture's
+# open form has none.
+NOT_IN_FIXTURE = {("revision", ARCH + "played_on_return")}
 
 # Installed by specification 0.0.9 but not cited by the fixture: the fixture
 # archive is born at the current release, and Door refuses an upgrade to the
@@ -151,7 +155,7 @@ class FixtureArchiveConformanceTests(unittest.TestCase):
         emitted = conformance.check_store(drafted.store, drafted.archive_id, PROJECTION_VERSION)
         missing = {(kind, term) for kind, term in missing
                    if term not in emitted.predicates.get(kind, set()) | emitted.classes.get(kind, set())}
-        self.assertEqual(missing, UNREACHABLE)
+        self.assertEqual(missing, UNREACHABLE | NOT_IN_FIXTURE)
 
     def test_every_installed_contract_is_in_the_context_graph(self):
         projection = build_projection(self.export)
