@@ -1,22 +1,26 @@
-# Archive's CI (ADR 0062): structure checks, every test suite, World's
-# conformance, and the release image, which is then started the way a
-# client's CI would start it.
+# Archive's CI (ADR 0062): every test suite, World's conformance, and the
+# release image, which is then started the way a client's CI would start it.
+# The structure checks are structure.yml, which runs on every change. A change
+# to nothing but the files below cannot change a test's outcome (no test or
+# build reads them), so it skips this workflow (ADR 0115).
 name: CI
 
 on:
   push:
+    paths-ignore: ["*.md", "docs/decisions/**", ".workshop.toml"]
   pull_request:
+    paths-ignore: ["*.md", "docs/decisions/**", ".workshop.toml"]
+
+# A newer push to the same branch or pull request cancels the older run;
+# main keeps every run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
 
 jobs:
-  structure:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - run: make check
-
   build-and-test:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
