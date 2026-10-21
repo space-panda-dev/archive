@@ -736,3 +736,20 @@ accepted; where it disagrees with this section, this section holds.
   ([ADR 0094](0094-peoples-writes.md)), and the operator the operator's.
 - Applications show an `AMBER` claim as "circle (tailnet only)".
 - Cloudflare is never treated as circle to get around a limit.
+
+## Amendment, 2026-10-20: words under a Work's tune, and edited lyrics
+
+Made on the acceptance of [ADR 0113](0113-editing-lead-sheets.md), which
+gives the reasons. The text above is left as it was accepted; where it
+disagrees with this section, this section holds.
+
+- **`archive.claim/underlay` version 1** places a lyric document's
+  syllables under a Work-level melody's items by index, optionally under
+  named passes of a repeat. It answers the alternative this record set
+  aside ("linking a syllable to a Work-level melody item").
+- A save that changes notes re-asserts, remapped, every timed lyrics claim
+  linked to them; the `stale_lyric_links` view lists any it missed.
+- Words edited in an application are a new plain-text document with a
+  `document_source` claim `derived_from` the document they were edited
+  from. A member stages one under ADR 0094's `admit`, which already opened
+  `/documents/stage` to members holding it.

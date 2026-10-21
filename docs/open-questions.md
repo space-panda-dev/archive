@@ -320,13 +320,15 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
   only whole, and a mark on a Work needs a chord sequence to range over.
 - Should sections nest (a verse of two phrases), and should a section's
   `kind` map to an inherited vocabulary such as SALAMI's function labels
-  ([ADR 0083](decisions/0083-form-and-work-meter.md))? How is a recording's departure from the written form (an extra
-  chorus, a cut bridge) matched rather than only shown?
-- How is a Work's melody placed on a recording note by note, how do lyric
-  syllables sit under melody notes, how are a tune's verse variants under
-  repeats and its grace notes written, and how does World join one asserter's
-  split notes claims of a part and check that their ranges do not overlap
-  ([ADR 0086](decisions/0086-notes-and-melody.md))?
+  ([ADR 0083](decisions/0083-form-and-work-meter.md))? (A recording's departure from the written form is now recorded
+  as a span naming no section, [ADR 0113](decisions/0113-editing-lead-sheets.md).)
+- How are a tune's verse variants under repeats (verse 2 sung to different
+  notes where the form has no ending) and its grace notes written, and how
+  does World join one asserter's split notes claims of a part and check that
+  their ranges do not overlap ([ADR 0086](decisions/0086-notes-and-melody.md))?
+  (Placing a Work's melody on a recording note by note is a passage
+  alignment, and syllables under a Work's melody are an underlay,
+  [ADR 0113](decisions/0113-editing-lead-sheets.md).)
 - For the amendments of 2026-10-19 to
   [ADR 0086](decisions/0086-notes-and-melody.md) and
   [ADR 0085](decisions/0085-documents-lyrics-rights.md): when is staccato too

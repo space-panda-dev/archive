@@ -597,3 +597,20 @@ dropped.
 - **Leaving bleed to the reader.** Bleed notes are below the singer and
   under the bass: a view cannot tell them from a low sung note without the
   run's voicing, which only the run has.
+
+## Amendment, 2026-10-20: sketches, and placing a tune on a recording
+
+Made on the acceptance of [ADR 0113](0113-editing-lead-sheets.md), which
+gives the reasons. The text above is left as it was accepted; where it
+disagrees with this section, this section holds.
+
+- **`archive.claim/melody` version 2**: a pitch item may leave out
+  `duration` (unmeasured: the rhythm is not known). A melody with any
+  unmeasured item is a sketch: it pins no `meter` and has no `start`, a
+  lead sheet never pins it, and no exporter writes it. A rest always has a
+  length. Version 1 stays installed.
+- Completing one's own sketch is a new revision of it; completing
+  another's is a new claim citing it in `corrects`.
+- Placing a Work's melody on a recording note by note is an `exact`
+  passage alignment (ADR 0113), which answers the alignment this record
+  left open.

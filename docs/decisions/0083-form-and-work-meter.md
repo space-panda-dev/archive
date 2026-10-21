@@ -406,3 +406,27 @@ outside the claims Door admits.
 - **Chord positions as beat numbers** (`beat: 3`). A beat number cannot say
   the "and" of a beat, and in a grouped bar it is unclear whether it counts
   groups or units; an offset in note values is exact.
+
+## Amendment, 2026-10-20: open repeats, passes, and departures
+
+Made on the acceptance of [ADR 0113](0113-editing-lead-sheets.md), which
+gives the reasons. The text above is left as it was accepted; where it
+disagrees with this section, this section holds.
+
+- **`archive.claim/form` version 2**: a repeat may leave out `times` (an
+  open repeat, played as many times as a performance plays it) and may
+  carry an `instruction` in the source's words. An open repeat's endings
+  have one last-time ending (`"last"`) and one default ending (no
+  `passes`). `form_order` lists an open repeat as a pass marked `open` and
+  its last pass.
+- **`archive.claim/form_spans` version 2**: a span placed from a section
+  inside repeats names its `passes` (one per enclosing repeat, outer first)
+  and optional `return`; `alignment.precision` states how well a machine
+  placed it. In a claim that pins a form, a span with no `section` is a
+  departure, kept as played: this answers how a departure is matched
+  rather than only shown.
+- A recording's chart folds into repeat signs only by the `folded_chart`
+  view's rules (ADR 0113): mapped by a person or at least `approximate`.
+- **`archive.claim/meter_layers` version 3**: an untimed claim's `form`
+  may pin form version 1 or 2.
+- The earlier versions stay installed and valid.

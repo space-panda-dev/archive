@@ -487,3 +487,17 @@ view parameter, and the export claim is a claim. They own no verb beyond Enrichm
 - **Practice state in the archive.** Loops and progress change every minute
   and say nothing about the music; as claims they would bury the evidence
   they sit beside.
+
+## Amendment, 2026-10-20: open repeats, last-time endings, and stacked verses
+
+Made on the acceptance of [ADR 0113](0113-editing-lead-sheets.md), which
+gives the reasons. The text above is left as it was accepted; where it
+disagrees with this section, this section holds.
+
+- The MusicXML and LilyPond exporters write a form's repeats, endings and
+  jumps; an open repeat with no `times` and its instruction as text; a
+  last-time ending; and stacked verses as numbered lyric lines, one per
+  pass an underlay names.
+- An exporter refuses a sketch (a melody with an unmeasured item).
+- The losses gain an open repeat's played count and a folded chart's
+  variant passes.

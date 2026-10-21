@@ -538,3 +538,18 @@ Verified on 2026-10-19 to exist; a later implementation would change:
 13. **`captured_by` and speaker spans select for limits (from wave 2).** An
     origin's `captured_by` and a speaker span naming the person select
     content for that person's own limits, under R5.3's condition (R6.11).
+
+## Amendment, 2026-10-20: editing lead sheets
+
+Made on the acceptance of [ADR 0113](0113-editing-lead-sheets.md), which
+gives the reasons. The text above is left as it was accepted; where it
+disagrees with this section, this section holds.
+
+- `annotate` gains [ADR 0113](0113-editing-lead-sheets.md)'s melody
+  version 2, underlay version 1, form and form spans version 2, lead sheet
+  version 2, passage alignment version 1, and the versions of chord
+  stacks, notes, timed lyrics and form spans that carry `aligned_by`.
+- `admit` is unchanged: a lyric document a member edits is staged content
+  with its `document_source` claim in the same batch, which its row
+  already covers.
+- A band's adopted lead sheet stays the operator's step.

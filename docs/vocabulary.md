@@ -403,6 +403,23 @@ by character offsets into the document's word, and a syllable may be
 kind of document an Artifact is and where, and when, it was retrieved.
 ([ADR 0085](decisions/0085-documents-lyrics-rights.md))
 
+**Sketch**: a Work-level melody with an **unmeasured** item, a pitch whose
+length is not known; never laid in bars or pinned by a lead sheet.
+**Underlay**: a claim placing a lyric document's syllables under a Work-level
+melody's items, optionally under named **passes** of a repeat. An **open
+repeat** is played as many times as a performance plays it, with a
+**last-time ending** and a **default ending**; a recording's form spans name
+the pass each span plays, and a span naming no section is a **departure**.
+**Passage alignment**: a claim that a passage of one performance, or of a
+Work's tune, corresponds to a passage of another, at a stated **precision**
+(rough, approximate, exact); neither a capture alignment nor a document
+alignment. **Folded chart**: a recording's chart with mapped passes folded
+into repeat signs, a pass that differs shown as a **variant**; a view. A
+**lyric link** is a syllable's notes or an underlay's items; **stale lyric
+links** are those still pinning superseded notes, melody or lyric
+documents; a view.
+([ADR 0113](decisions/0113-editing-lead-sheets.md))
+
 **Practice render**: a recording's stems mixed with chosen gains, optionally
 pitch-shifted and time-stretched, as derived media, named by the **practice
 key** of its **practice request**. **Transposition**: a view parameter that
