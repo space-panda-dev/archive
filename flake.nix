@@ -136,7 +136,8 @@
         if hasMatcher pkgs.stdenv.hostPlatform.system then matchPythonFor pkgs else pythonFor pkgs;
 
       # The Python parts and commands for World, the relay, enrichment, and
-      # the fixture. The relay reads enrich/derived.py, the derived-media layout.
+      # the fixture. The relay reads enrich/derived.py, the derived-media layout,
+      # and reports ARCHIVE_COMMIT and ARCHIVE_BUILD on /health (ADR 0114).
       toolsFor = pkgs:
         let
           archive = archiveFor pkgs;
@@ -154,7 +155,9 @@
               --add-flags $out/share/archive/$3 \
               --prefix PATH : ${pkgs.lib.makeBinPath [ archive pkgs.git pkgs.git-annex pkgs.ffmpeg-headless ]} \
               --set-default ARCHIVE_GIT_EXECUTABLE ${pkgs.git}/bin/git \
-              --set-default ARCHIVE_GIT_ANNEX_EXECUTABLE ${pkgs.git-annex}/bin/git-annex
+              --set-default ARCHIVE_GIT_ANNEX_EXECUTABLE ${pkgs.git-annex}/bin/git-annex \
+              --set-default ARCHIVE_COMMIT "${self.rev or self.dirtyRev or ""}" \
+              --set-default ARCHIVE_BUILD "$(basename $out)"
           }
           wrap ${python} world world/world.py
           wrap ${python} world-conformance world/conformance.py

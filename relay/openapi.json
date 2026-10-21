@@ -8,7 +8,7 @@
       "name": "CC0-1.0",
       "identifier": "CC0-1.0"
     },
-    "description": "HTTP over Door's service and World's query and named views (ADRs 0056, 0060, 0082), derived media and practice audio by content digest (ADRs 0069, 0089), document staging (ADR 0085), and exports (ADR 0089), for the operator and, on a relay with a circle, its members (ADR 0088). Every answer is JSON: {ok, archive, result} or {ok: false, error: {code, message}}, except a file route's success, which is the file's bytes. Codes are stable; messages are not. The archive block names the archive, its specification, the relay's role and writes, the World projection versions it serves, the caller and their capacity, and the circle."
+    "description": "HTTP over Door's service and World's query and named views (ADRs 0056, 0060, 0082), derived media and practice audio by content digest (ADRs 0069, 0089), document staging (ADR 0085), and exports (ADR 0089), for the operator and, on a relay with a circle, its members (ADR 0088). Every answer is JSON: {ok, archive, result} or {ok: false, error: {code, message}}, except a file route's success, which is the file's bytes, and a local probe's /health, which is liveness only (ADR 0114). Codes are stable; messages are not. The archive block names the archive, its specification, the relay's role and writes, the World projection versions it serves, the caller and their capacity, and the circle."
   },
   "components": {
     "schemas": {
@@ -654,7 +654,9 @@
           "healthy",
           "writes",
           "door",
-          "world"
+          "world",
+          "commit",
+          "build"
         ],
         "properties": {
           "healthy": {
@@ -707,6 +709,20 @@
                 }
               }
             ]
+          },
+          "commit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The source commit the relay runs, or null when it cannot tell (ADR 0114)."
+          },
+          "build": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "How the relay was built: the Nix output's name, `export` (a `git archive` copy), `checkout` or `checkout-dirty`; null when unknown (ADR 0114)."
           }
         }
       },
@@ -1437,6 +1453,47 @@
             "$ref": "#/components/schemas/ExportResult"
           }
         }
+      },
+      "LocalHealth": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "healthy",
+          "writes",
+          "commit",
+          "build"
+        ],
+        "description": "The answer to a GET /health from the relay's own machine that carries no tailnet identity and was not forwarded (no Tailscale-*, Origin, X-Forwarded-For or Forwarded header): liveness only, with no archive block (ADR 0114).",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "description": "True exactly when healthy."
+          },
+          "healthy": {
+            "type": "boolean"
+          },
+          "writes": {
+            "enum": [
+              "dry-run",
+              "commit"
+            ]
+          },
+          "commit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The source commit the relay runs, or null when it cannot tell (ADR 0114)."
+          },
+          "build": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "How the relay was built: the Nix output's name, `export` (a `git archive` copy), `checkout` or `checkout-dirty`; null when unknown (ADR 0114)."
+          }
+        }
       }
     },
     "securitySchemes": {
@@ -1451,11 +1508,12 @@
   "paths": {
     "/health": {
       "get": {
-        "summary": "The archive, the relay's role and write mode, and whether Door and World answer",
+        "summary": "The archive, the relay's role and write mode, and whether Door and World answer; liveness only for an unforwarded local probe",
         "security": [
           {
             "tailnet": []
-          }
+          },
+          {}
         ],
         "responses": {
           "200": {
@@ -1463,7 +1521,14 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HealthAnswer"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/HealthAnswer"
+                    },
+                    {
+                      "$ref": "#/components/schemas/LocalHealth"
+                    }
+                  ]
                 }
               }
             }
@@ -1476,6 +1541,9 @@
                   "oneOf": [
                     {
                       "$ref": "#/components/schemas/HealthAnswer"
+                    },
+                    {
+                      "$ref": "#/components/schemas/LocalHealth"
                     },
                     {
                       "$ref": "#/components/schemas/Failure"
