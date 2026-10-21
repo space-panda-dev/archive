@@ -93,7 +93,6 @@ MEMBER_CONTRACTS = frozenset({
     ("archive.claim/underlay", "1"),               # ADR 0113
     ("archive.claim/form", "2"),                   # ADR 0113
     ("archive.claim/form_spans", "2"),             # ADR 0113
-    ("archive.claim/meter_layers", "3"),           # ADR 0113
     ("archive.claim/lead_sheet", "2"),             # ADR 0113 (a person's; a band's stays the operator's)
 })
 

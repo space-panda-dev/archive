@@ -237,7 +237,8 @@ def _melody_v2(record: dict[str, Any], lookups: Lookups) -> None:
 def _underlay(record: dict[str, Any], lookups: Lookups) -> None:
     """ADR 0113's underlay, with the melody, form, and the melody's meter it
     reads. The document's bytes are not in an export, so its locators are
-    checked where the bytes are (the relay, a client), not here."""
+    not checked here: the editor's adapter checks them before it proposes
+    (ADR 0113), and neither the relay nor Door reads the content."""
     melodies = _pinned(record, "melody", lookups)
     melody = contracted_view(melodies[0]) if len(melodies) == 1 else None
     forms = _pinned(record, "form", lookups)

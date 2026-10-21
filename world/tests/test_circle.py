@@ -526,8 +526,11 @@ class MemberDraftTest(unittest.TestCase):
             self.assertIn((name, "1"), installed & MEMBER_CONTRACTS)
         operators = installed - MEMBER_CONTRACTS
         self.assertTrue(any(i.startswith("archive.transition/") for i, _ in operators))
+        # ADR 0113's "Who may save" and ADR 0094's amendment name no meter
+        # layers version 3, so it stays the operator's until they do.
         for contract in sorted(operators) + [("archive.claim/sensitivity", "1"), ("archive.claim/rights", "1"),
-                                             WORK_ORIGIN, ("archive.claim/document_source", "1")]:
+                                             WORK_ORIGIN, ("archive.claim/document_source", "1"),
+                                             ("archive.claim/meter_layers", "3")]:
             with self.subTest(contract=contract):
                 self.refused(self.draft(contract=contract, shape="claim"), "operator_only")
 
