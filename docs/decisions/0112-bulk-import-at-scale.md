@@ -574,3 +574,71 @@ With it a 93-minute recording reserves 3.2 GB, so three or four copies fit
 on the laptop beside the reserve, and Jiang could return to the fast tier
 (projected usable about 50 minutes on the shadow, against about 22 with it
 in the background).
+
+## Amendment (2026-10-20): the background keeps the cores busy, usable per recording, region measures on the grid
+
+Status: proposed on `fast3/integration3` (round 3, branches `fast3/sched`
+and `fast3/grid`); the numbers are the operator's to confirm once measured.
+
+**Why.** On the shadow copy (25 recordings, 22.8 h) the usable proposal was
+23% of time-to-usable (298 s after a 1015 s fast pass), and the background
+stalled: a job waiting for memory (a long recording's Jiang, 11.3 GB of 14)
+held every job behind it, and routed stems were offered to free laptop
+cores only once local work ran out, so 6 of 8 cores sat idle. Region notes
+(basic-pitch over a cut) agreed with the whole run only to F1 0.78, because
+basic-pitch, f0-pesto and melody lay their own windows from the cut's start,
+as Demucs did before its regions were aligned.
+
+**No head-of-line blocking** (`backfill_queue`). The first ready job that
+cannot start for cores or memory is the head. The pool works out when it
+will fit (the running jobs end by their recorded costs) and starts a later
+job now when it ends before then or takes only what the head will leave
+over: backfilling, as batch schedulers do (EASY). A head that has waited
+`reserve_after_seconds` (1200) anyway, because costs run long under load,
+is reserved for outright. A job wider than the machine starts only on an
+idle machine, as before.
+
+**Overflow by when it ends.** A routed job the worker is not holding runs
+here when it would end here sooner: its recorded cost over its reserved
+cores, against the worker's backlog ahead of it (what it holds and the
+routed jobs ahead, by `remote_cost`) over its tasks in flight plus its own
+time. Free cores take stems early, from the back of the worker's queue. A
+task put again reuses its remembered transport (`<bank>/tmp/transports/`).
+
+**Usable per recording** (`backfill_proposals`). A recording is proposed
+as soon as its own fast units settle, beside the pool: `propose --artifact`,
+or one `--all` when more than two wait. `usable` comes when the fast tier
+has settled everywhere and every recording's proposal has run; a failed
+proposal makes nothing usable and the next one that succeeds is the usable
+one. The projection counts `propose_seconds_per_recording` (12). Unprobed
+Artifacts are read from the export, not from a dry-run `propose --all`.
+
+**Region measures on the whole run's grid** (as the operator decided over
+accepting a region's transcription as its own). A measure of a stem made
+over a region is given the region (`Run(placed=...)`, from the stem entry's
+`timeline`). `notes-basic-pitch` windows a region as Basic Pitch windows the
+whole run and takes frame times from the whole run's grid; `f0-pesto` places
+its 160-sample rows and minute chunks on the whole run's; `melody` puts
+silence before the region so its 128-sample rows land on the whole run's
+(its gate, `loud_db` and chunk starts stay the region's own). Notes starting
+before the region are dropped. `extract.py region-equivalence` and
+`python -m enrich.bench region` measure a region against the whole run
+(`equivalence.region_measure`, bounds from the `stems` agree list). On bench
+clips with real Demucs: region stems within one sample step of the whole
+(three on one vocal stem), note F1 0.89-1.0, melody pitch p99 2-6 cents;
+the clips are too quiet to judge f0 or a 90 dB stem target, so a real
+recording (the 554 s one over 35-520 s) is still to be measured.
+
+**Not changed.** A region measure's key is still its stem's bits, though
+its output now depends on where the region lies; safe unless two regions
+give identical stems.
+
+### For the operator to confirm (round 3)
+
+- `reserve_after_seconds` 1200 and the overflow rule, once measured on a
+  copy of the shadow (expected: usable at the fast pass plus about 12 s,
+  the cores busy through the background).
+- Whether region checks exclude about 2 s at each edge (song regions carry
+  a 10 s margin already).
+- Whether `--songs` replaces `--eager` on the shadow once the real-recording
+  region check passes.

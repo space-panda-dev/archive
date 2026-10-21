@@ -153,11 +153,21 @@ the cost gate's baseline, and never waits for ever for an absent worker.
 Measured on a copy of the whole shadow: usable after about 22 minutes
 with `chords-jiang` in the background tier (with it in the fast tier its
 copies need up to 11.4 GB each on a 93-minute recording and a long one runs
-nearly alone). Left: the background queue idles the laptop because a job
-waiting for cores or memory holds every job behind it, and routed stems are
-offered here only after local work (backfill the queue behind a waiting
-job, by the recorded costs); Jiang over windows, so several copies fit (built as `chords-jiang` 2, ADR 0112's last amendment);
-the usable proposal per recording or in parallel (23% of time-to-usable).
+nearly alone). Round 3 (built and merged on `fast3/integration3`, ADR 0112's last two
+amendments; not yet measured on the shadow): the background queue no longer
+idles the laptop (a job waiting for cores or memory does not hold the jobs
+behind it, backfilling by the recorded costs; routed stems overflow here
+whenever they would end here sooner); each recording is proposed as soon as
+its fast units settle (the usable proposal was 23% of time-to-usable);
+`chords-jiang` 2 bounds Jiang's memory (2 GB plus 0.8 GB an hour, not yet
+measured on whole long recordings), so several copies fit; region runs of
+`notes-basic-pitch`, `f0-pesto` and `melody` lie on the whole run's grid
+(bench clips: note F1 0.89-1.0). Left: measure time-to-usable, core use and
+overflow share on a copy of the shadow; the queued long-recording Jiang run
+(replace 0.8 GB/h and the 0.151 cost); the region check on the 554 s
+recording over 35-520 s, then whether `--songs` replaces `--eager`; one
+Door admission for a recording's proposer runs (about 2 s a run is the
+floor of a proposal today).
 The Mac worker now gets the content as WavPack (73% of the
 float WAV, decoding to its very samples) and can run two tasks at once:
 on the two recordings, 0.223 s per audio-second end to end against 0.305

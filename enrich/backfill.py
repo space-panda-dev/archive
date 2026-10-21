@@ -13,8 +13,9 @@ plan, what each recording still needs, and two projected times from the
 recorded costs: until every recording is usable, and until all is made.
 With `--commit`, in order:
 
-1. `enrich probe` every audio or video Artifact `enrich propose --all` lists
-   as unprobed (one `audio_stream` claim each, through Door);
+1. `enrich probe` every audio or video Artifact the archive's export shows
+   unprobed (`unprobed_of`: what `enrich propose --all` would list; one
+   `audio_stream` claim each, through Door);
 2. plan: for every Artifact with an audio stream claim, the units of the
    configuration (an extractor on the content, or on a file feature of it
    with `--from`) whose entries the bank lacks, read through `bank.Bank` as
@@ -23,17 +24,24 @@ With `--commit`, in order:
    every bank request (`requests/`); the bank is the ledger;
 3. the fast tier: every unit that measures the content itself, prefers no
    stem, and costs at most `fast_above` (by the recorded costs: rhythm,
-   tonal, chords-jiang, chords-chordino, structure) over EVERY recording,
-   then `enrich propose --all`: from then every recording is usable
-   (chords, beats, key, tuning, sections; ADR 0112, "Usable"), the `usable`
-   event; with `--world-store`, World is refreshed then too;
+   tonal, chords-jiang, chords-chordino, structure; a configuration may set
+   a `tier`) over EVERY recording. Each recording is proposed as soon as its
+   own fast units have settled (`backfill_proposals.Proposals`: one
+   `--artifact` each, one `--all` when more than two wait), while the pool
+   goes on with the others; once the fast tier has settled everywhere and
+   every recording's proposal has run, every recording is usable (chords,
+   beats, key, tuning, sections; ADR 0112, "Usable"), the `usable` event;
+   with `--world-store`, World is refreshed then too;
 4. the background tier (stems and what measures them: f0-pesto, melody,
    tonal and notes on the bass stem): no background job starts before step
    3 is done. In priority order: song recordings, then the most recently
    admitted, then the rest; a bank request goes ahead of everything, in
-   either tier, and is removed once its entry is made. Proposals in
-   batches as background units land (at most every
-   `propose_every_seconds`);
+   either tier, and is removed once its entry is made. A job waiting for
+   cores or memory does not hold the jobs behind it: a later one that ends
+   before it would fit, or takes only what it will leave over, starts now
+   (`backfill_queue`, backfilling; it is reserved for outright after
+   `reserve_after_seconds`). Proposals in batches as background units land
+   (at most every `propose_every_seconds`);
 5. `enrich propose --all` (dry run, commit, and a rerun that must answer
    unchanged); with `--world-store`, World refresh and conformance; `done`
    carries `time_to_usable_s` and `time_to_done_s`.
@@ -45,8 +53,9 @@ held to 1 thread), as many as the cores and memory allow. A unit routed to
 Spool (`"route": "spool"`, first `stems`) is put with `remote.py put`, at
 most `spool_in_flight` at a time in priority order, and collected as results
 arrive; with `overflow`, free cores here take routed work the worker is not
-holding. A worker that files nothing within `local_when_away_seconds` (every
-mode has one) plus its oldest task's expected time is absent, and its work
+holding whenever it would end here sooner than the worker could end it. A
+worker that files nothing within `local_when_away_seconds` (every mode has
+one) plus its oldest task's expected time is absent, and its work
 is made here. A task the spool failed for good, or could not put, runs here.
 
 `--follow` keeps it running: new bank requests every `poll_seconds`, first
