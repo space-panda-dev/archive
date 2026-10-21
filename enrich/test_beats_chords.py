@@ -138,6 +138,37 @@ def stand_in_programs(directory: Path) -> list[str]:
     return arguments
 
 
+def repository_decode(result_logprob: numpy.ndarray, penalty: float) -> list[int]:
+    """The repository's `XHMMDecoder.decode` at the pinned commit with every
+    frame a change point (`use_beats` off), as written there, returning the
+    template indices: the reference `jiang.viterbi` must equal."""
+    np = numpy
+    n_frame = result_logprob.shape[0]
+    n_chord = result_logprob.shape[1]
+    beat_arr = np.ones((n_frame,), dtype=np.int8)
+    dp = np.zeros_like(result_logprob)
+    dp[0, 1:] -= np.inf
+    dp_max_at = np.zeros((n_frame), dtype=np.int64)
+    pre = np.zeros_like(result_logprob, dtype=np.int64)
+    dp[0, :] += result_logprob[0, :]
+    dp_max_at[0] = np.argmax(dp[0, :])
+    pre[0, :] = -1
+    for t in range(1, n_frame):
+        same_trans = dp[t - 1, :]
+        if beat_arr[t]:
+            diff_trans = dp[t - 1, dp_max_at[t - 1]] - penalty
+            use_same_trans = same_trans > diff_trans
+            dp[t, :] = np.maximum(diff_trans, same_trans) + result_logprob[t, :]
+            pre[t, :] = dp_max_at[t - 1]
+            pre[t, use_same_trans] = np.arange(n_chord)[use_same_trans]
+        dp_max_at[t] = np.argmax(dp[t, :])
+    decode_ids = [None] * n_frame
+    decode_ids[-1] = dp_max_at[-1]
+    for t in range(n_frame - 2, -1, -1):
+        decode_ids[t] = pre[t + 1, decode_ids[t + 1]]
+    return [int(i) for i in decode_ids]
+
+
 def scratch(test: unittest.TestCase) -> Path:
     directory = Path(tempfile.mkdtemp(prefix="bank-learned-"))
     test.addCleanup(shutil.rmtree, directory, True)
@@ -179,16 +210,18 @@ class Manifests(unittest.TestCase):
                 self.assertEqual(extractor.needs, [])
                 self.assertEqual(module.PARAMETERS["threads"], module.THREADS)
 
-    def test_the_keys_are_the_ones_the_album_trial_filed(self) -> None:
-        """The shipped versions keep the trial's id, version, and parameters,
-        so a bank that holds the trial's entries holds these extractors'
-        (their outputs were compared byte for byte on two recordings). A
-        change to the parameters fails here: it is a new key, and the
-        trial's entries would no longer be read."""
+    def test_the_key_is_version_2s_not_the_album_trials(self) -> None:
+        """Version 1 kept the album trial's id, version, and parameters, so a
+        bank held the trial's entries as its own. Version 2 normalises a
+        recording over ten minutes by a sample's statistics, so its outputs
+        can differ and it is a new key: the trial's (and version 1's)
+        entries are not read as version 2's. A change to the parameters
+        fails here."""
         content = "sha256:41e7a7256ec18b7b6e1c7495e0f0533da5b7132689c03b7acf34e03ed14ff621"
-        trial = {"chords-jiang": "sha256:da77799bc2fd97c85a1d96f14814baff76b6417f722d12fc5501ca3a137ad9f2"}
-        keys = bank.Catalog.load().keys(content, list(trial))
-        self.assertEqual({e: keys[e] for e in trial}, trial)
+        trial = "sha256:da77799bc2fd97c85a1d96f14814baff76b6417f722d12fc5501ca3a137ad9f2"
+        key = bank.Catalog.load().keys(content, ["chords-jiang"])["chords-jiang"]
+        self.assertNotEqual(key, trial)
+        self.assertEqual(key, "sha256:40428c2bdeff260223976f993ea8df52c053ca304f7c40e4f3bb6e8a083c684e")
 
     def test_the_archive_side_never_imports_the_models(self) -> None:
         """Loading the programs (as the tests do) imports none of the model
@@ -257,6 +290,47 @@ class Pure(unittest.TestCase):
         found = jiang.posteriors(numpy.array([[-1000.0, -1001.0], [0.0, 0.0]]))
         self.assertTrue(numpy.allclose(found.sum(axis=1), 1.0))
         self.assertAlmostEqual(float(found[0, 0]), 1 / (1 + numpy.exp(-1.0)))
+
+    def test_jiang_viterbi_decides_as_the_repositorys_decoder(self) -> None:
+        """`viterbi` keeps one row of scores and reads observations a chunk at
+        a time; it must pick the very frames the repository's
+        `XHMMDecoder.decode` (without beats) picks, transcribed here, in the
+        float32 the networks give, across chunk edges and near ties."""
+        rng = numpy.random.default_rng(7)
+        for frames, count, chunk in ((1, 4, 8), (37, 5, 8), (300, 30, 64), (500, 12, 7)):
+            raw = rng.dirichlet(numpy.full(count, 0.3), size=frames).astype(numpy.float32)
+            raw[frames // 3:frames // 3 + 5] = raw[frames // 3]  # held frames: changes cost the penalty
+            observations = numpy.log(raw + numpy.float32(1e-6))
+            with self.subTest(frames=frames, count=count, chunk=chunk), patch.object(jiang, "CHUNK", chunk):
+                self.assertEqual(jiang.viterbi(observations, 30.0), repository_decode(observations, 30.0))
+                self.assertEqual(jiang.viterbi(observations, 0.5), repository_decode(observations, 0.5))
+
+    def test_jiang_mean_posteriors_are_the_bits_of_the_whole_spans_mean(self) -> None:
+        rng = numpy.random.default_rng(3)
+        observations = numpy.log(rng.dirichlet(numpy.ones(9), size=200).astype(numpy.float32))
+        for first, last, chunk in ((0, 200, 16), (5, 6, 16), (13, 190, 7), (0, 200, 4096)):
+            with self.subTest(first=first, last=last, chunk=chunk), patch.object(jiang, "CHUNK", chunk):
+                whole = jiang.posteriors(observations)[first:last].mean(axis=0)
+                found = jiang.mean_posteriors(observations, first, last)
+                self.assertEqual(found.dtype, whole.dtype)
+                self.assertEqual(found.tobytes(), whole.tobytes())
+
+    def test_jiang_chordlab_spans_each_run_of_one_label(self) -> None:
+        self.assertEqual(jiang.chordlab(["N", "N", "C:maj", "C:maj", "C:maj", "N"], 0.5),
+                         [(0.0, 1.0, "N"), (1.0, 2.5, "C:maj"), (2.5, 3.0, "N")])
+        self.assertEqual(jiang.chordlab([], 0.5), [])
+
+    def test_jiang_windows_are_equal_and_tile_the_frames(self) -> None:
+        self.assertEqual(jiang.windows(10, 25), [(0, 10)])
+        self.assertEqual(jiang.windows(25, 25), [(0, 25)])
+        self.assertEqual(jiang.windows(26, 25), [(0, 13), (13, 26)])
+        for frames, size in ((1000, 333), (25841, 25840), (77000, 25840)):
+            found = jiang.windows(frames, size)
+            self.assertEqual(found[0][0], 0)
+            self.assertEqual(found[-1][1], frames)
+            self.assertTrue(all(a[1] == b[0] for a, b in zip(found, found[1:])))
+            self.assertLessEqual(max(b - a for a, b in found), size)
+            self.assertLessEqual(max(b - a for a, b in found) - min(b - a for a, b in found), 1)
 
 
 class PinnedModels(unittest.TestCase):

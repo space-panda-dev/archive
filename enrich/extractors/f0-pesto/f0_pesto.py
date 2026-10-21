@@ -20,6 +20,21 @@ silence outside the audio; floored at -120), and `loud_db`, its 99th
 percentile, so a note builder can find re-articulations and gate voicing
 without decoding the audio again.
 
+A region run (ADR 0112) is laid on the whole run's grid. Where the
+request's input carries the `region` it lies at in the recording, the audio
+is placed at that offset (rounded to a sample at 16 kHz): silence before it
+back to the whole run's row at or before its start, and the first minute cut
+short at the whole run's next minute, so every row and every minute's edge
+falls where the whole run's does. A row before the region is dropped, and
+the grid's `first_centre` says where the first row lies on the cut's
+timeline (0 to 159 samples). Only the silence where the whole run hears what
+lies before or after the region differs, and `loud_db` is the region's.
+This holds when the region starts on a whole sample at 16 kHz in the
+audio's own rate too (a 10 ms step: song regions start on whole seconds,
+`regions.regions_of`): otherwise ffmpeg resamples the region at another
+phase than the whole, and every row differs a little (measured: a start at
+12.3456 s gave f0 p99 33 cents against 0 at 15 s).
+
 The checkpoint is a pickle that PESTO loads with `weights_only=False`, so
 its digest is checked before it is loaded, and the checked file is the one
 loaded.
@@ -44,6 +59,7 @@ RATE = 16000
 HOP = 160
 STEP_MS = 10
 CHUNK_SECONDS = 60
+CHUNK = CHUNK_SECONDS * RATE  # samples a chunk; only a test sets another
 CHECKPOINT = "mir-1k_g7"
 WEIGHTS = "sha256:16c32e06ddd950e3e4866dfa3c7f8a87c4988f8adf43e57977b189f031f26f3e"
 PESTO = "2.0.1"
@@ -84,7 +100,7 @@ class Tracker(Protocol):
     confidence, one row per HOP samples from sample 0."""
     software: list[dict[str, str]]
 
-    def track(self, signal: numpy.ndarray) -> tuple[numpy.ndarray, numpy.ndarray]: ...
+    def track(self, signal: numpy.ndarray, first: int | None = None) -> tuple[numpy.ndarray, numpy.ndarray]: ...
 
 
 class Pesto:
@@ -108,20 +124,48 @@ class Pesto:
         self.torch = torch
         self.software = [{"name": "pesto-pitch", "version": version}, {"name": "torch", "version": torch.__version__}]
 
-    def track(self, signal: numpy.ndarray) -> tuple[numpy.ndarray, numpy.ndarray]:
+    def track(self, signal: numpy.ndarray, first: int | None = None) -> tuple[numpy.ndarray, numpy.ndarray]:
         """A minute at a time, each chunk's rows past its own minute dropped,
-        so every row stays on the grid of the whole signal."""
-        step = CHUNK_SECONDS * RATE
+        so every row stays on the grid of the whole signal; the first chunk
+        `first` samples long when given (a region's, see `chunks`)."""
         pitches, confidences = [], []
         with self.torch.inference_mode():
-            for start in range(0, len(signal), step):
-                chunk = self.torch.from_numpy(signal[start:start + step])
+            for start, end in chunks(len(signal), first):
+                chunk = self.torch.from_numpy(signal[start:end])
                 pitch, confidence, _volume, _activations = self.model(chunk, sr=RATE, convert_to_freq=True,
                                                                       return_activations=True)
-                keep = step // HOP if start + step < len(signal) else None
+                keep = (end - start) // HOP if end < len(signal) else None
                 pitches.append(pitch.reshape(-1).numpy()[:keep])
                 confidences.append(confidence.reshape(-1).numpy()[:keep])
         return numpy.concatenate(pitches), numpy.concatenate(confidences)
+
+
+def chunks(samples: int, first: int | None = None) -> list[tuple[int, int]]:
+    """[start, end) of each chunk the tracker is given: a minute each, the
+    first `first` samples (a multiple of HOP) when given."""
+    step = CHUNK
+    edges = [0, *range(first or step, samples, step)]
+    return [(start, min(end, samples)) for start, end in zip(edges, [*edges[1:], samples])]
+
+
+def offset_at(region: dict[str, int] | None, rate: int) -> int | None:
+    """Where a region's audio starts on the recording's timeline, in samples
+    at `rate`, to the nearest (half to even); None for whole content."""
+    if region is None:
+        return None
+    whole, part = divmod(region["start"] * rate, region["rate"])
+    return whole + (1 if 2 * part > region["rate"] or (2 * part == region["rate"] and whole % 2) else 0)
+
+
+def placed(signal: numpy.ndarray, offset: int) -> tuple[numpy.ndarray, int, int]:
+    """A region's signal at `offset` (samples at RATE) on the whole run's
+    grid: the signal after the silence back to the whole's row at or before
+    it, that silence's length, and the first chunk's (to the whole's next
+    minute)."""
+    lead = offset % HOP
+    step = CHUNK
+    return (numpy.concatenate([numpy.zeros(lead, dtype=signal.dtype), signal]), lead,
+            step - (offset - lead) % step)
 
 
 def load_tracker() -> Tracker:
@@ -186,16 +230,27 @@ def main(argv: list[str]) -> int:
         output = Path(request["output_dir"])
         tracker = load_tracker()
         signal = decode(request["input"]["path"])
-        pitch, confidence = tracker.track(signal)
-        track = on_grid(pitch, confidence, len(signal))
+        offset = offset_at(request["input"].get("region"), RATE)
+        if offset is None:
+            pitch, confidence = tracker.track(signal)
+            track = on_grid(pitch, confidence, len(signal))
+            level = row_levels(signal, len(track))
+            first_centre = 0
+        else:
+            # A region on the whole run's grid (see the module).
+            signal, lead, first = placed(signal, offset)
+            pitch, confidence = tracker.track(signal, first)
+            track = on_grid(pitch, confidence, len(signal))
+            level = row_levels(signal, len(track))
+            drop = 1 if lead else 0
+            track, level, first_centre = track[drop:], level[drop:], drop * HOP - lead
         (output / "f0.f32").write_bytes(track.tobytes())
-        level = row_levels(signal, len(track))
         (output / "level_db.f32").write_bytes(level.tobytes())
         software = [*tracker.software, {"name": "ffmpeg", "version": ffmpeg_version()},
                     {"name": "numpy", "version": numpy.__version__},
                     {"name": "python", "version": platform.python_version()}]
         result = {"contract": "archive-extractor-result/1", "software": software,
-                  "grids": {"f0": {"sample_rate": RATE, "hop": HOP, "first_centre": 0}},
+                  "grids": {"f0": {"sample_rate": RATE, "hop": HOP, "first_centre": first_centre}},
                   "outputs": {"f0": {"shape": list(track.shape)}, "rows_from_tracker": {"value": int(len(pitch))},
                               "level_db": {"shape": list(level.shape)},
                               "loud_db": {"value": float(numpy.percentile(level, LOUD_PERCENTILE))}}}

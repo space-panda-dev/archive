@@ -128,6 +128,18 @@ settings are in milliseconds, so they keep their meaning. The levels are
 measured over whole hops of the decoded stream, not over each chunk, so they
 do not depend on the chunking or on which rows are measured.
 
+A region run (ADR 0112) is laid on the whole run's grid. Where the
+request's input carries the `region` it lies at in the recording, the audio
+is placed at that offset (rounded to a sample at 44,100 Hz) after silence
+back to the whole run's row at or before it, so every row falls where the
+whole run's does; a row before the region is dropped, the grid's
+`first_centre` says where the first row lies on the cut's timeline, and
+notes starting before the region are dropped. What stays the region's own:
+`loud_db` and the gate are the region's, and its chunks start where its
+measured rows do, so MELODIA's voicing, which is relative to the contours it
+is given, can differ from the whole run's near the region's edges and where
+the whole run's chunks cut it elsewhere.
+
 Invoked by the runner as `melody.py <request.json>`.
 """
 
@@ -323,6 +335,22 @@ def decoded_blocks(path: str, ffmpeg: str = "ffmpeg", block_bytes: int = 1 << 20
             errors.seek(0)
             raise MelodyError(f"ffmpeg could not decode {path}: "
                               f"{errors.read().decode('utf-8', 'replace').strip()[:300]}")
+
+
+def offset_at(region: dict[str, int] | None, rate: int) -> int | None:
+    """Where a region's audio starts on the recording's timeline, in samples
+    at `rate`, to the nearest (half to even); None for whole content."""
+    if region is None:
+        return None
+    whole, part = divmod(region["start"] * rate, region["rate"])
+    return whole + (1 if 2 * part > region["rate"] or (2 * part == region["rate"] and whole % 2) else 0)
+
+
+def led(blocks: Iterable[numpy.ndarray], lead: int) -> Iterator[numpy.ndarray]:
+    """The blocks after `lead` samples of silence."""
+    if lead:
+        yield numpy.zeros(lead, dtype=numpy.float32)
+    yield from blocks
 
 
 def plan(measured: numpy.ndarray, samples: int, chunk: int, margin: int, hop: int
@@ -530,21 +558,30 @@ def run(request: dict[str, Any], es: Any) -> dict[str, Any]:
     melody = Melody(es, chosen)
     hop = chosen["hop"]
     output = Path(request["output_dir"])
+    # A region's audio after the silence that puts its rows on the whole
+    # run's grid; the row before the region is dropped at the end.
+    offset = offset_at(request["input"].get("region"), RATE)
+    lead = 0 if offset is None else offset % hop
+    drop = 1 if lead else 0
+
+    def decoded() -> Iterator[numpy.ndarray]:
+        return led(decoded_blocks(path), lead)
+
     # First the levels, and from them the gate and the rows within its reach.
     energy = Energy(hop)
-    samples = sum(len(block) for block in energy.tap(decoded_blocks(path)))
-    if samples == 0:
+    samples = sum(len(block) for block in energy.tap(decoded()))
+    if samples == lead:
         raise MelodyError(f"{path} decodes to no samples")
     rows = -(-samples // hop) + 1
     level_db = row_levels(energy.hops(), rows, hop)
-    loud_db, gate_db = loudness(level_db, chosen["gate_floor"], chosen["gate_range"])
+    loud_db, gate_db = loudness(level_db[drop:], chosen["gate_floor"], chosen["gate_range"])
     measured = reach(level_db >= gate_db, chosen["reach"])
     pieces = plan(measured, samples, chosen["chunk"], chosen["margin"], hop)
     # Then MELODIA on those rows only; every other row is unvoiced.
     pitch = numpy.zeros(rows, dtype=numpy.float32)
     confidence = numpy.zeros(rows, dtype=numpy.float32)
     # cut() first, so that it is drawn to its end and checks the decode.
-    for audio, (start, _end, first, count) in zip(cut(decoded_blocks(path), pieces, samples), pieces):
+    for audio, (start, _end, first, count) in zip(cut(decoded(), pieces, samples), pieces):
         measured_pitch, measured_confidence = melody.measure(audio)
         skip = first - start // hop
         if skip < 0 or skip + count > len(measured_pitch):
@@ -560,33 +597,35 @@ def run(request: dict[str, Any], es: Any) -> dict[str, Any]:
     flags, midi, cents = intonation(pitch, reference)
     values = {"pitch": pitch, "confidence": confidence, "voiced": flags, "midi": midi, "cents": cents,
               "level_db": level_db}
+    values = {name: value[drop:] for name, value in values.items()}
     for name, dtype in SERIES.items():
         (output / f"{name}.{'u8' if dtype == 'u1' else 'f32'}").write_bytes(
             numpy.ascontiguousarray(values[name], dtype=dtype).tobytes())
     # The notes are segmented from the gated contour, so the audio is decoded
     # again: the gate is known only once the whole recording is.
     notes = []
-    for audio, (start, _end, first, count) in zip(cut(decoded_blocks(path), pieces, samples), pieces):
+    for audio, (start, _end, first, count) in zip(cut(decoded(), pieces, samples), pieces):
         here = pitch[start // hop:start // hop + -(-len(audio) // hop) + 1]
         # A note belongs to the piece whose kept rows hold its onset.
         low, high = first * hop / RATE, (first + count) * hop / RATE
         for onset, duration, number in melody.notes(here, audio):
             onset += start / RATE
-            if low <= onset < high:
+            if low <= onset < high and onset >= lead / RATE:
+                onset -= lead / RATE
                 notes.append({"start": onset, "end": onset + duration, "value": number})
     (output / "notes.json").write_text(json.dumps(notes))
-    outputs: dict[str, Any] = {name: {"shape": [rows, 1]} for name in SERIES}
-    outputs.update({"notes": {}, "voiced_fraction": {"value": float(voiced.mean())},
-                    "melodia_voiced_fraction": {"value": float(melodia_voiced.mean())},
-                    "measured_fraction": {"value": float(measured.mean())},
+    outputs: dict[str, Any] = {name: {"shape": [rows - drop, 1]} for name in SERIES}
+    outputs.update({"notes": {}, "voiced_fraction": {"value": float(voiced[drop:].mean())},
+                    "melodia_voiced_fraction": {"value": float(melodia_voiced[drop:].mean())},
+                    "measured_fraction": {"value": float(measured[drop:].mean())},
                     "loud_db": {"value": loud_db}, "gate_db": {"value": gate_db},
-                    "reference_hz": {"value": reference}, "samples": {"value": samples}})
+                    "reference_hz": {"value": reference}, "samples": {"value": samples - lead}})
     software = [{"name": "ffmpeg", "version": ffmpeg_version()},
                 {"name": "essentia", "version": importlib.metadata.version("essentia")},
                 {"name": "numpy", "version": numpy.__version__},
                 {"name": "python", "version": platform.python_version()}]
     return {"contract": "archive-extractor-result/1", "software": software,
-            "grids": {"melody": {"sample_rate": RATE, "hop": hop, "frame": FRAME, "first_centre": 0}},
+            "grids": {"melody": {"sample_rate": RATE, "hop": hop, "frame": FRAME, "first_centre": drop * hop - lead}},
             "outputs": outputs}
 
 

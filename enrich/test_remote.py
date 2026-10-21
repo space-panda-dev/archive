@@ -52,14 +52,18 @@ with open(root / "calls.jsonl", "a") as log:
 if words[:2] == ["put", "--attachments"]:
     for line in sys.stdin.read().splitlines():
         task = json.loads(line)
+        path = root / "tasks" / (task["task_id"] + ".json")
+        if path.exists():  # as Spool: an equal task is existing, its attachments not read; another conflicts
+            if json.loads(path.read_text()) != task:
+                sys.exit(4)
+            print(json.dumps({"task_id": task["task_id"], "status": "existing"}))
+            continue
         for item in task["attachments"]:
             data = (Path(words[2]) / item["sha256"]).read_bytes()
             assert hashlib.sha256(data).hexdigest() == item["sha256"] and len(data) == item["size"]
             (root / "attachments" / item["sha256"]).write_bytes(data)
-        path = root / "tasks" / (task["task_id"] + ".json")
-        status = "existing" if path.exists() else "inserted"
         path.write_text(json.dumps(task))
-        print(json.dumps({"task_id": task["task_id"], "status": status}))
+        print(json.dumps({"task_id": task["task_id"], "status": "inserted"}))
 elif words == ["results"]:
     for path in sorted((root / "done").glob("*.json")):
         print(path.read_text().strip())
@@ -245,6 +249,28 @@ class Transport(unittest.TestCase):
         self.assertEqual(decoded[0], decoded[1])
         self.assertEqual(answer["transport"]["codec"], "wavpack")
         self.assertEqual(remote.check_payload(task["payload"]), task["payload"])
+
+    def test_a_task_put_again_is_not_encoded_again(self) -> None:
+        code, first, spool = self.put("again", "--transport", "wavpack")
+        self.assertEqual((code, first["status"]), (0, "put"), first)
+        encoded = []
+        real = remote.encode_transport
+        with patch.object(remote, "encode_transport", lambda *a: encoded.append(a) or real(*a)):
+            again = remote.put(bank.Catalog.load(), self.directory / "again" / "bank", remote.Spool(spool.command),
+                               "stems", self.audio, "audio/wav", self.digest, json.loads(self.config.read_text())
+                               ["parameters"], transport="wavpack", ffmpeg="ffmpeg")
+        self.assertEqual((again["status"], again["transport"].get("remembered")), ("existing", True))
+        self.assertEqual(encoded, [])  # Spool held the very task: nothing was encoded
+        [held] = spool.tasks()
+        # Spool no longer holds it (collected): the transport is encoded, checked and sent again.
+        for task in spool.tasks():
+            (spool.root / "tasks" / (task["task_id"] + ".json")).unlink()
+        with patch.object(remote, "encode_transport", lambda *a: encoded.append(a) or real(*a)):
+            third = remote.put(bank.Catalog.load(), self.directory / "again" / "bank", remote.Spool(spool.command),
+                               "stems", self.audio, "audio/wav", self.digest, json.loads(self.config.read_text())
+                               ["parameters"], transport="wavpack", ffmpeg="ffmpeg")
+        self.assertEqual((third["status"], len(encoded)), ("put", 1))
+        self.assertEqual(spool.tasks(), [held])  # the same task as before, its transport the same bits
 
     def test_flac_cannot_hold_float_samples_so_the_content_travels(self) -> None:
         code, answer, spool = self.put("flac", "--transport", "flac")

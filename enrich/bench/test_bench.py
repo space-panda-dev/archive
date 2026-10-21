@@ -424,6 +424,48 @@ class EquivalenceCheck(unittest.TestCase):
         self.assertEqual(self.run_check(), 2)
 
 
+class RegionCheck(unittest.TestCase):
+    """The suite around `extract.py region-equivalence`: the equivalence
+    check's interpreter, configuration and clips, its own bank and region."""
+
+    setUp = EquivalenceCheck.setUp
+    configure = EquivalenceCheck.configure
+
+    def configure_region(self, exit_code: int, region: dict | None = None) -> None:
+        self.configure(exit_code)
+        config = json.loads((self.root / "config.json").read_text())
+        if region is not None:
+            config["region"] = region
+        (self.root / "config.json").write_text(json.dumps(config))
+
+    def run_region(self) -> int:
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            return cli.main(["--root", str(self.root), "region"])
+
+    def test_it_runs_region_equivalence_over_every_clip(self) -> None:
+        from enrich.bench import region
+        self.configure_region(0)
+        argv = region.command(self.root)
+        self.assertEqual(argv[1:8], [str(region.EXTRACT), "region-equivalence", "--seconds", "15:45", "--bank",
+                                     str(self.root / "equivalence" / "region-bank"), "--config"])
+        self.assertEqual([Path(argv[i + 1]).name for i, w in enumerate(argv) if w == "--content"], ["a.flac", "b.wav"])
+        self.assertEqual(self.run_region(), 0)
+        self.configure_region(0, {"seconds": "5:25", "bank": "eq/rbank", "programs": {"python": "essentia/python"}})
+        argv = region.command(self.root)
+        self.assertEqual(argv[3:7], ["--seconds", "5:25", "--bank", str(self.root / "eq" / "rbank")])
+        self.assertIn(f"python={self.root / 'essentia' / 'python'}", argv)
+
+    def test_its_status_is_the_comparisons_and_a_bad_config_cannot_happen(self) -> None:
+        for code, expected in ((1, 1), (2, 2)):
+            with self.subTest(code=code):
+                self.configure_region(code)
+                self.assertEqual(self.run_region(), expected)
+        self.configure_region(0, {"against": "mps"})
+        self.assertEqual(self.run_region(), 2)
+        self.configure_region(0, {"programs": {"python": 3}})
+        self.assertEqual(self.run_region(), 2)
+
+
 def write_wav(path: Path, seconds: float, rate: int = 48000, channels: int = 2) -> None:
     """A float WAV header and silence: what the cost gate reads its length from."""
     import struct

@@ -14,6 +14,7 @@ or writes an archive.
 | [`run.py`](run.py) | Running a variant over a set, the result document, baselines, and the gate |
 | [`cost.py`](cost.py) | The backfill's cost gate: CPU seconds per audio-second of every backfill unit over one clip |
 | [`equivalence.py`](equivalence.py) | The stem equivalence check: `extract.py equivalence` over the root's clips (ADR 0090's amendment) |
+| [`region.py`](region.py) | The region check: `extract.py region-equivalence` over the same clips (ADR 0112) |
 | [`__main__.py`](__main__.py) | The command |
 | [`test_bench.py`](test_bench.py) | The harness on tiny synthetic sets |
 
@@ -47,6 +48,19 @@ by the Mac's worker through Spool and collected. Exit 0 the record passes, 1
 it fails, 2 it could not be made. Declared in wf's suites, it is
 `bench-stems`. The suite is cached by source tree, so after changing
 the data or a variant's environment ask again with `--fresh`.
+
+`$P -m enrich.bench region` checks that a region's entries stand for the
+whole run's under `--songs` (ADR 0112): over the same clips, it makes the
+stems and what measures them (notes-basic-pitch and f0-pesto of the vocals
+and bass, melody of the vocals) whole and over a region (15 to 45 s), and
+compares them over the region with the bounds `stems` declares for a
+stand-in (note F1 at least 0.98, f0 p99 at most 5 cents, voicing at least
+0.99; melody held to the f0 bounds). Each stem's sample difference is
+reported. Settings: the `equivalence` object, and an optional `region`
+object (`bank`, `seconds`, `programs`; see [`region.py`](region.py)). Run it
+under an interpreter with Essentia for melody, or name one in
+`region.programs.python`. Exit 0 every region agrees, 1 one does not, 2 it
+could not be made.
 
 Exit status: 0 passed, 1 a mean F1 dropped by more than the tolerance (0.02
 by default, over all items and per subset, with and without offsets), 2 the

@@ -154,12 +154,14 @@ command, `rg -n '^##' enrich/README.md`).
 | `enrich/note_builder.py` | 356 | `build`: one note per held pitch from a pitch track and its level (ADR 0086); settings `VOICE`, `BASS`; tests `enrich/test_note_builder.py` |
 | `enrich/probe.py`, `detector.py` | 234, 674 | stream facts (0065), span suggestions (0066; presets and the talk gate, 0091) |
 | `enrich/match.py`, `cover.py`, `windows.py` | 358, 1073, 517 | work matching (0067, 0071, 0072) |
-| `enrich/extract.py` | 985 | feature-bank runner: `main` (`list`, `run` with `--region` and `--exact`, `equivalence`), `cut_region`, `run_default`, `run_from`; `Run.stand_in` |
-| `enrich/bank.py` | 1474 | `Catalog` (452; `within` for regions), `Bank` (1064; `candidates`, `stands_in`, `measured_over`, `probe_falls_short`): the bank format; equivalence records (`check_equivalence` 888, `decisions`); region keys (`key_of`, `check_region`), `RegionView`/`region_entries`/`regions` (readers of region entries; `Entry.placed`, `Entry.timeline`), `covering`, bank requests (`ask`, `requests`) at the end (ADR 0112) |
-| `enrich/equivalence.py` | 262 | `measure`: the equivalence record of interchangeable entries; `MEASURES` (note F1, f0 cents, voicing) |
+| `enrich/extract.py` | 1060 | feature-bank runner: `main` (`list`, `run` with `--region` and `--exact`, `equivalence`, `region-equivalence`), `cut_region`, `run_default`, `run_from` (a region's stem measured with its `placed` region); `Run.stand_in` |
+| `enrich/bank.py` | 1498 | `Catalog` (452; `within` for regions, `placed_by` for a stem made over one), `Bank` (1106; `candidates`, `stands_in`, `measured_over`, `probe_falls_short`): the bank format; equivalence records (`check_equivalence` 909, `decisions`); region keys (`key_of`, `check_region`), `RegionView`/`region_entries`/`regions` (readers of region entries; `Entry.placed`, `Entry.timeline`), `covering`, bank requests (`ask`, `requests`) at the end (ADR 0112) |
+| `enrich/equivalence.py` | 440 | `measure`: the equivalence record of interchangeable entries; `MEASURES` (note F1, f0 cents, voicing); `region_measure`: a region's stems and measures against the whole run's (ADR 0112) |
 | `enrich/regions.py` | 259 | song spans by precedence, `regions_of`, `regions_for`, `expensive`, `plan` per mode (ADR 0112); tests `enrich/test_regions.py` |
-| `enrich/remote.py` | 612 | extractor runs through Spool: `put` (with a lossless `make_transport` of the content), `work`, `collect` (ADR 0090) |
-| `enrich/backfill.py` | 1623 | `enrich backfill` (ADR 0112 and its amendment): `Planning`/`plan` (modes from `regions.plan`, region jobs, requests first, `request_key`), `Schedule.tier` (fast or background), `prioritise`, `projection` (time to usable and to done), `Planner.state` (reads the bank through `Bank`, over a region through `Catalog.within`), `unit_order` (probes first), `layout`/`copies` (`DEVICE_SETTINGS`: stems on `cpu-inductor` one thread a copy), `check_remote` (stand-in routing), `Runner` (the pool by `Job.priority`, the background held until usable, the Spool window, `--follow` intake), `Proposals`, `Follow`; tests `enrich/test_backfill.py` |
+| `enrich/remote.py` | 667 | extractor runs through Spool: `put` (with a lossless `make_transport` of the content, remembered under `<bank>/tmp/transports/` so `put_again` does not encode it again), `work`, `collect` (ADR 0090) |
+| `enrich/backfill.py` | 1185 | `enrich backfill` (ADR 0112 and its amendments): `Planning`/`plan` (modes from `regions.plan`, region jobs, requests first, `request_key`), `Schedule.tier` (fast or background), `prioritise`, `projection` (time to usable, with the per-recording proposal, and to done), `Planner.state` (reads the bank through `Bank`, over a region through `Catalog.within`), `unit_order` (probes first), `layout`/`copies` (`DEVICE_SETTINGS`: stems on `cpu-inductor` one thread a copy), `check_remote` (stand-in routing), `unprobed_of`/`discover` (unprobed read from the export); re-exports the two modules below; tests `enrich/test_backfill.py` |
+| `enrich/backfill_queue.py` | 487 | the backfill's pool: `Job`, `Runner` (by `Job.priority`, the background held until usable, the Spool window), `choose`/`shadow` (backfilling behind a head waiting for cores or memory; reserved outright after `reserve_after_seconds`), `take_here` (overflow of routed work when it ends here sooner), `remote_parameters` |
+| `enrich/backfill_proposals.py` | 319 | the backfill's archive-side steps: `Steps` (each `call` knows its outcome), `Proposals` (usable per recording, one `--all` when more than two wait), `Follow` (`--follow` intake) |
 | `enrich/media.py`, `waveform.py`, `derived.py` | 193, 161, 62 | derived media (ADR 0069) |
 | `enrich/extractors/stems/stems.py` | 755 | `separate`; `cpu-inductor` (`compile_network`, `htdemucs_core`); a region run separates the source over a window on the whole run's grid (`aligned`, `context_of`, `trimmed`) so its stems are the whole's; tests `enrich/test_stems.py` |
 | `enrich/support.py` | 291 | test support: synthetic audio, scratch archives |
@@ -171,7 +173,8 @@ runs all extractors together); suite `enrich-tests` is
 `enrich/tests/test_media.py`.
 The bench (`enrich/bench/`, [README](enrich/bench/README.md)) scores note
 transcribers against private sets outside the repository, and gates the
-backfill's CPU seconds per audio-second (`cost.py`, `python -m enrich.bench cost`); suites `bench` and
+backfill's CPU seconds per audio-second (`cost.py`, `python -m enrich.bench cost`), and checks a region's
+entries against the whole run's (`region.py`, `python -m enrich.bench region`); suites `bench` and
 `bench-horn`. The `enrich` suite does not discover it (no `__init__.py`).
 Rules: enrichment never changes its inputs (INV-9); every claim carries its
 run and provenance (ADR 0064, [provenance](docs/provenance.md)); an

@@ -396,7 +396,7 @@ class FromTheBank(unittest.TestCase):
         [planned] = found.outputs
         self.assertEqual((planned.contract, planned.name), (proposers.CHORD_STACKS, "chords"))
         payload = planned.payload
-        self.assertTrue(payload["weight_scale"].startswith("chords-jiang 1 readings: mean over the span's frames"))
+        self.assertTrue(payload["weight_scale"].startswith("chords-jiang 2 readings: mean over the span's frames"))
         entry = self.bank.entry(self.digest, "chords-jiang")
         document = json.loads(entry.file("readings").read_text())
         self.assertEqual(len(payload["spans"]), len(JIANG_LABELS))
