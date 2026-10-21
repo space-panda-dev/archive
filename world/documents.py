@@ -14,6 +14,11 @@ Nothing here stores a lyric. A timed lyrics claim places a document's lines
 and words by number; `lyric_view` joins the words from the document's bytes
 when something is shown, and the joined text is a view, never a claim.
 
+ADR 0113 adds two computed views: `stale_lyric_links`, the timed lyrics and
+underlays whose notes, melody, or document has been superseded, and
+`lyric_documents`, a Work's lyric documents with the `derived_from` chain
+between them.
+
 `reach` is a computed view: how far an object may be shown or shared under
 the sensitivity and rights claims on it and on everything it pins. The
 circle is private, so rights never keep anything from it; only sensitivity
@@ -561,6 +566,24 @@ def _pinned_onsets(by_role: dict[str, list[dict[str, Any]]], targets: dict[str, 
     return onsets
 
 
+def check_syllable_place(syllable: dict[str, Any], previous_number: int, previous_char: int,
+                         where: str) -> tuple[int, int]:
+    """Where a syllable lies in its word, the rule ADR 0085 (amended
+    2026-10-19) gives timed lyrics and ADR 0113 gives an underlay: a later
+    `syllable` number than the one before, and characters `start_char` to
+    `end_char` (code points, end exclusive) at or after the syllable before.
+    Returns this syllable's number and end character, for the next."""
+    if _int(syllable["syllable"], f"{where} syllable", 1) <= previous_number:
+        raise DocumentError(f"{where} must name a later syllable of the word than the syllable before it")
+    start_char = _int(syllable["start_char"], f"{where} start_char", 0)
+    end_char = _int(syllable["end_char"], f"{where} end_char", 1)
+    if end_char <= start_char:
+        raise DocumentError(f"{where} must end after it starts in characters")
+    if start_char < previous_char:
+        raise DocumentError(f"{where} must start at or after the syllable before it in characters")
+    return syllable["syllable"], end_char
+
+
 def _check_syllables(word: dict[str, Any], span: tuple[int, int], count: int, scaled: bool,
                      onsets: dict[str, set[int]], named: set[str], where: str) -> None:
     """A word's syllables: numbered in order, within the word's span, each at
@@ -571,16 +594,7 @@ def _check_syllables(word: dict[str, Any], span: tuple[int, int], count: int, sc
         at = f"{where} syllable {index}"
         _closed(syllable, {"syllable", "start_char", "end_char", "start_sample", "end_sample"},
                 {"confidence", "carried_by"}, at)
-        if _int(syllable["syllable"], f"{at} syllable", 1) <= previous_number:
-            raise DocumentError(f"{at} must name a later syllable of the word than the syllable before it")
-        previous_number = syllable["syllable"]
-        start_char = _int(syllable["start_char"], f"{at} start_char", 0)
-        end_char = _int(syllable["end_char"], f"{at} end_char", 1)
-        if end_char <= start_char:
-            raise DocumentError(f"{at} must end after it starts in characters")
-        if start_char < previous_char:
-            raise DocumentError(f"{at} must start at or after the syllable before it in characters")
-        previous_char = end_char
+        previous_number, previous_char = check_syllable_place(syllable, previous_number, previous_char, at)
         start, end = _check_span(syllable, count, [], at)
         if start < previous_end or end > span[1]:
             raise DocumentError(f"{at} must lie within its word, at or after the syllable before it")
@@ -721,19 +735,27 @@ def check_locators(claim: dict[str, Any], data: bytes) -> None:
     word (counted in Unicode code points). Door does not read content, so
     this is a check for an importer or a view, not an admission rule."""
     payload = claim["payload"]
-    lines = document_lines(data, payload["scheme"])
-    for index, line in enumerate(payload["lines"]):
+    check_placed_words(payload["lines"], data, payload["scheme"], "timed lyrics")
+
+
+def check_placed_words(placed: list[dict[str, Any]], data: bytes, scheme: str, where: str) -> None:
+    """The locator check of `check_locators` over any checked list of placed
+    lines (`line`, optional `words`, each with a `word` and optional
+    `syllables`), so a timed lyrics claim and an underlay (ADR 0113) are held
+    to one rule."""
+    lines = document_lines(data, scheme)
+    for index, line in enumerate(placed):
         if line["line"] > len(lines):
-            raise DocumentError(f"timed lyrics line {index} names line {line['line']}, "
+            raise DocumentError(f"{where} line {index} names line {line['line']}, "
                                 f"but the document has {len(lines)}")
         for word in line.get("words", []):
             if word["word"] > len(lines[line["line"] - 1]):
-                raise DocumentError(f"timed lyrics line {index} names word {word['word']} of line {line['line']}, "
+                raise DocumentError(f"{where} line {index} names word {word['word']} of line {line['line']}, "
                                     f"which has {len(lines[line['line'] - 1])}")
             text = lines[line["line"] - 1][word["word"] - 1]
             for syllable in word.get("syllables", []):
                 if syllable["end_char"] > len(text):
-                    raise DocumentError(f"timed lyrics line {index} word {word['word']} syllable "
+                    raise DocumentError(f"{where} line {index} word {word['word']} syllable "
                                         f"{syllable['syllable']} ends at character {syllable['end_char']}, "
                                         f"but the word has {len(text)}")
 
@@ -768,6 +790,188 @@ def lyric_view(claim: dict[str, Any], data: bytes) -> list[dict[str, Any]]:
                       for w in line.get("words", [])],
         })
     return view
+
+
+# ---------------------------------------------------------------------------
+# Lyric links and lyric documents over time (ADR 0113): computed views
+
+
+UNDERLAY = ("archive.claim/underlay", "1")              # ADR 0113, checked in world/notes.py
+# What each lyric claim links to, by role: the notes or melody its words are
+# on, and the document they come from.
+LYRIC_LINKS = {TIMED_LYRICS: ("notes", "document"), UNDERLAY: ("melody", "document")}
+
+
+def _refs(record: dict[str, Any], role: str) -> list[dict[str, Any]]:
+    return [ref for ref in record.get("refs", []) if isinstance(ref, dict) and ref.get("role") == role]
+
+
+def _later(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    return (a.get("at", ""), a["revision_id"]) > (b.get("at", ""), b["revision_id"])
+
+
+class _Successors:
+    """For each claim revision, the revision that supersedes it under ADR
+    0113's definition: a newer revision of the same object, or else the
+    latest claim by the same asserter citing it in `corrects`. A correction
+    by anyone else supersedes nothing (INV-7)."""
+
+    def __init__(self, records: list[dict[str, Any]]) -> None:
+        self.by_revision = {r["revision_id"]: r for r in records}
+        self.next: dict[str, str] = {}
+        for record in records:
+            for ref in record.get("supersedes", []):
+                self.next[ref["revision_id"]] = record["revision_id"]
+        self.corrected: dict[str, dict[str, Any]] = {}
+        for record in records:
+            for ref in _refs(record, "corrects"):
+                old = self.by_revision.get(ref["revision_id"])
+                if old is None or old.get("agent") != record.get("agent"):
+                    continue
+                held = self.corrected.get(ref["revision_id"])
+                if held is None or _later(record, held):
+                    self.corrected[ref["revision_id"]] = record
+
+    def step(self, revision: str) -> tuple[str, str] | None:
+        """The revision that supersedes `revision`, and why, or None."""
+        if revision in self.next:
+            return self.next[revision], "a newer revision of the same claim"
+        if revision in self.corrected:
+            return self.corrected[revision]["revision_id"], "corrected by its own asserter"
+        return None
+
+    def chain(self, revision: str) -> list[tuple[str, str]]:
+        """Every revision that supersedes `revision` in turn, the latest last."""
+        found, seen = [], {revision}
+        while (step := self.step(revision)) is not None and step[0] not in seen:
+            found.append(step)
+            seen.add(step[0])
+            revision = step[0]
+        return found
+
+
+def _document_successors(records: list[dict[str, Any]]) -> dict[str, tuple[str, str]]:
+    """For each document Artifact revision, the latest document revision that
+    supersedes it: one described by a document source claim, by an asserter
+    of a document source claim of the earlier document, as derived from it."""
+    sources = [r for r in heads(records) if _contract(r) == DOCUMENT_SOURCE]
+    asserters: dict[str, set[str]] = {}
+    for source in sources:
+        for ref in _refs(source, "document"):
+            asserters.setdefault(ref["revision_id"], set()).add(source.get("agent"))
+    successor: dict[str, tuple[str, dict[str, Any]]] = {}
+    for source in sources:
+        described = _refs(source, "document")
+        for ref in _refs(source, "derived_from"):
+            if source.get("agent") not in asserters.get(ref["revision_id"], ()):
+                continue
+            for document in described:
+                held = successor.get(ref["revision_id"])
+                if held is None or _later(source, held[1]):
+                    successor[ref["revision_id"]] = (document["revision_id"], source)
+    return {old: (new, "a document derived from it by the same asserter") for old, (new, _) in successor.items()}
+
+
+def _document_chain(successors: dict[str, tuple[str, str]], revision: str) -> list[tuple[str, str]]:
+    found, seen = [], {revision}
+    while revision in successors and successors[revision][0] not in seen:
+        found.append(successors[revision])
+        revision = successors[revision][0]
+        seen.add(revision)
+    return found
+
+
+def stale_lyric_links(records: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The `stale_lyric_links` view (ADR 0113): every timed lyrics or
+    underlay revision that pins a superseded notes claim, melody, or lyric
+    document, with the revision that superseded it (the latest, following
+    supersession), as {claim, object_id, contract, role, pinned,
+    superseded_by, why}, in order of claim revision and role.
+
+    A lyric claim that is itself superseded is left out (its successor is
+    judged instead), and so is a link that a later claim citing the lyric
+    claim in `corrects` already moved: one that pins, in the same role, the
+    superseding revision or one later in the chain. An empty list is an
+    editor's evidence that a save left no link behind. `records` are
+    committed records as `reach` takes them. Computed, never stored."""
+    records = list(records)
+    claims = _Successors(records)
+    documents = _document_successors(records)
+    corrections: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        for ref in _refs(record, "corrects"):
+            corrections.setdefault(ref["revision_id"], []).append(record)
+    stale = []
+    for record in records:
+        roles = LYRIC_LINKS.get(_contract(record))
+        if roles is None or claims.step(record["revision_id"]) is not None:
+            continue
+        for role in roles:
+            for ref in _refs(record, role):
+                chain = (_document_chain(documents, ref["revision_id"]) if role == "document"
+                         else claims.chain(ref["revision_id"]))
+                if not chain:
+                    continue
+                later = {revision for revision, _ in chain}
+                if any(pin["revision_id"] in later for fix in corrections.get(record["revision_id"], [])
+                       for pin in _refs(fix, role)):
+                    continue
+                stale.append({"claim": record["revision_id"], "object_id": record["object_id"],
+                              "contract": list(_contract(record)), "role": role, "pinned": ref["revision_id"],
+                              "superseded_by": chain[-1][0], "why": chain[0][1]})
+    return sorted(stale, key=lambda s: (s["claim"], s["role"], s["pinned"]))
+
+
+def lyric_documents(work_id: str, records: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A Work's lyric documents (ADR 0113): each document Artifact revision a
+    head document source claim describes as `lyrics` of the Work, most
+    recently derived or retrieved first, as {document: {id, revision_id},
+    sources, agents, media_type, retrieved_at, derived_from, chain}.
+    `retrieved_at` is the latest its source claims state (an edited
+    document's is the save's instant); `chain` is the document's
+    `derived_from` ancestry, nearest first, following the first of several
+    parents by revision id, so an editor starting with no lead sheet starts
+    from the first entry and sees what it came from. Computed, never stored."""
+    records = list(records)
+    sources = [r for r in heads(records) if _contract(r) == DOCUMENT_SOURCE]
+    parents: dict[str, set[str]] = {}
+    for source in sources:
+        for document in _refs(source, "document"):
+            parents.setdefault(document["revision_id"], set()).update(
+                ref["revision_id"] for ref in _refs(source, "derived_from"))
+    found: dict[str, dict[str, Any]] = {}
+    for source in sources:
+        payload = source.get("payload") if isinstance(source.get("payload"), dict) else {}
+        if "lyrics" not in payload.get("kinds", []) or work_id not in {ref["id"] for ref in _refs(source, "work")}:
+            continue
+        for document in _refs(source, "document"):
+            entry = found.setdefault(document["revision_id"], {
+                "document": {"id": document["id"], "revision_id": document["revision_id"]},
+                "sources": [], "agents": [], "media_type": payload.get("media_type"),
+                "retrieved_at": None, "derived_from": [], "chain": [], "_at": ""})
+            entry["sources"].append(source["revision_id"])
+            if source.get("agent") not in entry["agents"]:
+                entry["agents"].append(source.get("agent"))
+            stated = payload.get("retrieved_at")
+            if stated is not None and (entry["retrieved_at"] is None or stated > entry["retrieved_at"]):
+                entry["retrieved_at"] = stated
+            entry["_at"] = max(entry["_at"], source.get("at", ""))
+    for revision, entry in found.items():
+        entry["sources"].sort()
+        entry["agents"].sort(key=str)
+        entry["derived_from"] = sorted(parents.get(revision, ()))
+        seen, current = {revision}, revision
+        while parents.get(current):
+            current = min(parents[current])
+            if current in seen:
+                break
+            entry["chain"].append(current)
+            seen.add(current)
+    ordered = sorted(found.values(), key=lambda e: (e["retrieved_at"] or "", e["_at"], e["document"]["revision_id"]),
+                     reverse=True)
+    for entry in ordered:
+        del entry["_at"]
+    return ordered
 
 
 # ---------------------------------------------------------------------------
