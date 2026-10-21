@@ -588,6 +588,10 @@ When an established concept is meant, use its established word:
 The reverse also holds: do not file unrelated work under an existing word just
 to avoid a new directory.
 
+[CONTEXT.md](../CONTEXT.md) restates this table in the glossary format agent
+tools read, keeping only the aliases that are wrong wherever they appear; this
+table wins where they differ.
+
 ### Inheriting a term
 
 Reuse a standard term before inventing one. Never accept a standard term's
