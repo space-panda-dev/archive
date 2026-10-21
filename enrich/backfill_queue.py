@@ -6,7 +6,8 @@ Spool (ADR 0090).
 
 **Order.** Ready jobs are offered in `Job.priority` order: requests, then
 the fast tier, then the background by recording. No background job starts
-while a fast job is still to run or the fast tier's proposal is outstanding.
+here while a fast job is still to run or the fast tier's proposal is
+outstanding; routed jobs are put to the worker from the start.
 
 **No head-of-line blocking** (ADR 0112, round 3 amendment). The first ready
 job that cannot start for cores or memory is the *head*. It does not hold
@@ -204,16 +205,16 @@ class Runner:
 
     def put_window(self) -> None:
         """Inside the lock: put the next routed jobs, in priority order, until
-        `spool_in_flight` are with the spool."""
+        `spool_in_flight` are with the spool. A routed background job is put
+        while the fast tier still runs here: it holds no core here, so the
+        worker starts at once rather than idle until the first proposal."""
         if self.spool is None or time.monotonic() < self.put_paused_until:
             return
         room = self.schedule.spool_in_flight - sum(1 for j in self.jobs if j.status in ("put", "putting"))
         if room <= 0:
             return
-        open_background = self.background_open()
         chosen = sorted((j for j in self.jobs if j.routed and j.status == "pending"
-                         and all(a.status == "done" for a in j.after) and (j.rank < 2 or open_background)),
-                        key=Job.priority)[:room]
+                         and all(a.status == "done" for a in j.after)), key=Job.priority)[:room]
         if not chosen:
             return
         for job in chosen:

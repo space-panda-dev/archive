@@ -701,6 +701,11 @@ after all, or that is filed before it starts here, is not made here. A job
 whose entry was made since the plan is not put. Without the directory the
 rule is the old one.
 
+**Put from the start.** Routed background jobs are put while the fast tier
+still runs here: a put holds no core here beyond its encode, and the live
+run's first put came 27 minutes in, after the usable proposal, with the Mac
+idle until then. What runs here keeps the tier order.
+
 **Costed as it runs.** The worker's pace, lease to filed per audio-second,
 replaces `remote_cost` once measured, for the absent allowance and the
 overflow rule: a worker off the home network is costed with its transfer.

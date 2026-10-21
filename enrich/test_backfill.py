@@ -809,6 +809,28 @@ class Spool(unittest.TestCase):
         # Their content travels as WavPack, the stems default, encoded by the configured ffmpeg.
         self.assertEqual(self.put_options, [{"transport": "wavpack", "ffmpeg": None}] * 2)
 
+    def test_routed_background_work_is_put_while_the_fast_tier_still_runs(self) -> None:
+        # The worker starts at once: tonight's run put its first stems only after the usable proposal.
+        self.sched = backfill.schedule_of({"backfill": {"units": [["stems"], ["rhythm"]],
+                                                        "extractors": {"stems": {"route": "spool"}},
+                                                        "poll_seconds": 0.01}}, CATALOG)
+        planned = backfill.plan(self.recs, self.sched, self.planner, "eager", shape(self.sched), True)
+        put_done = threading.Event()
+
+        def put(*arguments, **options):
+            put_done.set()
+            return {"status": "put", "task_id": f"task-{arguments[6][7:12]}", "key": "k"}
+
+        runner = backfill.Runner(planned.jobs, self.planner, self.sched, shape(self.sched), 8, 32.0, "eager",
+                                 lambda **e: None, self.run_unit, spool=object(), hold_background=lambda: True)
+        with patch.object(backfill.remote, "put", put):
+            with runner.changed:
+                self.assertFalse(runner.background_open())  # rhythm is still to run, and the proposal held
+                runner.put_window()
+            self.assertTrue(put_done.wait(10))
+        self.assertTrue(any(j.unit == STEMS and j.status in ("putting", "put") for j in planned.jobs))
+        self.assertTrue(all(j.status == "pending" for j in planned.jobs if j.unit == RHYTHM))
+
     def test_what_runs_here_does_not_wait_for_the_puts(self) -> None:
         # A put encodes its transport first; rhythm, which needs no stems, runs meanwhile.
         self.sched = backfill.schedule_of({"backfill": {"units": [["stems"], ["rhythm"]],
