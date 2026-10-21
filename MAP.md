@@ -91,12 +91,13 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 
 ## Spec: what every archive must satisfy, copied into each
 
-- `spec/VERSION` (current `0.0.10`, unreleased); `spec/archive-spec.md`
-  (2620) is a byte copy of `spec/0.0.10/archive-spec.md`. Navigate by
+- `spec/VERSION` (current `0.0.11`, unreleased); `spec/archive-spec.md`
+  (2620) is a byte copy of `spec/0.0.11/archive-spec.md`. Navigate by
   heading: `rg -n '^##' spec/archive-spec.md` (section 6, "Reading
-  commands", runs from line 757 to 2602; D-18 holds 0.0.10's contracts).
+  commands", runs from line 757 to 2602; D-18 holds 0.0.10's contracts;
+  D-19, ADR 0113's six versions, is not written yet).
   Release notes: [docs/releases/0.0.10.md](docs/releases/0.0.10.md).
-- `spec/<version>/contracts.json` (0.0.10: 315 lines, 62 contracts) lists
+- `spec/<version>/contracts.json` (0.0.11: 345 lines, 68 contracts) lists
   `{id, version, digest}`; each digest names `spec/contracts/sha256-<hex>.json`.
 - `spec/<version>/context.jsonld` is the JSON-LD context (ADR 0025).
 
@@ -134,7 +135,8 @@ full rebuild (ADR 0055).
 `relay/relay.py` (1159; `GET /media/{digest}/bank/{extractor}/{output}/{key}` serves a region entry's file by key): `DOOR_ROUTES`, `MEDIA_ROUTES`, `ROUTES` (lines
 44-54), `Relay` (641), `make_handler` (827), `main` (1051).
 `relay/openapi.json` (1935) describes every route, answer, and refusal.
-Tests: suite `relay`; `relay/tests/test_relay.py` (911), `test_media.py`
+Tests: suite `relay`; `relay/tests/test_relay.py` (1156; `CoherentSaveChecks`
+is ADR 0113's end-to-end save on the built fixture), `test_media.py`
 (467). Every answer is validated against `openapi.json`, and Door refusals
 against `door/service.schema.json`.
 Rules: ADR 0054 (Door service), 0056, 0060 (interface and role), 0063 (read

@@ -353,13 +353,10 @@ scheduler has added it.
 
 ## Lead-sheet editor (ADR 0113)
 
-- **First build** (operator, 2026-10-20), in the next specification
-  release: melody version 2 (sketches), underlay version 1, form and form
-  spans version 2 (open repeats, passes, departures), meter layers version
-  3, lead sheet version 2, the `folded_chart` and `stale_lyric_links` views, the exporters' open
-  repeats and stacked verses, and the relay's end-to-end save test (one
-  admission; a stale save writes nothing; an identical retry writes
-  nothing).
+- **Still to serve from the first build:** `form.folded_chart` as the
+  `folded_chart` named view (World's rule is built; the chord source, a
+  lead sheet's precedence or ADR 0082's current rule, is not wired), and
+  section D-19 of the specification for the six versions 0.0.11 installs.
 - **Then:** passage alignment, the `aligned_by` versions of chord stacks,
   notes, timed lyrics (with `derived_from`), form spans and timed meter
   layers, and lead sheet version 3 (refusing rough copies); applying a correction to

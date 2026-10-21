@@ -177,6 +177,7 @@ class Requests(unittest.TestCase):
             "written_rhythm": {"notes": SOURCE},
             "bass_line": {"source": RECORDING},
             "may_publish": {"approval": SOURCE},
+            "stale_lyric_links": {},
         }
         for key in views.VIEWS:
             reached = []

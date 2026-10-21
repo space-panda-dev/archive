@@ -2,14 +2,15 @@
 standing, an object's reach, a circle's readable set, what changed under a
 lead sheet, the played order of a form's sections and a meter's bars, a
 recording's tune and its hand-offs, the credits of a recording, notes
-written on a beat grid, a recording's bass line, and whether an approval
-may still publish.
+written on a beat grid, a recording's bass line, whether an approval may
+still publish, and the lyric links a save left behind (ADR 0113).
 
 Each is a question World answers by a rule its own module states
 (`judgments.standing`, `documents.reach`, `circle.readable_set`,
 `lead_sheets.changes_since`, `form.form_order` and `form.bar_order`,
 `notes.tune_notes` and `notes.handoffs`, `catalogue.track_credits`,
-`notes.written_rhythm`, `circle.may_publish`); this
+`notes.written_rhythm`, `circle.may_publish`,
+`documents.stale_lyric_links`); this
 module only reads the request and the records, as `world/views.py` does,
 and its registry joins that one, so a view is listed exactly when it is
 answered. Every answer is computed when asked and never stored (S-18). Each
@@ -509,6 +510,23 @@ def may_publish(world: list[dict[str, Any]], subject: dict[str, Any], params: di
 
 
 # ---------------------------------------------------------------------------
+# archive.view/stale_lyric_links version 1
+
+
+def _no_subject(subject: Any) -> dict[str, Any]:
+    _closed(subject, set(), set(), "subject")
+    return {}
+
+
+def stale_lyric_links(world: list[dict[str, Any]], subject: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    """Every timed lyrics or underlay revision that pins a superseded notes
+    claim, melody, or lyric document, with what superseded it (ADR 0113;
+    `documents.stale_lyric_links`). An editor reads it after a save: an
+    empty list is its evidence that the save left no lyric link behind."""
+    return {"stale": documents.stale_lyric_links(world)}
+
+
+# ---------------------------------------------------------------------------
 # archive.view/track_credits version 1
 
 
@@ -571,6 +589,9 @@ VIEWS: dict[tuple[str, str], dict[str, Any]] = {
     (VIEW + "may_publish", "1"): {
         "question": "May this publication approval still publish, on this date?",
         "subject": _approval_subject, "parameters": _on_parameters},
+    (VIEW + "stale_lyric_links", "1"): {
+        "question": "Which lyric links pin notes, a melody, or a document that has since been superseded?",
+        "subject": _no_subject, "parameters": _no_parameters},
 }
 
 HANDLERS: dict[tuple[str, str], Callable[[list, dict, dict], dict]] = {
@@ -585,4 +606,5 @@ HANDLERS: dict[tuple[str, str], Callable[[list, dict, dict], dict]] = {
     (VIEW + "written_rhythm", RHYTHM): written_rhythm,
     (VIEW + "bass_line", RHYTHM): bass_line,
     (VIEW + "may_publish", "1"): may_publish,
+    (VIEW + "stale_lyric_links", "1"): stale_lyric_links,
 }

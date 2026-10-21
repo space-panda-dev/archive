@@ -121,6 +121,7 @@ released):
 | `written_rhythm` | `notes` or `melody_spans` (a pin) | `rule`, `written` (chords and rests: `position`, `duration`, `bar`, `at`; a chord's `notes`, `pitches`, `sounded_share`, `articulation`; a rest's `boundary`), `feel`, `clef`, `counts`, `left_out`, or `why` |
 | `bass_line` | `source` (the recording's Artifact) | `lines`: each head notes claim saying `bass`, with `clef` and its written rhythm |
 | `may_publish` | `approval` (a pin) | `may_publish`, `blockers`, `class`, `destination`, `on` |
+| `stale_lyric_links` | none (`{}`) | `stale` (`claim`, `object_id`, `contract`, `role`, `pinned`, `superseded_by`, `why`), empty when no lyric link was left behind (ADR 0113) |
 
 `chord_names` and `chords_current` take `transpose` (ADR 0089) and `key`: a
 key reading for `chord_names`; for `chords_current`, `{"reading": …}` or

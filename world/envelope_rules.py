@@ -6,7 +6,7 @@ A contract module's check is given the claim and what it pins, not the kind
 of the claim's agent nor the form of a claim it corrects, so without this
 World would project a sensitivity limit asserted by a tool, or a timed meter
 correcting an untimed one, that Door refuses. The tables mirror the bundles'
-declarations; `world/tests/test_envelope_rules.py` reads every 0.0.10 bundle
+declarations; `world/tests/test_envelope_rules.py` reads every 0.0.11 bundle
 and fails when they differ. A fact that cannot be read (an agent whose kind
 World does not hold, a pinned claim it does not hold) fails the check.
 """
@@ -19,6 +19,7 @@ from typing import Any, Callable
 # one of these kinds.
 AGENT_KINDS: dict[tuple[str, str], frozenset[str]] = {
     ("archive.claim/lead_sheet", "1"): frozenset({"person", "organisation"}),
+    ("archive.claim/lead_sheet", "2"): frozenset({"person", "organisation"}),
     ("archive.claim/sensitivity", "1"): frozenset({"person"}),
     ("archive.claim/sharing_consent", "1"): frozenset({"person"}),
     ("archive.claim/span_annotation", "1"): frozenset({"person"}),
@@ -30,7 +31,9 @@ AGENT_KINDS: dict[tuple[str, str], frozenset[str]] = {
 # something in `by` exactly when this claim does.
 TARGET_FORMS: dict[tuple[str, str], tuple[str, dict[str, str]]] = {
     ("archive.claim/meter_layers", "2"): ("source", {"corrects": "same", "meter": "without"}),
+    ("archive.claim/meter_layers", "3"): ("source", {"corrects": "same", "meter": "without"}),
     ("archive.claim/melody", "1"): ("source", {"meter": "without"}),
+    ("archive.claim/melody", "2"): ("source", {"meter": "without"}),
 }
 
 
