@@ -1,7 +1,6 @@
 # 0113. Editing lead sheets: sketches, words under a Work's tune, open repeats, passages, and one save
 
-Status: proposed (2026-10-20), its decisions settled by the operator the
-same day; amends
+Status: accepted (operator, 2026-10-20); amends
 [ADR 0083](0083-form-and-work-meter.md),
 [ADR 0084](0084-lead-sheets.md),
 [ADR 0085](0085-documents-lyrics-rights.md),

@@ -600,10 +600,9 @@ dropped.
 
 ## Amendment, 2026-10-20: sketches, and placing a tune on a recording
 
-Pending: this takes effect when [ADR 0113](0113-editing-lead-sheets.md),
-which gives the reasons, is accepted. The text above is left as it was
-accepted; once this takes effect, where it disagrees with this section,
-this section holds.
+Made on the acceptance of [ADR 0113](0113-editing-lead-sheets.md), which
+gives the reasons. The text above is left as it was accepted; where it
+disagrees with this section, this section holds.
 
 - **`archive.claim/melody` version 2**: a pitch item may leave out
   `duration` (unmeasured: the rhythm is not known). A melody with any

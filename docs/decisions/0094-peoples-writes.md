@@ -541,10 +541,9 @@ Verified on 2026-10-19 to exist; a later implementation would change:
 
 ## Amendment, 2026-10-20: editing lead sheets
 
-Pending: this takes effect when [ADR 0113](0113-editing-lead-sheets.md),
-which gives the reasons, is accepted. The text above is left as it was
-accepted; once this takes effect, where it disagrees with this section,
-this section holds.
+Made on the acceptance of [ADR 0113](0113-editing-lead-sheets.md), which
+gives the reasons. The text above is left as it was accepted; where it
+disagrees with this section, this section holds.
 
 - `annotate` gains [ADR 0113](0113-editing-lead-sheets.md)'s melody
   version 2, underlay version 1, form and form spans version 2, lead sheet

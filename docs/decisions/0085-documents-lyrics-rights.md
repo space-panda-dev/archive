@@ -739,10 +739,9 @@ accepted; where it disagrees with this section, this section holds.
 
 ## Amendment, 2026-10-20: words under a Work's tune, and edited lyrics
 
-Pending: this takes effect when [ADR 0113](0113-editing-lead-sheets.md),
-which gives the reasons, is accepted. The text above is left as it was
-accepted; once this takes effect, where it disagrees with this section,
-this section holds.
+Made on the acceptance of [ADR 0113](0113-editing-lead-sheets.md), which
+gives the reasons. The text above is left as it was accepted; where it
+disagrees with this section, this section holds.
 
 - **`archive.claim/underlay` version 1** places a lyric document's
   syllables under a Work-level melody's items by index, optionally under

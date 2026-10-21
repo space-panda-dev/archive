@@ -268,10 +268,9 @@ invariant, and hold no state outside the claims Door admits.
 
 ## Amendment, 2026-10-20: lead sheet version 2
 
-Pending: this takes effect when [ADR 0113](0113-editing-lead-sheets.md),
-which gives the reasons, is accepted. The text above is left as it was
-accepted; once this takes effect, where it disagrees with this section,
-this section holds.
+Made on the acceptance of [ADR 0113](0113-editing-lead-sheets.md), which
+gives the reasons. The text above is left as it was accepted; where it
+disagrees with this section, this section holds.
 
 - **`archive.claim/lead_sheet` version 2** pins melody version 1 or 2
   (never a sketch, a melody with an unmeasured item), form and form spans

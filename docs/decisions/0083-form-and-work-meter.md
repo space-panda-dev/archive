@@ -409,10 +409,9 @@ outside the claims Door admits.
 
 ## Amendment, 2026-10-20: open repeats, passes, and departures
 
-Pending: this takes effect when [ADR 0113](0113-editing-lead-sheets.md),
-which gives the reasons, is accepted. The text above is left as it was
-accepted; once this takes effect, where it disagrees with this section,
-this section holds.
+Made on the acceptance of [ADR 0113](0113-editing-lead-sheets.md), which
+gives the reasons. The text above is left as it was accepted; where it
+disagrees with this section, this section holds.
 
 - **`archive.claim/form` version 2**: a repeat may leave out `times` (an
   open repeat, played as many times as a performance plays it) and may
