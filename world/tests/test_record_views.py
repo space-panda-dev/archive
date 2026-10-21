@@ -122,6 +122,60 @@ class RecordViews(unittest.TestCase):
         with self.assertRaises(views.ViewError):
             self.answer(request("played_bars", {"meter": meter}, layer=3))
 
+    def test_a_lead_sheet_version_2_is_read_by_the_lead_sheet_views(self):
+        # ADR 0113: a lead sheet may be revised to version 2, and a refused
+        # save reads what changed since; neither view may drop it.
+        sheet = self.record("archive.claim/lead_sheet", "fixture-lead-sheet-v2")
+        work = next(ref["id"] for ref in sheet["refs"] if ref["role"] == "work")
+        current = self.answer({"view": "archive.view/lead_sheet_current", "version": "1",
+                               "subject": {"work": work}, "parameters": {}})["answer"]
+        listed = [c["claim"] for key in ("conflict", "others") for c in current.get(key, [])] \
+            + ([current["chosen"]["claim"]] if "chosen" in current else [])
+        self.assertIn(sheet["revision_id"], listed)
+        pin = {"id": sheet["object_id"], "revision_id": sheet["revision_id"]}
+        self.assertIsInstance(self.answer(request("lead_sheet_changes", {"lead_sheet": pin}))["answer"]["changes"], list)
+
+    def test_played_order_version_2_reads_an_open_repeat_and_marks_its_pass(self):
+        form = self.pin("archive.claim/form", "fixture-form-open")
+        with self.assertRaises(views.ViewError):
+            self.answer(request("played_sections", {"form": form}))
+        body = {**request("played_sections", {"form": form}), "version": "2"}
+        played = self.answer(body)["answer"]["played"]
+        # The intro; one pass marked open (the head and the default ending);
+        # the last pass (the head and the last-time ending); the coda.
+        self.assertEqual([(p["section"], p["open"]) for p in played],
+                         [(0, False), (1, True), (2, True), (1, False), (3, False), (4, False)])
+        meter = self.pin("archive.claim/meter_layers", "fixture-meter-open")
+        with self.assertRaises(views.ViewError):
+            self.answer(request("played_bars", {"meter": meter}))
+        bars = self.answer({**request("played_bars", {"meter": meter}), "version": "2"})["answer"]
+        self.assertEqual(bars["form"], form["revision_id"])
+        self.assertEqual([(b["bar"], b["open"]) for b in bars["played"]],
+                         [(0, False), (1, True), (2, True), (1, False), (3, False), (4, False)])
+        # Version 1 answers a form version 1 as it did, without the mark.
+        old = self.answer(request("played_sections", {"form": self.pin("archive.claim/form", "world-w-form-segno")}))
+        self.assertNotIn("open", old["answer"]["played"][0])
+
+    def test_the_folded_chart_is_a_named_view(self):
+        spans = self.pin("archive.claim/form_spans", "fixture-form-spans-passes")
+        answer = self.answer(request("folded_chart", {"form_spans": spans}))
+        self.assertEqual(answer["parameters"]["person"], self.operator)
+        chart = answer["answer"]
+        self.assertEqual((chart["view"], chart["precision"]), (["archive.view/folded_chart", "1"], "approximate"))
+        kinds = [item["kind"] for item in chart["chart"]]
+        self.assertIn("repeat", kinds)
+        departure = next(item for item in chart["chart"] if item.get("written_out") == "departure")
+        self.assertEqual(departure["label"], "Extra chorus")
+        with self.assertRaises(views.ViewError):
+            self.answer(request("folded_chart", {"form_spans": self.pin("archive.claim/form", "fixture-form-open")}))
+
+    def test_a_works_lyric_documents_are_a_named_view(self):
+        sheet = self.record("archive.claim/lead_sheet", "fixture-lead-sheet-v2")
+        work = next(ref["id"] for ref in sheet["refs"] if ref["role"] == "work")
+        lyrics = object_id(self.archive, "archive.core/artifact", "fixture-lyrics")
+        found = self.answer(request("lyric_documents", {"work": work}))["answer"]["documents"]
+        self.assertIn(lyrics, [entry["document"]["id"] for entry in found])
+
     def test_the_tune_takes_the_selected_notes(self):
         spans = self.pin("archive.claim/melody_spans", "world-fixture-melody-spans")
         notes = self.record("archive.claim/notes", "world-fixture-notes")

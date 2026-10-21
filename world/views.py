@@ -10,7 +10,7 @@ answer is computed when asked, never admitted, and never stored as evidence
 names the claim it chose and why, and reports a conflict rather than
 choosing where its rule cannot (INV-8, INV-24).
 
-Five views, each version 1:
+Six views, each version 1:
 
 - `archive.view/chord_names`: the computed names of chord readings, so a
   client never reimplements `world/harmony.py`;
@@ -22,7 +22,10 @@ Five views, each version 1:
 - `archive.view/chords_current`: the first current rule for chords, for one
   chosen person (decision D4.2);
 - `archive.view/lead_sheet_current`: which lead sheet of a Work a viewer
-  reads, a person's or a band's (decision D4.1).
+  reads, a person's or a band's (decision D4.1);
+- `archive.view/folded_chart`: a recording's chart folded into its form's
+  repeats where its form spans say so, with the chords the first current
+  rule shows (ADR 0113, `form.folded_chart`).
 
 The two that name chords take `transpose` (ADR 0089) and `key`, the key
 reading, or for `chords_current` the key regions claim, whose spelling
@@ -43,6 +46,7 @@ import re
 from bisect import bisect_right
 from typing import Any, Callable
 
+from world import form as forms
 from world import judgments as judging
 from world.exports import transpose_key, transpose_reading
 from world.harmony import HarmonyError, check_reading_v2, is_bass_only, reading_names, stack_names
@@ -52,10 +56,14 @@ from world.view_requests import OBJECT_ID, REVISION_ID, ViewError, _bad, _closed
 VIEW = "archive.view/"
 CHORD_STACKS = {("archive.claim/chord_stacks", "1"), ("archive.claim/chord_stacks", "2")}
 JUDGMENT = {("archive.assessment/judgment", "1"), ("archive.assessment/judgment", "2")}
-LEAD_SHEET = {("archive.claim/lead_sheet", "1")}
+LEAD_SHEET = {("archive.claim/lead_sheet", "1"), ("archive.claim/lead_sheet", "2")}
 KEY_REGIONS = ("archive.claim/key_regions", "1")
 BAND_MEMBERSHIP = {("archive.claim/band_membership", "1")}
 DERIVATION_RUN = ("archive.claim/derivation_run", "1")
+FORM_SPANS = {forms.FORM_SPANS, forms.FORM_SPANS_V2}
+FORMS = {forms.FORM, forms.FORM_V2}
+TIMED_METER = {("archive.claim/meter_layers", "1"), forms.METER_LAYERS_V2, forms.METER_LAYERS_V3}
+AUDIO_STREAM = ("archive.claim/audio_stream", "1")
 METHOD_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}\Z")
 MAX_NAMED_READINGS = 1000
 MAX_MACHINES = 16
@@ -199,6 +207,22 @@ def _lead_sheet_parameters(params: dict[str, Any], caller: str | None) -> dict[s
     return {"by": {kind: _object_id(by[kind], f"parameters by {kind}")}}
 
 
+def _spans_subject(subject: Any) -> dict[str, Any]:
+    _closed(subject, {"form_spans"}, set(), "subject")
+    return {"form_spans": _pin(subject["form_spans"], "subject form_spans")}
+
+
+def _folded_parameters(params: dict[str, Any], caller: str | None) -> dict[str, Any]:
+    _closed(params, set(), {"person", "machine_order", "meter", "layer"}, "parameters")
+    current = _current_parameters({k: params[k] for k in ("person", "machine_order") if k in params}, caller)
+    layer = params.get("layer", 0)
+    if isinstance(layer, bool) or not isinstance(layer, int) or layer < 0:
+        raise _bad("parameters layer must be an integer of at least 0")
+    return {"person": current["person"], "machine_order": current["machine_order"],
+            "meter": None if params.get("meter") is None else _pin(params["meter"], "parameters meter"),
+            "layer": layer}
+
+
 # The registry: every view World serves, at every version it serves. The
 # relay's GET /world/views lists it and POST /world/view dispatches through
 # it, so a view missing here is neither listed nor answered.
@@ -218,6 +242,9 @@ VIEWS: dict[tuple[str, str], dict[str, Any]] = {
     (VIEW + "lead_sheet_current", "1"): {
         "question": "Which lead sheet of this Work does this viewer read?",
         "subject": _lead_sheet_subject, "parameters": _lead_sheet_parameters},
+    (VIEW + "folded_chart", "1"): {
+        "question": "What is this recording's chart, folded into its form's repeats where its spans say so?",
+        "subject": _spans_subject, "parameters": _folded_parameters},
 }
 
 
@@ -825,6 +852,97 @@ def _others(cover: list, excluded: list[dict[str, Any]], judgments: Judgments) -
 
 
 # ---------------------------------------------------------------------------
+# archive.view/folded_chart version 1
+
+
+def _pinned_record(world: list[dict[str, Any]], pin: dict[str, str], contracts: set[tuple[str, str]],
+                   what: str) -> dict[str, Any]:
+    found = next((r for r in world if r.get("revision_id") == pin["revision_id"]), None)
+    if found is None or found.get("id", found.get("object_id")) != pin["id"]:
+        raise ViewError("view_subject_not_found", f"no record is {pin['revision_id']}")
+    if _contract(found) not in contracts:
+        raise _bad(f"{pin['revision_id']} is not {what}")
+    return found
+
+
+def _shown(segment: dict[str, Any] | None) -> str | None:
+    """What the chart shows for one stretch of the first current rule: the
+    symbol of the chosen chord's first name, `N.C.` for a chosen stack with
+    no name, and nothing where the rule chose nothing (a gap or a
+    conflict)."""
+    if segment is None or "stack" not in segment:
+        return None
+    names = [name["symbol"] for resolution in segment["names"] for name in resolution["names"]]
+    return names[0] if names else "N.C."
+
+
+def folded_chart(world: list[dict[str, Any]], subject: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    """A recording's chart in played order, folded into its written form's
+    repeat signs only where its form spans say so (ADR 0113, E.21;
+    `form.folded_chart`, whose rules this version names). The chord shown is
+    the first current rule's (`chords_current`, ADR 0082) for the chosen
+    person: at each bar's downbeat of the named timed meter layers claim
+    about the same recording, or, with no meter, at each change of chord."""
+    claim = _pinned_record(world, subject["form_spans"], FORM_SPANS, "a form spans claim")
+    sources, streams = _refs(claim, "source"), _refs(claim, "stream")
+    if len(sources) != 1 or len(streams) != 1:
+        raise _bad(f"{claim['revision_id']} must pin one source and one stream")
+    stream = _pinned_record(world, streams[0], {AUDIO_STREAM}, "an audio stream claim")
+    forms_pinned = _refs(claim, "form")
+    form_claim = _pinned_record(world, forms_pinned[0], FORMS, "a form") if forms_pinned else None
+    view = {"payload": claim.get("payload"), "refs": claim.get("refs", []), "revision_id": claim["revision_id"]}
+    try:
+        checked_form = None
+        if form_claim is not None:
+            checked_form = {"payload": form_claim["payload"], "refs": form_claim.get("refs", []),
+                            "revision_id": form_claim["revision_id"]}
+            (forms.check_form_v2 if _contract(form_claim) == forms.FORM_V2 else forms.check_form)(checked_form)
+        stream_view = {"payload": stream.get("payload"), "refs": stream.get("refs", []),
+                       "revision_id": stream["revision_id"]}
+        (forms.check_form_spans_v2 if _contract(claim) == forms.FORM_SPANS_V2 else forms.check_form_spans)(
+            view, stream_view, checked_form)
+    except (ValueError, KeyError, TypeError) as error:
+        raise _bad(f"a record the view reads is malformed: {error}") from None
+    source = {"id": sources[0]["id"], "revision_id": sources[0]["revision_id"]}
+    segments = chords_current(world, {"source": source}, {
+        "person": params["person"], "machine_order": params["machine_order"], "transpose": 0, "key": None,
+        "start_sample": 0})["segments"]
+    starts = [segment["start_sample"] for segment in segments]
+
+    def at(sample: int) -> dict[str, Any] | None:
+        index = bisect_right(starts, sample) - 1
+        if index >= 0 and segments[index]["end_sample"] > sample:
+            return segments[index]
+        return None
+
+    downbeats: list[int] | None = None
+    if params["meter"] is not None:
+        meter = _pinned_record(world, params["meter"], TIMED_METER, "a timed meter layers claim")
+        if [(r["id"], r.get("revision_id")) for r in _refs(meter, "source")] != [(source["id"], source["revision_id"])]:
+            raise _bad("parameters meter must be a timed meter layers claim about the form spans' source")
+        layers = meter["payload"].get("layers", [])
+        if params["layer"] >= len(layers) or "bars" not in layers[params["layer"]]:
+            raise _bad("parameters layer must name a layer of bars")
+        downbeats = [bar["start_sample"] for bar in layers[params["layer"]]["bars"]]
+
+    def chords(start: int, end: int) -> list[Any]:
+        if downbeats is not None:
+            return [_shown(at(sample)) for sample in downbeats if start <= sample < end]
+        shown: list[Any] = []
+        for segment in segments:
+            if segment["end_sample"] > start and segment["start_sample"] < end:
+                name = _shown(segment)
+                if not shown or shown[-1] != name:
+                    shown.append(name)
+        return shown
+
+    sample_count = stream["payload"].get("sample_count") if isinstance(stream.get("payload"), dict) else None
+    return {**forms.folded_chart(form_claim["payload"] if form_claim else None, view, chords, sample_count),
+            "rule": "the first current rule's chord for the chosen person, "
+                    + ("at each bar's downbeat" if downbeats is not None else "at each change")}
+
+
+# ---------------------------------------------------------------------------
 # archive.view/lead_sheet_current version 1
 
 
@@ -886,6 +1004,7 @@ HANDLERS: dict[tuple[str, str], Callable[[list, dict, dict], dict]] = {
     (VIEW + "chord_differences", "1"): chord_differences,
     (VIEW + "chords_current", "1"): chords_current,
     (VIEW + "lead_sheet_current", "1"): lead_sheet_current,
+    (VIEW + "folded_chart", "1"): folded_chart,
 }
 
 

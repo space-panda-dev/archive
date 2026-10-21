@@ -101,7 +101,10 @@ the registry, the request rules ([`view_requests.py`](view_requests.py)), and
 the chord views; [`record_views.py`](record_views.py) adds the views of
 0.0.10's other records to the same registry. Every view is version 1 but
 `written_rhythm` and `bass_line`, which are version 2 (version 1 was never
-released):
+released), and `played_sections` and `played_bars`, served at versions 1 and
+2 (version 2 reads form version 2 and meter layers version 3, and marks each
+entry `open` when it is played in the pass standing for an open repeat's
+further passes, ADR 0113):
 
 | View | Subject | Answer |
 |---|---|---|
@@ -110,18 +113,25 @@ released):
 | `chord_differences` | `source` | `differences` (`kind`, `label`, both sides, `only_in_a`, `only_in_b`, basses), `not_compared` |
 | `chords_current` | `source` | `rule`, `segments` (`chosen`, `stack`, `names`, `held`, `bass_from`, or `conflict`; `why`, `others`; `spelling` with a key), `unresolved_runs` |
 | `lead_sheet_current` | `work`, optional `recording` | `by`, `chosen` or `conflict`, `others`, a band's `members` |
+| `folded_chart` | `form_spans` (a pin) | `view`, `precision`, `chart` (folded repeats with their passes, count, `difference`, bars, variants and endings; everything else written out with why), `rule` (ADR 0113) |
 | `standing` | `claim` (a pin) | `verdict`, `conflict`, `judgments`, `why` |
 | `reach` | `object` | `labelled`, `rights`, `furthest`, `why` |
 | `readable_set` | `circle` (`destination`, `members`, optional `band`) | `revisions`, `withheld`, `why`; with a `reader`, `readable` |
 | `lead_sheet_changes` | `lead_sheet` (a pin) | `changes` (`role`, `pinned`, `kind`, `by`, `verdict`) |
-| `played_sections` | `form` (a pin) | `played` (`section`, `label`, `kind`) |
-| `played_bars` | `meter` (a pin) | `form`, `played` (`bar`, `section`, `numerator`, `denominator`) |
+| `played_sections` | `form` (a pin) | `played` (`section`, `label`, `kind`; `open` at version 2) |
+| `played_bars` | `meter` (a pin) | `form`, `played` (`bar`, `section`, `numerator`, `denominator`; `open` at version 2) |
 | `tune` | `melody_spans` (a pin) | `notes` (each with `from`), `handoffs`, `left_out` (a machine's spans on the bass line) |
 | `track_credits` | `recording` (an Entity) | `credits` (`claim`, `scope`, `via`, `why`, `refined_by`) |
 | `written_rhythm` | `notes` or `melody_spans` (a pin) | `rule`, `written` (chords and rests: `position`, `duration`, `bar`, `at`; a chord's `notes`, `pitches`, `sounded_share`, `articulation`; a rest's `boundary`), `feel`, `clef`, `counts`, `left_out`, or `why` |
 | `bass_line` | `source` (the recording's Artifact) | `lines`: each head notes claim saying `bass`, with `clef` and its written rhythm |
 | `may_publish` | `approval` (a pin) | `may_publish`, `blockers`, `class`, `destination`, `on` |
 | `stale_lyric_links` | none (`{}`) | `stale` (`claim`, `object_id`, `contract`, `role`, `pinned`, `superseded_by`, `why`), empty when no lyric link was left behind (ADR 0113) |
+| `lyric_documents` | `work` (an Entity) | `documents` (`document`, `sources`, `agents`, `media_type`, `retrieved_at`, `derived_from`, `chain`), most recent first (ADR 0113) |
+
+`folded_chart` takes `person` and `machine_order` as `chords_current` does,
+whose chosen chord it shows, and optionally `meter`, a timed meter layers
+claim about the same recording, and its `layer`: with one, the chord at each
+bar's downbeat is compared across passes; without, each change of chord.
 
 `chord_names` and `chords_current` take `transpose` (ADR 0089) and `key`: a
 key reading for `chord_names`; for `chords_current`, `{"reading": …}` or

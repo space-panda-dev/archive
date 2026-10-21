@@ -3,20 +3,24 @@ standing, an object's reach, a circle's readable set, what changed under a
 lead sheet, the played order of a form's sections and a meter's bars, a
 recording's tune and its hand-offs, the credits of a recording, notes
 written on a beat grid, a recording's bass line, whether an approval may
-still publish, and the lyric links a save left behind (ADR 0113).
+still publish, and the lyric links a save left behind and a Work's lyric
+documents (ADR 0113).
 
 Each is a question World answers by a rule its own module states
 (`judgments.standing`, `documents.reach`, `circle.readable_set`,
 `lead_sheets.changes_since`, `form.form_order` and `form.bar_order`,
 `notes.tune_notes` and `notes.handoffs`, `catalogue.track_credits`,
 `notes.written_rhythm`, `circle.may_publish`,
-`documents.stale_lyric_links`); this
+`documents.stale_lyric_links`, `documents.lyric_documents`); this
 module only reads the request and the records, as `world/views.py` does,
 and its registry joins that one, so a view is listed exactly when it is
 answered. Every answer is computed when asked and never stored (S-18). Each
 view is version 1 but the written rhythm and the bass line, version 2: their
 parameters are the written rhythm rule's of that version
-(`notes.RHYTHM_RULES`), and version 1, which no release served, is replaced;
+(`notes.RHYTHM_RULES`), and version 1, which no release served, is replaced.
+The played sections and bars are also served at version 2, which reads form
+version 2 and meter layers version 3 and marks an open repeat's pass
+(ADR 0113); version 1, which 0.0.10 served, answers as it did.
 `world/views.py` says how versions change.
 
 Records are given as `world/views.py` takes them, with `object_id`, `at`,
@@ -36,14 +40,17 @@ VIEW = "archive.view/"
 OPERATOR_INITIALIZATION = ("archive.transition/operator_initialization", "1")
 JUDGMENT = {("archive.assessment/judgment", "1"), ("archive.assessment/judgment", "2")}
 FORM = ("archive.claim/form", "1")
+FORMS = {FORM, ("archive.claim/form", "2")}            # played order version 2 reads both (ADR 0113)
 METER = {("archive.claim/meter_layers", "1"), ("archive.claim/meter_layers", "2")}
+METERS = METER | {("archive.claim/meter_layers", "3")}
 MELODY_SPANS = ("archive.claim/melody_spans", "1")
 NOTES = ("archive.claim/notes", "1")
 TIMED_LYRICS = ("archive.claim/timed_lyrics", "1")
-METER_TIMED = {("archive.claim/meter_layers", "1"), ("archive.claim/meter_layers", "2")}
+METER_TIMED = {("archive.claim/meter_layers", "1"), ("archive.claim/meter_layers", "2"),
+               ("archive.claim/meter_layers", "3")}
 RHYTHM = "2"        # the written rhythm and bass line views' version, and their rule's (`notes.RHYTHM_RULES`)
 APPROVALS = {("archive.transition/publication_approval", "1"), ("archive.transition/publication_approval", "2")}
-LEAD_SHEET = ("archive.claim/lead_sheet", "1")
+LEAD_SHEETS = {("archive.claim/lead_sheet", "1"), ("archive.claim/lead_sheet", "2")}
 TRACKLIST = ("archive.claim/tracklist", "1")
 RECORDING_AUDIO = ("archive.claim/recording_audio", "1")
 CONTRIBUTION = ("archive.claim/contribution", "1")
@@ -251,7 +258,7 @@ def lead_sheet_changes(world: list[dict[str, Any]], subject: dict[str, Any], par
     """What happened to a lead sheet's inputs after it pinned them (ADR
     0084): a later revision, a correction, or a judgment. The lead sheet
     keeps its pins; only its asserter's new revision moves them."""
-    sheet = _record(world, subject["lead_sheet"], {LEAD_SHEET}, "a lead sheet")
+    sheet = _record(world, subject["lead_sheet"], LEAD_SHEETS, "a lead sheet")
     records = [{"revision_id": r["revision_id"], "shape": r.get("shape"), "refs": r.get("refs", []),
                 "payload": r.get("payload"), "agent": r.get("agent"),
                 "supersedes": [s["revision_id"] for s in r.get("supersedes", []) if isinstance(s, dict)]}
@@ -262,7 +269,7 @@ def lead_sheet_changes(world: list[dict[str, Any]], subject: dict[str, Any], par
 
 
 # ---------------------------------------------------------------------------
-# archive.view/played_sections and archive.view/played_bars version 1
+# archive.view/played_sections and archive.view/played_bars versions 1 and 2
 
 
 def _form_subject(subject: Any) -> dict[str, Any]:
@@ -270,19 +277,31 @@ def _form_subject(subject: Any) -> dict[str, Any]:
     return {"form": _pin(subject["form"], "subject form")}
 
 
-def played_sections(world: list[dict[str, Any]], subject: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+def _sections(world: list[dict[str, Any]], subject: dict[str, Any], version: str) -> dict[str, Any]:
     """A form's sections in the order played (ADR 0083): repeats unrolled,
-    each pass taking its ending, each jump taken once."""
-    claim = _record(world, subject["form"], {FORM}, "a form")
+    each pass taking its ending, each jump taken once. Version 1 reads a
+    form version 1; version 2 also a form version 2, and marks each entry
+    `open` when it is played in the pass that stands for an open repeat's
+    further passes (ADR 0113)."""
+    claim = _record(world, subject["form"], {FORM} if version == "1" else FORMS, "a form")
     try:
-        form.check_form(_view(claim))
-        order = form.form_order(claim["payload"])
+        (form.check_form_v2 if _contract(claim) == ("archive.claim/form", "2") else form.check_form)(_view(claim))
+        order = form.form_order(claim["payload"], marked=True)
     except ValueError as error:
         raise _fail(error) from None
     sections = claim["payload"]["sections"]
     return {"played": [{"section": index, "label": sections[index]["label"],
-                        **({"kind": sections[index]["kind"]} if "kind" in sections[index] else {})}
-                       for index in order]}
+                        **({"kind": sections[index]["kind"]} if "kind" in sections[index] else {}),
+                        **({"open": opened} if version != "1" else {})}
+                       for index, opened in order]}
+
+
+def played_sections(world: list[dict[str, Any]], subject: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    return _sections(world, subject, "1")
+
+
+def played_sections_v2(world: list[dict[str, Any]], subject: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    return _sections(world, subject, "2")
 
 
 def _meter_subject(subject: Any) -> dict[str, Any]:
@@ -295,11 +314,14 @@ def _layer_parameters(params: dict[str, Any], caller: str | None) -> dict[str, A
     return {"layer": _index(params.get("layer", 0), "parameters layer")}
 
 
-def played_bars(world: list[dict[str, Any]], subject: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+def _bars(world: list[dict[str, Any]], subject: dict[str, Any], params: dict[str, Any],
+          version: str) -> dict[str, Any]:
     """A written meter layer's bars in the order played (ADR 0083): the
     sections of the form the meter pins in their played order, each with its
-    bars in written order; with no form, as written."""
-    meter = _record(world, subject["meter"], METER, "a meter layers claim")
+    bars in written order; with no form, as written. Version 2 also reads
+    meter layers version 3 and a form version 2, and marks each bar `open`
+    as `played_sections` version 2 marks its section."""
+    meter = _record(world, subject["meter"], METER if version == "1" else METERS, "a meter layers claim")
     layers = meter["payload"].get("layers", [])
     if params["layer"] >= len(layers) or "bars" not in layers[params["layer"]]:
         raise _bad("parameters layer must name a layer of bars")
@@ -307,15 +329,24 @@ def played_bars(world: list[dict[str, Any]], subject: dict[str, Any], params: di
     form_payload = None
     if pinned:
         form_payload = _record(world, {"id": pinned[0]["id"], "revision_id": pinned[0]["revision_id"]},
-                               {FORM}, "a form")["payload"]
+                               {FORM} if version == "1" else FORMS, "a form")["payload"]
     try:
-        order = form.bar_order(layers[params["layer"]], form_payload)
+        order = form.bar_order(layers[params["layer"]], form_payload, marked=True)
     except ValueError as error:
         raise _fail(error) from None
     bars = layers[params["layer"]]["bars"]
     return {"form": pinned[0]["revision_id"] if pinned else None,
             "played": [{"bar": index, **{k: bars[index][k] for k in ("section", "numerator", "denominator")
-                                         if k in bars[index]}} for index in order]}
+                                         if k in bars[index]},
+                        **({"open": opened} if version != "1" else {})} for index, opened in order]}
+
+
+def played_bars(world: list[dict[str, Any]], subject: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    return _bars(world, subject, params, "1")
+
+
+def played_bars_v2(world: list[dict[str, Any]], subject: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    return _bars(world, subject, params, "2")
 
 
 # ---------------------------------------------------------------------------
@@ -527,6 +558,27 @@ def stale_lyric_links(world: list[dict[str, Any]], subject: dict[str, Any], para
 
 
 # ---------------------------------------------------------------------------
+# archive.view/lyric_documents version 1
+
+
+def _work_subject(subject: Any) -> dict[str, Any]:
+    _closed(subject, {"work"}, set(), "subject")
+    return {"work": _object_id(subject["work"], "subject work")}
+
+
+def lyric_documents(world: list[dict[str, Any]], subject: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    """A Work's lyric documents, most recently derived or retrieved first,
+    each with its chain of `derived_from` (ADR 0113;
+    `documents.lyric_documents`): where an editor with no lead sheet starts."""
+    if not any(r.get("object_id") == subject["work"] and r.get("shape") == "entity" for r in world):
+        raise ViewError("view_subject_not_found", f"no Entity is {subject['work']}")
+    try:
+        return {"documents": documents.lyric_documents(subject["work"], world)}
+    except (ValueError, KeyError, TypeError) as error:
+        raise _fail(ValueError(str(error))) from None
+
+
+# ---------------------------------------------------------------------------
 # archive.view/track_credits version 1
 
 
@@ -574,6 +626,15 @@ VIEWS: dict[tuple[str, str], dict[str, Any]] = {
     (VIEW + "played_bars", "1"): {
         "question": "In what order are this meter's written bars played?",
         "subject": _meter_subject, "parameters": _layer_parameters},
+    (VIEW + "played_sections", "2"): {
+        "question": "In what order are this form's sections played, and which pass stands for an open repeat's?",
+        "subject": _form_subject, "parameters": _no_parameters},
+    (VIEW + "played_bars", "2"): {
+        "question": "In what order are this meter's written bars played, and which pass stands for an open repeat's?",
+        "subject": _meter_subject, "parameters": _layer_parameters},
+    (VIEW + "lyric_documents", "1"): {
+        "question": "Which lyric documents does this Work have, and what was each derived from?",
+        "subject": _work_subject, "parameters": _no_parameters},
     (VIEW + "tune", "1"): {
         "question": "What is this recording's tune, and where does it pass between parts?",
         "subject": _tune_subject, "parameters": _no_parameters},
@@ -601,6 +662,9 @@ HANDLERS: dict[tuple[str, str], Callable[[list, dict, dict], dict]] = {
     (VIEW + "lead_sheet_changes", "1"): lead_sheet_changes,
     (VIEW + "played_sections", "1"): played_sections,
     (VIEW + "played_bars", "1"): played_bars,
+    (VIEW + "played_sections", "2"): played_sections_v2,
+    (VIEW + "played_bars", "2"): played_bars_v2,
+    (VIEW + "lyric_documents", "1"): lyric_documents,
     (VIEW + "tune", "1"): tune,
     (VIEW + "track_credits", "1"): track_credits,
     (VIEW + "written_rhythm", RHYTHM): written_rhythm,

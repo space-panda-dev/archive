@@ -165,6 +165,7 @@ class Requests(unittest.TestCase):
             "chord_differences": {"source": SOURCE},
             "chords_current": {"source": SOURCE},
             "lead_sheet_current": {"work": WORK},
+            "folded_chart": {"form_spans": SOURCE},
             # world/record_views.py's views of 0.0.10's other records.
             "standing": {"claim": SOURCE},
             "reach": {"object": WORK},
@@ -178,6 +179,7 @@ class Requests(unittest.TestCase):
             "bass_line": {"source": RECORDING},
             "may_publish": {"approval": SOURCE},
             "stale_lyric_links": {},
+            "lyric_documents": {"work": WORK},
         }
         for key in views.VIEWS:
             reached = []
