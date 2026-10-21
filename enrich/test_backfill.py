@@ -868,6 +868,195 @@ class Spool(unittest.TestCase):
         self.assertEqual(sum(1 for _, u in self.ran if u == STEMS), 2)
 
 
+class SimSpool:
+    """A spool and its workers in miniature, read as `remote.Spool.tasks`
+    reads one: tasks leased in task-id order (as Spool does, whatever the
+    put order), each worker one task at a time, renewing while it works.
+    A worker given `None` seconds never comes: an absent one."""
+
+    def __init__(self, test: unittest.TestCase, planner: FakePlanner, recs: list[Recording],
+                 workers: list[float | None]):
+        self.planner, self.recs, self.workers = planner, recs, workers
+        self.pending: set[str] = set()
+        self.leased: dict[str, tuple[float, str]] = {}
+        self.by_task: dict[str, Recording] = {}
+        self.made: list[tuple[str, str]] = []  # (task, worker)
+        self.puts: list[str] = []
+        self.lock, self.stopped = threading.Lock(), threading.Event()
+        test.addCleanup(self.stopped.set)
+
+    def start(self) -> None:
+        for index, seconds in enumerate(self.workers):
+            if seconds is not None:
+                threading.Thread(target=self.worker, args=(f"w{index}", seconds), daemon=True).start()
+
+    def put(self, catalog, root, spool, extractor, content, media_type, digest, parameters, **options):
+        task = f"task-{digest[7:12]}"
+        with self.lock:
+            self.by_task[task] = next(r for r in self.recs if r.digest == digest)
+            self.pending.add(task)
+            self.puts.append(task)
+        return {"status": "put", "task_id": task, "key": "k"}
+
+    def collect(self, catalog, root, spool):
+        return {"status": "ok", "tasks": {}, "failed": {}}
+
+    def tasks(self) -> dict:
+        with self.lock:
+            view = {t: {"state": "pending"} for t in self.pending}
+            view.update({t: {"state": "leased", "leased_at": at, "renewed_at": time.time(), "worker": who}
+                         for t, (at, who) in self.leased.items()})
+        return view
+
+    def worker(self, name: str, seconds: float) -> None:
+        while not self.stopped.is_set():
+            with self.lock:
+                task = min(self.pending) if self.pending else None
+                if task is not None:
+                    self.pending.discard(task)
+                    self.leased[task] = (time.time(), name)
+            if task is None:
+                self.stopped.wait(0.005)
+                continue
+            self.stopped.wait(seconds)
+            with self.lock:
+                self.planner.made(self.by_task[task], STEMS)
+                del self.leased[task]
+                self.made.append((task, name))
+
+
+class SimulatedPool(unittest.TestCase):
+    """ADR 0112, the Mac's path: the backfill reads what the spool holds, so
+    a worker holding a lease is never given up, the absent clock counts from
+    when the worker could have started, a given-up task the worker takes
+    after all is not made here too, and nothing made since the plan is put."""
+
+    def setUp(self) -> None:
+        self.planner = FakePlanner()
+        self.sched = backfill.schedule_of({"backfill": {
+            "units": [["stems"], ["tonal", "stems/bass"]], "extractors": {"stems": {"route": "spool"}},
+            "poll_seconds": 0.01, "overflow": False,
+            "local_when_away_seconds": {"songs": 0.15, "eager": 0.15, "on-demand": 0.15}}}, CATALOG)
+        self.sched.settings["stems"]["remote_cost"] = None  # no allowance: only the clock's own seconds
+        self.ran: list[tuple[str, Unit]] = []
+        self.notes: list[dict] = []
+
+    def run_unit(self, job: Job):
+        self.ran.append((job.recording.object_id, job.unit))
+        self.planner.made(job.recording, job.unit, job.region)
+        return {"status": "ok"}, 0.0
+
+    def go(self, recs, workers, in_flight=2):
+        self.sched.spool_in_flight = in_flight
+        sim = SimSpool(self, self.planner, recs, workers)
+        planned = backfill.plan(recs, self.sched, self.planner, "eager", shape(self.sched), True)
+        with patch.object(backfill.remote, "put", sim.put), patch.object(backfill.remote, "collect", sim.collect):
+            runner = backfill.Runner(planned.jobs, self.planner, self.sched, shape(self.sched), 8, 32.0, "eager",
+                                     lambda **e: self.notes.append(e), self.run_unit, spool=sim)
+            sim.start()
+            runner.run()
+        self.assertTrue(all(j.status == "done" for j in planned.jobs))
+        stems_here = {rec for rec, unit in self.ran if unit == STEMS}
+        by_worker = {sim.by_task[task].object_id for task, _ in sim.made}
+        self.assertEqual(stems_here & by_worker, set(), "a recording's stems were made twice")
+        return runner, sim, stems_here, by_worker
+
+    def steps(self, step: str) -> list[dict]:
+        return [n for n in self.notes if n.get("step") == step]
+
+    def test_a_slow_worker_holding_its_lease_is_never_given_up(self) -> None:
+        # Each task takes 0.4 s there, against 0.15 s with nothing filed; the
+        # second waits behind the first, and its clock starts only when the
+        # worker frees its slot.
+        recs = [recording("a"), recording("b")]
+        runner, sim, here, there = self.go(recs, [0.4])
+        self.assertEqual(here, set())
+        self.assertEqual(there, {r.object_id for r in recs})
+        self.assertEqual(self.steps("no worker took the task in time; runs here too"), [])
+        self.assertEqual(len(self.steps("the worker leased the task")), 2)
+        self.assertGreater(runner.pace["stems"], 0.0)  # measured lease to filed
+
+    def test_a_fast_and_a_slow_worker_share_the_work_once(self) -> None:
+        recs = [recording(name) for name in "abcdef"]
+        runner, sim, here, there = self.go(recs, [0.03, 0.3], in_flight=3)
+        self.assertEqual(here, set())
+        self.assertEqual(there, {r.object_id for r in recs})
+        self.assertEqual({who for _, who in sim.made}, {"w0", "w1"})
+        self.assertEqual(len(sim.made), len(recs))
+
+    def test_an_absent_worker_is_given_up_and_its_tasks_are_made_here_once(self) -> None:
+        recs = [recording("a"), recording("b")]
+        runner, sim, here, there = self.go(recs, [None])
+        self.assertEqual(here, {r.object_id for r in recs})
+        self.assertEqual(len(self.steps("no worker took the task in time; runs here too")), 2)
+
+    def test_a_given_up_task_the_worker_then_holds_or_files_is_not_made_here(self) -> None:
+        recs = [recording("a"), recording("b")]
+        sim = SimSpool(self, self.planner, recs, [])
+        jobs = [Job(rec, STEMS, i, routed=False, status="pending", given_up=True, detail=f"task-{rec.digest[7:12]}")
+                for i, rec in enumerate(recs)]
+        runner = backfill.Runner(jobs, self.planner, self.sched, shape(self.sched), 8, 32.0, "eager",
+                                 lambda **e: self.notes.append(e), self.run_unit, spool=sim)
+        sim.by_task = {j.detail: j.recording for j in jobs}
+        sim.leased[jobs[0].detail] = (time.time(), "w0")  # leased after the give-up
+        self.planner.made(recs[1], STEMS)  # filed after the give-up
+        with patch.object(backfill.remote, "collect", sim.collect):
+            runner.collect()
+        self.assertEqual((jobs[0].status, jobs[0].routed, jobs[0].given_up), ("put", True, False))
+        self.assertEqual(jobs[1].status, "done")
+        self.assertEqual(runner.given_back, 1)
+        # A stale lease (no renewal within lease_fresh_seconds) is nobody's.
+        self.assertFalse(runner.held({"state": "leased", "renewed_at": time.time() - 301}, time.time()))
+
+    def test_a_recording_made_since_the_plan_is_not_put(self) -> None:
+        recs = [recording("a"), recording("b")]
+        sim = SimSpool(self, self.planner, recs, [0.02])
+        planned = backfill.plan(recs, self.sched, self.planner, "eager", shape(self.sched), True)
+        self.planner.made(recs[0], STEMS)  # a stand-in filed after the plan
+        with patch.object(backfill.remote, "put", sim.put), patch.object(backfill.remote, "collect", sim.collect):
+            runner = backfill.Runner(planned.jobs, self.planner, self.sched, shape(self.sched), 8, 32.0, "eager",
+                                     lambda **e: self.notes.append(e), self.run_unit, spool=sim)
+            sim.start()
+            runner.run()
+        self.assertEqual(sim.puts, [f"task-{recs[1].digest[7:12]}"])
+        self.assertEqual(len(self.steps("already made; not put")), 1)
+
+    def test_tasks_the_backfill_did_not_put_are_named(self) -> None:
+        recs = [recording("a")]
+        sim = SimSpool(self, self.planner, recs, [0.02])
+        sim.pending.add("task-stale")  # a task from an earlier run; sorts after this run's
+        sim.by_task["task-stale"] = recs[0]
+        self.go_with(sim, recs)
+        foreign = self.steps("the spool holds tasks this backfill did not put")
+        self.assertTrue(foreign)
+        self.assertEqual(foreign[0]["count"], 1)
+
+    def test_spool_tasks_are_read_from_its_directory(self) -> None:
+        root = scratch(self)
+        for name in ("pending", "leased"):
+            (root / name).mkdir()
+        (root / "pending" / "bank-aa.json").write_text("{}")
+        lease = root / "leased" / "lease_1792554021233164_33_bank-bb.json"
+        lease.write_text(json.dumps({"task_id": "bank-bb", "capability": "c"}))
+        lease.with_suffix(".renewed").write_text("1792555474737584")
+        lease.with_suffix(".worker").write_text("mac")
+        found = backfill.remote.Spool(f"spool --dir {root}").tasks()
+        self.assertEqual(found, {"bank-aa": {"state": "pending"},
+                                 "bank-bb": {"state": "leased", "leased_at": 1792554021.233164,
+                                             "renewed_at": 1792555474.737584, "worker": "mac"}})
+        self.assertIsNone(backfill.remote.Spool("ssh host spool --dir /nonexistent").tasks())
+        self.assertIsNone(backfill.remote.Spool("spool").tasks())
+
+    def go_with(self, sim, recs):
+        planned = backfill.plan(recs, self.sched, self.planner, "eager", shape(self.sched), True)
+        with patch.object(backfill.remote, "put", sim.put), patch.object(backfill.remote, "collect", sim.collect):
+            runner = backfill.Runner(planned.jobs, self.planner, self.sched, shape(self.sched), 8, 32.0, "eager",
+                                     lambda **e: self.notes.append(e), self.run_unit, spool=sim)
+            sim.start()
+            runner.run()
+        return runner
+
+
 class StandIns(unittest.TestCase):
     """ADR 0090's amendment through the scheduler: an entry made on another
     device counts as made once a passing record lets it stand in, a routed

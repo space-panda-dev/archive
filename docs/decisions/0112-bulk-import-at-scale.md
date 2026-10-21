@@ -672,3 +672,45 @@ shadow ran `--eager`) are no longer found and are made again.
   region check passes on audio with vocals and bass (the 554 s recording
   over 160-220 s has sung vocals; no recording measured so far has an
   audible bass stem).
+
+## Amendment (2026-10-21): the worker's leases
+
+Status: proposed on `fast3/macpath`; the Spool changes it leans on are the
+operator's to take to Spool.
+
+**Why.** On the live shadow run the Mac filed 8 stems tasks in about 4 h
+while 12 were given up and made on the laptop as well. The Mac was busy,
+but with the wrong tasks: the backfill's absent rule counted only filings,
+so a worker separating a 93-minute recording off the home network (about
+1180 s, 48% of it transfer) looked absent, and a given-up task stayed in the
+spool for the Mac to make again later. Spool leases in task-id order, and
+nothing withdraws a task, so stale tasks from earlier runs went first.
+
+**What the backfill now reads.** `remote.Spool.tasks` reads the spool's
+directory, when the `--spool` command names one this machine can read,
+and changes nothing in it: pending tasks, and leased ones with when they
+were leased and last renewed. Spool's CLI answers only counts; this read
+goes once it answers per task.
+
+**Held is not absent.** A put task leased and renewed within
+`lease_fresh_seconds` (300, Spool's reclaim age) is the worker's and is
+never also made here. The absent clock runs only for tasks nobody holds,
+from when the worker could have started them: its last filing, the put, or
+the end of its last lease seen. A given-up task that the worker leases
+after all, or that is filed before it starts here, is not made here. A job
+whose entry was made since the plan is not put. Without the directory the
+rule is the old one.
+
+**Costed as it runs.** The worker's pace, lease to filed per audio-second,
+replaces `remote_cost` once measured, for the absent allowance and the
+overflow rule: a worker off the home network is costed with its transfer.
+
+**Collected beside the pool.** Results are filed every `poll_seconds` by a
+collector thread, while anything is with the spool, also while puts are
+paused after a give-up and while the proposals run.
+
+**Left to Spool** (the operator's): withdrawing a task (pending: removed;
+leased: the next renew answers withdrawn and the worker stops it), leasing
+in put order, a per-task status read, and prefetch (lease and fetch the
+next task while the current one runs). Prefetch and a deeper
+`spool_in_flight` wait for withdraw, and for disk on the Mac.

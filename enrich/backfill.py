@@ -56,7 +56,10 @@ arrive; with `overflow`, free cores here take routed work the worker is not
 holding whenever it would end here sooner than the worker could end it. A
 worker that files nothing within `local_when_away_seconds` (every mode has
 one) plus its oldest task's expected time is absent, and its work
-is made here. A task the spool failed for good, or could not put, runs here.
+is made here; when the spool's directory can be read here, a task the
+worker holds a lease on is never given up, and the clock runs from when
+the worker could have started (`backfill_queue`). A task the spool failed
+for good, or could not put, runs here.
 
 `--follow` keeps it running: new bank requests every `poll_seconds`, first
 in the queue; new admissions every `rescan_seconds`; until stopped (SIGTERM,
@@ -196,6 +199,9 @@ SCHEDULE = {
     # before its work is made here; every mode has one (no infinite wait).
     "local_when_away_seconds": {"songs": 1800, "eager": 900, "on-demand": 600},
     "spool_in_flight": 2,  # routed tasks put at once; the rest wait here, in priority order
+    # A worker's lease renewed within this long is held: its task is never
+    # also made here, and the absent clock stops (Spool's reclaim age).
+    "lease_fresh_seconds": 300.0,
     "overflow": True,  # free cores here take routed work the worker is not holding
     "propose_every_seconds": 900.0,  # background proposals, batched
     "rescan_seconds": 600.0,  # --follow: how often new admissions are looked for
@@ -245,6 +251,7 @@ class Schedule:
     rescan_seconds: float = 600.0
     reserve_after_seconds: float = 1200.0
     propose_seconds_per_recording: float = 12.0
+    lease_fresh_seconds: float = 300.0
 
     def setting(self, extractor_id: str) -> dict[str, Any]:
         return {**DEFAULT_SETTING, **self.settings.get(extractor_id, {})}
@@ -332,7 +339,8 @@ def schedule_of(config: dict[str, Any], catalog: bank.Catalog) -> Schedule:
                     float(numbers["memory_reserve_gb"]), {mode: float(away[mode]) for mode in MODES},
                     int(numbers["spool_in_flight"]), bool(numbers["overflow"]),
                     float(numbers["propose_every_seconds"]), float(numbers["rescan_seconds"]),
-                    float(numbers["reserve_after_seconds"]), float(numbers["propose_seconds_per_recording"]))
+                    float(numbers["reserve_after_seconds"]), float(numbers["propose_seconds_per_recording"]),
+                    float(numbers["lease_fresh_seconds"]))
 
 
 def device_of(parameters: dict[str, Any]) -> str | None:
