@@ -149,6 +149,35 @@ class ServeChecks(unittest.TestCase):
         self.assertEqual(server.wait(timeout=30), 0)
         self.assertFalse(door_socket.exists())
 
+    def test_a_built_fixture_is_served_in_place_and_answers_a_local_probe(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="fixture-built-"))
+        self.addCleanup(remove_tree, tmp)
+        (tmp / "built").mkdir()
+        built = subprocess.run([sys.executable, str(HERE / "build.py"), str(tmp / "built" / "archive"),
+                                "--door", DOOR, "--archive", ARCHIVE], capture_output=True, text=True)
+        self.assertEqual(built.returncode, 0, built.stderr)
+        (tmp / "built" / "manifest.json").write_text(built.stdout, encoding="utf-8")
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        server = subprocess.Popen([sys.executable, str(HERE / "serve.py"), "--work", str(tmp / "work"),
+                                   "--built", str(tmp / "built"), "--port", str(port), "--door", DOOR,
+                                   "--archive", ARCHIVE], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(lambda: (server.terminate(), server.wait(timeout=30)))
+        manifest = json.loads(server.stdout.readline())
+        self.assertEqual(manifest["archive_id"], json.loads(built.stdout)["archive_id"])
+        self.assertFalse((tmp / "work" / "archive").exists())
+        # A local probe carries no login and gets liveness only (ADR 0114).
+        for _ in range(200):
+            try:
+                with urllib.request.urlopen(manifest["relay"] + "/health", timeout=30) as response:
+                    status, health = response.status, json.loads(response.read())
+                break
+            except urllib.error.URLError:
+                time.sleep(0.1)
+        self.assertEqual((status, health["ok"], health["writes"]), (200, True, "commit"))
+        self.assertNotIn("archive", health)
+
 
 if __name__ == "__main__":
     unittest.main()
