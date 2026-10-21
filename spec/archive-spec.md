@@ -1,6 +1,6 @@
 # Archive Specification
 
-Version: 0.0.10
+Version: 0.0.11
 Status: draft
 
 This is the contract an archive is governed by. It is copied into every archive

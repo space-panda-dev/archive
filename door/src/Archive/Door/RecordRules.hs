@@ -1,11 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | The 0.0.10 profile rules (D-18) that read only the record itself: its
--- payload and its own references. Door evaluates them wherever it checks a
--- contract instance, so a committed record is held to them as it loads.
+-- | The 0.0.10 and 0.0.11 profile rules (D-18, D-19) that read only the
+-- record itself: its payload and its own references. Door evaluates them
+-- wherever it checks a contract instance, so a committed record is held to
+-- them as it loads.
 --
--- The untimed meter and form rules are larger and live in their own modules;
--- this one dispatches to them.
+-- The untimed meter, form, and underlay rules are larger and live in their
+-- own modules; this one dispatches to them.
 module Archive.Door.RecordRules
   ( validateRecordRules
   , exportKey
@@ -13,6 +14,7 @@ module Archive.Door.RecordRules
   ) where
 
 import Archive.Door.FormStructure (validateFormStructure)
+import Archive.Door.PlacedItems (passListsRule, placedItemsRule, validatePassLists, validatePlacedItems)
 import Archive.Door.RuleJson
 import Archive.Door.RuleSyntax
 import Archive.Door.SpanRules (validateContainedSpans)
@@ -28,7 +30,7 @@ import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 
--- | Check every record-level 0.0.10 rule at the root of @schema@ against a
+-- | Check every record-level 0.0.10 and 0.0.11 rule at the root of @schema@ against a
 -- contract instance @{payload, refs}@.
 validateRecordRules :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
 validateRecordRules schema instanceValue = do
@@ -50,6 +52,8 @@ validateRecordRules schema instanceValue = do
   with "x-archive-export-key" exportKeyRule (exportKeyCheck payload refs)
   with "x-archive-written-bars" writtenBarsRule (validateWrittenBars payload)
   with "x-archive-form-structure" formStructureRule (validateFormStructure payload)
+  with "x-archive-placed-items" placedItemsRule (validatePlacedItems payload)
+  with "x-archive-pass-lists" passListsRule (validatePassLists payload)
 
 -- | No revision appears twice among the references in @roles@.
 distinctRevisions :: [InstanceRef] -> [Text] -> Either Text ()

@@ -440,7 +440,7 @@ malformedRecordRetainsGoodRecords root = do
 
 missingContextIsIncomplete :: FilePath -> IO ()
 missingContextIsIncomplete root = do
-  gitChecked root ["rm", "--", "spec/0.0.10/context.jsonld"]
+  gitChecked root ["rm", "--", "spec/0.0.11/context.jsonld"]
   gitChecked root ["commit", "-m", "test missing committed context"]
   (code, output, errors) <- command root ["status"]
   assert "a missing selected context is incomplete rather than absent"
@@ -452,23 +452,23 @@ missingContextIsIncomplete root = do
 
 missingVersionIsIncomplete :: FilePath -> IO ()
 missingVersionIsIncomplete root = do
-  gitChecked root ["rm", "--", "spec/0.0.10/VERSION"]
+  gitChecked root ["rm", "--", "spec/0.0.11/VERSION"]
   gitChecked root ["commit", "-m", "test missing committed VERSION"]
   (code, output, errors) <- command root ["status"]
   assert "a missing committed VERSION is an incomplete archive"
     (code == ExitFailure 2
-      && contains "spec/0.0.10/VERSION" output
+      && contains "spec/0.0.11/VERSION" output
       && contains "\"record_count\":2" output)
     output errors
 
 missingSpecificationIsIncomplete :: FilePath -> IO ()
 missingSpecificationIsIncomplete root = do
-  gitChecked root ["rm", "--", "spec/0.0.10/archive-spec.md"]
+  gitChecked root ["rm", "--", "spec/0.0.11/archive-spec.md"]
   gitChecked root ["commit", "-m", "test missing committed specification"]
   (code, output, errors) <- command root ["status"]
   assert "a missing copied specification is an incomplete archive"
     (code == ExitFailure 2
-      && contains "spec/0.0.10/archive-spec.md" output
+      && contains "spec/0.0.11/archive-spec.md" output
       && contains "\"record_count\":2" output)
     output errors
 
@@ -877,7 +877,7 @@ contractIds value = case field "contracts" value of
 
 draft :: String -> Text.Text -> Aeson.Value -> [Aeson.Value] -> [Aeson.Value] -> Aeson.Value
 draft objectId shape payload refs contracts = Aeson.object
-  ([ "spec" .= ("archive/0.0.10" :: Text.Text)
+  ([ "spec" .= ("archive/0.0.11" :: Text.Text)
    , "object_id" .= objectId
    , "shape" .= shape
    , "by" .= ("pkg:hackage/archive@0.0.1.0" :: Text.Text)
