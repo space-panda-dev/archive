@@ -27,6 +27,19 @@ worker's backlog ahead of it (what it holds, and the routed jobs ahead in
 the queue, by `remote_cost`) over its tasks in flight, plus its own time.
 So free cores here take stems early, from the back of the worker's queue,
 not only once local work runs out.
+
+**The worker's leases** (ADR 0112, the Mac's path). When the spool's
+directory can be read here (`remote.Spool.tasks`), a put task the worker
+holds (leased, renewed within `lease_fresh_seconds`) is never given up, and
+the absent clock runs only for tasks nobody holds, from when the worker
+could have started them (its last filing, the put, or the end of its last
+lease seen). A given-up task the worker leases after all, or that is filed
+before it starts here, is not made here too. A job made since the plan is
+not put. The worker's pace, lease to filed, replaces `remote_cost` once
+measured, so a worker off the home network is costed as it runs. A
+collector beside the pool files results whatever the pool and the
+proposals are doing. Without the directory (a spool behind `ssh` or
+`sudo`), the rule is the old one: a worker that files nothing is absent.
 """
 
 from __future__ import annotations
@@ -74,6 +87,8 @@ class Job:
     cores: int | None = None  # reserved on the machine; its threads when None
     tier: str = "background"
     requests: list[str] = field(default_factory=list)  # the request keys this job makes good
+    given_up: bool = False  # its spool task was given up to run here; the task may still be taken
+    leased_at: float | None = None  # when the worker leased its task (epoch seconds), when seen
 
     @property
     def seconds(self) -> float | None:
@@ -152,6 +167,12 @@ class Runner:
         self.head_noted: Job | None = None
         self.backfilled = 0  # jobs started past a waiting head
         self.taken_here = 0  # routed jobs taken here
+        # What the spool holds, task by task (`remote.Spool.tasks`), when it can be read here.
+        self.view: Callable[[], dict[str, dict[str, Any]] | None] | None = getattr(spool, "tasks", None)
+        self.lease_seen = 0.0  # when the worker was last seen holding one of these tasks
+        self.pace: dict[str, float] = {}  # measured worker seconds per audio-second, lease to filed
+        self.foreign_noted: int | None = None
+        self.given_back = 0  # given-up tasks the worker took after all, so not made here
 
     def end(self, job: Job, status: str, detail: str | None = None) -> None:
         """Inside the lock: the job is done, failed or blocked."""
@@ -171,7 +192,10 @@ class Runner:
         return float(cost) * job.seconds * self.schedule.load_factor / max(1, job.reserved)
 
     def remote_wall(self, job: Job) -> float | None:
-        cost = self.schedule.setting(job.unit.extractor)["remote_cost"]
+        """Seconds the worker should take, lease to filed: its measured pace
+        this run when there is one (transfer included, so a worker off the
+        home network counts as slower), else the recorded `remote_cost`."""
+        cost = self.pace.get(job.unit.extractor, self.schedule.setting(job.unit.extractor)["remote_cost"])
         if cost is None or job.seconds is None:
             return None
         return float(cost) * job.seconds
@@ -199,6 +223,13 @@ class Runner:
         threading.Thread(target=lambda: [self.put_one(job) for job in chosen], daemon=True).start()
 
     def put_one(self, job: Job) -> None:
+        if self.planner.state(job.recording, job.unit, job.region)[0] == DONE:
+            # Made since the plan (a stand-in filed from the spool, say): nothing to encode or send.
+            with self.changed:
+                self.end(job, "done")
+                self.changed.notify_all()
+            self.note(step="already made; not put", **job.describe())
+            return
         try:
             answer = remote.put(self.planner.catalog, self.planner.root, self.spool, job.unit.extractor,
                                 job.recording.path, job.recording.media_type
@@ -236,12 +267,15 @@ class Runner:
         if answer.get("tasks") or answer.get("failed"):
             self.note(step="spool collect", status=answer.get("status"), failed=answer.get("failed"),
                       tasks={k[:17]: v.get("status") for k, v in answer.get("tasks", {}).items()})
+        tasks = self.read_tasks()
+        wall = time.time()
         with self.changed:
             waiting = [j for j in self.jobs if j.status == "put"]
+            given = [j for j in self.jobs if j.given_up and j.status == "pending"]
         events = []
         for job in waiting:
             task = job.detail
-            if self.planner.state(job.recording, job.unit)[0] == DONE:
+            if self.planner.state(job.recording, job.unit, job.region)[0] == DONE:
                 events.append((job, "done", "filed from the spool", {"waited_s": round(time.monotonic() - job.since,
                                                                                        1)}))
             elif self.made_elsewhere(job):
@@ -251,28 +285,98 @@ class Runner:
             elif task in (answer.get("failed") or {}) \
                     or (answer.get("tasks") or {}).get(task, {}).get("status") == "refused":
                 events.append((job, "pending", "the spool gave the task up; runs here", {"task": task}))
+        # Given up but not started here: the task the spool still holds may
+        # have been filed meanwhile, or leased after all. Either way it is
+        # not made here too.
+        for job in given:
+            if self.planner.state(job.recording, job.unit, job.region)[0] == DONE:
+                events.append((job, "done", "filed from the spool after it was given up; not made here",
+                               {"task": job.detail}))
+            elif tasks is not None and self.held(tasks.get(job.detail or ""), wall):
+                events.append((job, "put", "the worker took it after all; not made here", {"task": job.detail}))
         with self.changed:
             now = time.monotonic()
             for job, status, step, extra in events:
+                if job.status not in ("put", "pending"):
+                    continue  # started here meanwhile
                 if status == "done":
-                    job.wall_s = now - job.since
+                    if job.status == "put":
+                        job.wall_s = now - job.since
+                        self.measured(job, wall, extra)
                     self.last_filed = now
                     self.end(job, "done")
+                elif status == "put":
+                    job.status, job.routed, job.given_up = "put", True, False
+                    self.given_back += 1
                 else:
                     job.status, job.routed = "pending", False
                 self.note(step=step, **job.describe(), **extra)
             still = [j for j in self.jobs if j.status == "put"]
-            if still:
-                oldest = min(still, key=lambda j: j.since)
+            queued = still
+            if tasks is not None:
+                held = [j for j in still if self.held(tasks.get(j.detail or ""), wall)]
+                for job in held:
+                    if job.leased_at is None:
+                        job.leased_at = tasks[job.detail or ""]["leased_at"]
+                        self.note(step="the worker leased the task", **job.describe(), task=job.detail,
+                                  worker=tasks[job.detail or ""].get("worker"),
+                                  queued_s=round(max(0.0, job.leased_at - (wall - (now - job.since))), 1))
+                if held:
+                    self.lease_seen = now  # the worker is busy with this backfill's work
+                queued = [j for j in still if all(j is not h for h in held)]
+                self.note_foreign(tasks)
+            if queued:
+                # The absent clock runs only for tasks nobody holds, and from
+                # when the worker could have started them: its last filing,
+                # the task's put, or the end of the last lease seen.
+                oldest = min(queued, key=lambda j: j.since)
                 allowance = self.remote_wall(oldest) or 0.0
                 limit = self.schedule.away(self.mode) + allowance
-                if now - max(self.last_filed, oldest.since) > limit:
-                    for job in still:
-                        job.status, job.routed = "pending", False
+                if now - max(self.last_filed, oldest.since, self.lease_seen) > limit:
+                    for job in queued:
+                        job.status, job.routed, job.given_up = "pending", False, True
                         self.note(step="no worker took the task in time; runs here too", **job.describe(),
                                   task=job.detail, limit_s=round(limit, 1))
                     self.put_paused_until = now + self.schedule.away(self.mode)
             self.changed.notify_all()
+
+    def read_tasks(self) -> dict[str, dict[str, Any]] | None:
+        """Outside the lock: the spool's tasks, or None when unknown."""
+        if self.view is None:
+            return None
+        try:
+            return self.view()
+        except Exception as exc:  # noqa: BLE001  (unknown is the old rule, never a failed backfill)
+            self.note(step="spool tasks unreadable", error=str(exc)[-300:])
+            return None
+
+    def held(self, task: dict[str, Any] | None, wall: float) -> bool:
+        """Whether a worker holds the task: leased, and renewed lately."""
+        return bool(task) and task.get("state") == "leased" \
+            and wall - float(task.get("renewed_at") or 0.0) <= self.schedule.lease_fresh_seconds
+
+    def measured(self, job: Job, wall: float, extra: dict[str, Any]) -> None:
+        """Inside the lock: the worker's pace on a job it was seen to lease,
+        lease to filed, in seconds per audio-second; the next estimates
+        (`remote_wall`) use it, half the last and half before."""
+        if job.leased_at is None or not job.seconds:
+            return
+        pace = max(0.0, wall - job.leased_at) / job.seconds
+        before = self.pace.get(job.unit.extractor)
+        self.pace[job.unit.extractor] = pace if before is None else (pace + before) / 2
+        extra["worker_s_per_audio_s"] = round(pace, 4)
+
+    def note_foreign(self, tasks: dict[str, dict[str, Any]]) -> None:
+        """Inside the lock: say once (and when it changes) how many tasks the
+        spool holds that this backfill did not put. The worker may take them
+        before this backfill's; only Spool can withdraw them."""
+        ours = {j.detail for j in self.jobs if j.detail}
+        foreign = sorted(t for t in tasks if t not in ours)
+        if len(foreign) != (self.foreign_noted or 0):
+            self.foreign_noted = len(foreign)
+            self.note(step="the spool holds tasks this backfill did not put", count=len(foreign),
+                      leased=sum(1 for t in foreign if tasks[t].get("state") == "leased"),
+                      tasks=[t[:17] for t in foreign[:20]])
 
     def made_elsewhere(self, job: Job) -> bool:
         """Whether the worker's entry, under the parameters it was put with,
@@ -429,7 +533,31 @@ class Runner:
             self.changed.notify_all()
 
     def run(self) -> None:
-        last_collect = last_intake = time.monotonic()
+        """Run the plan. With a spool, a collector beside the pool files what
+        the worker sends every `poll_seconds`, whatever the pool or `tick`
+        is doing, while any task is with the spool, also while puts are
+        paused after a give-up (a given-up task may still be filed)."""
+        if self.spool is None:
+            self.pool()
+            return
+        finished = threading.Event()
+        collector = threading.Thread(target=self.collector, args=(finished,), daemon=True)
+        collector.start()
+        try:
+            self.pool()
+        finally:
+            finished.set()
+            collector.join()
+
+    def collector(self, finished: threading.Event) -> None:
+        while not finished.wait(self.schedule.poll_seconds):
+            with self.changed:
+                tracking = any(j.status == "put" or (j.given_up and j.status == "pending") for j in self.jobs)
+            if tracking:
+                self.collect()
+
+    def pool(self) -> None:
+        last_intake = time.monotonic()
         with self.changed:
             while True:
                 for job in self.jobs:
@@ -455,9 +583,6 @@ class Runner:
                 self.changed.release()
                 try:
                     self.tick()
-                    if waiting and time.monotonic() - last_collect >= self.schedule.poll_seconds:
-                        self.collect()
-                        last_collect = time.monotonic()
                     if self.intake is not None and not stopping \
                             and time.monotonic() - last_intake >= self.schedule.poll_seconds:
                         for job in self.intake():

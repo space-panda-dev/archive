@@ -183,6 +183,59 @@ class Spool:
         except ValueError as exc:
             raise RemoteError(f"spool {' '.join(arguments)} answered what is not JSON lines: {exc}") from exc
 
+    def directory(self) -> Path | None:
+        """The spool's directory, when the command names one (`--dir DIR`)
+        that this machine can read; None otherwise (`sudo -u`, `ssh`)."""
+        words = self.words
+        for index, word in enumerate(words[:-1]):
+            if word == "--dir":
+                found = Path(words[index + 1]).expanduser()
+                return found if (found / "pending").is_dir() and (found / "leased").is_dir() else None
+        return None
+
+    def tasks(self) -> dict[str, dict[str, Any]] | None:
+        """What the spool holds, task by task, read from its directory: a
+        pending task as `{"state": "pending"}`, a leased one with when it
+        was leased and last renewed (epoch seconds) and by which worker.
+        None when the directory cannot be read here.
+
+        A stopgap: Spool's CLI gives only counts (`status --json`), and this
+        reads its layout (`pending/<task>.json`; `leased/<lease>.json` with
+        `<lease>.renewed` holding epoch microseconds and `<lease>.worker`),
+        changing nothing. It goes once Spool answers per task itself."""
+        root = self.directory()
+        if root is None:
+            return None
+        found: dict[str, dict[str, Any]] = {}
+        try:
+            for path in (root / "pending").iterdir():
+                if path.suffix == ".json":
+                    found[path.stem] = {"state": "pending"}
+            for path in (root / "leased").iterdir():
+                if path.suffix != ".json":
+                    continue
+                try:
+                    task = json.loads(path.read_bytes())["task_id"]
+                    leased = path.stat().st_mtime
+                except (OSError, ValueError, KeyError, TypeError):
+                    continue  # renamed away (acked, failed, reclaimed) while being read
+                parts = path.stem.split("_")
+                if len(parts) > 2 and parts[0] == "lease" and parts[1].isdigit():
+                    leased = int(parts[1]) / 1e6
+                renewed = leased
+                try:
+                    renewed = max(leased, int(path.with_suffix(".renewed").read_text().strip()) / 1e6)
+                except (OSError, ValueError):
+                    pass
+                try:
+                    worker: str | None = path.with_suffix(".worker").read_text().strip() or None
+                except OSError:
+                    worker = None
+                found[task] = {"state": "leased", "leased_at": leased, "renewed_at": renewed, "worker": worker}
+        except OSError:
+            return None
+        return found
+
     def take(self, task: str, digest: str, path: Path) -> None:
         """One result attachment into `path`, which must not exist."""
         request = json.dumps({"task_id": task, "sha256": hex_of(digest)}).encode()
