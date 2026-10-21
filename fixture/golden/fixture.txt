@@ -1,0 +1,114 @@
+$ python3 scripts/prove.py fixture
+[exit 0]
+--- stdout
+$ fixture/build.py <tmp>/fixture/archive
+[exit 0]
+--- stdout (keys)
+archive_id, archive_root, cited_contracts, objects, operator_id, protocol, spec, steps; 45 steps
+$ archive status
+[exit 0]
+--- stdout
+{
+ "archive_id": "urn:uuid:<uuid-1>",
+ "context_present": true,
+ "record_count": 114,
+ "spec": "archive/0.0.10",
+ "status": "ok"
+}
+$ archive doctor
+[exit 0]
+--- stdout
+{
+ "archive_id": "urn:uuid:<uuid-1>",
+ "context_present": true,
+ "contracts": {
+  "status": "passed"
+ },
+ "coverage": {
+  "artifacts": 12,
+  "assessment_targets": 3,
+  "assessments": 3,
+  "claims": 90,
+  "contract_citations": 93,
+  "entities": 9,
+  "objects": 113,
+  "pinned_references": 247,
+  "records": 114,
+  "references": 247,
+  "supersessions": 1,
+  "unpinned_references": 0
+ },
+ "current": {
+  "detail": "no current rule is defined",
+  "status": "not_run"
+ },
+ "doctor_issue_count": 0,
+ "issues": [],
+ "record_count": 114,
+ "spec": "archive/0.0.10",
+ "status": "ok"
+}
+$ archive ls (shapes counted)
+[exit 0]
+--- stdout
+{
+ "record_count": 114,
+ "shapes": {
+  "artifact": 12,
+  "assessment": 3,
+  "claim": 90,
+  "entity": 9
+ }
+}
+$ door verify
+[exit 0]
+--- stdout
+{"status":"verified"}
+$ door admit --proposal <tmp>/proposal --dry-run
+[exit 0]
+--- stdout
+{
+ "content_verified": false,
+ "records": [
+  {
+   "agent": "urn:uuid:<uuid-2>",
+   "by": "pkg:generic/prove@0",
+   "object_id": "urn:uuid:<uuid-3>",
+   "payload": {
+    "kind": "person",
+    "label": "Prove client"
+   },
+   "refs": [],
+   "revision_id": "sha256:<sha256-1>",
+   "shape": "entity",
+   "spec": "archive/0.0.10",
+   "supersedes": []
+  }
+ ],
+ "retry": false,
+ "revision_ids": [
+  "sha256:<sha256-1>"
+ ],
+ "status": "predicted"
+}
+$ door admit --proposal <tmp>/proposal
+[exit 0]
+--- stdout
+{
+ "retry": false,
+ "revision_ids": [
+  "sha256:<sha256-1>"
+ ],
+ "status": "committed"
+}
+$ archive status
+[exit 0]
+--- stdout
+{
+ "archive_id": "urn:uuid:<uuid-1>",
+ "context_present": true,
+ "record_count": 115,
+ "spec": "archive/0.0.10",
+ "status": "ok"
+}
+--- stderr
