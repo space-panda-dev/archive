@@ -523,7 +523,12 @@ class Separation(unittest.TestCase):
         self.assertEqual(code, 0, answer)
         reader = bank.Bank(directory / "region" / "bank")
         stem = bank.covering(reader, digest, "stems", start, end, 48000)
-        region = reader.entry(stem.output("vocals")["sha256"], "f0-pesto", filed_under=digest)
+        vocals = stem.output("vocals")["sha256"]
+        # Its key carries the stem's entry, so the region's (Catalog.placed_by).
+        self.assertIsNone(reader.entry(vocals, "f0-pesto", filed_under=digest))
+        placed = bank.Bank(directory / "region" / "bank",
+                           reader.catalog.placed_by(vocals, "stems/vocals", stem.manifest["key"]))
+        region = placed.entry(vocals, "f0-pesto", filed_under=digest)
         self.assertIsNotNone(region)
         offset = start // 3  # at 16 kHz
         grid = region.grid("f0")
