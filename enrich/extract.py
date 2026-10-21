@@ -573,7 +573,8 @@ class Run:
                         "extractor": {"id": extractor.id, "version": extractor.version},
                         "parameters": request["parameters"], "content": self.content_digest(),
                         "media_type": self.input_media_type(),
-                        "needs": {need: keys[need.split("/", 1)[0]] for need in extractor.needs},
+                        "needs": {**{need: keys[need.split("/", 1)[0]] for need in extractor.needs},
+                                  **self.catalog.placed_needs(self.content_digest())},
                         **checked, "started_at": started, "ended_at": now(), "runner": RUNNER}
             if self.region is not None:
                 assert self.cut is not None
@@ -713,7 +714,9 @@ def run_from(catalog: bank.Catalog, root: Path, content: Path, media_type: str, 
     missing. Then the targets run with the feature's file as their input:
     its digest, recorded in the entry and checked again before anything is
     filed, is their content, so their keys depend on the stem's bits and
-    nothing else; their entries are filed under the content's directory,
+    nothing else, but for a stem made over a region: its measures lie on the
+    whole run's grid from the region's start, so the stem's entry is a need
+    in their keys (`Catalog.placed_by`, ADR 0112); their entries are filed under the content's directory,
     which holds everything made from it."""
     match = bank.FEATURE.fullmatch(feature)
     if match is None:
@@ -747,6 +750,8 @@ def run_from(catalog: bank.Catalog, root: Path, content: Path, media_type: str, 
     described = chosen.output(output)
     path, stem_digest, stem_type = chosen.path / described["file"], described["sha256"], described["media_type"]
     origin["entry"] = chosen.manifest["key"]
+    if chosen.timeline is not None:  # a stem made over a region: its measures' keys carry it (ADR 0112)
+        catalog = catalog.placed_by(stem_digest, feature, chosen.manifest["key"])
     second = Run(catalog, root, path, stem_type, stem_digest, programs, measuring, timeout,
                  filed_under=made["content"], optional=optional, exact=exact, placed=chosen.timeline)
     answer = second.execute(targets, jobs, dry_run)

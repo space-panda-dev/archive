@@ -463,6 +463,9 @@ class Catalog:
             self.extractors[extractor.id] = extractor
         # The content and region a region run keys its entries over (see `within`).
         self.region: tuple[str, dict[str, int]] | None = None
+        # A file feature made over a region, measured as content: its digest,
+        # the feature, and the key of the entry that holds it (see `placed_by`).
+        self.placement: tuple[str, str, str] | None = None
         for extractor in self.extractors.values():
             for need in extractor.needs:
                 source, output = FEATURE.fullmatch(need).groups()  # type: ignore[union-attr]
@@ -561,7 +564,7 @@ class Catalog:
         keys: dict[str, str] = {}
         for extractor_id in self.order(targets):
             extractor = self[extractor_id]
-            needs = {need: keys[need.split("/", 1)[0]] for need in extractor.needs}
+            needs = {**{need: keys[need.split("/", 1)[0]] for need in extractor.needs}, **self.placed_needs(content)}
             keys[extractor_id] = key_of(extractor.id, extractor.version,
                                         self.parameters(extractor_id, parameters), content, needs, region)
         return keys
@@ -572,9 +575,27 @@ class Catalog:
         lookups and the runner's graph find region entries unchanged. A
         region of None is the whole content."""
         view = Catalog.__new__(Catalog)
-        view.extractors = self.extractors
+        view.extractors, view.placement = self.extractors, self.placement
         view.region = None if region is None else (content, check_region(region))
         return view
+
+    def placed_by(self, content: str, feature: str, key: str) -> "Catalog":
+        """This catalog, keying the measures of `content`, a file feature made
+        over a region (a stem), with the entry that holds it as a need: their
+        outputs lie on the whole run's grid from where the region starts
+        (ADR 0112), so the stem's region entry key, which carries the region,
+        is in theirs. Identical stems of two regions are then measured twice,
+        and a whole stem's measures keep their keys."""
+        view = Catalog.__new__(Catalog)
+        view.extractors, view.region = self.extractors, self.region
+        view.placement = (content, feature, key)
+        return view
+
+    def placed_needs(self, content: str) -> dict[str, str]:
+        """The need `placed_by` adds to the keys of `content`'s entries, if any."""
+        if self.placement is not None and self.placement[0] == content:
+            return {self.placement[1]: self.placement[2]}
+        return {}
 
     def region_of(self, content: str) -> dict[str, int] | None:
         """The region this view keys `content` over, or None for whole."""
@@ -1210,7 +1231,10 @@ class Bank:
                 raise BankError(f"{feature} is a {described['kind']}, not a file; only a file can be content")
             measures = {}
             for extractor_id in extractor_ids:
-                measured = self.entry(described["sha256"], extractor_id, filed_under=content, feature=feature)
+                reader = self if entry.timeline is None else Bank(
+                    self.root, self.catalog.placed_by(described["sha256"], feature, entry.manifest["key"]),
+                    self.parameters, exact=self.exact)
+                measured = reader.entry(described["sha256"], extractor_id, filed_under=content, feature=feature)
                 if measured is not None and entry.timeline is not None and measured.timeline is None:
                     # A stem made over a region is content of its own, measured
                     # whole, so its measures' times are on the region's cut.

@@ -29,6 +29,11 @@ falls where the whole run's does. A row before the region is dropped, and
 the grid's `first_centre` says where the first row lies on the cut's
 timeline (0 to 159 samples). Only the silence where the whole run hears what
 lies before or after the region differs, and `loud_db` is the region's.
+This holds when the region starts on a whole sample at 16 kHz in the
+audio's own rate too (a 10 ms step: song regions start on whole seconds,
+`regions.regions_of`): otherwise ffmpeg resamples the region at another
+phase than the whole, and every row differs a little (measured: a start at
+12.3456 s gave f0 p99 33 cents against 0 at 15 s).
 
 The checkpoint is a pickle that PESTO loads with `weights_only=False`, so
 its digest is checked before it is loaded, and the checked file is the one

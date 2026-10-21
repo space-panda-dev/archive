@@ -626,19 +626,49 @@ before the region are dropped. `extract.py region-equivalence` and
 (`equivalence.region_measure`, bounds from the `stems` agree list). On bench
 clips with real Demucs: region stems within one sample step of the whole
 (three on one vocal stem), note F1 0.89-1.0, melody pitch p99 2-6 cents;
-the clips are too quiet to judge f0 or a 90 dB stem target, so a real
-recording (the 554 s one over 35-520 s) is still to be measured.
+`extract.py region-equivalence` exits 1 there because those values miss the
+`stems` bounds (F1 0.98), not because it fails. Those clips are no test of
+this: their vocal and bass stems are near silence (-67 to -90 dBFS a second;
+drums and other carry the mix), so a one-step stem difference moves a note.
 
-**Not changed.** A region measure's key is still its stem's bits, though
-its output now depends on where the region lies; safe unless two regions
-give identical stems.
+**The grid itself is exact.** Each measure run over a region of the very
+same stem FLAC (a 60 s cut of the 554 s recording's whole vocal and bass
+stems, 160-220 s, with sung vocals) against the whole run, so stems cannot
+differ: over 15-45 s, notes are identical (F1 1.0, 17 vocal and 13 bass
+notes, onsets within 1 ms), melody's 10,337 rows are
+bit-identical, and f0-pesto's rows are bit-identical but for 20-22 rows
+within 0.06 s of the region's start and 0.21 s of its end (what the whole
+run hears beyond the region). A start off the 10 ms grid (12.3456 s) is
+different: ffmpeg resamples to PESTO's 16 kHz at another phase, and every f0
+row differs a little (p99 33 cents); melody and notes stay identical but for
+the edges (melody within 1.9 s, one extra bass note 0.29 s in). Song regions
+start on whole seconds (`regions_of`), so `--songs` never makes such a
+region; `f0_pesto.py` says so. The region-equivalence gaps on the bench
+clips are therefore Demucs's own (a region's stems differ from the whole's
+by a step), not misalignment. Whole runs of the three are bit-identical to
+51c835e's (five entries compared), so their versions stand and their code
+digests are recorded.
+
+**A region measure has its own key.** Its output depends on where the
+region lies, so `extract.run_from`, `Bank.measured_over` and the planner key
+a measure of a stem made over a region with that stem's entry as a need
+(`Catalog.placed_by`): the stem's region entry key carries the region. Two
+regions' identical stems are measured twice; a whole stem's measures keep
+their keys. Region measures made before this (scratch banks only; the
+shadow ran `--eager`) are no longer found and are made again.
 
 ### For the operator to confirm (round 3)
 
 - `reserve_after_seconds` 1200 and the overflow rule, once measured on a
   copy of the shadow (expected: usable at the fast pass plus about 12 s,
   the cores busy through the background).
-- Whether region checks exclude about 2 s at each edge (song regions carry
-  a 10 s margin already).
-- Whether `--songs` replaces `--eager` on the shadow once the real-recording
-  region check passes.
+- An edge exclusion for region checks: proposed **2 s** at each end
+  (notes with an onset, rows with a centre, within 2 s of a region edge are
+  not compared). Measured on identical content the edge reaches 0.21 s
+  (f0), 0.29 s (one note) and 1.9 s (melody at an off-grid start); Basic
+  Pitch's window is 2 s, which bounds its reach. Song regions carry a 10 s
+  margin, so no song audio falls in it.
+- Whether `--songs` replaces `--eager` on the shadow once the real-Demucs
+  region check passes on audio with vocals and bass (the 554 s recording
+  over 160-220 s has sung vocals; no recording measured so far has an
+  audible bass stem).

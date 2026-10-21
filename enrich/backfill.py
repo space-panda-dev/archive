@@ -529,7 +529,10 @@ class Planner:
                     return WAITING, f"{feature} is not in the bank" + (" over this region" if region else "")
                 if reader.entry_from(recording.digest, feature, unit.extractor) is not None:
                     return DONE, None
-                keys = reader.catalog.keys(found[1], order, self.catalog.overrides_for(feature, self.parameters))
+                stem = reader.feature(recording.digest, feature)
+                catalog = reader.catalog if stem is None or stem[0].timeline is None else \
+                    reader.catalog.placed_by(found[1], feature, stem[0].manifest["key"])  # made over a region
+                keys = catalog.keys(found[1], order, self.catalog.overrides_for(feature, self.parameters))
         except bank.BankError as exc:
             return DAMAGED, str(exc)
         if not self.retry_failed:
@@ -933,8 +936,11 @@ def add_arguments(command: argparse.ArgumentParser) -> None:
 
 
 def export_of(args: argparse.Namespace, env: dict[str, str] | None) -> dict[str, Any]:
-    done = subprocess.run([args.archive_command, "export"], cwd=args.archive, capture_output=True, text=True,
-                          env=env)
+    try:
+        done = subprocess.run([args.archive_command, "export"], cwd=args.archive, capture_output=True, text=True,
+                              env=env)
+    except OSError as exc:
+        raise BackfillError(f"archive export failed: {exc}") from exc
     try:
         answer = json.loads(done.stdout)
     except ValueError:

@@ -256,8 +256,9 @@ class Proposals:
         if self.thread is not None:
             self.thread.join()
         while self.runner is not None and (self.waiting or self.outstanding):
+            before = self.thread
             self.tick()
-            if not self.busy():
+            if self.thread is before:  # nothing began (a fast job is still open): no round to end
                 break
             self.thread.join()
 

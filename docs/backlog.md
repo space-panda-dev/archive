@@ -162,12 +162,16 @@ its fast units settle (the usable proposal was 23% of time-to-usable);
 `chords-jiang` 2 bounds Jiang's memory (2 GB plus 0.8 GB an hour, not yet
 measured on whole long recordings), so several copies fit; region runs of
 `notes-basic-pitch`, `f0-pesto` and `melody` lie on the whole run's grid
-(bench clips: note F1 0.89-1.0). Left: measure time-to-usable, core use and
+(on identical stem content the region's notes and melody are the whole's
+bit for bit and f0 differs only within 0.21 s of an edge; a region measure
+is keyed by its stem's entry). Left: measure time-to-usable, core use and
 overflow share on a copy of the shadow; the queued long-recording Jiang run
-(replace 0.8 GB/h and the 0.151 cost); the region check on the 554 s
-recording over 35-520 s, then whether `--songs` replaces `--eager`; one
-Door admission for a recording's proposer runs (about 2 s a run is the
-floor of a proposal today).
+(replace 0.8 GB/h and the 0.151 cost); the real-Demucs region check on audio
+with vocals and bass (the bench clips' vocal and bass stems are near
+silence; the 554 s recording over 160-220 s has vocals), with the proposed
+2 s edge exclusion, then whether `--songs` replaces `--eager`; one Door
+admission for a recording's proposer runs (about 2 s a run is the floor of
+a proposal today).
 The Mac worker now gets the content as WavPack (73% of the
 float WAV, decoding to its very samples) and can run two tasks at once:
 on the two recordings, 0.223 s per audio-second end to end against 0.305

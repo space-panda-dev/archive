@@ -161,7 +161,7 @@ SHIPPED = {
     # stems/vocals, and again when each preference gained f0-pesto's probe: no
     # entry's bits change, only which is the default.
     "melody": {"version": "3",
-               "code": "sha256:988efc9141cf5132528401484f9225dd1866a796f81afe21b467c6bd10d0bbde",
+               "code": "sha256:b2bb10e8740ddc38aaca05bb452b323187bc7e9895d57a61a82dca106497a696",
                "outside": {}},
     # colour reads the peaks' format and decode from waveform.py, not the
     # derived-media tool media.py, so an edit to that tool's routes or
@@ -182,12 +182,15 @@ SHIPPED = {
                  "code": "sha256:23494ee6838986398b491f243a017b1687921f655db1c51693275931ebf892a2",
                  "outside": {"extractors/stems/stems.py":
                                  "sha256:9329ebecb2f5c583826aa5678468d3fbfd1f81761f5f725324433fbdd2a4a057"}},
+    # notes-basic-pitch, f0-pesto and melody keep their versions though the code
+    # changed for regions (ADR 0112, round 3): a whole run's bits are the same, and
+    # a measure of a stem made over a region has its own key (Catalog.placed_by).
     "notes-basic-pitch": {"version": "1",
-                          "code": "sha256:b81ad3ab4528b6c557e4a3ad254c5262754689efcbd157ac5bff976f28d40133",
+                          "code": "sha256:df2bda6355ae19919124932b9fceeea92de453e4352134abe0dafd9def983bf6",
                           "outside": {}},
     # f0-pesto version 2: the level of the same audio on the same rows.
     "f0-pesto": {"version": "2",
-                 "code": "sha256:cb9e2915b3f5c4b59caac11830467fc7c0dafcf6d95bdacbbb6e6c9036c02feb",
+                 "code": "sha256:a63ae11bc5a934fad313b99d73fd03004740575abd4faec0cc0a441ace8598ac",
                  "outside": {}},
     "f0-torchcrepe": {"version": "1",
                       "code": "sha256:3ea7b08895a262f9c175bcadb49fdf1ad59c6a8c69d6492aa5341e6abcafa4e7",
@@ -470,6 +473,25 @@ class Cache(unittest.TestCase):
                          bank.digest_of(described.encode()))
         with self.assertRaisesRegex(bank.BankError, "decimal text"):
             bank.check_parameters({"threshold": 0.5})
+
+    def test_a_measure_of_a_stem_made_over_a_region_is_keyed_by_that_stems_entry(self) -> None:
+        """ADR 0112: its output lies on the whole run's grid from where the
+        region starts, so two regions' identical stems are not one entry;
+        a whole stem's measures keep their keys."""
+        catalog = bank.Catalog.load()
+        stem, other = "sha256:" + "ab" * 32, "sha256:" + "ef" * 32
+        here, there = "sha256:" + "cd" * 32, "sha256:" + "12" * 32
+        whole = catalog.keys(stem, ["f0-pesto"])["f0-pesto"]
+        placed = catalog.placed_by(stem, "stems/vocals", here)
+        self.assertEqual(placed.keys(stem, ["f0-pesto"])["f0-pesto"],
+                         bank.key_of("f0-pesto", catalog["f0-pesto"].version, catalog.parameters("f0-pesto"), stem,
+                                     {"stems/vocals": here}))
+        self.assertNotEqual(placed.keys(stem, ["f0-pesto"]), catalog.keys(stem, ["f0-pesto"]))
+        self.assertNotEqual(placed.keys(stem, ["f0-pesto"]),
+                            catalog.placed_by(stem, "stems/vocals", there).keys(stem, ["f0-pesto"]))
+        self.assertEqual(placed.keys(other, ["f0-pesto"]), catalog.keys(other, ["f0-pesto"]))  # that stem only
+        self.assertEqual(placed.within(other, None).placed_needs(stem), {"stems/vocals": here})
+        self.assertEqual(catalog.keys(stem, ["f0-pesto"])["f0-pesto"], whole)
 
     def test_parameters_are_limited_to_what_every_language_encodes_alike(self) -> None:
         """Within these limits the canonical JSON is RFC 8785's."""
