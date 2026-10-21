@@ -1,6 +1,6 @@
 # 0115. CI skips the build for a push that changes only prose no build reads, and cancels superseded runs
 
-Status: proposed on `readiness-adopt`; amends
+Status: accepted (operator, 2026-10-21); amends
 [ADR 0062](0062-release-bundle-and-ci.md)'s "CI runs everything on every push"
 
 ## Context

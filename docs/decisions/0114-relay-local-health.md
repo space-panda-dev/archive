@@ -1,6 +1,6 @@
 # 0114. A local probe reads the relay's liveness, commit and build without a tailnet identity
 
-Status: proposed on `readiness-adopt`; amends
+Status: accepted (operator, 2026-10-21); amends
 [ADR 0056](0056-tailnet-relay.md) and [ADR 0060](0060-relay-interface-and-role.md)'s
 `/health`
 
