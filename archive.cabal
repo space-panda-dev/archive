@@ -16,6 +16,7 @@ data-files:
   , spec/0.0.8/context.jsonld
   , spec/0.0.9/context.jsonld
   , spec/0.0.10/context.jsonld
+  , spec/0.0.11/context.jsonld
   , spec/0.0.1/contracts.json
   , spec/0.0.2/contracts.json
   , spec/0.0.3/contracts.json
@@ -26,6 +27,7 @@ data-files:
   , spec/0.0.8/contracts.json
   , spec/0.0.9/contracts.json
   , spec/0.0.10/contracts.json
+  , spec/0.0.11/contracts.json
   , spec/contracts/*.json
 
 library
@@ -52,6 +54,7 @@ library
     , Archive.Door.FormStructure
     , Archive.Door.JudgedScope
     , Archive.Door.PinnedRules
+    , Archive.Door.PlacedItems
     , Archive.Door.RecordRules
     , Archive.Door.ReleaseAdmission
     , Archive.Door.RuleJson
@@ -126,7 +129,7 @@ executable archive
 test-suite door-test
   type: exitcode-stdio-1.0
   main-is: Main.hs
-  other-modules: BeyondCircle010, Rules010, Specification010
+  other-modules: BeyondCircle010, Rules010, Rules011, Specification010, Specification011
   hs-source-dirs: door/test
   build-tool-depends:
       archive:archive

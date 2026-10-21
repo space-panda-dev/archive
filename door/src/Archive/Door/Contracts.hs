@@ -33,7 +33,7 @@ module Archive.Door.Contracts
 
 import Archive.Door.Json (decodeUnique)
 import Archive.Door.RecordRules (validateRecordRules)
-import Archive.Door.RuleSyntax (releaseRuleNames, validateReleaseRules)
+import Archive.Door.RuleSyntax (release011RuleNames, releaseRuleNames, validateReleaseRules)
 import Archive.Door.SpanRules (sequentialSpansRule, validateSequentialSpans, withinGroups)
 import Archive.Door.WhenPinned (effectiveSchema)
 import Archive.Door.SchemaObjectKeywords
@@ -209,6 +209,7 @@ validateCoreContextForSpecification specification value = do
         "archive/0.0.8" -> Set.fromList reviewContextKeys
         "archive/0.0.9" -> Set.fromList creditContextKeys
         "archive/0.0.10" -> Set.fromList creditContextKeys
+        "archive/0.0.11" -> Set.fromList creditContextKeys
         _ -> Set.empty
   if not (Set.null expected) && keys == expected
     then Right ()
@@ -345,7 +346,7 @@ profileRuleNames =
   , "x-archive-metric-modulations", "x-archive-target-bound", "x-archive-partial-dates"
   , "x-archive-subset", "x-archive-document-order", "x-archive-nested-ranges"
   , "x-archive-target-samples", "x-archive-target-index"
-  ] <> releaseRuleNames
+  ] <> releaseRuleNames <> release011RuleNames
 
 -- | The schema one map of @x-archive-when-pinned@ makes (D-18), checked as
 -- a bundle's schema is.
