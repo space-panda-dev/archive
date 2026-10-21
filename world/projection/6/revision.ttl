@@ -240,7 +240,9 @@ wsh:DocumentAlignment a sh:NodeShape ;
   sh:targetObjectsOf arch:document_alignment ;
   sh:closed true ;
   sh:property [ sh:path arch:alignment_method ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
-  sh:property [ sh:path arch:max_error_samples ; sh:maxCount 1 ; sh:datatype xsd:integer ] .
+  sh:property [ sh:path arch:max_error_samples ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:alignment_precision ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:in ( "rough" "approximate" "exact" ) ;
+    rdfs:comment "form_spans 2 (revision 8)." ] .
 
 wsh:ChordSpan a sh:NodeShape ;
   rdfs:comment "One span of chord readings, <{revision}:span={n}>; rdf:value is its position from 0." ;
@@ -468,7 +470,7 @@ wsh:CreditedSpan a sh:NodeShape ;
 # the claim is pinned, and a number otherwise, so those paths state no type.
 
 wsh:Claim0010 a sh:NodeShape ;
-  rdfs:comment "A claim revision of a contract specification 0.0.10 adds, as the subject of what its graph asserts." ;
+  rdfs:comment "A claim revision of a contract specification 0.0.10 or 0.0.11 adds (0.0.11's since revision 8), as the subject of what its graph asserts." ;
   sh:targetClass arch:Claim ;
   sh:closed true ;
   sh:property [ sh:path rdf:type ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( arch:Claim ) ] ;
@@ -492,6 +494,11 @@ wsh:Claim0010 a sh:NodeShape ;
   sh:property [ sh:path arch:chosen_lyric_timing ; sh:nodeKind sh:IRI ; rdfs:comment "lead_sheet 1." ] ;
   sh:property [ sh:path arch:chosen_lyrics ; sh:nodeKind sh:IRI ; rdfs:comment "lead_sheet 1." ] ;
   sh:property [ sh:path arch:chosen_melody ; sh:nodeKind sh:IRI ; rdfs:comment "lead_sheet 1." ] ;
+  sh:property [ sh:path arch:chosen_underlay ; sh:nodeKind sh:IRI ; rdfs:comment "lead_sheet 2 (revision 8)." ] ;
+  sh:property [ sh:path arch:carrying_melody ; sh:nodeKind sh:IRI ; rdfs:comment "underlay 1 (revision 8)." ] ;
+  sh:property [ sh:path arch:pass_form ; sh:nodeKind sh:IRI ; rdfs:comment "underlay 1 (revision 8)." ] ;
+  sh:property [ sh:path arch:sung_passes ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; rdfs:comment "underlay 1 (revision 8)." ] ;
+  sh:property [ sh:path arch:underlay_lines ; sh:nodeKind sh:IRI ; rdfs:comment "underlay 1 (revision 8)." ] ;
   sh:property [ sh:path arch:chosen_meter ; sh:nodeKind sh:IRI ; rdfs:comment "lead_sheet 1." ] ;
   sh:property [ sh:path arch:confidence ; sh:nodeKind sh:IRI ; rdfs:comment "catalogue_correspondence 1, recording_audio 1, tracklist 1." ] ;
   sh:property [ sh:path arch:confidence_scale ; sh:maxCount 1 ; sh:datatype xsd:string ; rdfs:comment "notes 1, timed_lyrics 1, tuning 1." ] ;
@@ -650,7 +657,8 @@ wsh:FormRepeats a sh:NodeShape ;
   sh:property [ sh:path arch:first_section ] ;
   sh:property [ sh:path arch:last_section ] ;
   sh:property [ sh:path arch:repeat_endings ; sh:nodeKind sh:IRI ] ;
-  sh:property [ sh:path arch:times ; sh:maxCount 1 ; sh:datatype xsd:integer ] .
+  sh:property [ sh:path arch:times ; sh:maxCount 1 ; sh:datatype xsd:integer ; rdfs:comment "Absent on form 2's open repeat." ] ;
+  sh:property [ sh:path arch:repeat_instruction ; sh:maxCount 1 ; sh:datatype xsd:string ; rdfs:comment "form 2 (revision 8)." ] .
 
 wsh:FormSections a sh:NodeShape ;
   rdfs:comment "form 1: one section, <{revision}:section={n}>; rdf:value is its written position from 0." ;
@@ -671,7 +679,9 @@ wsh:FormSpan a sh:NodeShape ;
   sh:property [ sh:path arch:form_section ] ;
   sh:property [ sh:path arch:locator ; sh:nodeKind sh:IRI ] ;
   sh:property [ sh:path arch:section_kind ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
-  sh:property [ sh:path arch:start_sample ; sh:maxCount 1 ; sh:datatype xsd:integer ] .
+  sh:property [ sh:path arch:start_sample ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:played_passes ; sh:datatype xsd:integer ; rdfs:comment "form_spans 2 (revision 8)." ] ;
+  sh:property [ sh:path arch:played_on_return ; sh:maxCount 1 ; sh:datatype xsd:boolean ; rdfs:comment "form_spans 2 (revision 8)." ] .
 
 wsh:JudgedEntries a sh:NodeShape ;
   rdfs:comment "judgment 2: the judged chord sequence's entries, from first to last, as nodes of that sequence's graph." ;
@@ -770,7 +780,7 @@ wsh:Media a sh:NodeShape ;
   sh:property [ sh:path arch:printed_title ; sh:maxCount 1 ; sh:datatype xsd:string ] .
 
 wsh:MelodyItems a sh:NodeShape ;
-  rdfs:comment "melody 1: one note or rest, <{revision}:note={n}>, with its written length; rdf:value is its position from 0." ;
+  rdfs:comment "melody 1 and 2: one note or rest, <{revision}:note={n}>, with its written length; rdf:value is its position from 0. A melody 2 pitch with no written length is unmeasured (revision 8)." ;
   sh:targetObjectsOf arch:melody_items ;
   sh:closed true ;
   sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
@@ -824,7 +834,8 @@ wsh:RepeatEndings a sh:NodeShape ;
   sh:targetObjectsOf arch:repeat_endings ;
   sh:closed true ;
   sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
-  sh:property [ sh:path arch:ending_passes ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:ending_passes ; sh:or ( [ sh:datatype xsd:integer ] [ sh:in ( "last" ) ] ) ;
+    rdfs:comment "A pass number; form 2's last-time ending names last (revision 8)." ] ;
   sh:property [ sh:path arch:first_section ] ;
   sh:property [ sh:path arch:last_section ] .
 
@@ -888,3 +899,42 @@ wsh:WrittenDuration a sh:NodeShape ;
   sh:closed true ;
   sh:property [ sh:path arch:note_count ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
   sh:property [ sh:path arch:note_unit ; sh:maxCount 1 ; sh:datatype xsd:integer ] .
+
+# Specification 0.0.11 (ADR 0113), added in revision 8. Melody, form, form
+# spans, and lead sheet version 2 add fields to the shapes above; the
+# underlay places a lyric document's lines, words, and syllables under the
+# items of one Work-level melody, each item the node of the pinned melody.
+
+wsh:SungPasses a sh:NodeShape ;
+  rdfs:comment "underlay 1: <{revision}:passes>, the repeat of the pinned form and the passes of it the words are sung under (revision 8)." ;
+  sh:targetObjectsOf arch:sung_passes ;
+  sh:closed true ;
+  sh:property [ sh:path arch:repeat_index ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:sung_pass_numbers ; sh:minCount 1 ; sh:or ( [ sh:datatype xsd:integer ] [ sh:in ( "last" ) ] ) ] .
+
+wsh:UnderlayLine a sh:NodeShape ;
+  rdfs:comment "underlay 1: one placed line of the document, <{revision}:line={n}>; rdf:value is its position from 0 (revision 8)." ;
+  sh:targetObjectsOf arch:underlay_lines ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:document_line ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:underlay_words ; sh:minCount 1 ; sh:nodeKind sh:IRI ] .
+
+wsh:UnderlayWord a sh:NodeShape ;
+  rdfs:comment "underlay 1: one placed word, on melody items or by syllables (revision 8)." ;
+  sh:targetObjectsOf arch:underlay_words ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:line_word ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:carrying_items ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:underlay_syllables ; sh:nodeKind sh:IRI ] .
+
+wsh:UnderlaySyllable a sh:NodeShape ;
+  rdfs:comment "underlay 1: one syllable of a placed word, by its number and characters in the word, on melody items (revision 8)." ;
+  sh:targetObjectsOf arch:underlay_syllables ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:word_syllable ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:start_char ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:end_char ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:carrying_items ; sh:minCount 1 ; sh:nodeKind sh:IRI ] .

@@ -205,7 +205,7 @@ underlayChecks accepts refuses =
       <> "{\"word\":1,\"items\":[0]},"
       <> "{\"word\":2,\"syllables\":[{\"syllable\":1,\"start_char\":0,\"end_char\":3,\"items\":[1]},"
       <> "{\"syllable\":2,\"start_char\":3,\"end_char\":7,\"items\":[2,3]}]}]}]}"
-    oneLine words = "{\"lines\":[{\"line\":1,\"words\":[" <> words <> "]}]}"
+    oneLine placed = "{\"lines\":[{\"line\":1,\"words\":[" <> placed <> "]}]}"
 
 formChecks :: Judge -> Judge -> [Check]
 formChecks accepts refuses =

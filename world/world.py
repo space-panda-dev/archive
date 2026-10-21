@@ -61,7 +61,7 @@ PROJECTION_VERSION = 6
 # build writes, so each addition raises the version's revision. A generation
 # built at an earlier revision is rebuilt in full rather than extended, or its
 # older records would lack what the addition projects.
-PROJECTION_REVISIONS = {6: 7}
+PROJECTION_REVISIONS = {6: 8}
 XSD = "http://www.w3.org/2001/XMLSchema#"
 UTC_INSTANT = re.compile(r"([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.([0-9]+))?Z\Z")
 DECIMAL = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?\Z")

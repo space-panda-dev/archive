@@ -596,6 +596,60 @@
       ]
     },
     {
+      "name": "a form with an open repeat, and a sketch (0.0.11)",
+      "command": "admit",
+      "records": [
+        {"key": "form-open", "namespace": "archive.claim/form", "name": "fixture-form-open", "shape": "claim", "contracts": [{"id": "archive.claim/form", "version": "2"}],
+         "payload": {"sections": [{"label": "Intro", "kind": "intro"}, {"label": "Head", "kind": "head"}, {"label": "Solos on the form", "kind": "solo"}, {"label": "Last time"}, {"label": "Coda", "kind": "coda"}], "repeats": [{"first": 1, "last": 3, "instruction": "open for solos, head out", "endings": [{"first": 2, "last": 2}, {"first": 3, "last": 3, "passes": ["last"]}]}]},
+         "refs": [{"role": "work", "pin": "work-a"}]},
+        {"key": "melody-sketch", "namespace": "archive.claim/melody", "name": "fixture-melody-sketch", "shape": "claim", "contracts": [{"id": "archive.claim/melody", "version": "2"}],
+         "payload": {"part": "voice", "notes": [{"pitch": 64}, {"pitch": 67}, {"pitch": 69, "duration": {"count": 1, "unit": 2}}, {"rest": true, "duration": {"count": 1, "unit": 4}}, {"pitch": 67}]},
+         "refs": [{"role": "work", "pin": "work-a"}]}
+      ]
+    },
+    {
+      "name": "bars in the open form, words under the sketch, and a recording's passes (0.0.11)",
+      "command": "admit",
+      "records": [
+        {"key": "meter-open", "namespace": "archive.claim/meter_layers", "name": "fixture-meter-open", "shape": "claim", "contracts": [{"id": "archive.claim/meter_layers", "version": "3"}],
+         "payload": {"layers": [{"role": "written", "bars": [{"numerator": 4, "denominator": 4, "section": 0}, {"numerator": 4, "denominator": 4, "section": 1}, {"numerator": 4, "denominator": 4, "section": 2}, {"numerator": 4, "denominator": 4, "section": 3}, {"numerator": 4, "denominator": 4, "section": 4}]}]},
+         "refs": [{"role": "work", "pin": "work-a"}, {"role": "form", "pin": "form-open"}]},
+        {"key": "underlay-sketch", "namespace": "archive.claim/underlay", "name": "fixture-underlay-sketch", "shape": "claim", "contracts": [{"id": "archive.claim/underlay", "version": "1"}],
+         "payload": {"lines": [{"line": 1, "words": [{"word": 1, "items": [0]}, {"word": 2, "syllables": [{"syllable": 1, "start_char": 0, "end_char": 2, "items": [1]}, {"syllable": 2, "start_char": 2, "end_char": 4, "items": [2]}]}]}]},
+         "refs": [{"role": "melody", "pin": "melody-sketch"}, {"role": "document", "pin": "lyrics"}]},
+        {"key": "form-spans-passes", "namespace": "archive.claim/form_spans", "name": "fixture-form-spans-passes", "shape": "claim", "contracts": [{"id": "archive.claim/form_spans", "version": "2"}],
+         "payload": {"sample_rate": 8000, "alignment": {"method": "manual", "precision": "approximate"}, "spans": [{"start_sample": 0, "end_sample": 500, "section": 0}, {"start_sample": 500, "end_sample": 1000, "section": 1, "passes": [1]}, {"start_sample": 1000, "end_sample": 1500, "section": 2, "passes": [1]}, {"start_sample": 1500, "end_sample": 2000, "section": 1, "passes": [2]}, {"start_sample": 2000, "end_sample": 2500, "section": 2, "passes": [2]}, {"start_sample": 2500, "end_sample": 3000, "label": "Extra chorus"}, {"start_sample": 3000, "end_sample": 3500, "section": 1, "passes": [3]}, {"start_sample": 3500, "end_sample": 4000, "section": 3, "passes": [3]}]},
+         "refs": [{"role": "source", "pin": "recording"}, {"role": "stream", "pin": "stream"}, {"role": "form", "pin": "form-open"}]}
+      ]
+    },
+    {
+      "name": "the tune measured, laid in the open form (0.0.11)",
+      "command": "admit",
+      "records": [
+        {"key": "melody-measured", "namespace": "archive.claim/melody", "name": "fixture-melody-measured", "shape": "claim", "contracts": [{"id": "archive.claim/melody", "version": "2"}],
+         "payload": {"part": "voice", "start": {"layer": 0, "bar": 1}, "notes": [{"pitch": 64, "duration": {"count": 1, "unit": 4}}, {"pitch": 67, "duration": {"count": 1, "unit": 4}}, {"pitch": 69, "duration": {"count": 1, "unit": 2}}, {"pitch": 67, "duration": {"count": 1, "unit": 1}}]},
+         "refs": [{"role": "work", "pin": "work-a"}, {"role": "meter", "pin": "meter-open"}]}
+      ]
+    },
+    {
+      "name": "verse one under the tune's first pass (0.0.11)",
+      "command": "admit",
+      "records": [
+        {"key": "underlay-verse", "namespace": "archive.claim/underlay", "name": "fixture-underlay-verse", "shape": "claim", "contracts": [{"id": "archive.claim/underlay", "version": "1"}],
+         "payload": {"label": "Verse 1", "passes": {"repeat": 0, "passes": [1]}, "lines": [{"line": 1, "words": [{"word": 1, "items": [0]}, {"word": 2, "items": [1, 2]}]}, {"line": 2, "words": [{"word": 1, "items": [3]}]}]},
+         "refs": [{"role": "melody", "pin": "melody-measured"}, {"role": "document", "pin": "lyrics"}, {"role": "form", "pin": "form-open"}, {"role": "derived_from", "pin": "underlay-sketch"}]}
+      ]
+    },
+    {
+      "name": "a lead sheet, version 2 (0.0.11)",
+      "command": "admit",
+      "records": [
+        {"key": "lead-sheet-v2", "namespace": "archive.claim/lead_sheet", "name": "fixture-lead-sheet-v2", "shape": "claim", "contracts": [{"id": "archive.claim/lead_sheet", "version": "2"}],
+         "payload": {"label": "Fixture chart, open solos"},
+         "refs": [{"role": "work", "pin": "work-a"}, {"role": "meter", "pin": "meter-open"}, {"role": "form", "pin": "form-open"}, {"role": "melody", "pin": "melody-measured"}, {"role": "lyrics", "pin": "lyrics"}, {"role": "underlay", "pin": "underlay-verse"}, {"role": "derived_from", "pin": "lead-sheet"}]}
+      ]
+    },
+    {
       "name": "retire",
       "command": "transition",
       "records": [
