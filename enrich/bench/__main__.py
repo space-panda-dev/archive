@@ -1,4 +1,4 @@
-"""python -m enrich.bench validate SET | run SET --variant NAME | check SET | equivalence | region | cost
+"""python -m enrich.bench validate SET | run SET --variant NAME | check SET | equivalence | region | cost | chords ...
 
 Exit status: 0 passed, 1 a mean regressed beyond the tolerance, 2 the run
 could not happen (a missing or changed file, a bad manifest or config, a
@@ -11,10 +11,10 @@ import argparse
 import json
 import sys
 
-from . import cost, equivalence, region, variants
+from . import chords, cost, equivalence, region, variants
 from .run import (DEFAULT_TOLERANCE, baseline_path, compare, record_baseline, run_set, summary,
                   write_result)
-from .sets import BenchError, bench_root, load_set, verify
+from .sets import BenchError, bench_root, load_set, sha256_file, verify
 
 
 def _gate(root, result, tolerance) -> int:
@@ -33,6 +33,57 @@ def _gate(root, result, tolerance) -> int:
         return 1
     print(f"ok: within {tolerance} of the baseline")
     return 0
+
+
+def _chords(args) -> int:
+    if args.chords_command == "reference":
+        from pathlib import Path
+        taps = [float(line) for line in Path(args.taps).read_text().split() if line.strip()]
+        reference = chords.reference_from_taps(
+            json.loads(Path(args.claims).read_text()), taps, recording_sha256=sha256_file(Path(args.recording)),
+            chart_sha256=sha256_file(Path(args.chart)), transposition=args.transposition,
+            first_occurrence=args.first_occurrence)
+        chords.parse_reference(reference)
+        Path(args.out).write_text(json.dumps(reference, indent=1) + "\n")
+        print(f"reference {args.out}: {len(reference['chords'])} chords over {len(reference['sections'])} sections")
+        return 0
+    root = bench_root(args.root)
+    path = root / "sets" / f"{args.set}.json"
+    if not path.is_file():
+        raise BenchError(f"no set {args.set}: {path} does not exist")
+    chord_set = chords.parse_set(args.set, json.loads(path.read_text(encoding="utf-8")), sha256_file(path))
+    if args.chords_command == "validate":
+        chords.verify(root, chord_set)
+        for item in chord_set.items:
+            chords.parse_reference(json.loads((root / item.reference.path).read_text(encoding="utf-8")), item)
+        print(f"{chord_set.name}: {len(chord_set.items)} items, every file present and unchanged, every reference valid")
+        return 0
+    if args.chords_command == "run":
+        names = [args.variant]
+    else:
+        found = sorted((root / "baselines" / chord_set.name).glob("*@recording.json"))
+        if not found:
+            raise BenchError(f"no baselines for {chord_set.name} under {root / 'baselines'}")
+        names = [p.stem.split("@", 1)[0] for p in found]
+    status = 0
+    for name in names:
+        result = chords.run_set(root, chord_set, chords.build(name, root))
+        print(chords.summary(result))
+        print(f"  result {write_result(root, result)}")
+        if args.chords_command == "run" and args.record_baseline:
+            print(f"  baseline {record_baseline(root, result)}")
+            continue
+        base = baseline_path(root, chord_set.name, name, "recording")
+        if not base.is_file():
+            print(f"no baseline at {base}; nothing to compare (record one with --record-baseline)")
+            continue
+        failures = chords.compare(result, json.loads(base.read_text()), args.tolerance)
+        if failures:
+            print("REGRESSION:\n  " + "\n  ".join(failures))
+            status = 1
+        else:
+            print(f"ok: within {args.tolerance} of the baseline")
+    return status
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -57,7 +108,39 @@ def main(argv: list[str] | None = None) -> int:
     k = commands.add_parser("cost", help="measure the backfill's CPU seconds per audio-second over the root's clip "
                                          "and fail on a regression (see enrich/bench/cost.py)")
     k.add_argument("--record-baseline", action="store_true", help="store this result as the baseline")
+    h = commands.add_parser("chords", help="the chord bench: chart chords placed on recordings against the "
+                                           "machine's (see enrich/bench/chords.py)")
+    hc = h.add_subparsers(dest="chords_command", required=True)
+    hv = hc.add_parser("validate", help="check a chord set's manifest, every file it names, and every reference")
+    hv.add_argument("set")
+    hr = hc.add_parser("run", help="score one chord variant over a set, record it, compare with its baseline")
+    hr.add_argument("set")
+    hr.add_argument("--variant", required=True, choices=sorted(chords.VARIANTS))
+    hr.add_argument("--tolerance", type=float, default=DEFAULT_TOLERANCE)
+    hr.add_argument("--record-baseline", action="store_true", help="store this result as the baseline")
+    hk = hc.add_parser("check", help="rerun every baseline of a chord set and fail on a regression")
+    hk.add_argument("set")
+    hk.add_argument("--tolerance", type=float, default=DEFAULT_TOLERANCE)
+    hf = hc.add_parser("reference", help="a person's reference from the chart's claims and tapped section downbeats")
+    hf.add_argument("--claims", required=True, help="JSON: the chart's untimed payloads {meter, form, sequence, key}")
+    hf.add_argument("--taps", required=True, help="a text file of seconds, one per line: each played section's "
+                                                  "downbeat, then the end of the last")
+    hf.add_argument("--recording", required=True, help="the recording (its sha256 is recorded)")
+    hf.add_argument("--chart", required=True, help="the chart document (its sha256 is recorded)")
+    hf.add_argument("--transposition", type=int, default=0)
+    hf.add_argument("--first-occurrence", type=int, default=0,
+                    help="the played section the first tap starts (default the first)")
+    hf.add_argument("--out", required=True)
     args = parser.parse_args(argv)
+    if args.command == "chords":
+        try:
+            return _chords(args)
+        except (BenchError, ValueError, OSError) as exc:
+            # A chart the placement rule cannot read (align.AlignError), a
+            # malformed JSON or taps file, a missing file: the run could not
+            # happen, which is 2, never 1 (a regression).
+            print(f"bench: {exc}", file=sys.stderr)
+            return 2
     try:
         root = bench_root(args.root)
         if args.command == "equivalence":
