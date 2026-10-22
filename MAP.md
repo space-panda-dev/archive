@@ -23,7 +23,7 @@ extractors) and proposes their claims to Door under derivation runs (ADR
 0064, 0073, 0074). **capture** (`capture/`) imports a recorder card as
 sessions and runs the enrich chain (ADR 0070). **documents** (`documents/`)
 holds importers of outside documents ([README](documents/README.md)); so far the iReal Pro codec, chart
-reader and chord grammar (ADR 0116, proposed). **migration** (`migration/`)
+reader, chord grammar and exporter (ADR 0116, proposed). **migration** (`migration/`)
 translates the V2 spike's records into Door proposals (ADR 0035, 0036,
 0047-0049). **shadow** (`shadow/`) compares and reviews shadow runs and makes
 scratch archives (ADR 0061, [runbook](docs/shadow-runbook.md)). **fixture**
@@ -325,10 +325,14 @@ Purpose: importers of outside documents (ADR 0116, proposed; nothing admits
 yet). `documents/ireal/codec.py`: `decode_playlist`, `chart_link`,
 `encode_chart`, `encode_playlist`, `unscramble`; `chart.py`: `read_chart`,
 `UnsupportedChart`; `symbols.py`: `GRAMMAR_VERSION`, `QUALITIES`,
-`read_symbol`, `reading_of`, `symbol_of`, `read_key`.
+`read_symbol`, `reading_of`, `symbol_of`, `read_key`; `export.py`:
+exporter `lead-sheet-ireal` 1 (`render`, `playlist`, `page`, `main` as
+`relay/exporting.py` runs an exporter); `stand_in.py`: the chart-to-claims
+reading the exporter's round trip tests, until the importer's replaces it.
 Tests: suite `documents` (tier 5, local); `test_codec`, `test_chart`,
 `test_symbols` (readings checked with World's `check_reading_v2` and
-`check_key_reading`). Invented charts only: no real titles or charts.
+`check_key_reading`), `test_export` (read, export, read again: equal in
+claims). Invented charts only: no real titles or charts.
 
 ## migration (Python)
 
