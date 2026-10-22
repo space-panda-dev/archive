@@ -21,7 +21,9 @@ media to the operator's browser over the tailnet (ADR 0056, 0060).
 **enrich** (`enrich/`) runs machine tools (probe, detect, match, feature-bank
 extractors) and proposes their claims to Door under derivation runs (ADR
 0064, 0073, 0074). **capture** (`capture/`) imports a recorder card as
-sessions and runs the enrich chain (ADR 0070). **migration** (`migration/`)
+sessions and runs the enrich chain (ADR 0070). **documents** (`documents/`)
+holds importers of outside documents ([README](documents/README.md)); so far the iReal Pro codec, chart
+reader and chord grammar (ADR 0116, proposed). **migration** (`migration/`)
 translates the V2 spike's records into Door proposals (ADR 0035, 0036,
 0047-0049). **shadow** (`shadow/`) compares and reviews shadow runs and makes
 scratch archives (ADR 0061, [runbook](docs/shadow-runbook.md)). **fixture**
@@ -42,6 +44,7 @@ module is `wf check enrich -- -p test_bank.py` and one test name is
 | check | 1 | 60s | `python3 scripts/check.py "$@"` |
 | docs | 1 | 60s | `wf vet --docs "$@"` |
 | build | 300 | 1800s | `cabal build -v0 lib:archive exe:door exe:archive "$@"` |
+| documents | 5 | 60s | `python3 -m unittest discover -s documents/ireal -p "test_*.py" "$@"` |
 | haskell | night | 3600s | `cabal test all "$@"` |
 | world | night | 3600s | `$PYTHON -m unittest discover -s world/tests "$@"` |
 | relay | 300 | 1800s | `$PYTHON -m unittest discover -s relay/tests "$@"` |
@@ -315,6 +318,17 @@ Rules: ADR 0070; capture proposes, Door commits (INV-2).
 | `capture/capture.py` | 704 |
 | `capture/test_capture.py` | 855 |
 <!-- /wf:gen -->
+
+## documents (Python)
+
+Purpose: importers of outside documents (ADR 0116, proposed; nothing admits
+yet). `documents/ireal/codec.py`: `decode_playlist`, `chart_link`,
+`encode_chart`, `encode_playlist`, `unscramble`; `chart.py`: `read_chart`,
+`UnsupportedChart`; `symbols.py`: `GRAMMAR_VERSION`, `QUALITIES`,
+`read_symbol`, `reading_of`, `symbol_of`, `read_key`.
+Tests: suite `documents` (tier 5, local); `test_codec`, `test_chart`,
+`test_symbols` (readings checked with World's `check_reading_v2` and
+`check_key_reading`). Invented charts only: no real titles or charts.
 
 ## migration (Python)
 
