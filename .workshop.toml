@@ -46,15 +46,16 @@ tier = 300
 paths = ["door/**", "archive/**", "archive.cabal", "cabal.project"]
 
 # The importers of outside documents (documents/, ADR 0116, proposed): the
-# iReal Pro codec, chart reader and chord grammar, standard library only, with
-# no Door and no prelude. Measured: 0.1 s here.
+# iReal Pro codec, chart reader, chord grammar and exporter, standard library
+# and World only, with no Door and no prelude. Measured: 0.1 s here.
 [suites.documents]
 run = 'python3 -m unittest discover -s documents/ireal -p "test_*.py" "$@"'
 where = "local"
 timeout_seconds = 60
 parser = "unittest"
 tier = 5
-paths = ["documents/**", "world/harmony.py", "world/tonality.py"]
+paths = ["documents/**", "world/harmony.py", "world/tonality.py", "world/form.py", "world/exports.py",
+         "world/notes.py", "world/contributions.py", "world/lead_sheets.py", "world/documents.py"]
 
 # ---- before a merge, on the laptop (tiers 30 to night) --------------------------
 # HS: what the prelude builds, so every suite below depends on it.

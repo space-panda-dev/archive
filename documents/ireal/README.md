@@ -1,8 +1,8 @@
 # iReal Pro
 
 The iReal Pro importer ([ADR 0116](../../docs/decisions/0116-ireal-charts.md),
-proposed), standard library only. The codec, chart reader, grammar and claims
-are pure; `batches.py`, `importer.py` and `links.py` write Door proposals and
+accepted), standard library only. The codec, chart reader, grammar, claims and
+exporter are pure; `batches.py`, `importer.py` and `links.py` write Door proposals and
 run `door admit`. Tests use invented charts only (suites `documents` and
 `documents-door`).
 
@@ -15,7 +15,9 @@ run `door admit`. Tests use invented charts only (suites `documents` and
 | [`batches.py`](batches.py) | proposal directories with revisions planned ahead; `combined` joins batches for a dry run, which predicts them in groups under Door's proposal size limit |
 | [`importer.py`](importer.py) | `run_import`: the playlist and chart documents, their source claims, one `ireal-chart` run per chart and its claims; a rerun on unchanged input writes nothing |
 | [`links.py`](links.py) | `candidates` (Work and composer candidates with their evidence; a title alone is never a link) and `run_link` (the operator's confirmed links, composer contributions, `lead_sheet`) |
-| `test_*.py` | one per pure module |
+| [`export.py`](export.py) | exporter `lead-sheet-ireal` version 1: an untimed lead sheet as an `irealb://` link of one chart, with its losses; `playlist` (links into one playlist) and `page` (the HTML iReal Pro imports from); runs as the relay runs an exporter |
+| [`stand_in.py`](stand_in.py) | a stand-in for the importer's reading of a chart into claim payloads, naming each choice it makes, so the exporter's round trip is tested; the importer's claim builder replaces it |
+| `test_*.py` | one per module; `test_export` reads, exports and reads again |
 
 Links in the wild are percent-encoded by different programs (some escape
 every byte, some escape `=` and the song separator), so a chart's slice of

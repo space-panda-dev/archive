@@ -22,8 +22,8 @@ media to the operator's browser over the tailnet (ADR 0056, 0060).
 extractors) and proposes their claims to Door under derivation runs (ADR
 0064, 0073, 0074). **capture** (`capture/`) imports a recorder card as
 sessions and runs the enrich chain (ADR 0070). **documents** (`documents/`)
-holds importers of outside documents ([README](documents/README.md)); the iReal Pro importer, Work links and
-chord grammar (ADR 0116, proposed). **migration** (`migration/`)
+holds importers of outside documents ([README](documents/README.md)); the iReal Pro importer, Work links,
+chord grammar and exporter (ADR 0116). **migration** (`migration/`)
 translates the V2 spike's records into Door proposals (ADR 0035, 0036,
 0047-0049). **shadow** (`shadow/`) compares and reviews shadow runs and makes
 scratch archives (ADR 0061, [runbook](docs/shadow-runbook.md)). **fixture**
@@ -322,7 +322,7 @@ Rules: ADR 0070; capture proposes, Door commits (INV-2).
 
 ## documents (Python)
 
-Purpose: importers of outside documents (ADR 0116, proposed).
+Purpose: importers of outside documents (ADR 0116).
 `documents/documents.py`: the command line, `ireal import|candidates|link`.
 `documents/ireal/codec.py`: `decode_playlist`, `chart_link`, `encode_chart`,
 `encode_playlist`, `unscramble`; `chart.py`: `read_chart`, `UnsupportedChart`;
@@ -333,11 +333,15 @@ directories with revisions planned ahead, `combined` for a dry run's groups;
 `importer.py`: `run_import` (playlist and chart documents, `ireal-chart` runs,
 quiet reruns); `links.py`: `candidates` (a private candidates file and a
 decisions template), `run_link` (the operator's Work links, composer
-contributions, `lead_sheet`).
+contributions, `lead_sheet`); `export.py`:
+exporter `lead-sheet-ireal` 1 (`render`, `playlist`, `page`, `main` as
+`relay/exporting.py` runs an exporter); `stand_in.py`: the chart-to-claims
+reading the exporter's round trip tests, until the importer's replaces it.
 Tests: suite `documents` (tier 5, local; `documents/ireal/test_*.py`,
 readings checked with World's `check_reading_v2` and `check_key_reading`);
 suite `documents-door` (tier 30, prelude; `documents/tests`: import, rerun,
-link and candidates through the real Door in a scratch archive). Invented
+link and candidates through the real Door in a scratch archive);
+`test_export` reads, exports and reads again: equal in claims. Invented
 charts only: no real titles or charts.
 
 ## migration (Python)
