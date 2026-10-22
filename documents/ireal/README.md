@@ -12,9 +12,9 @@ run `door admit`. Tests use invented charts only (suites `documents` and
 | [`chart.py`](chart.py) | `read_chart`: a song's markup into bars, cells, time signatures, marks, repeats with endings, segno, coda, Fine and jumps; `UnsupportedChart` for structure it cannot read |
 | [`symbols.py`](symbols.py) | grammar version 1: `read_symbol` (a chord into a chord-stack reading, `UnsupportedSymbol` naming what it cannot read), `reading_of` (a text-only reading instead), `symbol_of` (a reading back to a symbol), `read_key` |
 | [`claims.py`](claims.py) | `chart_claims`: a chart into `chord_sequence` v2, `form` v1, an untimed `meter_layers` v2 written layer and `key_sequence` v1; a chart World refuses raises `UnsupportedChart`, so none is read in part |
-| [`batches.py`](batches.py) | proposal directories with revisions planned ahead; `combined` joins a playlist's batches for one dry run |
+| [`batches.py`](batches.py) | proposal directories with revisions planned ahead; `combined` joins batches for a dry run, which predicts them in groups under Door's proposal size limit |
 | [`importer.py`](importer.py) | `run_import`: the playlist and chart documents, their source claims, one `ireal-chart` run per chart and its claims; a rerun on unchanged input writes nothing |
-| [`links.py`](links.py) | `candidates` (Work and composer candidates with evidence, never by title alone) and `run_link` (the operator's confirmed links, composer contributions, `lead_sheet`) |
+| [`links.py`](links.py) | `candidates` (Work and composer candidates with their evidence; a title alone is never a link) and `run_link` (the operator's confirmed links, composer contributions, `lead_sheet`) |
 | `test_*.py` | one per pure module |
 
 Links in the wild are percent-encoded by different programs (some escape

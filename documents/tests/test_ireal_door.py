@@ -123,10 +123,30 @@ class Import(unittest.TestCase):
         self.assertEqual(run["payload"]["method"], {"id": "ireal-chart", "version": "1"})
         self.assertEqual(sorted(ref["role"] for ref in run["refs"]), ["parameters", "used", "used"])
 
+        # The chain: each chart's claims name its document and its run, the
+        # run used that document and the playlist, and the meter pins the
+        # form and sequence of the same run.
+        playlist_id = playlist_source[0]["refs"][0]["id"]
+        runs = {r["revision_id"]: r for r in self.claims("archive.claim/derivation_run")}
+        heads = {r["revision_id"]: r for r in records}
+        for meter in self.claims("archive.claim/meter_layers"):
+            pins = {ref["role"]: ref for ref in meter["refs"]}
+            used = {ref["id"] for ref in runs[pins["run"]["revision_id"]]["refs"] if ref["role"] == "used"}
+            self.assertEqual(used, {playlist_id, pins["document"]["id"]})
+            for role in ("form", "sequence"):
+                pinned = {ref["role"]: ref for ref in heads[pins[role]["revision_id"]]["refs"]}
+                self.assertEqual((pinned["run"], pinned["document"]), (pins["run"], pins["document"]))
+
         before = len(self.export()["records"])
         code, answer = self.importing()
         self.assertEqual((code, answer["status"], answer["counts"]), (0, "unchanged", {"known": 3}))
         self.assertEqual(len(self.export()["records"]), before)
+
+        # A new release of the tool with the same grammar and parameters
+        # reads nothing again.
+        with unittest.mock.patch.object(importer, "AGENT", importer.AGENT_PREFIX + "9.9.9"):
+            code, answer = self.importing()
+        self.assertEqual((code, answer["status"]), (0, "unchanged"))
 
     def test_the_same_chart_in_another_playlist_yields_nothing(self) -> None:
         self.importing()

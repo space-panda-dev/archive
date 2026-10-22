@@ -36,8 +36,8 @@ if str(ENRICH) not in sys.path:
 import adapter  # noqa: E402  (the enrichment adapter: reading the archive, staging, identities)
 from batches import Batch, admit, combined
 from codec import CodecError, chart_link, decode_playlist
-from importer import (AGENT, FORM, KEY, KINDS, MEDIA_TYPE, METER, RUN, RUN_NAMESPACE,
-                      SEQUENCE, SOFTWARE, SOURCE)
+from importer import (AGENT, DRY_RUN_CHARTS, FORM, KEY, KINDS, MEDIA_TYPE, METER, RUN, RUN_NAMESPACE,
+                      SEQUENCE, SOFTWARE, SOURCE, ours)
 from claims import METHOD
 from symbols import GRAMMAR_VERSION
 
@@ -225,11 +225,11 @@ def chart_readings(reader: adapter.ArchiveReader, document: str) -> dict[str, di
     `ireal-chart` run of this grammar version: role name to pin."""
     method = {"id": METHOD, "version": str(GRAMMAR_VERSION)}
     runs = {record["revision_id"]: record for record in reader.heads.values()
-            if record["shape"] == "claim" and reader.cites(record, RUN) and record["agent"] == AGENT
+            if record["shape"] == "claim" and reader.cites(record, RUN) and ours(record)
             and record["payload"].get("method") == method}
     by_run: dict[str, dict[str, dict[str, str]]] = {}
     for record in reader.heads.values():
-        if record["shape"] != "claim" or record["agent"] != AGENT:
+        if record["shape"] != "claim" or not ours(record):
             continue
         refs = record.get("refs", [])
         run = next((ref["revision_id"] for ref in refs if ref["role"] == "run"), None)
@@ -372,8 +372,13 @@ def run_link(decisions_path: Path, *, archive: Path, door: str = "door", archive
     batches, report = plan_link(reader, decisions, operator or operator_of(reader))
     if batches:
         if dry_run:
-            admit(combined("link", batches), door=door, dry_run=True, staging=None, env=env,
-                  keep=proposals / "0000-link" if proposals else None)
+            # Link batches pin only committed records, so they are predicted
+            # in groups; one proposal for every chart would pass Door's
+            # proposal size limit, as the importer's dry run would.
+            for index in range(0, len(batches), DRY_RUN_CHARTS):
+                admit(combined("link", batches[index:index + DRY_RUN_CHARTS]), door=door, dry_run=True,
+                      staging=None, env=env,
+                      keep=proposals / f"{index // DRY_RUN_CHARTS:04d}-link" if proposals else None)
         else:
             for number, batch in enumerate(batches):
                 admit(batch, door=door, dry_run=False, staging=None, env=env,

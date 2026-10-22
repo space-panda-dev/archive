@@ -329,7 +329,7 @@ Purpose: importers of outside documents (ADR 0116, proposed).
 `symbols.py`: `GRAMMAR_VERSION`, `QUALITIES`, `read_symbol`, `reading_of`,
 `symbol_of`, `read_key`; `claims.py`: `chart_claims` (chord sequence, form,
 written meter layer, key sequence), `PARAMETERS`; `batches.py`: Door proposal
-directories with revisions planned ahead, `combined` for a dry run;
+directories with revisions planned ahead, `combined` for a dry run's groups;
 `importer.py`: `run_import` (playlist and chart documents, `ireal-chart` runs,
 quiet reruns); `links.py`: `candidates` (a private candidates file and a
 decisions template), `run_link` (the operator's Work links, composer

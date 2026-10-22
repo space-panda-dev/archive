@@ -25,8 +25,9 @@ The rules this module adds to the reader's, all named in `PARAMETERS`:
   iReal Pro's playback).
 - **Bar repeats.** `x` repeats the bar before and `r` the two before (the
   `r` bar and the empty bar after it): written out, a repeated bar whose only
-  chord is on its downbeat lists no chords (held), and otherwise each chord
-  is a new entry copying the repeated entry's readings.
+  chord is on its downbeat and is the chord still sounding lists no chords
+  (held), and otherwise each chord is a new entry copying the repeated
+  entry's readings.
 """
 
 from __future__ import annotations
@@ -61,8 +62,9 @@ PARAMETERS: dict[str, Any] = {
     "sections": "a section starts at the first bar, each rehearsal mark, each {, each ending, after each repeat's "
                 "last bar, at the segno and the coda, and after the bar a jump, the Fine or the first coda sign "
                 "leaves from; one with no mark of its own repeats the mark in force; endings are 1., 2., 3.",
-    "bar_repeats": "x and r are written out: a repeated bar whose only chord is on its downbeat lists no chords "
-                   "(held); otherwise each chord is a new entry copying the repeated entry's readings",
+    "bar_repeats": "x and r are written out: a repeated bar whose only chord is on its downbeat and is the chord "
+                   "still sounding lists no chords (held); otherwise each chord is a new entry copying the "
+                   "repeated entry's readings",
     "implied_extensions": "an extension implies the sevenths and ninths below it; a thirteenth leaves out the "
                           "eleventh; 7alt and 11 name uncertain tones",
     "minor_key": "natural minor",
@@ -116,6 +118,8 @@ def _bar_chords(chart: Chart, text_only: list[tuple[str, str]]) -> list[list[_Ch
             if cells:
                 raise UnsupportedChart(f"bar {bar.number} after a two-bar repeat is not empty")
             out.append(pending_second)
+            if pending_second:
+                previous = pending_second[-1].readings[0]
             pending_second = None
             continue
         if kinds & {"repeat_one", "repeat_two"}:
@@ -127,6 +131,8 @@ def _bar_chords(chart: Chart, text_only: list[tuple[str, str]]) -> list[list[_Ch
             out.append(out[-back])
             if back == 2:
                 pending_second = out[-2]
+            if out[-1]:
+                previous = out[-1][-1].readings[0]
             continue
         chords = []
         for index, cell in cells:
@@ -243,7 +249,11 @@ def chart_claims(markup: str, key_field: str) -> ChartClaims:
         item: dict[str, Any] = {"numerator": numerator, "denominator": denominator,
                                 "locator": {"bar": bar.number}, "section": section}
         listed = []
-        held = (chords is not None and len(chords) == 1 and chords[0].offset == 0
+        # A repeated bar holds only the chord still sounding: `x` after a
+        # one-chord bar does, but `r` over two different one-chord bars
+        # brings back a chord that is not sounding, a new entry.
+        held = (len(chords) == 1 and chords[0].offset == 0 and bool(entries)
+                and chords[0].readings == entries[-1]["readings"]
                 and any(chords is earlier for earlier in bar_chords[:bar.number - 1]))
         if not held:
             for chord in chords:

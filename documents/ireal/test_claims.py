@@ -66,11 +66,17 @@ class Entries(unittest.TestCase):
                          [(3, 4), (4, 4), (4, 4)])
 
     def test_a_repeated_bar_holds_one_downbeat_chord_and_copies_more(self) -> None:
-        claims = chart_claims("[T44C XyQKcl LZD-7 G7 |x |F XyQ|G XyQ|r|XyQZ", "C")
-        self.assertEqual(texts(claims), ["C", "D-7", "G7", "D-7", "G7", "F", "G"])
+        claims = chart_claims("[T44C XyQKcl LZD-7 G7 |x |F XyQ|G XyQ|r|XyQ|C XyQ|C XyQ|r|XyQZ", "C")
+        self.assertEqual(texts(claims), ["C", "D-7", "G7", "D-7", "G7", "F", "G", "F", "G", "C", "C"])
         self.assertEqual(bar_chords(claims), [
             [(0, None)], [], [(1, None), (2, {"count": 1, "unit": 2})], [(3, None), (4, {"count": 1, "unit": 2})],
-            [(5, None)], [(6, None)], [], []])
+            [(5, None)], [(6, None)], [(7, None)], [(8, None)], [(9, None)], [(10, None)], [], []])
+
+    def test_a_two_bar_repeat_brings_back_a_chord_that_is_not_sounding(self) -> None:
+        # F then G, repeated: the repeat's first bar is F again, not G held.
+        claims = chart_claims("[T44F XyQ|G XyQ|r|XyQZ", "C")
+        self.assertEqual(texts(claims), ["F", "G", "F", "G"])
+        self.assertEqual(bar_chords(claims), [[(0, None)], [(1, None)], [(2, None)], [(3, None)]])
 
     def test_alternates_invisible_roots_slashes_and_no_chord(self) -> None:
         claims = chart_claims("[T44C7(Db7) W/E pn |(Gb7)XyQZ", "C")

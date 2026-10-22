@@ -17,8 +17,10 @@ yields nothing. A chart the grammar cannot read yields its document, its
 source claim and the run, no other claim, and is listed in the report with
 the reason; the command then exits 1.
 
-A dry run asks Door to predict every batch as one (later batches pin the
-revisions earlier ones would commit), and stages and configures nothing.
+A dry run asks Door to predict the playlist batch followed by up to
+`DRY_RUN_CHARTS` chart batches as one proposal (chart batches pin the
+revisions the playlist batch would commit), group by group, and stages and
+configures nothing.
 """
 
 from __future__ import annotations
@@ -42,7 +44,8 @@ from codec import CodecError, chart_link, decode_playlist
 from symbols import GRAMMAR_VERSION
 
 VERSION = "0.1.0"
-AGENT = f"pkg:generic/archive-documents@{VERSION}"
+AGENT_PREFIX = "pkg:generic/archive-documents@"
+AGENT = f"{AGENT_PREFIX}{VERSION}"
 SOFTWARE = (("archive-documents", VERSION),)
 ARTIFACT_NAMESPACE = "archive.core/artifact"
 RUN_NAMESPACE = "archive.derivation/run"
@@ -87,13 +90,19 @@ def parameter_bytes() -> bytes:
     return adapter.canonical(PARAMETERS)
 
 
+def ours(record: dict[str, Any]) -> bool:
+    """Asserted by this tool at any release: the method's version and the
+    parameters, not the package's version, say what a run read."""
+    return record["agent"].startswith(AGENT_PREFIX)
+
+
 def used_documents(reader: adapter.ArchiveReader, parameters_digest: str) -> set[str]:
     """Object IDs every recorded `ireal-chart` run of this grammar version and
     these parameters used: their charts yield nothing again."""
     used: set[str] = set()
     method = {"id": METHOD, "version": str(GRAMMAR_VERSION)}
     for record in reader.records:
-        if record["shape"] != "claim" or not reader.cites(record, RUN) or record["agent"] != AGENT:
+        if record["shape"] != "claim" or not reader.cites(record, RUN) or not ours(record):
             continue
         if record["payload"].get("method") != method:
             continue
