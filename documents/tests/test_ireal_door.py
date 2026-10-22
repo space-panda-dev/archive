@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -21,6 +22,7 @@ sys.path.insert(0, str(DOCUMENTS))
 sys.path.insert(0, str(DOCUMENTS / "ireal"))
 
 import documents  # noqa: E402
+import importer  # noqa: E402
 from codec import Playlist, Song, encode_playlist, music_field  # noqa: E402
 
 DOOR = os.environ.get("ARCHIVE_TEST_DOOR")
@@ -87,11 +89,15 @@ class Import(unittest.TestCase):
     def test_a_dry_run_predicts_and_writes_nothing(self) -> None:
         before = len(self.export()["records"])
         proposals = self.tmp / "proposals"
-        code, answer = self.importing("--dry-run", "--proposals", str(proposals))
+        # Two charts per proposal: the three charts are predicted in two
+        # proposals, each after the playlist's records.
+        with unittest.mock.patch.object(importer, "DRY_RUN_CHARTS", 2):
+            code, answer = self.importing("--dry-run", "--proposals", str(proposals))
         self.assertEqual((code, answer["status"]), (1, "predicted"))
         self.assertEqual(len(self.export()["records"]), before)
         self.assertFalse((self.tmp / "staging").exists())
-        self.assertTrue((proposals / "0000-import" / "manifest.json").is_file())
+        self.assertEqual(sorted(p.name for p in proposals.iterdir()), ["0000-import", "0001-import"])
+        self.assertTrue((proposals / "0001-import" / "manifest.json").is_file())
 
     def test_import_admits_documents_and_claims_and_a_rerun_writes_nothing(self) -> None:
         code, answer = self.importing("--retrieved-at", "2001-02-03")
@@ -177,8 +183,6 @@ class Import(unittest.TestCase):
                                     "--out", str(out), "--archive-command", ARCHIVE)
         self.assertEqual((answer["linked"], answer["with_work_candidates"]), (1, 2))   # title, and composer
 
-
-import unittest.mock  # noqa: E402
 
 if __name__ == "__main__":
     unittest.main()

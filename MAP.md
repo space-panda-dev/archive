@@ -22,8 +22,8 @@ media to the operator's browser over the tailnet (ADR 0056, 0060).
 extractors) and proposes their claims to Door under derivation runs (ADR
 0064, 0073, 0074). **capture** (`capture/`) imports a recorder card as
 sessions and runs the enrich chain (ADR 0070). **documents** (`documents/`)
-holds importers of outside documents ([README](documents/README.md)); so far the iReal Pro codec, chart
-reader and chord grammar (ADR 0116, proposed). **migration** (`migration/`)
+holds importers of outside documents ([README](documents/README.md)); the iReal Pro importer, Work links and
+chord grammar (ADR 0116, proposed). **migration** (`migration/`)
 translates the V2 spike's records into Door proposals (ADR 0035, 0036,
 0047-0049). **shadow** (`shadow/`) compares and reviews shadow runs and makes
 scratch archives (ADR 0061, [runbook](docs/shadow-runbook.md)). **fixture**
@@ -50,6 +50,7 @@ module is `wf check enrich -- -p test_bank.py` and one test name is
 | relay | 300 | 1800s | `$PYTHON -m unittest discover -s relay/tests "$@"` |
 | enrich-tests | 30 | 1800s | `$PYTHON -m unittest discover -s enrich/tests "$@"` |
 | shadow | 300 | 1800s | `$PYTHON -m unittest discover -s shadow -p "test_*.py" "$@"` |
+| documents-door | 30 | 1800s | `$PYTHON -m unittest discover -s documents/tests "$@"` |
 | migration | 30 | 1800s | `$PYTHON -m unittest discover -s migration -p "test_*.py" "$@"` |
 | fixture | 300 | 1800s | `$PYTHON -m unittest discover -s fixture -p "test_*.py" "$@"` |
 | enrich | night | 3600s | `$ENRICH_PYTHON -m unittest discover -s enrich -p "test_*.py" "$@"` |
@@ -321,14 +322,23 @@ Rules: ADR 0070; capture proposes, Door commits (INV-2).
 
 ## documents (Python)
 
-Purpose: importers of outside documents (ADR 0116, proposed; nothing admits
-yet). `documents/ireal/codec.py`: `decode_playlist`, `chart_link`,
-`encode_chart`, `encode_playlist`, `unscramble`; `chart.py`: `read_chart`,
-`UnsupportedChart`; `symbols.py`: `GRAMMAR_VERSION`, `QUALITIES`,
-`read_symbol`, `reading_of`, `symbol_of`, `read_key`.
-Tests: suite `documents` (tier 5, local); `test_codec`, `test_chart`,
-`test_symbols` (readings checked with World's `check_reading_v2` and
-`check_key_reading`). Invented charts only: no real titles or charts.
+Purpose: importers of outside documents (ADR 0116, proposed).
+`documents/documents.py`: the command line, `ireal import|candidates|link`.
+`documents/ireal/codec.py`: `decode_playlist`, `chart_link`, `encode_chart`,
+`encode_playlist`, `unscramble`; `chart.py`: `read_chart`, `UnsupportedChart`;
+`symbols.py`: `GRAMMAR_VERSION`, `QUALITIES`, `read_symbol`, `reading_of`,
+`symbol_of`, `read_key`; `claims.py`: `chart_claims` (chord sequence, form,
+written meter layer, key sequence), `PARAMETERS`; `batches.py`: Door proposal
+directories with revisions planned ahead, `combined` for a dry run;
+`importer.py`: `run_import` (playlist and chart documents, `ireal-chart` runs,
+quiet reruns); `links.py`: `candidates` (a private candidates file and a
+decisions template), `run_link` (the operator's Work links, composer
+contributions, `lead_sheet`).
+Tests: suite `documents` (tier 5, local; `documents/ireal/test_*.py`,
+readings checked with World's `check_reading_v2` and `check_key_reading`);
+suite `documents-door` (tier 30, prelude; `documents/tests`: import, rerun,
+link and candidates through the real Door in a scratch archive). Invented
+charts only: no real titles or charts.
 
 ## migration (Python)
 

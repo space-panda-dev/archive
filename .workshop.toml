@@ -105,6 +105,16 @@ prelude = true
 tier = 300
 paths = ["shadow/**", "migration/**", "world/**", "door/**", "archive/**", "spec/**", "archive.cabal", "cabal.project"]
 
+# The documents importers against the real Door: an invented playlist
+# imported, rerun, linked and listed as candidates in a scratch archive.
+[suites.documents-door]
+run = '$PYTHON -m unittest discover -s documents/tests "$@"'
+timeout_seconds = 1800
+parser = "unittest"
+prelude = true
+tier = 30
+paths = ["documents/**", "world/**", "enrich/adapter.py", "door/**", "archive/**", "spec/**", "archive.cabal", "cabal.project"]
+
 # Measured: 6 s.
 [suites.migration]
 run = '$PYTHON -m unittest discover -s migration -p "test_*.py" "$@"'

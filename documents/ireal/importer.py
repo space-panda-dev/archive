@@ -217,6 +217,9 @@ def plan(data: bytes, filename: str, reader: adapter.ArchiveReader, staging: ada
     return (head if head.drafts else None), charts, report
 
 
+# Charts per dry-run proposal (with the playlist batch before them).
+DRY_RUN_CHARTS = 100
+
 def run_import(path: Path, *, archive: Path, staging_path: Path, door: str = "door",
                archive_command: str = "archive", dry_run: bool = False, retrieved_at: str | None = None,
                proposals: Path | None = None, env: dict[str, str] | None = None) -> dict[str, Any]:
@@ -235,9 +238,16 @@ def run_import(path: Path, *, archive: Path, staging_path: Path, door: str = "do
         proposals.mkdir(parents=True, exist_ok=True)
     if batches:
         if dry_run:
-            whole = combined("import", batches)
-            admit(whole, door=door, dry_run=True, staging=None, env=env,
-                  keep=proposals / "0000-import" if proposals else None)
+            # Chart batches pin only what the playlist batch commits, so each
+            # group of them is predicted after it; one proposal for a whole
+            # long playlist would pass Door's proposal size limit.
+            chart_batches = batches[1:] if head else batches
+            groups = [chart_batches[i:i + DRY_RUN_CHARTS]
+                      for i in range(0, len(chart_batches), DRY_RUN_CHARTS)] or [[]]
+            for index, group in enumerate(groups):
+                whole = combined("import", ([head] if head else []) + group)
+                admit(whole, door=door, dry_run=True, staging=None, env=env,
+                      keep=proposals / f"{index:04d}-import" if proposals else None)
         else:
             for index, batch in enumerate(batches):
                 admit(batch, door=door, dry_run=False, staging=staging, env=env,
