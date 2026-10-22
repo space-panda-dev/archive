@@ -141,6 +141,20 @@ class Losses(unittest.TestCase):
         self.assertEqual(codec.decode_playlist(link).songs[0].composer, export.NO_COMPOSER)
 
 
+    def test_only_composer_credits_fill_the_composer_field(self) -> None:
+        _, records, pin = chart_records("T44C7 |F7 Z")
+        records = copy.deepcopy(records)
+        lead = records[-1]
+        credit = next(r for r in records if r["contract"] == ["archive.claim/contribution", "1"])
+        lyricist = {**copy.deepcopy(credit), "revision_id": "sha256:" + "1" * 64}
+        lyricist["payload"].update(role={"type": "lyricist"}, text="Bo Invented", credited_as="Bo Invented")
+        records.insert(-1, lyricist)
+        lead["refs"].insert(0, {"role": "credits", "id": lyricist["id"], "revision_id": lyricist["revision_id"]})
+        link, losses = render({**REQUEST, "rendered": [pin]}, records)
+        self.assertEqual(losses, ["credits other than composers"])
+        self.assertEqual(codec.decode_playlist(link).songs[0].composer, "Ada Example")
+
+
 class Refusals(unittest.TestCase):
     def setUp(self) -> None:
         _, self.records, self.pin = chart_records("T44C7 |F7 Z")

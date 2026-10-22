@@ -37,8 +37,10 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from world.contributions import check_contribution  # noqa: E402
 from world.form import check_form, check_meter_layers_v2  # noqa: E402
 from world.harmony import check_chord_sequence_v2  # noqa: E402
+from world.lead_sheets import check_lead_sheet  # noqa: E402
 from world.tonality import check_key_sequence  # noqa: E402
 
 from chart import Chart, UnsupportedChart, read_chart  # noqa: E402
@@ -237,8 +239,10 @@ def _claim(record: dict[str, Any]) -> dict[str, Any]:
 def records(title: str, composer: str, payloads: dict[str, Any], seed: str = "chart") \
         -> tuple[list[dict[str, Any]], dict[str, str]]:
     """World's records of one read chart linked to a Work titled `title`, with
-    a composer credit and a person's lead sheet pinning them, each checked
-    with World's checks; and the lead sheet's pin, which an export renders."""
+    a composer credit (ADR 0116, section 4: role composer, the composer field
+    verbatim as `text` and `credited_as`, a confirmed person as contributor)
+    and a person's lead sheet pinning them, each checked with World's checks;
+    and the lead sheet's pin, which an export renders."""
     document = _record(seed + "/document", "artifact", {"content": {"digest": "sha256:" + "0" * 64}}, [])
     doc = _ref("document", document)
     sequence = _record(seed + "/sequence", "claim", payloads["sequence"], [doc],
@@ -258,11 +262,19 @@ def records(title: str, composer: str, payloads: dict[str, Any], seed: str = "ch
         made.append(key)
         refs.append(_ref("key", key))
     if composer:
+        person = _record(seed + "/composer", "entity", {"kind": "person", "label": composer}, [])
         credit = _record(seed + "/credit", "claim",
-                         {"scope": "work", "role": "composer", "text": composer, "credited_as": composer},
-                         [_ref("work", work), doc], ("archive.claim/contribution", "1"))
-        made.append(credit)
+                         {"scope": "work", "role": {"type": "composer"}, "text": composer, "credited_as": composer},
+                         [_ref("work", work), doc, _ref("contributor", person)], ("archive.claim/contribution", "1"))
+        made += [person, credit]
+        check_contribution(_claim(credit), _targets(made))
         refs.append(_ref("credits", credit))
     lead = _record(seed + "/lead", "claim", {"label": "iReal"}, refs, ("archive.claim/lead_sheet", "1"))
+    check_lead_sheet({**_claim(lead), "agent": lead["agent"]}, _targets(made), {lead["agent"]: "person"})
     made.append(lead)
     return made, {"id": lead["id"], "revision_id": lead["revision_id"]}
+
+
+def _targets(made: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """What each record is, as World's checks read their targets."""
+    return {record["revision_id"]: record for record in made}

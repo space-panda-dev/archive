@@ -20,9 +20,10 @@ What it reads, all through the lead sheet's pins:
 - the form: rehearsal marks, `{` `}` repeats with `N1`..`N3` endings and a
   `<Nx>` count, segno `S`, coda `Q`, `<D.C./D.S. al Coda/Fine>`, `<Fine>`;
 - the key field from the first key region's first reading; the composer
-  from the credits (`Composer Unknown` with none, since an empty field
-would write iReal's song separator); the title from the Work's label; options `style`,
-  `tempo` and `transpose` (semitones, ADR 0089's transposition).
+  from the composer credits (`Composer Unknown` with none, since an empty
+  field would write iReal's song separator); the title from the Work's
+  label; options `style`, `tempo` and `transpose` (semitones, ADR 0089's
+  transposition).
 
 A chord at offset o of a bar of length L goes in cell k of n with k/n = o/L
 (the importer's placement rule, inverted); n is 4 when that places every
@@ -40,7 +41,7 @@ iReal mark where a mark is needed (written as a comment); section kinds
 other than intro and verse; jumps with `repeats_on_return`, more than one
 jump, more than three endings, endings that are not one pass each, nested
 repeats; melody, lyrics and underlays; chord claims other than the one the
-meter indexes.
+meter indexes; credits in a role other than composer.
 
 Where it differs from the ADR's wording: a text-only reading whose text is a
 single chord token of iReal's markup (the chart's own symbol, such as `C2`
@@ -247,6 +248,8 @@ def render(request: dict[str, Any], records: list[dict[str, Any]]) -> tuple[byte
     if _role(lead, "melody") or _role(lead, "lyrics") or _role(lead, "lyric_timing"):
         losses.append("melody, lyrics and underlays")
 
+    if len(_role(lead, "work")) != 1:
+        raise ExportRefused("a lead sheet pins exactly one Work")
     work = found.get(_role(lead, "work")[0], "work")
     title = (work.get("payload") or {}).get("label") or "Untitled"
 
@@ -304,7 +307,7 @@ def render(request: dict[str, Any], records: list[dict[str, Any]]) -> tuple[byte
     markup = _markup(layer, entries, form["payload"] if form else None, names, losses)
     # An empty composer field next to the empty unused field would write
     # `===`, iReal's song separator, so a chart with no credit names none.
-    composer = _composer(found, lead) or NO_COMPOSER
+    composer = _composer(found, lead, losses) or NO_COMPOSER
     fields = [_field(title, losses), _field(composer, losses), "", style, key_field, "",
               codec.music_field(markup), "", str(tempo), "0"]
     link = codec.encode_chart(codec.Song("irealb", tuple(fields), b""))
@@ -320,11 +323,17 @@ def _field(text: str, losses: list[str]) -> str:
     return text
 
 
-def _composer(found: _Records, lead: dict[str, Any]) -> str:
+def _composer(found: _Records, lead: dict[str, Any], losses: list[str]) -> str:
+    """The composer field: the composer credits' one verbatim `text` (the
+    chart's own field, which ADR 0116 writes on every composer's credit), else
+    their `credited_as` names. A contribution's role is `{"type": ...}`
+    (ADR 0078); a credit in another role, or in none, has no iReal field."""
     texts, names = [], []
     for ref in _role(lead, "credits"):
         payload = found.get(ref, "credit").get("payload") or {}
-        if payload.get("role", "composer") != "composer":
+        role = payload.get("role")
+        if not isinstance(role, dict) or role.get("type") != "composer":
+            losses.append("credits other than composers")
             continue
         if payload.get("text"):
             texts.append(payload["text"])
