@@ -227,6 +227,7 @@ bank. Doc: [enrich/README.md](enrich/README.md) (one section per command,
 | `enrich/enrich.py` | `main`: `probe`, `detect`, `match`, `match-windows` (`run_probe`, `run_detect`, `run_match`, `run_match_windows`) |
 | `enrich/adapter.py` | `propose`: a tool result to a Door proposal (ADR 0064) |
 | `enrich/propose.py`, `proposers.py` | `enrich propose` (per-region runs where the whole read lacks a feature; `Context.region`, `shift_of`); `PROPOSERS` (registry at the end): bank features as claims, the bass line and vocal bleed filter (`bass_line`, `read_bass_line`, `drop_bleed`), lines built from `f0-pesto` (`build_line`), forced alignment declared and refused `not_yet` |
+| `enrich/align.py`, `align_command.py` | `enrich align` (ADR 0116 section 6, proposed): `chart_of` (World's played bars, `beats_of`), `machine_of`, `place` (DP over played bar and beat, twelve transpositions, `Refused` when unsure), `payloads` (timed meter, chord stacks, form spans); the command reads the archive and proposes one run; tests `enrich/tests/test_align.py` (suite `enrich-tests`) |
 | `enrich/note_builder.py` | `build`: one note per held pitch from a pitch track and its level (ADR 0086); settings `VOICE`, `BASS`; tests `enrich/test_note_builder.py` |
 | `enrich/probe.py`, `detector.py` | stream facts (0065), span suggestions (0066; presets and the talk gate, 0091) |
 | `enrich/match.py`, `cover.py`, `windows.py` | work matching (0067, 0071, 0072) |
@@ -246,11 +247,13 @@ bank. Doc: [enrich/README.md](enrich/README.md) (one section per command,
 Tests: suite `enrich`, `enrich/test_<topic>.py` by command or extractor
 family (`git ls-files 'enrich/test_*'`; `test_bank` is the longest, `test_extractors`
 runs all extractors together); suite `enrich-tests` is
-`enrich/tests/test_media.py`.
+`enrich/tests/` (`test_media.py`, `test_align.py`).
 The bench (`enrich/bench/`, [README](enrich/bench/README.md)) scores note
 transcribers against private sets outside the repository, and gates the
 backfill's CPU seconds per audio-second (`cost.py`, `python -m enrich.bench cost`), and checks a region's
-entries against the whole run's (`region.py`, `python -m enrich.bench region`); suites `bench` and
+entries against the whole run's (`region.py`, `python -m enrich.bench region`), and scores machine
+chords, key, meter, downbeats and sections against charts placed on recordings (`chords.py`, `python -m
+enrich.bench chords`, ADR 0116, proposed); suites `bench` and
 `bench-horn`. The `enrich` suite does not discover it (no `__init__.py`).
 Rules: enrichment never changes its inputs (INV-9); every claim carries its
 run and provenance (ADR 0064, [provenance](docs/provenance.md)); an
@@ -275,8 +278,8 @@ shipped extractors").
 <!-- wf:gen lines enrich/README.md enrich/enrich.py enrich/adapter.py enrich/proposers.py enrich/detector.py enrich/cover.py enrich/extract.py enrich/bank.py enrich/remote.py enrich/backfill.py enrich/backfill_queue.py enrich/extractors/stems/stems.py enrich/extractors/quality/quality.py enrich/extractors/tonal/tonal.py enrich/extractors/structure/structure.py enrich/extractors/rhythm/meter.py enrich/test_bank.py docs/feature-bank.md -->
 | file | lines |
 |---|---|
-| `enrich/README.md` | 1172 |
-| `enrich/enrich.py` | 722 |
+| `enrich/README.md` | 1225 |
+| `enrich/enrich.py` | 738 |
 | `enrich/adapter.py` | 609 |
 | `enrich/proposers.py` | 1059 |
 | `enrich/detector.py` | 674 |
@@ -296,7 +299,7 @@ shipped extractors").
 <!-- /wf:gen -->
 
 <!-- wf:gen anchors enrich/enrich.py#main enrich/bank.py#Catalog enrich/bank.py#Bank enrich/bank.py#check_equivalence enrich/test_bank.py#SHIPPED -->
-- `enrich/enrich.py#main`: line 635
+- `enrich/enrich.py#main`: line 643
 - `enrich/bank.py#Catalog`: line 452
 - `enrich/bank.py#Bank`: line 1106
 - `enrich/bank.py#check_equivalence`: line 909
