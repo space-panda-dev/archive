@@ -422,7 +422,10 @@ class BankProposers:
             sys.path.insert(0, enrich)
         import propose
         import proposers
-        store = propose.bank_of(argparse.Namespace(bank=str(self.bank), config=self.config))
+        try:
+            store = propose.bank_of(argparse.Namespace(bank=str(self.bank), config=self.config))
+        except propose.ProposeError as exc:
+            raise BenchError(f"variant {self.name}: {exc}") from exc
         count = int(item.recording.seconds * NOMINAL_RATE) + 1
         context = proposers.Context(store, item.id, NOMINAL_RATE, count)
 

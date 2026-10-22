@@ -135,7 +135,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "chords":
         try:
             return _chords(args)
-        except BenchError as exc:
+        except (BenchError, ValueError, OSError) as exc:
+            # A chart the placement rule cannot read (align.AlignError), a
+            # malformed JSON or taps file, a missing file: the run could not
+            # happen, which is 2, never 1 (a regression).
             print(f"bench: {exc}", file=sys.stderr)
             return 2
     try:

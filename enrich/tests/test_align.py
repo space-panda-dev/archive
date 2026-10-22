@@ -205,6 +205,34 @@ class Method(unittest.TestCase):
         self.assertTrue(all(s["end"] == "held" for s in spans))
 
 
+    def test_each_chorus_of_a_one_section_form_is_its_own_span(self) -> None:
+        # One section played once per chorus: the occurrence index never
+        # changes, so a new span must start where the played order restarts.
+        meter, form, sequence = chart_payloads()
+        for bar in meter["layers"][0]["bars"]:
+            bar["section"] = 0
+        form = {"sections": [{"label": "A"}]}
+        chart = align.chart_of(meter, form, sequence)
+        machine = align.machine_of(*machine_payloads(self.one_section_entries() * 2, transpose=0, intro=4, tail=3))
+        found = align.place(chart, machine)
+        self.assertIsInstance(found, align.Placement, getattr(found, "detail", ""))
+        self.assertEqual(found.passes, 2)
+        made = align.payloads(chart, meter, machine, found)
+        self.assertEqual([s["section"] for s in made["form"]["spans"]], [0, 0])
+        self.assertEqual(made["form"]["spans"][0]["end_sample"], made["form"]["spans"][1]["start_sample"])
+
+    @staticmethod
+    def one_section_entries() -> list[int]:
+        """The chart's chord per beat over one pass of its eight bars, as written."""
+        beats, current = [], None
+        for bar in range(8):
+            changes = dict((at, e) for e, at in BARS[bar])
+            for beat in range(4):
+                current = changes.get(beat, current)
+                beats.append(current)
+        return beats
+
+
 def claim_record(key: str, contract: tuple[str, str], payload: dict, refs: list[dict]) -> dict:
     return {"key": key, "namespace": contract[0], "name": f"test-{key}", "shape": "claim",
             "contracts": [{"id": contract[0], "version": contract[1]}], "payload": payload, "refs": refs}
@@ -281,6 +309,17 @@ class Command(unittest.TestCase):
         used = {ref["id"] for ref in run["refs"] if ref["role"] == "used"}
         for key in ("mix", "meter", "form", "sequence"):
             self.assertIn(self.objects[key]["object_id"], used)
+        # The machine's two claims are read: the run uses them, and the timed
+        # meter and chords cite exactly those revisions as derived_from.
+        machine = {(r["object_id"], r["revision_id"]) for r in records if r["shape"] == "claim"
+                   and r["contracts"][0]["id"] in ("archive.claim/meter_layers", "archive.claim/chord_stacks")
+                   and r not in made and not any(ref["role"] in ("meter", "sequence") for ref in r["refs"])}
+        self.assertEqual(len(machine), 2)
+        self.assertLessEqual(machine, {(ref["id"], ref["revision_id"]) for ref in run["refs"] if ref["role"] == "used"})
+        for record in made:
+            if record["contracts"][0]["id"] != "archive.claim/form_spans":
+                self.assertEqual({(ref["id"], ref["revision_id"]) for ref in record["refs"]
+                                  if ref["role"] == "derived_from"}, machine)
         code, again = self.align()
         self.assertEqual((code, again["status"]), (0, "unchanged"), again)
 

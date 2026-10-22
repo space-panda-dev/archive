@@ -506,7 +506,11 @@ def payloads(chart: Chart, meter: dict[str, Any], machine: Machine,
     alignment = {"method": ALIGNMENT_METHOD}
     bars, spans, sections = [], [], []
     current: tuple[int, int] | None = None   # (entry, start sample) of the span open now
-    open_section: tuple[int, int, int | None] | None = None   # (occurrence, start, section)
+    # (pass, occurrence, start, section): a new span starts where the played
+    # section changes or the played order restarts (a new chorus), so a form
+    # of one section still gives a span per chorus.
+    open_section: tuple[int, int, int, int | None] | None = None
+    passes, previous = 0, None
 
     def close(end: int) -> None:
         nonlocal current
@@ -542,16 +546,19 @@ def payloads(chart: Chart, meter: dict[str, Any], machine: Machine,
             at = _sample(machine, placed.beat + float(offset) * placed.beats)
             close(at)
             current = (entry, at)
+        if previous is not None and placed.played <= previous:
+            passes += 1
+        previous = placed.played
         if chart.has_form:
-            if open_section is None or open_section[0] != bar.occurrence:
+            if open_section is None or open_section[:2] != (passes, bar.occurrence):
                 if open_section is not None:
-                    sections.append({"start_sample": open_section[1], "end_sample": start,
-                                     "section": open_section[2]})
-                open_section = (bar.occurrence, start, bar.section)
+                    sections.append({"start_sample": open_section[2], "end_sample": start,
+                                     "section": open_section[3]})
+                open_section = (passes, bar.occurrence, start, bar.section)
     last_end = machine.grid[placement.bars[-1].beat + placement.bars[-1].beats]
     close(last_end)
     if open_section is not None:
-        sections.append({"start_sample": open_section[1], "end_sample": last_end, "section": open_section[2]})
+        sections.append({"start_sample": open_section[2], "end_sample": last_end, "section": open_section[3]})
     out = {"meter": {"sample_rate": machine.sample_rate, "alignment": alignment,
                      "layers": [{"role": "written", "bars": bars}]},
            "chords": {"sample_rate": machine.sample_rate, "alignment": alignment, "hold_rule": HOLD_RULE,

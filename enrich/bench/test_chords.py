@@ -9,6 +9,7 @@ Run from the repository root:
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import io
 import json
@@ -233,3 +234,18 @@ class Set(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(json.loads((self.root / "r.json").read_text()),
                          json.loads((self.root / "data" / "a.json").read_text()))
+
+    def test_a_chart_the_rule_cannot_count_exits_two_not_one(self) -> None:
+        # 1 means a regression; a reference that cannot be made is a run that
+        # could not happen.
+        claims, taps = self.root / "claims.json", self.root / "taps.txt"
+        odd = copy.deepcopy(CLAIMS)
+        odd["meter"]["layers"][0]["bars"][0].update(numerator=7, denominator=8)
+        claims.write_text(json.dumps(odd))
+        taps.write_text("\n".join(map(str, TAPS)))
+        with redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err:
+            code = cli.main(["chords", "reference", "--claims", str(claims), "--taps", str(taps),
+                             "--recording", str(self.root / "data" / "a.flac"),
+                             "--chart", str(self.root / "data" / "a.irealb"), "--out", str(self.root / "r.json")])
+        self.assertEqual(code, 2)
+        self.assertIn("7/8", err.getvalue())
