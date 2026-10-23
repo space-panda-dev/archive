@@ -596,11 +596,14 @@
       ]
     },
     {
-      "name": "a form with an open repeat, and a sketch (0.0.11)",
+      "name": "a form with an open repeat, one with a D.S. al coda, and a sketch (0.0.11)",
       "command": "admit",
       "records": [
         {"key": "form-open", "namespace": "archive.claim/form", "name": "fixture-form-open", "shape": "claim", "contracts": [{"id": "archive.claim/form", "version": "2"}],
          "payload": {"sections": [{"label": "Intro", "kind": "intro"}, {"label": "Head", "kind": "head"}, {"label": "Solos on the form", "kind": "solo"}, {"label": "Last time"}, {"label": "Coda", "kind": "coda"}], "repeats": [{"first": 1, "last": 3, "instruction": "open for solos, head out", "endings": [{"first": 2, "last": 2}, {"first": 3, "last": 3, "passes": ["last"]}]}]},
+         "refs": [{"role": "work", "pin": "work-a"}]},
+        {"key": "form-segno", "namespace": "archive.claim/form", "name": "fixture-form-segno", "shape": "claim", "contracts": [{"id": "archive.claim/form", "version": "2"}],
+         "payload": {"sections": [{"label": "Intro", "kind": "intro"}, {"label": "A"}, {"label": "B", "kind": "bridge"}, {"label": "Coda", "kind": "coda"}], "jumps": [{"after": 2, "kind": "dal_segno", "to": 1, "then": "coda", "coda_from": 1, "coda": 3}]},
          "refs": [{"role": "work", "pin": "work-a"}]},
         {"key": "melody-sketch", "namespace": "archive.claim/melody", "name": "fixture-melody-sketch", "shape": "claim", "contracts": [{"id": "archive.claim/melody", "version": "2"}],
          "payload": {"part": "voice", "notes": [{"pitch": 64}, {"pitch": 67}, {"pitch": 69, "duration": {"count": 1, "unit": 2}}, {"rest": true, "duration": {"count": 1, "unit": 4}}, {"pitch": 67}]},
@@ -608,7 +611,7 @@
       ]
     },
     {
-      "name": "bars in the open form, words under the sketch, and a recording's passes (0.0.11)",
+      "name": "bars in the open form, words under the sketch, and a recording's passes and return (0.0.11)",
       "command": "admit",
       "records": [
         {"key": "meter-open", "namespace": "archive.claim/meter_layers", "name": "fixture-meter-open", "shape": "claim", "contracts": [{"id": "archive.claim/meter_layers", "version": "3"}],
@@ -619,7 +622,10 @@
          "refs": [{"role": "melody", "pin": "melody-sketch"}, {"role": "document", "pin": "lyrics"}]},
         {"key": "form-spans-passes", "namespace": "archive.claim/form_spans", "name": "fixture-form-spans-passes", "shape": "claim", "contracts": [{"id": "archive.claim/form_spans", "version": "2"}],
          "payload": {"sample_rate": 8000, "alignment": {"method": "manual", "precision": "approximate"}, "spans": [{"start_sample": 0, "end_sample": 500, "section": 0}, {"start_sample": 500, "end_sample": 1000, "section": 1, "passes": [1]}, {"start_sample": 1000, "end_sample": 1500, "section": 2, "passes": [1]}, {"start_sample": 1500, "end_sample": 2000, "section": 1, "passes": [2]}, {"start_sample": 2000, "end_sample": 2500, "section": 2, "passes": [2]}, {"start_sample": 2500, "end_sample": 3000, "label": "Extra chorus"}, {"start_sample": 3000, "end_sample": 3500, "section": 1, "passes": [3]}, {"start_sample": 3500, "end_sample": 4000, "section": 3, "passes": [3]}]},
-         "refs": [{"role": "source", "pin": "recording"}, {"role": "stream", "pin": "stream"}, {"role": "form", "pin": "form-open"}]}
+         "refs": [{"role": "source", "pin": "recording"}, {"role": "stream", "pin": "stream"}, {"role": "form", "pin": "form-open"}]},
+        {"key": "form-spans-return", "namespace": "archive.claim/form_spans", "name": "fixture-form-spans-return", "shape": "claim", "contracts": [{"id": "archive.claim/form_spans", "version": "2"}],
+         "payload": {"sample_rate": 8000, "alignment": {"method": "manual"}, "spans": [{"start_sample": 0, "end_sample": 500, "section": 0}, {"start_sample": 500, "end_sample": 1000, "section": 1}, {"start_sample": 1000, "end_sample": 1500, "section": 2}, {"start_sample": 1500, "end_sample": 2000, "section": 1, "return": true}, {"start_sample": 2000, "end_sample": 2500, "section": 3}]},
+         "refs": [{"role": "source", "pin": "recording"}, {"role": "stream", "pin": "stream"}, {"role": "form", "pin": "form-segno"}]}
       ]
     },
     {
