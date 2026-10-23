@@ -1,6 +1,7 @@
 # 0070. New recordings are imported natively
 
-Status: accepted
+Status: accepted; amended 2026-10-22 (one track of a twin take, and sessions
+for migrated parts; accepted by the operator, 2026-10-22)
 
 The shadow is a migrated copy of the V2 archive; its newest recording is the
 frozen bundle's newest. New rehearsals still enter the V2 system, and V2 records
@@ -60,9 +61,9 @@ archive need approval per run until the operator grants a standing one.
 - **One session per source.** Two microphones of one rehearsal would be two
   sessions, and a selection across both would cross sessions.
 
-## Amendment (proposed): one track of a twin take, and sessions for migrated parts
+## Amendment, 2026-10-22: one track of a twin take, and sessions for migrated parts
 
-Status: proposed. Nothing below is accepted.
+Status: accepted by the operator, 2026-10-22.
 
 The operator's recorder writes every take twice: a `TrLR` and a `TrMic`
 file with the same clock, the same length, and the same size, carrying what
@@ -119,3 +120,10 @@ source.
   where they are, and the mix of such a take is never imported.
 - Analysis already made on a twin that is now a second source stays in the
   feature bank; it is not run again.
+- A night whose parts were migrated as different twins keeps each part's
+  migrated track, so one source can list one part's mix and the next part's
+  `TrMic`. The operator chose this over importing the missing mix: the
+  rule stays one file per take, and reviews made on the migrated track stay.
+- Twins are on for every card of the Zoom H4essential grammar. No command
+  option turns them off: a recorder fed by a genuinely separate microphone
+  needs its own decision first.
