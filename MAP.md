@@ -384,7 +384,7 @@ catalog except the specification upgrade, so a new contract needs a plan step.
 <!-- wf:gen lines fixture/plan.json -->
 | file | lines |
 |---|---|
-| `fixture/plan.json` | 688 |
+| `fixture/plan.json` | 694 |
 <!-- /wf:gen -->
 
 ## Do not read
