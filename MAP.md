@@ -272,7 +272,7 @@ shipped extractors").
 <!-- wf:gen lines enrich/README.md enrich/enrich.py enrich/adapter.py enrich/proposers.py enrich/detector.py enrich/cover.py enrich/extract.py enrich/bank.py enrich/remote.py enrich/backfill.py enrich/backfill_queue.py enrich/extractors/stems/stems.py enrich/extractors/quality/quality.py enrich/extractors/tonal/tonal.py enrich/extractors/structure/structure.py enrich/extractors/rhythm/meter.py enrich/test_bank.py docs/feature-bank.md -->
 | file | lines |
 |---|---|
-| `enrich/README.md` | 1172 |
+| `enrich/README.md` | 1175 |
 | `enrich/enrich.py` | 722 |
 | `enrich/adapter.py` | 609 |
 | `enrich/proposers.py` | 1059 |
@@ -281,7 +281,7 @@ shipped extractors").
 | `enrich/extract.py` | 1060 |
 | `enrich/bank.py` | 1498 |
 | `enrich/remote.py` | 720 |
-| `enrich/backfill.py` | 1193 |
+| `enrich/backfill.py` | 1223 |
 | `enrich/backfill_queue.py` | 613 |
 | `enrich/extractors/stems/stems.py` | 755 |
 | `enrich/extractors/quality/quality.py` | 1317 |
@@ -312,8 +312,8 @@ Rules: ADR 0070; capture proposes, Door commits (INV-2).
 <!-- wf:gen lines capture/capture.py capture/test_capture.py -->
 | file | lines |
 |---|---|
-| `capture/capture.py` | 704 |
-| `capture/test_capture.py` | 855 |
+| `capture/capture.py` | 767 |
+| `capture/test_capture.py` | 943 |
 <!-- /wf:gen -->
 
 ## migration (Python)
