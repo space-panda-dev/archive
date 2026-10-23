@@ -367,11 +367,7 @@ scheduler has added it.
 
 ## Lead-sheet editor (ADR 0113)
 
-- **Still to serve from the first build:** `form.folded_chart` as the
-  `folded_chart` named view (World's rule is built; the chord source, a
-  lead sheet's precedence or ADR 0082's current rule, is not wired), and
-  section D-19 of the specification for the six versions 0.0.11 installs.
-- **Then:** passage alignment, the `aligned_by` versions of chord stacks,
+- **Next:** passage alignment, the `aligned_by` versions of chord stacks,
   notes, timed lyrics (with `derived_from`), form spans and timed meter
   layers, and lead sheet version 3 (refusing rough copies); applying a correction to
   every mapped pass; members' lyric documents once ADR 0094 is built.

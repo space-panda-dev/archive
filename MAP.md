@@ -129,7 +129,8 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
   is a byte copy of `spec/0.0.11/archive-spec.md`. Navigate by
   heading: `rg -n '^##' spec/archive-spec.md` (section 6, "Reading
   commands", is most of it; D-18 holds 0.0.10's contracts, D-19 0.0.11's).
-  Release notes: [docs/releases/0.0.10.md](docs/releases/0.0.10.md).
+  Release notes: [docs/releases/0.0.11.md](docs/releases/0.0.11.md),
+  [docs/releases/0.0.10.md](docs/releases/0.0.10.md).
 - `spec/<version>/contracts.json` lists
   `{id, version, digest}`; each digest names `spec/contracts/sha256-<hex>.json`.
 - `spec/<version>/context.jsonld` is the JSON-LD context (ADR 0025).

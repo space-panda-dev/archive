@@ -167,7 +167,7 @@ repository.
 ## What is provisional
 
 - **The specification** is a small pre-1.0 contract at version 0.0.11
-  ([current spec](spec/archive-spec.md), [0.0.11 release copy](spec/0.0.11/archive-spec.md), [0.0.10 release copy](spec/0.0.10/archive-spec.md), [0.0.9 release copy](spec/0.0.9/archive-spec.md), [0.0.8 release copy](spec/0.0.8/archive-spec.md), [0.0.7 release copy](spec/0.0.7/archive-spec.md), [0.0.6 release copy](spec/0.0.6/archive-spec.md), [0.0.5 release copy](spec/0.0.5/archive-spec.md), [0.0.4 release copy](spec/0.0.4/archive-spec.md), [0.0.3 release copy](spec/0.0.3/archive-spec.md)); unresolved subjects remain explicitly outside
+  ([current spec](spec/archive-spec.md), [0.0.11 release copy](spec/0.0.11/archive-spec.md), [0.0.10 release copy](spec/0.0.10/archive-spec.md), [0.0.9 release copy](spec/0.0.9/archive-spec.md), [0.0.8 release copy](spec/0.0.8/archive-spec.md), [0.0.7 release copy](spec/0.0.7/archive-spec.md), [0.0.6 release copy](spec/0.0.6/archive-spec.md), [0.0.5 release copy](spec/0.0.5/archive-spec.md), [0.0.4 release copy](spec/0.0.4/archive-spec.md), [0.0.3 release copy](spec/0.0.3/archive-spec.md); release notes for [0.0.11](docs/releases/0.0.11.md) and [0.0.10](docs/releases/0.0.10.md)); unresolved subjects remain explicitly outside
   its normative protocols.
 - The unresolved V2 audio migration gates are recorded in the
   [release readiness note](docs/proposals/v2-migration-release-readiness.md).
