@@ -15,8 +15,9 @@ or writes an archive.
 | [`cost.py`](cost.py) | The backfill's cost gate: CPU seconds per audio-second of every backfill unit over one clip |
 | [`equivalence.py`](equivalence.py) | The stem equivalence check: `extract.py equivalence` over the root's clips (ADR 0090's amendment) |
 | [`region.py`](region.py) | The region check: `extract.py region-equivalence` over the same clips (ADR 0112) |
+| [`chords.py`](chords.py) | The chord bench: chord sets, references from a chart and tapped section downbeats, mir_eval chord, key, meter, downbeat and section scores, the `bank-proposers` variant, and its gate (ADR 0116) |
 | [`__main__.py`](__main__.py) | The command |
-| [`test_bench.py`](test_bench.py) | The harness on tiny synthetic sets |
+| [`test_bench.py`](test_bench.py), [`test_chords.py`](test_chords.py) | The harness and the chord bench on tiny synthetic sets and invented charts |
 
 ## Running it
 
@@ -156,3 +157,44 @@ with `--input`.
   `config.json`. When the bank has it, a variant calling the bank's
   extractors replaces the adapter under the same name and its baseline is
   recorded again.
+
+## The chord bench
+
+[ADR 0116](../../docs/decisions/0116-ireal-charts.md) section 6 (proposed):
+a chart placed on a recording is a reference no extractor made, so it
+measures the machine's chords, key, meter, downbeats and sections. See
+[`chords.py`](chords.py) for every rule. Under the same bench root:
+
+- `sets/<name>.json`, contract `archive-bench-chord-set/1`, task `chords`:
+  per item `id` (the recording's sha256), `label`, `subset`, and files
+  `recording` (with `seconds`), `chart` (the chart document) and
+  `reference`.
+- A reference (`archive-bench-chord-reference/1`) holds the recording's
+  and the chart's digests, `placement` (`person` or `chord-blind`; a
+  reference is never made from the chords it scores), `transposition`,
+  `stretch` (the placed seconds), `chords` (`[start, end, Harte]`, meeting,
+  from World's computed names), `key` (a mir_eval key or null), `numerator`,
+  `downbeats` and `sections`.
+
+```
+$P -m enrich.bench chords reference --claims chart.json --taps taps.txt \
+   --recording take.flac --chart chart.irealb [--transposition N] --out ref.json
+$P -m enrich.bench chords validate SET
+$P -m enrich.bench chords run SET --variant bank-proposers [--record-baseline]
+$P -m enrich.bench chords check SET
+```
+
+`reference` takes the chart's untimed payloads as JSON (`meter`, `form`,
+`sequence`, optional `key`: what the iReal importer proposes) and a person's
+taps: one time per played section's downbeat, in World's played order from
+`--first-occurrence`, then the end of the last; bars between two taps share
+the time by their beats. No chord-blind run exists yet.
+
+The `bank-proposers` variant reads a feature bank already filled for each
+recording (`config.json`: `variants.bank-proposers.bank`, optional `chords`
+and `config`) through `enrich propose`'s proposers, so it scores what the
+archive would be told; it runs no extractor. Scores are over the placed
+stretch only; a metric the machine gave nothing for is absent, not zero, and
+a mean is over the items that have it. The gate: any mean, over all items
+and per subset, dropping by more than 0.02 fails (exit 1); a metric the
+baseline has and the result lacks stops the comparison (exit 2).
