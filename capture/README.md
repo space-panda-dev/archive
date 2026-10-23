@@ -50,14 +50,22 @@ staged or proposed.
    parts in path order. A recognised session is labelled by its grammar and
    the recorder's clock (`Zoom H4essential 2001-01-01 12:00:00`); renaming it
    is a revision for a review client to propose.
-3. **Skip what is known.** A session whose files' contents are all already
-   current Artifacts (whoever admitted them) is `already_imported` and left
-   alone. A session only partly known is refused: its parts claims would
-   need new revisions, which this importer does not propose. The same
-   content in two new files is refused, as is a new session whose session
-   object already exists.
-4. **Admit.** Each new session is one content-bearing `door admit` batch
-   (ADR 0023): an Artifact per file, named `capture-<sha256>` in
+3. **Keep one file of each take, and skip what is known.** Where a grammar's
+   sources are twins (the Zoom H4essential's `TrLR` and `TrMic`, by
+   default), one file of each take is kept, the same one every time: a file
+   already in the archive is the take (the mix when both are), otherwise the
+   mix. A twin already in the archive beside the kept file stays as a later
+   source; every other twin is listed under `passed_over` with the reason
+   (ADR 0070, amendment on twins). A session whose files are parts of a
+   session already in the archive is `already_imported` and left alone; one
+   only partly in such a session is refused, because its parts claims would
+   need new revisions, which this importer does not propose. A file whose
+   content is already an Artifact of no session, such as a part migrated
+   from the V2 system, is cited by the new session's parts claim and listed
+   under `adopted`, not admitted again. The same content in two new files is
+   refused, as is a new session whose session object already exists.
+4. **Admit.** Each new session is one `door admit` batch (ADR 0023): an
+   Artifact per new file, named `capture-<sha256>` in
    `archive.core/artifact`; the `recording_session` Entity, named
    `session-<sha256 of the primary source's first part>` in
    `archive.audio/session` (ADR 0048); and one `archive.claim/session_parts`

@@ -6,11 +6,13 @@
                    [--profile-cache <dir>] [--detector-preset jam|show|studio]
                    [--defer-listening-copies] [--bank <root>] [--extract-config <file>] [--dry-run]
 
-The importer hashes every file, skips content that is already an Artifact's,
-groups the rest into sessions and sources with a recorder grammar, and
-proposes each session to `door admit` in one content-bearing batch: an
-Artifact per file, the `recording_session` Entity, and one
-`archive.claim/session_parts` claim per source. Then it runs the enrichment
+The importer hashes every file, groups the files into sessions and sources
+with a recorder grammar, keeps one file of each take where the grammar's
+sources are twins, and proposes each session to `door admit` in one batch:
+an Artifact per new file, the `recording_session` Entity, and one
+`archive.claim/session_parts` claim per source. A file whose content is
+already an Artifact of no session is cited rather than admitted again; a
+session already in the archive is left as it is. Then it runs the enrichment
 chain on the new Artifacts, quickest first: `enrich probe`, `enrich detect`
 on each session's primary source, waveform peaks, the listening copies, and
 `enrich match-windows` on what was detected, and, when a feature bank is
@@ -103,6 +105,13 @@ class Session:
     sources: list[Source]
     status: str = "new"
     planned: dict[str, Any] = field(default_factory=dict)
+    # Whether the grammar's sources are twins: one file of each take is kept.
+    twins: bool = False
+    # Files left out of the session, each with the reason (twins).
+    passed_over: list[dict[str, str]] = field(default_factory=list)
+    # The current Artifact record of each file already in the archive, by
+    # digest: those files are cited, not admitted again.
+    adopted: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @property
     def files(self) -> list[InputFile]:
@@ -230,7 +239,8 @@ def group(files: list[InputFile], grammars: Sequence[Any], session_name: str | N
             tokens = [token for token in g.sources if token in chain[0]]
             sources = [Source(token, [take[token] for take in chain]) for token in tokens]
             started = chain[0][tokens[0]].recognised.started
-            sessions.append(Session(f"{g.label} {started:%Y-%m-%d %H:%M:%S}", g.name, sources))
+            sessions.append(Session(f"{g.label} {started:%Y-%m-%d %H:%M:%S}", g.name, sources,
+                                    twins=bool(getattr(g, "twins", False))))
 
     if unrecognised:
         if session_name is None:
@@ -270,26 +280,70 @@ def known_contents(reader: adapter.ArchiveReader) -> dict[str, dict[str, Any]]:
     return known
 
 
+def session_parts(reader: adapter.ArchiveReader) -> set[str]:
+    """Every Artifact object that is a part in a current session parts claim."""
+    parts: set[str] = set()
+    for record in reader.records:
+        if (record["shape"] == "claim" and reader.heads.get(record["object_id"]) is record
+                and reader.cites(record, PARTS_CONTRACT)):
+            parts.update(ref["id"] for ref in record.get("refs", []) if ref.get("role") == "part")
+    return parts
+
+
+def keep_one_of_each_take(session: Session, known: dict[str, dict[str, Any]]) -> None:
+    """For a grammar whose sources are twins, one file of each take, the same
+    one every time (ADR 0070, amendment on twins): a file already in the
+    archive is the take, the mix when both are; otherwise the mix, the
+    grammar's first source. A twin already in the archive beside the kept
+    file stays as a later source, so the archive says what it is; every other
+    twin is passed over and reported."""
+    if not session.twins or len(session.sources) < 2:
+        return
+    if len({len(source.files) for source in session.sources}) != 1:
+        raise CaptureError(f"the sources of session {session.label!r} do not have a file for every take")
+    first = session.sources[0]
+    kept: list[InputFile] = []
+    later: dict[str, list[InputFile]] = {source.token: [] for source in session.sources[1:]}
+    for take in zip(*(source.files for source in session.sources)):
+        present = [item for item in take if item.digest in known]
+        keep = take[0] if take[0].digest in known or not present else present[0]
+        kept.append(keep)
+        for source, item in zip(session.sources, take):
+            if item is keep:
+                continue
+            if item.digest in known:
+                later[source.token].append(item)
+            else:
+                reason = f"twin of {keep.relative}" + (", already in the archive" if keep.digest in known else "")
+                session.passed_over.append({"file": item.relative, "reason": reason})
+    session.sources = [Source(first.token, kept)] + [Source(token, files) for token, files in later.items() if files]
+
+
 def classify(sessions: list[Session], reader: adapter.ArchiveReader) -> None:
     """Mark each session already imported or new, and refuse what cannot be
-    proposed: a session only partly in the archive (its parts would need a
-    revision this importer does not make), the same content in two files,
-    and a session object that already exists."""
+    proposed: a session only partly in an existing session (its parts would
+    need a revision this importer does not make), the same content in two
+    files, and a session object that already exists. A file whose content is
+    already an Artifact of no session is adopted: the session cites it
+    (ADR 0070, amendment on migrated parts)."""
     known = known_contents(reader)
+    belonging = session_parts(reader)
     new_digests: Counter[str] = Counter()
     for session in sessions:
+        keep_one_of_each_take(session, known)
         present = [item for item in session.files if item.digest in known]
-        if len(present) == len(session.files):
-            session.status = "already_imported"
-            continue
-        if present:
+        if any(known[item.digest]["object_id"] in belonging for item in present):
+            if len(present) == len(session.files):
+                session.status = "already_imported"
+                continue
             listed = ", ".join(item.relative for item in present)
             raise CaptureError(f"session {session.label!r} is partly imported already ({listed}); "
                                "its parts would need a new revision, which this importer does not propose")
-        new_digests.update(item.digest for item in session.files)
+        session.adopted = {item.digest: known[item.digest] for item in present}
+        new_digests.update(item.digest for item in session.files if item.digest not in known)
         session_id = adapter.object_id(reader.archive_id, SESSION_NAMESPACE, session.name)
         if session_id in reader.heads:
-            raise CaptureError(f"session {session.name} already exists, but none of its files' contents do")
+            raise CaptureError(f"session {session.name} already exists, but none of its files is one of its parts")
     repeated = [digest for digest, count in new_digests.items() if count > 1]
     if repeated:
         names = ", ".join(item.relative for session in sessions for item in session.files if item.digest in repeated)
@@ -311,7 +365,13 @@ def plan(session: Session, reader: adapter.ArchiveReader) -> tuple[list[dict], l
         return {"object_id": object_id, "revision_id": adapter.revision_of(draft)}
 
     pins: dict[str, dict[str, str]] = {}
+    adopted = []
     for item in session.files:
+        if item.digest in session.adopted:
+            record = session.adopted[item.digest]
+            pins[item.digest] = {"object_id": record["object_id"], "revision_id": record["revision_id"]}
+            adopted.append({"file": item.relative, "digest": item.digest, **pins[item.digest]})
+            continue
         pin = add(ARTIFACT_NAMESPACE, "capture-" + item.hex, "artifact",
                   {"content": {"digest": item.digest, "size": item.size}}, [])
         pins[item.digest] = pin
@@ -325,7 +385,7 @@ def plan(session: Session, reader: adapter.ArchiveReader) -> tuple[list[dict], l
                  for item in source.files]
         parts.append({"source": source.token,
                       **add(PARTS_CONTRACT[0], f"{session.name}-{source.token}", "claim", {}, refs, [citation])})
-    session.planned = {"session": entity, "parts": parts, "artifacts": artifacts}
+    session.planned = {"session": entity, "parts": parts, "artifacts": artifacts, "adopted": adopted}
     return drafts, identities, artifacts
 
 
@@ -335,6 +395,8 @@ def admit(session: Session, reader: adapter.ArchiveReader, staging: adapter.Stag
     contents = []
     remote = None
     for item in session.files:
+        if item.digest in session.adopted:
+            continue  # already in the archive: cited, not staged
         name = item.staged_name()
         key = (staging.key_for(item.digest, item.size, name) if dry_run
                else staging.stage_file(item.path, item.digest, item.size, name))
@@ -607,6 +669,7 @@ def describe(session: Session) -> dict[str, Any]:
     return {"name": session.name, "label": session.label, "grammar": session.grammar, "status": session.status,
             "sources": [{"source": source.token, "files": [item.relative for item in source.files]}
                         for source in session.sources],
+            "passed_over": session.passed_over,
             **session.planned}
 
 
