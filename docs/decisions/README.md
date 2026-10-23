@@ -103,7 +103,7 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0086](0086-notes-and-melody.md) | Note events per part, and melody at two levels (amended 2026-10-19: articulation, written rhythm, the bass line; 2026-10-20 by 0113: sketches) |
 | [0087](0087-tracklists-and-correspondence.md) | Releases list their tracks; artists, releases and recordings correspond to MusicBrainz and Discogs |
 | [0088](0088-bandmates.md) | Bandmates read their circle and assert their own claims (amended 2026-10-19 by 0092, 0093 and 0094: internet members, audiences, members' writes) |
-| [0089](0089-practice-audio-and-exports.md) | Practice audio from the stems, transposition, and exports that are views until shared (amended 2026-10-20 by 0113: open repeats, stacked verses) |
+| [0089](0089-practice-audio-and-exports.md) | Practice audio from the stems, transposition, and exports that are views until shared (amended 2026-10-20 by 0113: open repeats, stacked verses; 2026-10-22 by 0116: the `ireal` format) |
 | [0090](0090-extractor-runs-travel-through-spool.md) | An extractor run travels through Spool, and its files come back as result attachments (amended 2026-10-19: a stem is a stem; equivalence by a measured tolerance, the device as provenance) |
 | [0091](0091-talk-needs-level.md) | Talk needs level, and a studio preset never says talk (amends 0066's presets) |
 | [0092](0092-internet-exposure.md) | Internet exposure through Cloudflare Access; internet logins are members |
@@ -127,7 +127,7 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0110](0110-shared-clock.md) | The node is tempo master, and its clock asserts the meter |
 | [0111](0111-pad-maps.md) | A pad map says what a sampler plays, and a proposer turns a session's MIDI into lineage |
 | [0112](0112-bulk-import-at-scale.md) | Bulk import at scale: song spans eagerly, the rest on demand, and eager everything as a fast mode |
-| [0113](0113-editing-lead-sheets.md) | Editing lead sheets: sketches, words under a Work's tune, open repeats, passages, and one save |
+| [0113](0113-editing-lead-sheets.md) | Editing lead sheets: sketches, words under a Work's tune, open repeats, passages, and one save (amended 2026-10-22 by 0116: written directions in meter layers version 3) |
 | [0114](0114-relay-local-health.md) | A local probe reads the relay's liveness, commit and build without a tailnet identity |
 | [0115](0115-ci-skips-prose-only-pushes.md) | CI skips the build for a push that changes only prose no build reads, and cancels superseded runs |
 | [0116](0116-ireal-charts.md) | iReal Pro charts are documents read into a Work's untimed claims, linked by a person, exported as a view, and aligned to recordings |

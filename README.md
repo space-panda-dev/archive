@@ -8,8 +8,8 @@ elsewhere and is governed by the specification kept here.
 
 > **Status.** Door, the `archive` reader commands, [World](world/README.md),
 > the relay, [`enrich/`](enrich/README.md) and [`capture/`](capture/README.md)
-> are implemented for specification 0.0.10; what each specification version
-> adds is in its [release notes](docs/releases/0.0.10.md) and the decision
+> are implemented for specification 0.0.11; what each specification version
+> adds is in its [release notes](docs/releases/0.0.11.md) and the decision
 > records they cite. Two limits matter: persistent admission and transitions
 > do not yet meet the accepted power-loss durability contract
 > ([ADR 0031](docs/decisions/0031-power-loss-durability.md)), so a success

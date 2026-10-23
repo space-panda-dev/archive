@@ -372,6 +372,10 @@ scheduler has added it.
   layers, and lead sheet version 3 (refusing rough copies); applying a correction to
   every mapped pass; members' lyric documents once ADR 0094 is built.
 
+## iReal Pro charts (ADR 0116)
+
+- **Next:** settle decision Q (`2` as add2 or sus2) and read it as a chord.
+
 ## People, samples, and rehearsals (ADRs 0092-0111) <!-- lens: allow stale -->
 
 The operator accepted ADRs 0092 to 0111 on 2026-10-19 as decisions only: <!-- lens: allow stale -->

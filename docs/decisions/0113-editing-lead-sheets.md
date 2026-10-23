@@ -6,7 +6,10 @@ Status: accepted (operator, 2026-10-20); amends
 [ADR 0085](0085-documents-lyrics-rights.md),
 [ADR 0086](0086-notes-and-melody.md),
 [ADR 0089](0089-practice-audio-and-exports.md) and
-[ADR 0094](0094-peoples-writes.md)'s ability table
+[ADR 0094](0094-peoples-writes.md)'s ability table; amended 2026-10-22 by
+[ADR 0116](0116-ireal-charts.md) (decision D: an untimed bar of meter layers
+version 3 may carry written directions). Installed by specification 0.0.11
+(D-19).
 
 ## Context
 

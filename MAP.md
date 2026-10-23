@@ -125,7 +125,7 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 
 ## Spec: what every archive must satisfy, copied into each
 
-- `spec/VERSION` (current `0.0.11`, unreleased); `spec/archive-spec.md`
+- `spec/VERSION` (current `0.0.11`); `spec/archive-spec.md`
   is a byte copy of `spec/0.0.11/archive-spec.md`. Navigate by
   heading: `rg -n '^##' spec/archive-spec.md` (section 6, "Reading
   commands", is most of it; D-18 holds 0.0.10's contracts, D-19 0.0.11's).

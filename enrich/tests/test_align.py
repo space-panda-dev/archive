@@ -243,10 +243,14 @@ class Command(unittest.TestCase):
     """The chart's claims and the machine's are admitted through Door; `enrich
     align` places the chart and Door admits the placement."""
 
-    def build(self, errors: float) -> None:
+    def build(self, errors: float, meter_version: str = "2") -> None:
         self.tmp = support.scratch(self, "align-")
         self.env = support.environment()
         meter, form, sequence = chart_payloads()
+        if meter_version == "3":
+            meter["layers"][0]["bars"][0]["directions"] = [
+                {"text": "Medium Swing", "tempo": {"bpm": "120"}}]
+            meter["layers"][0]["bars"][4]["directions"] = [{"text": "softer"}]
         machine_meter, machine_chords, count = machine_payloads(played_entries() * 2, transpose=2, intro=6,
                                                                 tail=4, errors=errors, seed=4)
         wav = support.sine_wav(self.tmp / "take.wav", RATE, str(count / RATE))
@@ -257,7 +261,7 @@ class Command(unittest.TestCase):
                      claim_record("form", ("archive.claim/form", "1"), form, doc),
                      claim_record("sequence", ("archive.claim/chord_sequence", "2"), sequence, doc)]},
                  {"name": "meter", "command": "admit", "records": [
-                     claim_record("meter", ("archive.claim/meter_layers", "2"), meter,
+                     claim_record("meter", ("archive.claim/meter_layers", meter_version), meter,
                                   doc + [{"role": "form", "pin": "form"}, {"role": "sequence", "pin": "sequence"}])]})
         self.root, manifest = support.build_archive(self, {"mix": wav, "chart": chart}, steps)
         self.objects = manifest["objects"]
@@ -322,6 +326,19 @@ class Command(unittest.TestCase):
                                   if ref["role"] == "derived_from"}, machine)
         code, again = self.align()
         self.assertEqual((code, again["status"]), (0, "unchanged"), again)
+
+    def test_an_untimed_meter_3_with_directions_is_placed_at_version_3(self) -> None:
+        self.build(errors=0.05, meter_version="3")
+        code, answer = self.align()
+        self.assertEqual((code, answer["status"]), (0, "committed"), answer)
+        records = support.export(self.root)["records"]
+        [run] = [r for r in records if r["revision_id"] == answer["run"]["revision_id"]]
+        [meter] = [r for r in records if r.get("contracts", [{}])[0].get("id") == "archive.claim/meter_layers"
+                   and any(ref["role"] == "run" and ref["revision_id"] == run["revision_id"] for ref in r["refs"])]
+        self.assertEqual(meter["contracts"][0]["version"], "3")
+        # A timed bar never carries directions; they stay on the chart's bars.
+        self.assertFalse(any("directions" in bar for layer in meter["payload"]["layers"]
+                             for bar in layer["bars"]))
 
     def test_a_chart_the_machine_does_not_hear_proposes_nothing(self) -> None:
         self.build(errors=0.7)
