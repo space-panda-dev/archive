@@ -340,8 +340,8 @@ quiet reruns); `links.py`: `candidates` (a private candidates file and a
 decisions template), `run_link` (the operator's Work links, composer
 contributions, `lead_sheet`); `export.py`:
 exporter `lead-sheet-ireal` 1 (`render`, `playlist`, `page`, `main` as
-`relay/exporting.py` runs an exporter); `stand_in.py`: the chart-to-claims
-reading the exporter's round trip tests, until the importer's replaces it.
+`relay/exporting.py` runs an exporter); `stand_in.py`: World's records of a chart
+as the importer reads it, for the exporter's round trip.
 Tests: suite `documents` (tier 5, local; `documents/ireal/test_*.py`,
 readings checked with World's `check_reading_v2` and `check_key_reading`);
 suite `documents-door` (tier 30, prelude; `documents/tests`: import, rerun,

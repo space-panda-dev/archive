@@ -16,7 +16,7 @@ run `door admit`. Tests use invented charts only (suites `documents` and
 | [`importer.py`](importer.py) | `run_import`: the playlist and chart documents, their source claims, one `ireal-chart` run per chart and its claims; a rerun on unchanged input writes nothing |
 | [`links.py`](links.py) | `candidates` (Work and composer candidates with their evidence; a title alone is never a link) and `run_link` (the operator's confirmed links, composer contributions, `lead_sheet` v2) |
 | [`export.py`](export.py) | exporter `lead-sheet-ireal` version 1: an untimed lead sheet as an `irealb://` link of one chart, with its losses; `playlist` (links into one playlist) and `page` (the HTML iReal Pro imports from); runs as the relay runs an exporter |
-| [`stand_in.py`](stand_in.py) | a stand-in for the importer's reading of a chart into claim payloads, naming each choice it makes, so the exporter's round trip is tested; the importer's claim builder replaces it |
+| [`stand_in.py`](stand_in.py) | World's records of a chart as the importer's own reader (`claims.chart_claims`) reads it, so the exporter's round trip tests the importer and the exporter together |
 | `test_*.py` | one per module; `test_export` reads, exports and reads again |
 
 Links in the wild are percent-encoded by different programs (some escape
