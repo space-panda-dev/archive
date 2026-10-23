@@ -1,4 +1,4 @@
-"""python -m enrich.bench validate SET | run SET --variant NAME | check SET | equivalence | cost
+"""python -m enrich.bench validate SET | run SET --variant NAME | check SET | equivalence | region | cost
 
 Exit status: 0 passed, 1 a mean regressed beyond the tolerance, 2 the run
 could not happen (a missing or changed file, a bad manifest or config, a
@@ -11,7 +11,7 @@ import argparse
 import json
 import sys
 
-from . import cost, equivalence, variants
+from . import cost, equivalence, region, variants
 from .run import (DEFAULT_TOLERANCE, baseline_path, compare, record_baseline, run_set, summary,
                   write_result)
 from .sets import BenchError, bench_root, load_set, verify
@@ -52,6 +52,8 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--tolerance", type=float, default=DEFAULT_TOLERANCE)
     commands.add_parser("equivalence", help="measure the stem equivalence record over the root's clips "
                                             "(see enrich/bench/equivalence.py)")
+    commands.add_parser("region", help="compare a region's stems and their measures with the whole run's over "
+                                       "the root's clips (see enrich/bench/region.py)")
     k = commands.add_parser("cost", help="measure the backfill's CPU seconds per audio-second over the root's clip "
                                          "and fail on a regression (see enrich/bench/cost.py)")
     k.add_argument("--record-baseline", action="store_true", help="store this result as the baseline")
@@ -60,6 +62,8 @@ def main(argv: list[str] | None = None) -> int:
         root = bench_root(args.root)
         if args.command == "equivalence":
             return equivalence.check(root)
+        if args.command == "region":
+            return region.check(root)
         if args.command == "cost":
             return cost.check(root, record_baseline=args.record_baseline)
         bench_set = load_set(root, args.set)

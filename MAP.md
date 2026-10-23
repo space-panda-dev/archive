@@ -1,7 +1,9 @@
 # Map
 
-Where each part lives, which files are long (line counts from `wc -l`),
-which tests cover it, and what not to open. Rules: [AGENTS.md](AGENTS.md);
+Where each part lives, which files are long, which tests cover it, and
+what not to open. Files of 600 lines or more, and definition lines, are `wf:gen` blocks:
+`lens stale --fix MAP.md` regenerates them, and the `docs` suite fails
+when one is stale. Rules: [AGENTS.md](AGENTS.md);
 `INV-n`: [docs/invariants.md](docs/invariants.md); ADR `nnnn`:
 [docs/decisions/](docs/decisions/README.md).
 
@@ -34,46 +36,54 @@ after `--`; the Python suites append them to `unittest discover`, so one
 module is `wf check enrich -- -p test_bank.py` and one test name is
 `-k <substring>`. Without wf: `make check`, `make test`.
 
-| Suite | Runs | Timeout |
-|---|---|---|
-| `check` | `python3 scripts/check.py` (docs, links, orphans, spec, licences) | 300 s |
-| `haskell` | `cabal test all` (`door-test`, `archive-test`) | 3600 s |
-| `world` | `unittest discover -s world/tests` | 3600 s |
-| `relay` | `unittest discover -s relay/tests` | 1800 s |
-| `enrich-tests` | `unittest discover -s enrich/tests` (derived media) | 1800 s |
-| `enrich` | `unittest discover -s enrich -p "test_*.py"` (Essentia interpreter) | 3600 s |
-| `capture` | `unittest discover -s capture -p "test_*.py"` (Essentia interpreter) | 1800 s |
-| `bench` | `unittest discover -s enrich/bench` (the bench's own interpreter) | 300 s |
-| `bench-horn` | `python -m enrich.bench check horn-v1`: private data, x86-64 laptop only; fails on a regression | 3600 s |
-| `migration`, `shadow`, `fixture` | `unittest discover -s <dir> -p "test_*.py"` | 1800 s |
+<!-- wf:gen suites  -->
+| suite | tier | timeout | run |
+|---|---|---|---|
+| check | 1 | 60s | `python3 scripts/check.py "$@"` |
+| docs | 1 | 60s | `wf vet --docs "$@"` |
+| build | 300 | 1800s | `cabal build -v0 lib:archive exe:door exe:archive "$@"` |
+| haskell | night | 3600s | `cabal test all "$@"` |
+| world | night | 3600s | `$PYTHON -m unittest discover -s world/tests "$@"` |
+| relay | 300 | 1800s | `$PYTHON -m unittest discover -s relay/tests "$@"` |
+| enrich-tests | 30 | 1800s | `$PYTHON -m unittest discover -s enrich/tests "$@"` |
+| shadow | 300 | 1800s | `$PYTHON -m unittest discover -s shadow -p "test_*.py" "$@"` |
+| migration | 30 | 1800s | `$PYTHON -m unittest discover -s migration -p "test_*.py" "$@"` |
+| fixture | 300 | 1800s | `$PYTHON -m unittest discover -s fixture -p "test_*.py" "$@"` |
+| enrich | night | 3600s | `$ENRICH_PYTHON -m unittest discover -s enrich -p "test_*.py" "$@"` |
+| capture | 300 | 1800s | `$ENRICH_PYTHON -m unittest discover -s capture -p "test_*.py" "$@"` |
+| bench | 30 | 300s | `P="$HOME/archive-bench/envs/harness/bin/python"; test -x "$P" \|\| { echo "bench: no $P; the bench runs on the x86-64 laptop (wf check --on laptop)"; exit 1; }; "$P" -m unittest discover -s enrich/bench -p "test_*.py" "$@"` |
+| bench-horn | night | 3600s | `P="$HOME/archive-bench/envs/harness/bin/python"; test -x "$P" \|\| { echo "bench-horn: no $P; the bench runs on the x86-64 laptop (wf check --on laptop)"; exit 1; }; ARCHIVE_BENCH_ROOT="$HOME/archive-bench" "$P" -m enrich.bench check horn-v1 "$@"` |
+<!-- /wf:gen -->
 
-Python suites build `door`/`archive` first and set
+`haskell` is `door-test` and `archive-test`; `enrich` and `capture` run
+the Essentia interpreter; `bench` and `bench-horn` need the bench's private
+data on the x86-64 laptop. Python suites build `door`/`archive` first and set
 `ARCHIVE_REQUIRE_INTEGRATION=1` (skips become failures).
 
 ## Door and archive (Haskell): the one writer, and the reader commands
 
-Build: [archive.cabal](archive.cabal) (149): library `door/src`, executables
+Build: [archive.cabal](archive.cabal): library `door/src`, executables
 `door`, `archive`, test suites `door-test`, `archive-test`.
 
-| File | Lines | What |
-|---|---|---|
-| `door/app/Main.hs` | 277 | `main` dispatch: `admit`, `transition` (`--dry-run`), `serve --socket`, `verify`; `proposalDryRun`, `admissionCommit`, `transitionCommit`, `serve` |
-| `archive/app/Main.hs` | 373 | `main`: `init`, `maintenance repack/prune-packed`, `status`, `doctor`, `ls`, `show`, `export [--since]`; `current` is unsupported |
-| `door/src/Archive/Door/AdmissionDryRun.hs` | 1574 | `dryRunAdmission`, `loadSnapshot`, `validateProposalContract` |
-| `door/src/Archive/Door/AdmissionCommit.hs` | 335 | `commitAdmission`, `refreshVerificationCheckpoint` |
-| `door/src/Archive/Door/TransitionDryRun.hs` | 1119 | `dryRunTransition`, `transitionDispatchTable` (contract id/version to kind) |
-| `door/src/Archive/Door/TransitionCommit.hs` | 114 | `commitTransition` |
-| `door/src/Archive/Door/Contracts.hs` | 2448 | bundle loading; `validateSchema` (line ~274) parses the `x-archive-*` rule keywords; `validate*Rule` functions implement them |
-| `door/src/Archive/Door/RecordCommit.hs` | 3015 | `commitRecordBatch*`, write lock, git-annex content |
-| `door/src/Archive/Door/Bootstrap.hs` | 1627 | `initArchive` |
-| `door/src/Archive/Door/VerifiedCheckpoint.hs` | 416 | incremental verification checkpoint (ADR 0052) |
-| `door/src/Archive/Door/Refusal.hs` | 120 | `RefusalCode` (ADR 0058) |
-| `door/src/Archive/Read/Core.hs`, `Archive/Doctor/Checks.hs` | 617, 444 | reading commands, `doctor` |
-| `door/src/Archive/GitSnapshot.hs`, `Process.hs`, `ProcessPinned.c` | 660, 320, 799 | Git snapshot reads, pinned process launch (ADR 0033) |
-| `door/service.schema.json` | 304 | published service and refusal codes |
+| File | What |
+|---|---|
+| `door/app/Main.hs` | `main` dispatch: `admit`, `transition` (`--dry-run`), `serve --socket`, `verify`; `proposalDryRun`, `admissionCommit`, `transitionCommit`, `serve` |
+| `archive/app/Main.hs` | `main`: `init`, `maintenance repack/prune-packed`, `status`, `doctor`, `ls`, `show`, `export [--since]`; `current` is unsupported |
+| `door/src/Archive/Door/AdmissionDryRun.hs` | `dryRunAdmission`, `loadSnapshot`, `validateProposalContract` |
+| `door/src/Archive/Door/AdmissionCommit.hs` | `commitAdmission`, `refreshVerificationCheckpoint` |
+| `door/src/Archive/Door/TransitionDryRun.hs` | `dryRunTransition`, `transitionDispatchTable` (contract id/version to kind) |
+| `door/src/Archive/Door/TransitionCommit.hs` | `commitTransition` |
+| `door/src/Archive/Door/Contracts.hs` | bundle loading; `validateSchema` parses the `x-archive-*` rule keywords; `validate*Rule` functions implement them |
+| `door/src/Archive/Door/RecordCommit.hs` | `commitRecordBatch*`, write lock, git-annex content |
+| `door/src/Archive/Door/Bootstrap.hs` | `initArchive` |
+| `door/src/Archive/Door/VerifiedCheckpoint.hs` | incremental verification checkpoint (ADR 0052) |
+| `door/src/Archive/Door/Refusal.hs` | `RefusalCode` (ADR 0058) |
+| `door/src/Archive/Read/Core.hs`, `Archive/Doctor/Checks.hs` | reading commands, `doctor` |
+| `door/src/Archive/GitSnapshot.hs`, `Process.hs`, `ProcessPinned.c` | Git snapshot reads, pinned process launch (ADR 0033) |
+| `door/service.schema.json` | published service and refusal codes |
 
-Tests: suite `haskell`. `door/test/Main.hs` (7827) and `archive/test/Main.hs`
-(1001) are single sequential programs of named `assert "..."` checks with no
+Tests: suite `haskell`. `door/test/Main.hs` and `archive/test/Main.hs`
+are single sequential programs of named `assert "..."` checks with no
 filter; find one with `rg -n 'assert "<words>' door/test/Main.hs`.
 Rules: INV-1, INV-2, INV-5; record envelope ADR 0022; admission ADR 0023;
 transitions ADR 0028, 0030; power-loss durability is accepted but not yet met
@@ -89,17 +99,42 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 `door/test/BeyondCircle010.hs`, agreement with World in
 `world/tests/test_door_agreement_beyond_circle.py`.
 
+<!-- wf:gen lines door/src/Archive/Door/AdmissionDryRun.hs door/src/Archive/Door/TransitionDryRun.hs door/src/Archive/Door/Contracts.hs door/src/Archive/Door/RecordCommit.hs door/src/Archive/Door/Bootstrap.hs door/src/Archive/Read/Core.hs door/src/Archive/GitSnapshot.hs door/src/Archive/ProcessPinned.c door/test/Main.hs archive/test/Main.hs -->
+| file | lines |
+|---|---|
+| `door/src/Archive/Door/AdmissionDryRun.hs` | 1579 |
+| `door/src/Archive/Door/TransitionDryRun.hs` | 1119 |
+| `door/src/Archive/Door/Contracts.hs` | 2449 |
+| `door/src/Archive/Door/RecordCommit.hs` | 3015 |
+| `door/src/Archive/Door/Bootstrap.hs` | 1627 |
+| `door/src/Archive/Read/Core.hs` | 617 |
+| `door/src/Archive/GitSnapshot.hs` | 660 |
+| `door/src/Archive/ProcessPinned.c` | 799 |
+| `door/test/Main.hs` | 7843 |
+| `archive/test/Main.hs` | 1001 |
+<!-- /wf:gen -->
+
+<!-- wf:gen anchors door/src/Archive/Door/Contracts.hs#validateSchema door/src/Archive/Door/TransitionDryRun.hs#transitionDispatchTable -->
+- `door/src/Archive/Door/Contracts.hs#validateSchema`: line 286
+- `door/src/Archive/Door/TransitionDryRun.hs#transitionDispatchTable`: line 145
+<!-- /wf:gen -->
+
 ## Spec: what every archive must satisfy, copied into each
 
 - `spec/VERSION` (current `0.0.11`, unreleased); `spec/archive-spec.md`
-  (2620) is a byte copy of `spec/0.0.11/archive-spec.md`. Navigate by
+  is a byte copy of `spec/0.0.11/archive-spec.md`. Navigate by
   heading: `rg -n '^##' spec/archive-spec.md` (section 6, "Reading
-  commands", runs from line 757 to 2602; D-18 holds 0.0.10's contracts;
-  D-19, ADR 0113's six versions, is not written yet).
+  commands", is most of it; D-18 holds 0.0.10's contracts, D-19 0.0.11's).
   Release notes: [docs/releases/0.0.10.md](docs/releases/0.0.10.md).
-- `spec/<version>/contracts.json` (0.0.11: 345 lines, 68 contracts) lists
+- `spec/<version>/contracts.json` lists
   `{id, version, digest}`; each digest names `spec/contracts/sha256-<hex>.json`.
 - `spec/<version>/context.jsonld` is the JSON-LD context (ADR 0025).
+
+<!-- wf:gen lines spec/archive-spec.md -->
+| file | lines |
+|---|---|
+| `spec/archive-spec.md` | 2741 |
+<!-- /wf:gen -->
 
 Rules: never delete a version or a bundle an archive may cite; supersede it
 (AGENTS.md, Pruning). `check` fails when a catalog entry has no bundle, a
@@ -109,18 +144,18 @@ upgrades: ADR 0068.
 
 ## World (Python): disposable RDF projection of an export, and SPARQL
 
-| File | Lines | What |
-|---|---|---|
-| `world/world.py` | 2138 | `_main` (line ~2013): `build`, `rebuild`, `refresh`, `query`, `musicbrainz-work`; `_project` (271), `_project_review_claim` (592), `_project_derivation_claim` (838), `_project_music_claim` (1083), `refresh_store`, `query` |
-| `world/harmony.py` | 889 | chord stacks, sequences, meter (ADR 0077) |
-| `world/contributions.py` | 810 | contributions, membership (ADR 0078) |
-| `world/documents.py`, `notes.py`, `circle.py` | 1081, 1365, 765 | documents, timed lyrics and syllables, sensitivity and rights, `Reacher` (0085); notes, melody, `tune_notes`, `written_rhythm` (0086); sharing gate, readable set, `beyond_circle`, `may_publish` (0088, 0085) |
-| `world/record_views.py`, `contract_graphs.py` | 588, 565 | the record views (`VIEWS` at the end); `RECHECKS`, contract to checker |
-| `world/conformance.py` | 176 | checks a store against `world/projection/6/` |
-| `world/projection/6/*.ttl`, `projection.json` | 18-440 | named graphs, SHACL shapes, vocabulary |
-| `world/examples/*.sparql` | | example queries, checked by tests |
+| File | What |
+|---|---|
+| `world/world.py` | `_main`: `build`, `rebuild`, `refresh`, `query`, `musicbrainz-work`; `_project`, `_project_review_claim`, `_project_derivation_claim`, `_project_music_claim`, `refresh_store`, `query` |
+| `world/harmony.py` | chord stacks, sequences, meter (ADR 0077) |
+| `world/contributions.py` | contributions, membership (ADR 0078) |
+| `world/documents.py`, `notes.py`, `circle.py` | documents, timed lyrics and syllables, sensitivity and rights, `Reacher` (0085); notes, melody, `tune_notes`, `written_rhythm` (0086); sharing gate, readable set, `beyond_circle`, `may_publish` (0088, 0085) |
+| `world/record_views.py`, `contract_graphs.py` | the record views (`VIEWS` at the end); `RECHECKS`, contract to checker |
+| `world/conformance.py` | checks a store against `world/projection/6/` |
+| `world/projection/6/*.ttl`, `projection.json` | named graphs, SHACL shapes, vocabulary |
+| `world/examples/*.sparql` | example queries, checked by tests |
 
-Tests: suite `world`; `world/tests/test_world.py` (1010), plus `test_harmony`,
+Tests: suite `world`; `world/tests/test_world.py`, plus `test_harmony`,
 `test_contributions`, `test_derivation`, `test_door_agreement`,
 `test_conformance`, `test_upgrade`, `test_music`, `test_role_scheme`.
 Rules: World owns no facts and presents competing claims without choosing
@@ -130,50 +165,90 @@ version served beside the old for 90 days (ADR 0059); incomplete or
 unsupported input fails, never an empty answer (INV-24); refresh must equal a
 full rebuild (ADR 0055).
 
+<!-- wf:gen lines world/world.py world/harmony.py world/contributions.py world/documents.py world/notes.py world/circle.py world/tests/test_world.py -->
+| file | lines |
+|---|---|
+| `world/world.py` | 2138 |
+| `world/harmony.py` | 1061 |
+| `world/contributions.py` | 810 |
+| `world/documents.py` | 1287 |
+| `world/notes.py` | 1657 |
+| `world/circle.py` | 770 |
+| `world/tests/test_world.py` | 1010 |
+<!-- /wf:gen -->
+
+<!-- wf:gen anchors world/world.py#_main world/world.py#_project world/world.py#_project_review_claim world/world.py#_project_derivation_claim world/world.py#_project_music_claim world/world.py#refresh_store -->
+- `world/world.py#_main`: line 2027
+- `world/world.py#_project`: line 273
+- `world/world.py#_project_review_claim`: line 606
+- `world/world.py#_project_derivation_claim`: line 852
+- `world/world.py#_project_music_claim`: line 1097
+- `world/world.py#refresh_store`: line 1808
+<!-- /wf:gen -->
+
 ## Relay (Python): HTTP for the browser; no state; loopback only
 
-`relay/relay.py` (1159; `GET /media/{digest}/bank/{extractor}/{output}/{key}` serves a region entry's file by key): `DOOR_ROUTES`, `MEDIA_ROUTES`, `ROUTES` (lines
-44-54), `Relay` (641), `make_handler` (827), `main` (1051).
-`relay/openapi.json` (1935) describes every route, answer, and refusal.
-Tests: suite `relay`; `relay/tests/test_relay.py` (1156; `CoherentSaveChecks`
-is ADR 0113's end-to-end save on the built fixture), `test_media.py`
-(467). Every answer is validated against `openapi.json`, and Door refusals
+`relay/relay.py` (`GET /media/{digest}/bank/{extractor}/{output}/{key}` serves a region entry's file by key): `DOOR_ROUTES`, `MEDIA_ROUTES`, `ROUTES`, `Relay`, `make_handler`, `main`.
+`relay/openapi.json` describes every route, answer, and refusal.
+Tests: suite `relay`; `relay/tests/test_relay.py` (`CoherentSaveChecks`
+is ADR 0113's end-to-end save on the built fixture), `test_media.py`. A local
+probe's `GET /health` needs no login (ADR 0114). Every answer is validated against `openapi.json`, and Door refusals
 against `door/service.schema.json`.
 Rules: ADR 0054 (Door service), 0056, 0060 (interface and role), 0063 (read
-speed), 0069 (media by digest).
+speed), 0069 (media by digest), 0114 (local health).
+
+<!-- wf:gen lines relay/relay.py relay/openapi.json relay/tests/test_relay.py -->
+| file | lines |
+|---|---|
+| `relay/relay.py` | 1216 |
+| `relay/openapi.json` | 4724 |
+| `relay/tests/test_relay.py` | 1194 |
+<!-- /wf:gen -->
+
+<!-- wf:gen anchors relay/relay.py#DOOR_ROUTES relay/relay.py#MEDIA_ROUTES relay/relay.py#ROUTES relay/relay.py#Relay relay/relay.py#make_handler relay/relay.py#main -->
+- `relay/relay.py#DOOR_ROUTES`: line 60
+- `relay/relay.py#MEDIA_ROUTES`: line 67
+- `relay/relay.py#ROUTES`: line 79
+- `relay/relay.py#Relay`: line 739
+- `relay/relay.py#make_handler`: line 927
+- `relay/relay.py#main`: line 1202
+<!-- /wf:gen -->
 
 ## enrich (Python)
 
 Purpose: machine claims proposed through Door, derived media, and the feature
-bank. Doc: [enrich/README.md](enrich/README.md) (1106; one section per
-command, `rg -n '^##' enrich/README.md`).
+bank. Doc: [enrich/README.md](enrich/README.md) (one section per command,
+`rg -n '^##' enrich/README.md`).
 
-| File | Lines | What |
-|---|---|---|
-| `enrich/enrich.py` | 685 | `main` (619): `probe`, `detect`, `match`, `match-windows` (`run_probe`, `run_detect`, `run_match`, `run_match_windows`) |
-| `enrich/adapter.py` | 588 | `propose`: a tool result to a Door proposal (ADR 0064) |
-| `enrich/propose.py`, `proposers.py` | 294, 1059 | `enrich propose` (per-region runs where the whole read lacks a feature; `Context.region`, `shift_of`); `PROPOSERS` (registry at the end): bank features as claims, the bass line and vocal bleed filter (`bass_line`, `read_bass_line`, `drop_bleed`), lines built from `f0-pesto` (`build_line`), forced alignment declared and refused `not_yet` |
-| `enrich/note_builder.py` | 356 | `build`: one note per held pitch from a pitch track and its level (ADR 0086); settings `VOICE`, `BASS`; tests `enrich/test_note_builder.py` |
-| `enrich/probe.py`, `detector.py` | 234, 674 | stream facts (0065), span suggestions (0066; presets and the talk gate, 0091) |
-| `enrich/match.py`, `cover.py`, `windows.py` | 358, 1073, 517 | work matching (0067, 0071, 0072) |
-| `enrich/extract.py` | 985 | feature-bank runner: `main` (`list`, `run` with `--region` and `--exact`, `equivalence`), `cut_region`, `run_default`, `run_from`; `Run.stand_in` |
-| `enrich/bank.py` | 1474 | `Catalog` (452; `within` for regions), `Bank` (1064; `candidates`, `stands_in`, `measured_over`, `probe_falls_short`): the bank format; equivalence records (`check_equivalence` 888, `decisions`); region keys (`key_of`, `check_region`), `RegionView`/`region_entries`/`regions` (readers of region entries; `Entry.placed`, `Entry.timeline`), `covering`, bank requests (`ask`, `requests`) at the end (ADR 0112) |
-| `enrich/equivalence.py` | 262 | `measure`: the equivalence record of interchangeable entries; `MEASURES` (note F1, f0 cents, voicing) |
-| `enrich/regions.py` | 259 | song spans by precedence, `regions_of`, `regions_for`, `expensive`, `plan` per mode (ADR 0112); tests `enrich/test_regions.py` |
-| `enrich/remote.py` | 612 | extractor runs through Spool: `put` (with a lossless `make_transport` of the content), `work`, `collect` (ADR 0090) |
-| `enrich/backfill.py` | 1623 | `enrich backfill` (ADR 0112 and its amendment): `Planning`/`plan` (modes from `regions.plan`, region jobs, requests first, `request_key`), `Schedule.tier` (fast or background), `prioritise`, `projection` (time to usable and to done), `Planner.state` (reads the bank through `Bank`, over a region through `Catalog.within`), `unit_order` (probes first), `layout`/`copies` (`DEVICE_SETTINGS`: stems on `cpu-inductor` one thread a copy), `check_remote` (stand-in routing), `Runner` (the pool by `Job.priority`, the background held until usable, the Spool window, `--follow` intake), `Proposals`, `Follow`; tests `enrich/test_backfill.py` |
-| `enrich/media.py`, `waveform.py`, `derived.py` | 193, 161, 62 | derived media (ADR 0069) |
-| `enrich/extractors/stems/stems.py` | 755 | `separate`; `cpu-inductor` (`compile_network`, `htdemucs_core`); a region run separates the source over a window on the whole run's grid (`aligned`, `context_of`, `trimmed`) so its stems are the whole's; tests `enrich/test_stems.py` |
-| `enrich/support.py` | 291 | test support: synthetic audio, scratch archives |
-| `enrich/extractors/<id>/` | | `extractor.json` + program; longest: `quality/quality.py` 1317, `tonal/tonal.py` 986, `structure/structure.py` 871, `rhythm/meter.py` 821 |
+| File | What |
+|---|---|
+| `enrich/enrich.py` | `main`: `probe`, `detect`, `match`, `match-windows` (`run_probe`, `run_detect`, `run_match`, `run_match_windows`) |
+| `enrich/adapter.py` | `propose`: a tool result to a Door proposal (ADR 0064) |
+| `enrich/propose.py`, `proposers.py` | `enrich propose` (per-region runs where the whole read lacks a feature; `Context.region`, `shift_of`); `PROPOSERS` (registry at the end): bank features as claims, the bass line and vocal bleed filter (`bass_line`, `read_bass_line`, `drop_bleed`), lines built from `f0-pesto` (`build_line`), forced alignment declared and refused `not_yet` |
+| `enrich/note_builder.py` | `build`: one note per held pitch from a pitch track and its level (ADR 0086); settings `VOICE`, `BASS`; tests `enrich/test_note_builder.py` |
+| `enrich/probe.py`, `detector.py` | stream facts (0065), span suggestions (0066; presets and the talk gate, 0091) |
+| `enrich/match.py`, `cover.py`, `windows.py` | work matching (0067, 0071, 0072) |
+| `enrich/extract.py` | feature-bank runner: `main` (`list`, `run` with `--region` and `--exact`, `equivalence`, `region-equivalence`), `cut_region`, `run_default`, `run_from` (a region's stem measured with its `placed` region); `Run.stand_in` |
+| `enrich/bank.py` | `Catalog` (`within` for regions, `placed_by` for a stem made over one), `Bank` (`candidates`, `stands_in`, `measured_over`, `probe_falls_short`): the bank format; equivalence records (`check_equivalence`, `decisions`); region keys (`key_of`, `check_region`), `RegionView`/`region_entries`/`regions` (readers of region entries; `Entry.placed`, `Entry.timeline`), `covering`, bank requests (`ask`, `requests`) at the end (ADR 0112) |
+| `enrich/equivalence.py` | `measure`: the equivalence record of interchangeable entries; `MEASURES` (note F1, f0 cents, voicing); `region_measure`: a region's stems and measures against the whole run's (ADR 0112) |
+| `enrich/regions.py` | song spans by precedence, `regions_of`, `regions_for`, `expensive`, `plan` per mode (ADR 0112); tests `enrich/test_regions.py` |
+| `enrich/remote.py` | extractor runs through Spool: `put` (with a lossless `make_transport` of the content, remembered under `<bank>/tmp/transports/` so `put_again` does not encode it again), `work`, `collect` (ADR 0090) |
+| `enrich/backfill.py` | `enrich backfill` (ADR 0112 and its amendments): `Planning`/`plan` (modes from `regions.plan`, region jobs, requests first, `request_key`), `Schedule.tier` (fast or background), `prioritise`, `projection` (time to usable, with the per-recording proposal, and to done), `Planner.state` (reads the bank through `Bank`, over a region through `Catalog.within`), `unit_order` (probes first), `layout`/`copies` (`DEVICE_SETTINGS`: stems on `cpu-inductor` one thread a copy), `check_remote` (stand-in routing), `unprobed_of`/`discover` (unprobed read from the export); re-exports the two modules below; tests `enrich/test_backfill.py` |
+| `enrich/backfill_queue.py` | the backfill's pool: `Job`, `Runner` (by `Job.priority`, the background held until usable, the Spool window), `choose`/`shadow` (backfilling behind a head waiting for cores or memory; reserved outright after `reserve_after_seconds`), `take_here` (overflow of routed work when it ends here sooner), `remote_parameters` |
+| `enrich/backfill_proposals.py` | the backfill's archive-side steps: `Steps` (each `call` knows its outcome), `Proposals` (usable per recording, one `--all` when more than two wait), `Follow` (`--follow` intake) |
+| `enrich/media.py`, `waveform.py`, `derived.py` | derived media (ADR 0069) |
+| `enrich/extractors/stems/stems.py` | `separate`; `cpu-inductor` (`compile_network`, `htdemucs_core`); a region run separates the source over a window on the whole run's grid (`aligned`, `context_of`, `trimmed`) so its stems are the whole's; tests `enrich/test_stems.py` |
+| `enrich/support.py` | test support: synthetic audio, scratch archives |
+| `enrich/extractors/<id>/` | `extractor.json` + program; the longest are below |
 
 Tests: suite `enrich`, `enrich/test_<topic>.py` by command or extractor
-family (`git ls-files 'enrich/test_*'`; `test_bank` 1308, `test_extractors`
+family (`git ls-files 'enrich/test_*'`; `test_bank` is the longest, `test_extractors`
 runs all extractors together); suite `enrich-tests` is
 `enrich/tests/test_media.py`.
 The bench (`enrich/bench/`, [README](enrich/bench/README.md)) scores note
 transcribers against private sets outside the repository, and gates the
-backfill's CPU seconds per audio-second (`cost.py`, `python -m enrich.bench cost`); suites `bench` and
+backfill's CPU seconds per audio-second (`cost.py`, `python -m enrich.bench cost`), and checks a region's
+entries against the whole run's (`region.py`, `python -m enrich.bench region`); suites `bench` and
 `bench-horn`. The `enrich` suite does not discover it (no `__init__.py`).
 Rules: enrichment never changes its inputs (INV-9); every claim carries its
 run and provenance (ADR 0064, [provenance](docs/provenance.md)); an
@@ -191,41 +266,94 @@ region entries, the region stems mismatch) is step 0 of
 Pitfall: the backfill's job events are `ran`/`failed`; `done` is only its
 last line.
 Find: extractors in `enrich/extractors/<id>/extractor.json`; SHIPPED digest
-pins in `enrich/test_bank.py` (`SHIPPED = {`, line 115); byte format in
-[docs/feature-bank.md](docs/feature-bank.md) (604; shipped table at "The
+pins in `enrich/test_bank.py` (`SHIPPED`); byte format in
+[docs/feature-bank.md](docs/feature-bank.md) (shipped table at "The
 shipped extractors").
+
+<!-- wf:gen lines enrich/README.md enrich/enrich.py enrich/adapter.py enrich/proposers.py enrich/detector.py enrich/cover.py enrich/extract.py enrich/bank.py enrich/remote.py enrich/backfill.py enrich/backfill_queue.py enrich/extractors/stems/stems.py enrich/extractors/quality/quality.py enrich/extractors/tonal/tonal.py enrich/extractors/structure/structure.py enrich/extractors/rhythm/meter.py enrich/test_bank.py docs/feature-bank.md -->
+| file | lines |
+|---|---|
+| `enrich/README.md` | 1172 |
+| `enrich/enrich.py` | 722 |
+| `enrich/adapter.py` | 609 |
+| `enrich/proposers.py` | 1059 |
+| `enrich/detector.py` | 674 |
+| `enrich/cover.py` | 1073 |
+| `enrich/extract.py` | 1060 |
+| `enrich/bank.py` | 1498 |
+| `enrich/remote.py` | 720 |
+| `enrich/backfill.py` | 1193 |
+| `enrich/backfill_queue.py` | 613 |
+| `enrich/extractors/stems/stems.py` | 755 |
+| `enrich/extractors/quality/quality.py` | 1317 |
+| `enrich/extractors/tonal/tonal.py` | 993 |
+| `enrich/extractors/structure/structure.py` | 871 |
+| `enrich/extractors/rhythm/meter.py` | 821 |
+| `enrich/test_bank.py` | 1331 |
+| `docs/feature-bank.md` | 633 |
+<!-- /wf:gen -->
+
+<!-- wf:gen anchors enrich/enrich.py#main enrich/bank.py#Catalog enrich/bank.py#Bank enrich/bank.py#check_equivalence enrich/test_bank.py#SHIPPED -->
+- `enrich/enrich.py#main`: line 635
+- `enrich/bank.py#Catalog`: line 452
+- `enrich/bank.py#Bank`: line 1106
+- `enrich/bank.py#check_equivalence`: line 909
+- `enrich/test_bank.py#SHIPPED`: line 115
+<!-- /wf:gen -->
 
 ## capture (Python)
 
 Purpose: import a recorder card as sessions, then run probe/detect/match.
-`capture/capture.py` (670): `main` (624, `import`), `read_directory`,
-`group`, `plan`, `admit`, `enrich`; `grammar.py` (124) recorder file-name
-grammars, `GRAMMARS`; `send.py` (185) sends a card read elsewhere.
-Tests: suite `capture`; `test_capture` (763), `test_grammar`, `test_send`.
+`capture/capture.py`: `main` (`import`), `read_directory`, `group`,
+`plan`, `admit`, `enrich`; `grammar.py` recorder file-name grammars,
+`GRAMMARS`; `send.py` sends a card read elsewhere.
+Tests: suite `capture`; `test_capture`, `test_grammar`, `test_send`.
 Rules: ADR 0070; capture proposes, Door commits (INV-2).
+
+<!-- wf:gen lines capture/capture.py capture/test_capture.py -->
+| file | lines |
+|---|---|
+| `capture/capture.py` | 704 |
+| `capture/test_capture.py` | 855 |
+<!-- /wf:gen -->
 
 ## migration (Python)
 
 Purpose: read-only V2 census and the V2 audio route's Door proposals.
-`v2_translate.py` (1218): `main` (`plan`, `verify`, `probe`); `v2_bundle.py`
-(1009) frozen bundle (ADR 0036); `v2_lookup.py` (149); `census.py` (600);
-`audio_route.py` (341, ADR 0040, 0047); `source_manifest.py` (310).
+`v2_translate.py`: `main` (`plan`, `verify`, `probe`); `v2_bundle.py`
+frozen bundle (ADR 0036); `v2_lookup.py`; `census.py`; `audio_route.py`
+(ADR 0040, 0047); `source_manifest.py`.
 Tests: suite `migration`; `git ls-files 'migration/test_*'` (six modules).
 Rules: translate V2 into this vocabulary; V2 never answers an open question
 (ADR 0015); evidence and claims are preserved (ADR 0035); unit status in
 [docs/port-ledger.md](docs/port-ledger.md).
 
+<!-- wf:gen lines migration/v2_translate.py migration/v2_bundle.py migration/census.py -->
+| file | lines |
+|---|---|
+| `migration/v2_translate.py` | 1218 |
+| `migration/v2_bundle.py` | 1009 |
+| `migration/census.py` | 600 |
+<!-- /wf:gen -->
+
 ## shadow and fixture (Python)
 
-shadow: `compare.py` (509) manifests and census reports; `review.py` (429)
-validates human checkpoint reviews; `scratch.py` (295) scratch archives (ADR
-0061). Suite `shadow`: `test_compare`, `test_review`, `test_scratch`.
-Procedure: [docs/shadow-runbook.md](docs/shadow-runbook.md) (424).
+shadow: `compare.py` manifests and census reports; `review.py` validates
+human checkpoint reviews; `scratch.py` scratch archives (ADR 0061). Suite `shadow`: `test_compare`, `test_review`, `test_scratch`.
+Procedure: [docs/shadow-runbook.md](docs/shadow-runbook.md).
 
-fixture: `build.py` (290, `main`) admits `plan.json` (413) through the real
-Door; `serve.py` (96) builds and serves it with the relay (ADR 0062). Suite
-`fixture`: `test_fixture`. The plan cites every contract in the current
+fixture: `build.py` (`main`) admits `plan.json` through the real Door;
+`serve.py` builds (or, with `--built`, takes) and serves it with the relay
+(ADR 0062): `wf run`, and `wf lease relay` for a client's worktree. Suite
+`fixture`: `test_fixture`. `scripts/prove.py` prints Door's and Archive's
+commands over it, normalised: `wf prove --golden` against `fixture/golden/`. The plan cites every contract in the current
 catalog except the specification upgrade, so a new contract needs a plan step.
+
+<!-- wf:gen lines fixture/plan.json -->
+| file | lines |
+|---|---|
+| `fixture/plan.json` | 688 |
+<!-- /wf:gen -->
 
 ## Do not read
 
@@ -235,18 +363,18 @@ catalog except the specification upgrade, so a new contract needs a plan step.
 | `spec/0.0.*/archive-spec.md` (old versions) | read `spec/archive-spec.md` by heading; `git diff --no-index spec/0.0.8/archive-spec.md spec/0.0.9/archive-spec.md` for a change |
 | `world/tests/fixtures/*.json` (one-line exports, up to 133 KB) | `python3 -c` with `json` to count or pick; regenerate via `door-test` with `ARCHIVE_TEST_WORLD_EXPORT` (world/README.md, Tests) |
 | `fixture/content/*` (binary) | `fixture/README.md` says how each was made |
-| `door/test/Main.hs` (7856), `RecordCommit.hs` (3015), `Contracts.hs` (2448) | `rg -n` the function or assert text, then read around it |
-| `relay/openapi.json` (1935) | `python3 -c` with `json` on `["paths"]["/route"]` |
-| `docs/port-ledger.md` (520) | `rg -n '<unit>' docs/port-ledger.md` |
+| `door/test/Main.hs`, `RecordCommit.hs`, `Contracts.hs` (the longest Haskell) | `rg -n` the function or assert text, then read around it |
+| `relay/openapi.json` | `python3 -c` with `json` on `["paths"]["/route"]` |
+| `docs/port-ledger.md` | `rg -n '<unit>' docs/port-ledger.md` |
 | `flake.lock`, `dist-newstyle/`, `cabal.project.local` | not source; never edit by hand |
 | SHIPPED digests in `enrich/test_bank.py` | let the test print the new digest |
 
 ## Slow things
 
-- `enrich`: about 16 minutes, the longest; run one module with `-p`.
-- `haskell`: about 4-7 minutes; monolithic, no filter.
-- Others: no recorded figure; limits are the timeouts above. An unchanged
-  tree is answered from cache.
+Each suite's tier is its measured time (`.workshop.toml` has the figures;
+`wf suites` shows the last run). `enrich` is the longest: run one module
+with `-- -p`. `haskell` has no filter. An unchanged tree is answered from
+cache.
 
 ## Common tasks
 
@@ -264,7 +392,7 @@ catalog except the specification upgrade, so a new contract needs a plan step.
    `contracts.json`), `spec/VERSION`, `spec/archive-spec.md`, `archive.cabal`
    data-files; Door rules in `Contracts.hs`/`AdmissionDryRun.hs` with
    `door/test/Main.hs`; a step in `fixture/plan.json`; World projection. Model:
-   commit `369a7d3` (spec 0.0.9). Governs: ADR 0057, 0068, 0027.
+   the commit that added `spec/0.0.9/VERSION` (spec 0.0.9). Governs: ADR 0057, 0068, 0027.
 4. **Add a World view of a claim.** `_project_*_claim` in `world/world.py`
    (or a rules module like `harmony.py`), shapes and terms in
    `world/projection/6/*.ttl`, raise `PROJECTION_REVISIONS`, an example in

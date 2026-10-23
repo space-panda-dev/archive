@@ -31,12 +31,12 @@ key `SHA256E-s47--ac78e6437d1967e51ca199d585c809045e107de8f524cbb84bf303dda33b74
 
 | Operation | Branch changed? | Evidence |
 |---|---:|---|
-| First `get --from=synthetic payload.bin` | Yes | Commit `484eb2a7` → `2ce6efb9`; branch byte digest `4fd990c1…` → `99e4cda1…` |
+| First `get --from=synthetic payload.bin` | Yes | Commit `484eb2a7` → `2ce6efb9`; branch byte digest `4fd990c1…` → `99e4cda1…` | <!-- lens: allow stale -->
 | Identical `get` retry | No | Commit and branch byte digest unchanged |
 | `whereis --json` twice | No | Commit and branch byte digest unchanged for each call |
 | `info --json` twice | No | Commit and branch byte digest unchanged for each call |
-| `fsck --from=synthetic` first run | Yes | Commit `2ce6efb9` → `45941b4a`; branch byte digest `99e4cda1…` → `25983623…` |
-| Identical `fsck --from=synthetic` retry | Yes | Commit `45941b4a` → `57e7f60c`; branch byte digest `25983623…` → `3a0e8b82…` |
+| `fsck --from=synthetic` first run | Yes | Commit `2ce6efb9` → `45941b4a`; branch byte digest `99e4cda1…` → `25983623…` | <!-- lens: allow stale -->
+| Identical `fsck --from=synthetic` retry | Yes | Commit `45941b4a` → `57e7f60c`; branch byte digest `25983623…` → `3a0e8b82…` | <!-- lens: allow stale -->
 
 The complete refs, blob hashes, commands, and fixture details are in the JSON
 report. The retrieved file's byte hash matched the synthetic fixture. This
@@ -86,9 +86,9 @@ Findings:
    commit stays reported, unadmitted storage.
 
 The retained command script, its output, the final Git `HEAD`
-(`3f1fa8b6`), the `git-annex` ref (`91edc2a9`), and the annex UUID are kept
+(`3f1fa8b6`), the `git-annex` ref (`91edc2a9`), and the annex UUID are kept <!-- lens: allow stale -->
 outside this repository with the run. The script's SHA-256 is
-`da53b1b9…c0451`, and the output's is `364517fd…36199`.
+`da53b1b9…c0451`, and the output's is `364517fd…36199`. <!-- lens: allow stale -->
 
 ## Review record for the real-archive-copy gate
 

@@ -1,0 +1,12 @@
+$ python3 scripts/prove.py usage
+[exit 0]
+--- stdout
+$ archive
+[exit 1]
+--- stdout
+{"error":"usage: archive (init --operator <identity-name> <root> | maintenance (repack | prune-packed) | status | doctor | ls | show <object-or-revision> | current | export [--since <commit>])","status":"failed"}
+$ door
+[exit 1]
+--- stderr
+usage: door (admit --proposal DIRECTORY --dry-run | admit | transition --proposal DIRECTORY [--dry-run] | transition | serve --socket PATH | verify)
+--- stderr

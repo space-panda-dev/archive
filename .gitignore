@@ -4,3 +4,4 @@ __pycache__/
 /world/.venv/
 /world/.store/
 /.claude/
+/.wf/

@@ -7,6 +7,13 @@ on, listening on the loopback interface. The caller sends the
 `Tailscale-User-Login` header itself; no tailnet is involved.
 
     fixture/serve.py --work DIR [--port 8450] [--login ci@example.invalid] [--origin URL]...
+    fixture/serve.py --work DIR --built BUILT ...
+
+With --built, it serves an archive built before instead of building one:
+BUILT/archive and its manifest BUILT/manifest.json, as `fixture/build.py
+BUILT/archive > BUILT/manifest.json` leaves them. Door commits to it in
+place, so BUILT should be a disposable copy (a development tool's lease
+clones one per instance).
 
 It prints the fixture manifest (with the relay's URL and the login's agent)
 once the relay answers, and serves until interrupted.
@@ -41,19 +48,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--origin", action="append", default=[], help="an https origin browsers may call from")
     parser.add_argument("--door", default=shutil.which("door") or "door")
     parser.add_argument("--archive", default=shutil.which("archive") or "archive")
+    parser.add_argument("--built", type=Path, help="serve BUILT/archive with BUILT/manifest.json instead of building")
     args = parser.parse_args(argv)
     work = args.work.absolute()
     if work.exists() and any(work.iterdir()):
         print(json.dumps({"status": "failed", "detail": f"{work} is not empty"}), file=sys.stderr)
         return 1
     work.mkdir(parents=True, exist_ok=True)
-    archive_root = work / "archive"
-    built = subprocess.run([sys.executable, str(HERE / "build.py"), str(archive_root), "--door", args.door,
-                            "--archive", args.archive], capture_output=True, text=True)
-    if built.returncode != 0:
-        sys.stderr.write(built.stderr)
-        return 1
-    manifest = json.loads(built.stdout)
+    if args.built is not None:
+        archive_root = args.built.absolute() / "archive"
+        manifest = json.loads((args.built / "manifest.json").read_text(encoding="utf-8"))
+    else:
+        archive_root = work / "archive"
+        built = subprocess.run([sys.executable, str(HERE / "build.py"), str(archive_root), "--door", args.door,
+                                "--archive", args.archive], capture_output=True, text=True)
+        if built.returncode != 0:
+            sys.stderr.write(built.stderr)
+            return 1
+        manifest = json.loads(built.stdout)
     environment = dict(os.environ)
     for variable, program in (("ARCHIVE_GIT_EXECUTABLE", "git"), ("ARCHIVE_GIT_ANNEX_EXECUTABLE", "git-annex")):
         environment.setdefault(variable, os.path.realpath(shutil.which(program) or program))

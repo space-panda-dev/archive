@@ -96,7 +96,10 @@ seedbox, and never separates stems: it mixes stems the bank already holds.
 status, and refusal code, as OpenAPI 3.1 with JSON Schema 2020-12. The tests
 validate every answer against it.
 
-Every request must carry an allowed `Tailscale-User-Login`; a request with an
+Every request must carry an allowed `Tailscale-User-Login`, except a local
+probe's `GET /health` (no identity, not forwarded), which is answered
+`{ok, healthy, writes, commit, build}` and nothing else
+([ADR 0114](../docs/decisions/0114-relay-local-health.md)); a request with an
 `Origin` must come from a listed origin; bodies are `application/json`, at
 most 1 MiB. Answers are `{"ok": true, "archive": ..., "result": ...}` or
 `{"ok": false, "error": {"code", "message"}, "archive": ...}`. `archive` names
@@ -105,7 +108,7 @@ versions served.
 
 | Route | Body | Result |
 | --- | --- | --- |
-| `GET /health` | | `{healthy, writes, door, world}`; 503 unless Door and World both answer |
+| `GET /health` | | `{healthy, writes, door, world, commit, build}`; 503 unless Door and World both answer |
 | `POST /world/query` | `{"query": sparql, "projection": n}` | `{snapshot, projection, media_type, data}`: SPARQL Results JSON or N-Triples |
 | `POST /door/admit-dry-run`, `/door/transition-dry-run` | `{"manifest", "records"}` | `{"door": ...}`, Door's answer |
 | `POST /door/admit`, `/door/transition` | the same | `{"door": ..., "world": {"status": "refreshed" \| "stale", ...}}`; refused unless `writes` is `commit` |

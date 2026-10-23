@@ -165,46 +165,114 @@ class SlotsAndThreads(unittest.TestCase):
         self.assertFalse(schedule(expensive_above=2.0).expensive("stems"))
 
 
+class FakeSteps:
+    """`Steps` as Proposals uses it: each proposal's own outcome, and the
+    shared failure count."""
+
+    def __init__(self, outcomes=None):
+        self.failures, self.calls, self.outcomes = 0, [], list(outcomes or [])
+        self.lock = threading.Lock()
+
+    def failed(self) -> None:
+        self.failures += 1
+
+    def proposed(self, label: str, artifacts) -> bool:
+        self.calls.append((label, artifacts))
+        good = self.outcomes.pop(0) if self.outcomes else True
+        if not good:
+            self.failed()
+        return good
+
+
+def pool_of(jobs):
+    """What Proposals reads of the pool: its jobs and its lock."""
+    return argparse.Namespace(jobs=jobs, changed=threading.Condition())
+
+
 class UsableProposal(unittest.TestCase):
-    """A usable proposal that fails makes nothing usable; the next good one does."""
+    """Each recording is proposed once its fast tier settles; usable when
+    all are; a usable proposal that fails makes nothing usable, the next
+    good one does."""
+
+    def proposals(self, steps, notes, every=0.0):
+        return backfill.Proposals(steps, argparse.Namespace(world_store=None), lambda **e: notes.append(e),
+                                  time.monotonic(), every, True)
+
+    def fast(self, rec, unit=RHYTHM):
+        return Job(rec, unit, 0, tier="fast", status="running")
+
+    def test_each_recording_is_proposed_when_its_fast_tier_settles_while_the_others_run(self) -> None:
+        a, b = recording("a"), recording("b")
+        jobs = [self.fast(a), self.fast(a, STRUCTURE), self.fast(b)]
+        notes, steps = [], FakeSteps()
+        proposals = self.proposals(steps, notes, every=3600.0)
+        proposals.runner = pool_of(jobs)
+        proposals.start([a, b], jobs)
+        for job in jobs[:2]:
+            job.status = "done"
+            proposals.settled(job)
+        proposals.tick()
+        proposals.thread.join()
+        self.assertEqual(steps.calls, [("propose (usable)", [a.object_id])])  # b's fast tier still runs
+        self.assertTrue(proposals.hold_background())
+        jobs[2].status = "failed"  # settled, if not made: b is proposed with what it has
+        proposals.settled(jobs[2])
+        proposals.finish()
+        self.assertEqual(steps.calls[1], ("propose (usable)", [b.object_id]))
+        self.assertEqual([n["step"] for n in notes], ["usable"])
+        self.assertIsNotNone(proposals.usable_s)
+        self.assertFalse(proposals.hold_background())
+
+    def test_many_recordings_waiting_are_proposed_with_one_all(self) -> None:
+        recs = [recording(n) for n in "abc"]
+        notes, steps = [], FakeSteps()
+        proposals = self.proposals(steps, notes)
+        proposals.runner = pool_of([])
+        proposals.start(recs, [])  # their fast tier is in the bank already
+        proposals.finish()
+        self.assertEqual(steps.calls, [("propose (usable, all)", None)])
+        self.assertEqual(notes[-1]["step"], "usable")
 
     def test_a_failed_usable_proposal_is_not_usable_and_the_next_good_one_is(self) -> None:
-        class Steps:
-            failures, calls = 0, []
-
-            def propose(self, label: str) -> None:
-                self.calls.append(label)
-                if len(self.calls) == 1:
-                    self.failures += 1  # `enrich propose` exited 1, as `Steps.run` counts it
-
-        notes: list[dict] = []
-        steps = Steps()
-        args = argparse.Namespace(world_store=None)
-        proposals = backfill.Proposals(steps, args, lambda **e: notes.append(e), time.monotonic(), 0.0, True)
-        proposals.begin("usable")
+        notes, steps = [], FakeSteps([False])
+        proposals = self.proposals(steps, notes)
+        proposals.runner = pool_of([])
+        proposals.start([recording("a")], [])
         proposals.finish()
         self.assertEqual([n["step"] for n in notes], ["usable proposal failed"])
         self.assertIsNone(proposals.usable_s)
         self.assertFalse(proposals.hold_background())  # the background is not held for ever
         proposals.tick()  # the next proposal, at the background interval, though no background unit landed
         proposals.finish()
-        self.assertEqual(steps.calls, ["propose --all (usable)", "propose --all (background batch)"])
+        self.assertEqual([c[0] for c in steps.calls], ["propose (usable)", "propose --all (background batch)"])
         self.assertEqual([n["step"] for n in notes], ["usable proposal failed", "usable"])
         self.assertIsNotNone(proposals.usable_s)
         self.assertFalse(proposals.usable_pending)
 
-    def test_a_usable_proposal_that_cannot_run_is_a_failure_not_usable(self) -> None:
-        class Steps:
-            failures = 0
+    def test_a_failure_beside_the_proposal_is_not_the_proposals(self) -> None:
+        # A --follow rescan failing while a proposal runs used to be counted as the proposal failing.
+        class Beside(FakeSteps):
+            def proposed(self, label, artifacts):
+                self.failed()  # another step, on another thread, failed meanwhile
+                return super().proposed(label, artifacts)
 
-            def propose(self, label: str) -> None:
+        notes, steps = [], Beside()
+        proposals = self.proposals(steps, notes)
+        proposals.runner = pool_of([])
+        proposals.start([recording("a")], [])
+        proposals.finish()
+        self.assertEqual([n["step"] for n in notes], ["usable"])
+        self.assertEqual(steps.failures, 1)  # still counted for the exit status
+
+    def test_a_usable_proposal_that_cannot_run_is_a_failure_not_usable(self) -> None:
+        class Broken(FakeSteps):
+            def proposed(self, label, artifacts):
                 raise OSError("no such program")
 
-        notes: list[dict] = []
-        steps = Steps()
-        proposals = backfill.Proposals(steps, argparse.Namespace(world_store=None), lambda **e: notes.append(e),
-                                       time.monotonic(), 0.0, True)
-        proposals.begin("usable")
+        notes, steps = [], Broken()
+        proposals = self.proposals(steps, notes)
+        proposals.runner = pool_of([])
+        proposals.start([recording("a")], [])
         proposals.finish()
         self.assertEqual([n["step"] for n in notes], ["proposal could not run", "usable proposal failed"])
         self.assertEqual((steps.failures, proposals.usable_s, proposals.usable_pending), (1, None, True))
@@ -230,12 +298,12 @@ class Plans(unittest.TestCase):
 
     def test_a_copy_that_grows_with_its_audio_reserves_memory_by_the_hour(self) -> None:
         jiang = Unit("chords-jiang")
-        self.assertEqual(backfill.SETTINGS["chords-jiang"]["memory_gb_per_hour"], 6.0)
+        self.assertEqual(backfill.SETTINGS["chords-jiang"]["memory_gb_per_hour"], 0.8)
         long_, short = recording("long", seconds=5400.0), recording("short", seconds=600.0, songs=True)
         sched = schedule((jiang, RHYTHM))
         jobs = {(j.recording.object_id, j.unit): j for j in self.plan([long_, short], "eager", sched=sched).jobs}
-        self.assertEqual(jobs[(long_.object_id, jiang)].memory_gb, 2.0 + 6.0 * 1.5)
-        self.assertEqual(jobs[(short.object_id, jiang)].memory_gb, 3.0)
+        self.assertAlmostEqual(jobs[(long_.object_id, jiang)].memory_gb, 2.0 + 0.8 * 1.5)
+        self.assertAlmostEqual(jobs[(short.object_id, jiang)].memory_gb, 2.0 + 0.8 / 6, places=2)
         self.assertEqual(jobs[(long_.object_id, RHYTHM)].memory_gb, 1.0)  # no hourly term
         given = schedule((jiang, RHYTHM), extractors={"rhythm": {"memory_gb_per_hour": 2.0}})
         jobs = {(j.recording.object_id, j.unit): j for j in self.plan([long_], "eager", sched=given).jobs}
@@ -285,9 +353,14 @@ class Plans(unittest.TestCase):
         self.assertEqual(got["audio_hours"], 8.0)
         load = sched.load_factor
         self.assertAlmostEqual(got["compute_hours_here"], 8 * (1.445 + 0.032) * load, places=2)
-        # Usable: the fast tier (rhythm) over eight cores; done: then stems over them.
-        self.assertAlmostEqual(got["time_to_usable_hours"], 0.032 * load, places=3)
-        self.assertAlmostEqual(got["time_to_done_hours"], (0.032 + 1.445) * load, places=2)
+        # Usable: the fast tier (rhythm) over eight cores, then the last recording's proposal;
+        # done: then stems over them.
+        proposal = sched.propose_seconds_per_recording
+        self.assertAlmostEqual(got["time_to_usable_hours"], 0.032 * load + proposal / 3600, places=3)
+        self.assertAlmostEqual(got["time_to_done_hours"], (0.032 + 1.445) * load + proposal / 3600, places=2)
+        # Proposals slower than the fast pass bound it.
+        slow = backfill.projection(planned.jobs, schedule((STEMS, RHYTHM), propose_seconds_per_recording=600.0), 8)
+        self.assertAlmostEqual(slow["time_to_usable_hours"], 9 * 600 / 3600, places=3)
         # With the worker taking stems too, the laptop takes what it is not holding: sooner than either alone.
         for job in planned.jobs:
             job.routed = job.unit == STEMS
@@ -591,6 +664,111 @@ class Pool(unittest.TestCase):
         self.assertEqual(sorted(j.status for j in planned.jobs), ["done", "failed"])
 
 
+ALL_UNITS = tuple(Unit(*u) for u in backfill.UNITS)
+
+
+def job(name: str, unit: Unit, seconds: float, memory: float, priority: int, cores: int = 1, **fields) -> Job:
+    rec = recording(name, seconds=seconds)
+    rec.priority = priority
+    return Job(rec, unit, priority, threads=cores, memory_gb=memory, cores=cores, **fields)
+
+
+class Backfilling(unittest.TestCase):
+    """ADR 0112, round 3: a job that cannot start for memory no longer holds
+    every job behind it; it is reserved for once it has waited long enough;
+    and free cores take routed work from the back of the worker's queue."""
+
+    def runner(self, jobs, cores=8, memory=12.0, spool=None, **numbers):
+        sched = schedule(ALL_UNITS, poll_seconds=0.01, **numbers)
+        return backfill.Runner(jobs, FakePlanner(), sched, shape(sched, cores, memory), cores, memory, "eager",
+                               lambda **e: None, lambda j: ({"status": "ok"}, 0.0), spool=spool)
+
+    def running(self, runner, job, now):
+        job.status, job.since = "running", now
+        runner.free_cores -= job.reserved
+        runner.free_memory -= job.memory_gb
+        runner.copies[job.unit.extractor] = runner.copies.get(job.unit.extractor, 0) + 1
+
+    def test_a_memory_blocked_head_lets_what_ends_before_it_or_fits_beside_it_start(self) -> None:
+        # The measured case: a long recording's Jiang waits for memory two f0-pesto copies hold.
+        f0 = [job(f"f{i}", BASS_F0, 3600.0, 3.0, i) for i in range(2)]
+        head = job("long", Unit("chords-jiang"), 5580.0, 10.0, 2, cores=2)
+        short = job("short", RHYTHM, 600.0, 1.0, 3)  # 22 s: ends long before the f0 copies
+        wide = job("wide", STEMS, 3600.0, 3.0, 4, cores=2)  # long, and more memory than Jiang leaves
+        narrow = job("narrow", MELODY, 3600.0, 1.0, 5)  # long, but within what Jiang leaves (2 GB)
+        runner = self.runner([*f0, head, short, wide, narrow])
+        now = time.monotonic()
+        for j in f0:
+            self.running(runner, j, now)
+        chosen = runner.choose(runner.ready(), now)
+        self.assertEqual(chosen, [short, narrow])
+        self.assertIs(runner.head, head)
+        # The f0 copies end by their recorded cost: then Jiang fits, with 2 GB and 6 cores left over.
+        when, cores, memory = runner.shadow(head, now, runner.free_cores, runner.free_memory, [])
+        self.assertAlmostEqual(when - now, 0.186 * 3600 * 1.15, places=3)
+        self.assertEqual((cores, memory), (6, 2.0))
+        # Once it has waited long enough, it is reserved for: nothing new starts.
+        runner.head_since = now - runner.schedule.reserve_after_seconds
+        self.assertEqual(runner.choose(runner.ready(), now), [])
+
+    def test_a_simulated_pool_keeps_its_cores_busy_while_the_head_waits_and_the_head_still_runs(self) -> None:
+        # Jobs sleep their recorded cost, scaled down: one long job holds memory the head needs, and
+        # short jobs behind the head used to wait for it; now they run beside the long one.
+        long = job("long", BASS_F0, 0.6 / (0.186 * 1.15), 5.0, 0)
+        head = job("head", Unit("chords-jiang"), 0.2 * 2 / (0.151 * 1.15), 6.0, 1, cores=2)
+        shorts = [job(f"s{i}", RHYTHM, 0.1 / (0.032 * 1.15), 1.0, 2 + i) for i in range(6)]
+        for index, j in enumerate([long, head, *shorts]):
+            j.order = index
+        events, lock = [], threading.Lock()
+        runner = self.runner([long, head, *shorts], cores=4, memory=8.0)
+
+        def run_unit(j: Job):
+            with lock:
+                events.append(("start", j, time.monotonic()))
+            time.sleep(runner.expected_wall(j))
+            runner.planner.made(j.recording, j.unit)
+            with lock:
+                events.append(("end", j, time.monotonic()))
+            return {"status": "ok"}, 0.0
+
+        runner.run_unit = run_unit
+        runner.run()
+        self.assertTrue(all(j.status == "done" for j in runner.jobs))
+        at = {(kind, j.recording.object_id): t for kind, j, t in events}
+        head_start, long_end = at[("start", head.recording.object_id)], at[("end", long.recording.object_id)]
+        self.assertGreaterEqual(head_start, long_end - 0.01)  # it waited for the memory
+        for j in shorts:  # and every short job ran while it waited, not after it
+            self.assertLess(at[("start", j.recording.object_id)], head_start)
+        self.assertLess(head_start - at[("start", long.recording.object_id)], 1.0)  # not starved
+        self.assertEqual(runner.backfilled, len(shorts))
+
+    def test_reserving_at_once_is_the_old_head_of_line_order(self) -> None:
+        f0 = job("f", BASS_F0, 3600.0, 6.0, 0)
+        head = job("long", Unit("chords-jiang"), 5580.0, 10.0, 1, cores=2)
+        short = job("short", RHYTHM, 600.0, 1.0, 2)
+        runner = self.runner([f0, head, short], reserve_after_seconds=0.0)
+        now = time.monotonic()
+        self.running(runner, f0, now)
+        self.assertEqual(runner.choose(runner.ready(), now), [])
+
+    def test_free_cores_take_routed_stems_from_the_back_of_the_workers_queue(self) -> None:
+        # Here a 600 s recording's stems take 498 s on two cores; the worker 134 s each, one at a time.
+        routed = [job(f"r{i}", STEMS, 600.0, 3.0, i, cores=2, routed=True) for i in range(4)]
+        local = job("local", RHYTHM, 600.0, 1.0, 9)
+        runner = self.runner([*routed, local], memory=32.0, spool=object(), spool_in_flight=1)
+        now = time.monotonic()
+        routed[0].status, routed[0].since = "put", now
+        chosen = runner.choose(runner.ready(), now)
+        # r1 would start on the worker in 134 s and end in 268, r2 end in 402: both sooner there;
+        # r3 would end there in 536 s, later than here; the local job runs too.
+        self.assertEqual(chosen, [routed[3], local])
+        runner.schedule.overflow = False
+        self.assertEqual(runner.choose(runner.ready(), now), [local])
+        runner.schedule.overflow = True
+        runner.put_paused_until = now + 60  # the worker is away: everything runs here
+        self.assertEqual(runner.choose(runner.ready(), now)[:3], routed[1:])
+
+
 class Spool(unittest.TestCase):
     """The fan-out: routed units are put, collected as they arrive, and run
     here when the spool gives them up."""
@@ -630,6 +808,28 @@ class Spool(unittest.TestCase):
         self.assertEqual({u for _, u in self.ran}, {BASS_TONAL})  # stems were never run here
         # Their content travels as WavPack, the stems default, encoded by the configured ffmpeg.
         self.assertEqual(self.put_options, [{"transport": "wavpack", "ffmpeg": None}] * 2)
+
+    def test_routed_background_work_is_put_while_the_fast_tier_still_runs(self) -> None:
+        # The worker starts at once: tonight's run put its first stems only after the usable proposal.
+        self.sched = backfill.schedule_of({"backfill": {"units": [["stems"], ["rhythm"]],
+                                                        "extractors": {"stems": {"route": "spool"}},
+                                                        "poll_seconds": 0.01}}, CATALOG)
+        planned = backfill.plan(self.recs, self.sched, self.planner, "eager", shape(self.sched), True)
+        put_done = threading.Event()
+
+        def put(*arguments, **options):
+            put_done.set()
+            return {"status": "put", "task_id": f"task-{arguments[6][7:12]}", "key": "k"}
+
+        runner = backfill.Runner(planned.jobs, self.planner, self.sched, shape(self.sched), 8, 32.0, "eager",
+                                 lambda **e: None, self.run_unit, spool=object(), hold_background=lambda: True)
+        with patch.object(backfill.remote, "put", put):
+            with runner.changed:
+                self.assertFalse(runner.background_open())  # rhythm is still to run, and the proposal held
+                runner.put_window()
+            self.assertTrue(put_done.wait(10))
+        self.assertTrue(any(j.unit == STEMS and j.status in ("putting", "put") for j in planned.jobs))
+        self.assertTrue(all(j.status == "pending" for j in planned.jobs if j.unit == RHYTHM))
 
     def test_what_runs_here_does_not_wait_for_the_puts(self) -> None:
         # A put encodes its transport first; rhythm, which needs no stems, runs meanwhile.
@@ -688,6 +888,195 @@ class Spool(unittest.TestCase):
         planned = self.go(lambda catalog, root, spool: {"status": "ok", "tasks": {}, "failed": {}})
         self.assertTrue(all(j.status == "done" for j in planned.jobs))
         self.assertEqual(sum(1 for _, u in self.ran if u == STEMS), 2)
+
+
+class SimSpool:
+    """A spool and its workers in miniature, read as `remote.Spool.tasks`
+    reads one: tasks leased in task-id order (as Spool does, whatever the
+    put order), each worker one task at a time, renewing while it works.
+    A worker given `None` seconds never comes: an absent one."""
+
+    def __init__(self, test: unittest.TestCase, planner: FakePlanner, recs: list[Recording],
+                 workers: list[float | None]):
+        self.planner, self.recs, self.workers = planner, recs, workers
+        self.pending: set[str] = set()
+        self.leased: dict[str, tuple[float, str]] = {}
+        self.by_task: dict[str, Recording] = {}
+        self.made: list[tuple[str, str]] = []  # (task, worker)
+        self.puts: list[str] = []
+        self.lock, self.stopped = threading.Lock(), threading.Event()
+        test.addCleanup(self.stopped.set)
+
+    def start(self) -> None:
+        for index, seconds in enumerate(self.workers):
+            if seconds is not None:
+                threading.Thread(target=self.worker, args=(f"w{index}", seconds), daemon=True).start()
+
+    def put(self, catalog, root, spool, extractor, content, media_type, digest, parameters, **options):
+        task = f"task-{digest[7:12]}"
+        with self.lock:
+            self.by_task[task] = next(r for r in self.recs if r.digest == digest)
+            self.pending.add(task)
+            self.puts.append(task)
+        return {"status": "put", "task_id": task, "key": "k"}
+
+    def collect(self, catalog, root, spool):
+        return {"status": "ok", "tasks": {}, "failed": {}}
+
+    def tasks(self) -> dict:
+        with self.lock:
+            view = {t: {"state": "pending"} for t in self.pending}
+            view.update({t: {"state": "leased", "leased_at": at, "renewed_at": time.time(), "worker": who}
+                         for t, (at, who) in self.leased.items()})
+        return view
+
+    def worker(self, name: str, seconds: float) -> None:
+        while not self.stopped.is_set():
+            with self.lock:
+                task = min(self.pending) if self.pending else None
+                if task is not None:
+                    self.pending.discard(task)
+                    self.leased[task] = (time.time(), name)
+            if task is None:
+                self.stopped.wait(0.005)
+                continue
+            self.stopped.wait(seconds)
+            with self.lock:
+                self.planner.made(self.by_task[task], STEMS)
+                del self.leased[task]
+                self.made.append((task, name))
+
+
+class SimulatedPool(unittest.TestCase):
+    """ADR 0112, the Mac's path: the backfill reads what the spool holds, so
+    a worker holding a lease is never given up, the absent clock counts from
+    when the worker could have started, a given-up task the worker takes
+    after all is not made here too, and nothing made since the plan is put."""
+
+    def setUp(self) -> None:
+        self.planner = FakePlanner()
+        self.sched = backfill.schedule_of({"backfill": {
+            "units": [["stems"], ["tonal", "stems/bass"]], "extractors": {"stems": {"route": "spool"}},
+            "poll_seconds": 0.01, "overflow": False,
+            "local_when_away_seconds": {"songs": 0.15, "eager": 0.15, "on-demand": 0.15}}}, CATALOG)
+        self.sched.settings["stems"]["remote_cost"] = None  # no allowance: only the clock's own seconds
+        self.ran: list[tuple[str, Unit]] = []
+        self.notes: list[dict] = []
+
+    def run_unit(self, job: Job):
+        self.ran.append((job.recording.object_id, job.unit))
+        self.planner.made(job.recording, job.unit, job.region)
+        return {"status": "ok"}, 0.0
+
+    def go(self, recs, workers, in_flight=2):
+        self.sched.spool_in_flight = in_flight
+        sim = SimSpool(self, self.planner, recs, workers)
+        planned = backfill.plan(recs, self.sched, self.planner, "eager", shape(self.sched), True)
+        with patch.object(backfill.remote, "put", sim.put), patch.object(backfill.remote, "collect", sim.collect):
+            runner = backfill.Runner(planned.jobs, self.planner, self.sched, shape(self.sched), 8, 32.0, "eager",
+                                     lambda **e: self.notes.append(e), self.run_unit, spool=sim)
+            sim.start()
+            runner.run()
+        self.assertTrue(all(j.status == "done" for j in planned.jobs))
+        stems_here = {rec for rec, unit in self.ran if unit == STEMS}
+        by_worker = {sim.by_task[task].object_id for task, _ in sim.made}
+        self.assertEqual(stems_here & by_worker, set(), "a recording's stems were made twice")
+        return runner, sim, stems_here, by_worker
+
+    def steps(self, step: str) -> list[dict]:
+        return [n for n in self.notes if n.get("step") == step]
+
+    def test_a_slow_worker_holding_its_lease_is_never_given_up(self) -> None:
+        # Each task takes 0.4 s there, against 0.15 s with nothing filed; the
+        # second waits behind the first, and its clock starts only when the
+        # worker frees its slot.
+        recs = [recording("a"), recording("b")]
+        runner, sim, here, there = self.go(recs, [0.4])
+        self.assertEqual(here, set())
+        self.assertEqual(there, {r.object_id for r in recs})
+        self.assertEqual(self.steps("no worker took the task in time; runs here too"), [])
+        self.assertEqual(len(self.steps("the worker leased the task")), 2)
+        self.assertGreater(runner.pace["stems"], 0.0)  # measured lease to filed
+
+    def test_a_fast_and_a_slow_worker_share_the_work_once(self) -> None:
+        recs = [recording(name) for name in "abcdef"]
+        runner, sim, here, there = self.go(recs, [0.03, 0.3], in_flight=3)
+        self.assertEqual(here, set())
+        self.assertEqual(there, {r.object_id for r in recs})
+        self.assertEqual({who for _, who in sim.made}, {"w0", "w1"})
+        self.assertEqual(len(sim.made), len(recs))
+
+    def test_an_absent_worker_is_given_up_and_its_tasks_are_made_here_once(self) -> None:
+        recs = [recording("a"), recording("b")]
+        runner, sim, here, there = self.go(recs, [None])
+        self.assertEqual(here, {r.object_id for r in recs})
+        self.assertEqual(len(self.steps("no worker took the task in time; runs here too")), 2)
+
+    def test_a_given_up_task_the_worker_then_holds_or_files_is_not_made_here(self) -> None:
+        recs = [recording("a"), recording("b")]
+        sim = SimSpool(self, self.planner, recs, [])
+        jobs = [Job(rec, STEMS, i, routed=False, status="pending", given_up=True, detail=f"task-{rec.digest[7:12]}")
+                for i, rec in enumerate(recs)]
+        runner = backfill.Runner(jobs, self.planner, self.sched, shape(self.sched), 8, 32.0, "eager",
+                                 lambda **e: self.notes.append(e), self.run_unit, spool=sim)
+        sim.by_task = {j.detail: j.recording for j in jobs}
+        sim.leased[jobs[0].detail] = (time.time(), "w0")  # leased after the give-up
+        self.planner.made(recs[1], STEMS)  # filed after the give-up
+        with patch.object(backfill.remote, "collect", sim.collect):
+            runner.collect()
+        self.assertEqual((jobs[0].status, jobs[0].routed, jobs[0].given_up), ("put", True, False))
+        self.assertEqual(jobs[1].status, "done")
+        self.assertEqual(runner.given_back, 1)
+        # A stale lease (no renewal within lease_fresh_seconds) is nobody's.
+        self.assertFalse(runner.held({"state": "leased", "renewed_at": time.time() - 301}, time.time()))
+
+    def test_a_recording_made_since_the_plan_is_not_put(self) -> None:
+        recs = [recording("a"), recording("b")]
+        sim = SimSpool(self, self.planner, recs, [0.02])
+        planned = backfill.plan(recs, self.sched, self.planner, "eager", shape(self.sched), True)
+        self.planner.made(recs[0], STEMS)  # a stand-in filed after the plan
+        with patch.object(backfill.remote, "put", sim.put), patch.object(backfill.remote, "collect", sim.collect):
+            runner = backfill.Runner(planned.jobs, self.planner, self.sched, shape(self.sched), 8, 32.0, "eager",
+                                     lambda **e: self.notes.append(e), self.run_unit, spool=sim)
+            sim.start()
+            runner.run()
+        self.assertEqual(sim.puts, [f"task-{recs[1].digest[7:12]}"])
+        self.assertEqual(len(self.steps("already made; not put")), 1)
+
+    def test_tasks_the_backfill_did_not_put_are_named(self) -> None:
+        recs = [recording("a")]
+        sim = SimSpool(self, self.planner, recs, [0.02])
+        sim.pending.add("task-stale")  # a task from an earlier run; sorts after this run's
+        sim.by_task["task-stale"] = recs[0]
+        self.go_with(sim, recs)
+        foreign = self.steps("the spool holds tasks this backfill did not put")
+        self.assertTrue(foreign)
+        self.assertEqual(foreign[0]["count"], 1)
+
+    def test_spool_tasks_are_read_from_its_directory(self) -> None:
+        root = scratch(self)
+        for name in ("pending", "leased"):
+            (root / name).mkdir()
+        (root / "pending" / "bank-aa.json").write_text("{}")
+        lease = root / "leased" / "lease_1792554021233164_33_bank-bb.json"
+        lease.write_text(json.dumps({"task_id": "bank-bb", "capability": "c"}))
+        lease.with_suffix(".renewed").write_text("1792555474737584")
+        lease.with_suffix(".worker").write_text("mac")
+        found = backfill.remote.Spool(f"spool --dir {root}").tasks()
+        self.assertEqual(found, {"bank-aa": {"state": "pending"},
+                                 "bank-bb": {"state": "leased", "leased_at": 1792554021.233164,
+                                             "renewed_at": 1792555474.737584, "worker": "mac"}})
+        self.assertIsNone(backfill.remote.Spool("ssh host spool --dir /nonexistent").tasks())
+        self.assertIsNone(backfill.remote.Spool("spool").tasks())
+
+    def go_with(self, sim, recs):
+        planned = backfill.plan(recs, self.sched, self.planner, "eager", shape(self.sched), True)
+        with patch.object(backfill.remote, "put", sim.put), patch.object(backfill.remote, "collect", sim.collect):
+            runner = backfill.Runner(planned.jobs, self.planner, self.sched, shape(self.sched), 8, 32.0, "eager",
+                                     lambda **e: self.notes.append(e), self.run_unit, spool=sim)
+            sim.start()
+            runner.run()
+        return runner
 
 
 class StandIns(unittest.TestCase):
@@ -836,7 +1225,7 @@ class EndToEnd(unittest.TestCase):
     def step(self, events: list[dict], name: str) -> dict:
         return [e for e in events if e["step"] == name][-1]
 
-    def test_a_propose_that_fails_stops_the_backfill_rather_than_finding_nothing_unprobed(self) -> None:
+    def test_an_export_that_fails_stops_the_backfill_rather_than_finding_nothing_unprobed(self) -> None:
         import enrich
         arguments = self.arguments()
         arguments[arguments.index("--archive-command") + 1] = str(self.tmp / "no-such-archive")
@@ -845,7 +1234,7 @@ class EndToEnd(unittest.TestCase):
                 patch("sys.stderr", err):
             code = enrich.main(arguments)
         self.assertEqual(code, 1)
-        self.assertIn("which Artifacts are unprobed is not known", json.loads(err.getvalue())["detail"])
+        self.assertIn("archive export failed", json.loads(err.getvalue())["detail"])
         self.assertFalse(entries(self.bank))
 
     def test_a_dry_run_writes_nothing_and_says_what_it_would_make(self) -> None:
@@ -952,7 +1341,7 @@ class EndToEnd(unittest.TestCase):
         self.assertTrue(all(starts.index(s) < first_background for s in fast))
         # Usable (the fast tier made and proposed through Door) before the first background job started.
         steps = [e["step"] for e in events]
-        self.assertEqual(self.step(events, "propose --all (usable)")["exit"], 0)
+        self.assertEqual([e["ok"] for e in events if e["step"] == "propose (usable)"], [True, True])  # one each
         usable, made = self.step(events, "usable"), self.step(events, "made")
         self.assertLessEqual(usable["s"], made["background_started_s"])
         self.assertLess(steps.index("usable"), steps.index("made"))

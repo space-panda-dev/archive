@@ -13,8 +13,9 @@ plan, what each recording still needs, and two projected times from the
 recorded costs: until every recording is usable, and until all is made.
 With `--commit`, in order:
 
-1. `enrich probe` every audio or video Artifact `enrich propose --all` lists
-   as unprobed (one `audio_stream` claim each, through Door);
+1. `enrich probe` every audio or video Artifact the archive's export shows
+   unprobed (`unprobed_of`: what `enrich propose --all` would list; one
+   `audio_stream` claim each, through Door);
 2. plan: for every Artifact with an audio stream claim, the units of the
    configuration (an extractor on the content, or on a file feature of it
    with `--from`) whose entries the bank lacks, read through `bank.Bank` as
@@ -23,17 +24,24 @@ With `--commit`, in order:
    every bank request (`requests/`); the bank is the ledger;
 3. the fast tier: every unit that measures the content itself, prefers no
    stem, and costs at most `fast_above` (by the recorded costs: rhythm,
-   tonal, chords-jiang, chords-chordino, structure) over EVERY recording,
-   then `enrich propose --all`: from then every recording is usable
-   (chords, beats, key, tuning, sections; ADR 0112, "Usable"), the `usable`
-   event; with `--world-store`, World is refreshed then too;
+   tonal, chords-jiang, chords-chordino, structure; a configuration may set
+   a `tier`) over EVERY recording. Each recording is proposed as soon as its
+   own fast units have settled (`backfill_proposals.Proposals`: one
+   `--artifact` each, one `--all` when more than two wait), while the pool
+   goes on with the others; once the fast tier has settled everywhere and
+   every recording's proposal has run, every recording is usable (chords,
+   beats, key, tuning, sections; ADR 0112, "Usable"), the `usable` event;
+   with `--world-store`, World is refreshed then too;
 4. the background tier (stems and what measures them: f0-pesto, melody,
    tonal and notes on the bass stem): no background job starts before step
    3 is done. In priority order: song recordings, then the most recently
    admitted, then the rest; a bank request goes ahead of everything, in
-   either tier, and is removed once its entry is made. Proposals in
-   batches as background units land (at most every
-   `propose_every_seconds`);
+   either tier, and is removed once its entry is made. A job waiting for
+   cores or memory does not hold the jobs behind it: a later one that ends
+   before it would fit, or takes only what it will leave over, starts now
+   (`backfill_queue`, backfilling; it is reserved for outright after
+   `reserve_after_seconds`). Proposals in batches as background units land
+   (at most every `propose_every_seconds`);
 5. `enrich propose --all` (dry run, commit, and a rerun that must answer
    unchanged); with `--world-store`, World refresh and conformance; `done`
    carries `time_to_usable_s` and `time_to_done_s`.
@@ -45,9 +53,13 @@ held to 1 thread), as many as the cores and memory allow. A unit routed to
 Spool (`"route": "spool"`, first `stems`) is put with `remote.py put`, at
 most `spool_in_flight` at a time in priority order, and collected as results
 arrive; with `overflow`, free cores here take routed work the worker is not
-holding. A worker that files nothing within `local_when_away_seconds` (every
-mode has one) plus its oldest task's expected time is absent, and its work
-is made here. A task the spool failed for good, or could not put, runs here.
+holding whenever it would end here sooner than the worker could end it. A
+worker that files nothing within `local_when_away_seconds` (every mode has
+one) plus its oldest task's expected time is absent, and its work
+is made here; when the spool's directory can be read here, a task the
+worker holds a lease on is never given up, and the clock runs from when
+the worker could have started (`backfill_queue`). A task the spool failed
+for good, or could not put, runs here.
 
 `--follow` keeps it running: new bank requests every `poll_seconds`, first
 in the queue; new admissions every `rescan_seconds`; until stopped (SIGTERM,
@@ -111,6 +123,8 @@ import bank  # noqa: E402
 import extract  # noqa: E402
 import regions  # noqa: E402
 import remote  # noqa: E402
+from backfill_proposals import Follow, Proposals, Steps  # noqa: E402,F401
+from backfill_queue import DONE, RANKS, BackfillError, Job, Runner, first_error, remote_parameters  # noqa: E402,F401
 from regions import Region  # noqa: E402
 
 STREAM = "archive.claim/audio_stream"
@@ -144,10 +158,13 @@ SETTINGS: dict[str, dict[str, Any]] = {
     "stems": {"threads": 2, "cores": 2, "memory_gb": 3.0, "cost": 1.445, "remote_cost": 0.223,
               "transport": "wavpack"},
     "f0-pesto": {"cost": 0.186, "memory_gb": 1.5},
-    # Jiang holds the whole recording's features: on the whole shadow its
-    # copies peaked at 11.4 GB resident on a 93-minute recording (round 2,
-    # 2026-10-20), and four 2 GB reservations sent the laptop into swap.
-    "chords-jiang": {"cores": 2, "cost": 0.151, "memory_gb": 2.0, "memory_gb_per_hour": 6.0},
+    # Version 1 held the whole recording's features: its copies peaked at
+    # 11.4 GB resident on a 93-minute recording (round 2, 2026-10-20). Version
+    # 2 holds a ten-minute sample's (2 GB at most, measured 1.8 GB on a 9-minute
+    # recording) and per hour only its spectrogram, features and outputs
+    # (about 0.6 GB, counted from their sizes; 0.8 reserved until measured on
+    # a long recording).
+    "chords-jiang": {"cores": 2, "cost": 0.151, "memory_gb": 2.0, "memory_gb_per_hour": 0.8},
     "notes-basic-pitch": {"cores": 3, "cost": 0.107, "memory_gb": 1.5},
     "melody": {"cost": 0.076},
     "chords-chordino": {"cores": 1, "cost": 0.042},
@@ -182,16 +199,24 @@ SCHEDULE = {
     # before its work is made here; every mode has one (no infinite wait).
     "local_when_away_seconds": {"songs": 1800, "eager": 900, "on-demand": 600},
     "spool_in_flight": 2,  # routed tasks put at once; the rest wait here, in priority order
+    # A worker's lease renewed within this long is held: its task is never
+    # also made here, and the absent clock stops (Spool's reclaim age).
+    "lease_fresh_seconds": 300.0,
     "overflow": True,  # free cores here take routed work the worker is not holding
     "propose_every_seconds": 900.0,  # background proposals, batched
     "rescan_seconds": 600.0,  # --follow: how often new admissions are looked for
+    # A job that cannot start for cores or memory lets later jobs start around
+    # it (by the recorded costs); once it has waited this long, nothing new
+    # starts until it does (ADR 0112, round 3).
+    "reserve_after_seconds": 1200.0,
+    # One recording's usable proposal (`enrich propose`, five proposers' runs
+    # through Door): 298 s for 25 recordings on the shadow (round 2), about
+    # 2.4 s a run. Proposed recording by recording behind the fast pass, it
+    # adds about one of these to time-to-usable (`projection`).
+    "propose_seconds_per_recording": 12.0,
 }
 THREAD_VARIABLES = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS",
                     "VECLIB_MAXIMUM_THREADS", "NUMBA_NUM_THREADS")
-
-
-class BackfillError(Exception):
-    pass
 
 
 # -- the configuration ------------------------------------------------------------
@@ -224,6 +249,9 @@ class Schedule:
     overflow: bool = True
     propose_every_seconds: float = 900.0
     rescan_seconds: float = 600.0
+    reserve_after_seconds: float = 1200.0
+    propose_seconds_per_recording: float = 12.0
+    lease_fresh_seconds: float = 300.0
 
     def setting(self, extractor_id: str) -> dict[str, Any]:
         return {**DEFAULT_SETTING, **self.settings.get(extractor_id, {})}
@@ -310,7 +338,9 @@ def schedule_of(config: dict[str, Any], catalog: bank.Catalog) -> Schedule:
                     float(numbers["load_factor"]), float(numbers["poll_seconds"]),
                     float(numbers["memory_reserve_gb"]), {mode: float(away[mode]) for mode in MODES},
                     int(numbers["spool_in_flight"]), bool(numbers["overflow"]),
-                    float(numbers["propose_every_seconds"]), float(numbers["rescan_seconds"]))
+                    float(numbers["propose_every_seconds"]), float(numbers["rescan_seconds"]),
+                    float(numbers["reserve_after_seconds"]), float(numbers["propose_seconds_per_recording"]),
+                    float(numbers["lease_fresh_seconds"]))
 
 
 def device_of(parameters: dict[str, Any]) -> str | None:
@@ -451,8 +481,8 @@ def find_regions(recordings: list[Recording], export: dict[str, Any], archive: P
 
 # -- what a unit still needs ---------------------------------------------------------
 
-DONE, TODO, WAITING, FAILED, SKIPPED, UNCONFIGURED, DAMAGED = (
-    "done", "todo", "waiting", "failed_before", "skipped", "unconfigured", "damaged")
+TODO, WAITING, FAILED, SKIPPED, UNCONFIGURED, DAMAGED = (
+    "todo", "waiting", "failed_before", "skipped", "unconfigured", "damaged")  # and DONE (backfill_queue)
 
 
 class Planner:
@@ -507,7 +537,10 @@ class Planner:
                     return WAITING, f"{feature} is not in the bank" + (" over this region" if region else "")
                 if reader.entry_from(recording.digest, feature, unit.extractor) is not None:
                     return DONE, None
-                keys = reader.catalog.keys(found[1], order, self.catalog.overrides_for(feature, self.parameters))
+                stem = reader.feature(recording.digest, feature)
+                catalog = reader.catalog if stem is None or stem[0].timeline is None else \
+                    reader.catalog.placed_by(found[1], feature, stem[0].manifest["key"])  # made over a region
+                keys = catalog.keys(found[1], order, self.catalog.overrides_for(feature, self.parameters))
         except bank.BankError as exc:
             return DAMAGED, str(exc)
         if not self.retry_failed:
@@ -539,56 +572,6 @@ def unit_order(units: list[Unit], catalog: bank.Catalog) -> list[Unit]:
 
 
 # -- the plan ------------------------------------------------------------------------
-
-RANKS = {"requested": 0, "fast": 1, "background": 2}
-
-
-@dataclass(eq=False)
-class Job:
-    recording: Recording
-    unit: Unit
-    order: int
-    threads: int = 1
-    memory_gb: float = 1.0
-    routed: bool = False
-    after: list["Job"] = field(default_factory=list)
-    dependents: int = 0
-    status: str = "pending"  # pending, putting, put, running, done, failed, blocked
-    detail: str | None = None
-    since: float = 0.0
-    cpu_s: float = 0.0
-    wall_s: float = 0.0
-    region: Region | None = None  # made over this region of the recording, or whole
-    requested: bool = False  # asked for by a bank request
-    cores: int | None = None  # reserved on the machine; its threads when None
-    tier: str = "background"
-    requests: list[str] = field(default_factory=list)  # the request keys this job makes good
-
-    @property
-    def seconds(self) -> float | None:
-        """The audio this job measures: its region, or the whole recording."""
-        if self.region is not None:
-            return (self.region.end - self.region.start) / self.region.rate
-        return self.recording.seconds
-
-    @property
-    def reserved(self) -> int:
-        return self.cores if self.cores is not None else self.threads
-
-    @property
-    def rank(self) -> int:
-        """Requests first, then the fast tier, then the background."""
-        return RANKS["requested"] if self.requested else RANKS[self.tier]
-
-    def priority(self) -> tuple[Any, ...]:
-        """Its place in the queue: rank, then the recording's priority (song
-        recordings, then the most recent), then what others wait for first."""
-        return self.rank, self.recording.priority, self.dependents == 0, self.order
-
-    def describe(self) -> dict[str, Any]:
-        return {"recording": self.recording.object_id, "content": self.recording.digest[7:19],
-                "unit": self.unit.name, **({"region": self.region.as_json()} if self.region else {})}
-
 
 @dataclass
 class Plan:
@@ -802,8 +785,9 @@ def projection(jobs: list[Job], schedule: Schedule, cores: int | None = None) ->
     every recording is usable (the fast tier over `cores`) and until all is
     made (the fast tier, then the background over `cores` and the worker
     together, the laptop taking what the worker is not holding when
-    `overflow`), each at least its longest single job. Proposing is not
-    counted."""
+    `overflow`), each at least its longest single job. Usable counts the
+    proposals (`propose_seconds_per_recording`, recording by recording
+    behind the fast pass); the background's batches are not counted."""
     cores = cores or os.cpu_count() or 1
     fast = local = remote_s = routed_local = 0.0
     longest_fast = longest = 0.0
@@ -831,7 +815,11 @@ def projection(jobs: list[Job], schedule: Schedule, cores: int | None = None) ->
             longest = max(longest, cpu / max(1, job.reserved))
     audio = sum(s for s in recordings.values() if s is not None)
     unknown_length = sum(1 for s in recordings.values() if s is None)
-    usable = max(fast / cores, longest_fast)
+    # Each recording is proposed once its fast tier is made, one at a time
+    # beside the pool: the last one's proposal comes after the fast pass, and
+    # proposals slower than the fast pass bound it.
+    proposal = schedule.propose_seconds_per_recording
+    usable = max(fast / cores, longest_fast, proposal * len(recordings)) + proposal if recordings else 0.0
     if remote_s and schedule.overflow and routed_local:
         # Worker and laptop share the routed work: the worker at its rate, the laptop with what it has left.
         share = (local + routed_local) / (cores + routed_local / remote_s)
@@ -879,24 +867,6 @@ def run_extract(job: Job, root: Path, config: str | None, ffmpeg: str | None = N
     return answer, usage.ru_utime + usage.ru_stime
 
 
-def first_error(answer: dict[str, Any]) -> str | None:
-    if answer.get("detail"):
-        return str(answer["detail"])[-600:]
-    for name, outcome in answer.get("extractors", {}).items():
-        if outcome.get("status") in ("failed", "blocked"):
-            return f"{name}: {outcome.get('error') or outcome.get('reason')}"[-600:]
-    return None
-
-
-def remote_parameters(parameters: dict[str, Any], extractor_id: str, schedule: Schedule) -> dict[str, Any]:
-    """The parameters a unit routed to Spool is put with: the configured
-    ones, with its `remote_parameters` (the Mac's `apply` with device mps)."""
-    given = schedule.setting(extractor_id)["remote_parameters"]
-    if not given:
-        return parameters
-    return {**parameters, extractor_id: {**parameters.get(extractor_id, {}), **given}}
-
-
 def check_remote(catalog: bank.Catalog, root: Path, parameters: dict[str, Any], schedule: Schedule) -> None:
     """A unit put with other parameters than the configured ones makes
     entries under another key, which count here only as stand-ins (ADR
@@ -927,270 +897,6 @@ def check_remote(catalog: bank.Catalog, root: Path, parameters: dict[str, Any], 
             raise BackfillError(f"{unit.extractor} is routed with {extractor.interchangeable['parameter']} {value}, "
                                 f"but the bank holds no passing equivalence record for that pair; measure one "
                                 f"first (extract.py equivalence {unit.extractor} --against {value} ...)")
-
-
-class Runner:
-    """A pool of copies over the plan. A job starts when what it waits for
-    is done, its extractor has a free copy, and its reserved cores and memory
-    fit; the ready jobs go in `Job.priority` order (requests, the fast tier,
-    the background), and the earliest that does not fit holds the rest, so a
-    wide one is never starved by narrow ones. No background job starts while
-    a fast job is still to run or `hold_background` says the fast tier's
-    proposal is outstanding (ADR 0112: every recording usable first).
-
-    Routed jobs are put to the spool at most `spool_in_flight` at a time, in
-    the same order, and collected every `poll_seconds`; with `overflow`, a
-    routed job the worker is not holding runs here when cores are free. A
-    worker that files nothing for `local_when_away_seconds` (plus the time
-    its oldest task should take) is absent: its tasks are made here, and
-    nothing more is put to it for that long again.
-
-    With `intake` (`--follow`), it does not stop when the plan is done: it
-    asks `intake` for new jobs every `poll_seconds` until `stop` says so.
-    `tick` is called on every turn, outside the lock (the proposals);
-    `settled` with each job that ends, inside it."""
-
-    def __init__(self, jobs: list[Job], planner: Planner, schedule: Schedule, shape: dict[str, dict[str, Any]],
-                 cores: int, memory_gb: float, mode: str, note: Callable[..., None],
-                 run_unit: Callable[[Job], tuple[dict[str, Any], float]],
-                 spool: remote.Spool | None = None, config: str | None = None, *,
-                 intake: Callable[[], list[Job]] | None = None, stop: Callable[[], bool] | None = None,
-                 tick: Callable[[], None] | None = None, hold_background: Callable[[], bool] | None = None,
-                 settled: Callable[[Job], None] | None = None):
-        self.jobs, self.planner, self.schedule, self.shape = jobs, planner, schedule, shape
-        self.cores, self.memory_gb, self.mode, self.note = cores, memory_gb, mode, note
-        self.run_unit, self.spool, self.config = run_unit, spool, config
-        self.intake, self.stop, self.tick = intake, stop or (lambda: False), tick or (lambda: None)
-        self.hold_background = hold_background or (lambda: False)
-        self.settled = settled or (lambda job: None)
-        self.changed = threading.Condition()
-        self.free_cores, self.free_memory = cores, memory_gb
-        self.copies: dict[str, int] = {}
-        self.last_filed = time.monotonic()
-        self.put_paused_until = 0.0
-        self.first_background: float | None = None  # when the first background job started
-
-    def end(self, job: Job, status: str, detail: str | None = None) -> None:
-        """Inside the lock: the job is done, failed or blocked."""
-        job.status = status
-        if detail is not None:
-            job.detail = detail
-        self.settled(job)
-
-    # -- Spool --
-
-    def put_window(self) -> None:
-        """Inside the lock: put the next routed jobs, in priority order, until
-        `spool_in_flight` are with the spool."""
-        if self.spool is None or time.monotonic() < self.put_paused_until:
-            return
-        room = self.schedule.spool_in_flight - sum(1 for j in self.jobs if j.status in ("put", "putting"))
-        if room <= 0:
-            return
-        open_background = self.background_open()
-        chosen = sorted((j for j in self.jobs if j.routed and j.status == "pending"
-                         and all(a.status == "done" for a in j.after) and (j.rank < 2 or open_background)),
-                        key=Job.priority)[:room]
-        if not chosen:
-            return
-        for job in chosen:
-            job.status = "putting"
-        # Beside the pool: a transport takes about 0.01 s per audio-second to
-        # encode and check, which must not hold back what runs here.
-        threading.Thread(target=lambda: [self.put_one(job) for job in chosen], daemon=True).start()
-
-    def put_one(self, job: Job) -> None:
-        try:
-            answer = remote.put(self.planner.catalog, self.planner.root, self.spool, job.unit.extractor,
-                                job.recording.path, job.recording.media_type
-                                or extract.media_type_of(job.recording.path), job.recording.digest,
-                                remote_parameters(self.planner.parameters, job.unit.extractor, self.schedule),
-                                transport=self.schedule.setting(job.unit.extractor)["transport"],
-                                ffmpeg=self.planner.programs.get("ffmpeg"))
-        except Exception as exc:  # noqa: BLE001  (the job runs here; the backfill goes on)
-            with self.changed:
-                job.routed, job.status = False, "pending"
-                self.changed.notify_all()
-            self.note(step="spool put failed; runs here", **job.describe(), error=str(exc)[-600:])
-            return
-        with self.changed:
-            job.detail = answer["task_id"]
-            if answer["status"] == "hit":
-                self.end(job, "done")
-                self.changed.notify_all()
-                return
-            if not any(j.status == "put" for j in self.jobs):
-                self.last_filed = time.monotonic()  # the worker's clock starts with its first task
-            job.status, job.since = "put", time.monotonic()
-            self.changed.notify_all()
-        self.note(step="spool put", **job.describe(), status=answer["status"], task=answer["task_id"],
-                  transport=answer.get("transport"))
-
-    def collect(self) -> None:
-        """Outside the lock: file what the spool holds, and give back to this
-        machine what the spool gave up or an absent worker holds."""
-        try:
-            answer = remote.collect(self.planner.catalog, self.planner.root, self.spool)
-        except (remote.RemoteError, bank.BankError, OSError) as exc:
-            self.note(step="spool collect failed", error=str(exc)[-600:])
-            answer = {"tasks": {}, "failed": {}}
-        if answer.get("tasks") or answer.get("failed"):
-            self.note(step="spool collect", status=answer.get("status"), failed=answer.get("failed"),
-                      tasks={k[:17]: v.get("status") for k, v in answer.get("tasks", {}).items()})
-        with self.changed:
-            waiting = [j for j in self.jobs if j.status == "put"]
-        events = []
-        for job in waiting:
-            task = job.detail
-            if self.planner.state(job.recording, job.unit)[0] == DONE:
-                events.append((job, "done", "filed from the spool", {"waited_s": round(time.monotonic() - job.since,
-                                                                                       1)}))
-            elif self.made_elsewhere(job):
-                events.append((job, "pending", "made on the worker, but it does not stand in here; runs here",
-                               {"task": task, "detail": "no passing equivalence record names the software it "
-                                                        "was made with"}))
-            elif task in (answer.get("failed") or {}) \
-                    or (answer.get("tasks") or {}).get(task, {}).get("status") == "refused":
-                events.append((job, "pending", "the spool gave the task up; runs here", {"task": task}))
-        with self.changed:
-            now = time.monotonic()
-            for job, status, step, extra in events:
-                if status == "done":
-                    job.wall_s = now - job.since
-                    self.last_filed = now
-                    self.end(job, "done")
-                else:
-                    job.status, job.routed = "pending", False
-                self.note(step=step, **job.describe(), **extra)
-            still = [j for j in self.jobs if j.status == "put"]
-            if still:
-                oldest = min(still, key=lambda j: j.since)
-                cost = self.schedule.setting(oldest.unit.extractor)["remote_cost"]
-                allowance = float(cost) * (oldest.seconds or 0.0) if cost is not None else 0.0
-                limit = self.schedule.away(self.mode) + allowance
-                if now - max(self.last_filed, oldest.since) > limit:
-                    for job in still:
-                        job.status, job.routed = "pending", False
-                        self.note(step="no worker took the task in time; runs here too", **job.describe(),
-                                  task=job.detail, limit_s=round(limit, 1))
-                    self.put_paused_until = now + self.schedule.away(self.mode)
-            self.changed.notify_all()
-
-    def made_elsewhere(self, job: Job) -> bool:
-        """Whether the worker's entry, under the parameters it was put with,
-        is in the bank although it does not count here."""
-        parameters = remote_parameters(self.planner.parameters, job.unit.extractor, self.schedule)
-        if parameters is self.planner.parameters:
-            return False
-        exact = bank.Bank(self.planner.root, self.planner.catalog, parameters, exact=True)
-        return exact.entry(job.recording.digest, job.unit.extractor) is not None
-
-    # -- the pool --
-
-    def background_open(self) -> bool:
-        """Whether a background job may start: the fast tier is all made and
-        its proposal is not outstanding."""
-        if any(j.tier == "fast" and not j.requested and j.status in ("pending", "putting", "put", "running")
-               for j in self.jobs):
-            return False
-        return not self.hold_background()
-
-    def fits(self, job: Job) -> bool:
-        copies = self.shape[job.unit.extractor]["copies"]
-        return (self.copies.get(job.unit.extractor, 0) < copies and job.reserved <= self.free_cores
-                and (job.memory_gb <= self.free_memory or self.free_cores == self.cores))
-
-    def start(self, job: Job) -> None:
-        job.status, job.since = "running", time.monotonic()
-        if job.routed:
-            job.routed = False  # taken here, from the worker's queue
-            self.note(step="routed work taken here", **job.describe())
-        if job.rank == RANKS["background"] and self.first_background is None:
-            self.first_background = job.since
-        self.free_cores -= job.reserved
-        self.free_memory -= job.memory_gb
-        self.copies[job.unit.extractor] = self.copies.get(job.unit.extractor, 0) + 1
-        threading.Thread(target=self.work, args=(job,), daemon=True).start()
-
-    def work(self, job: Job) -> None:
-        try:
-            answer, cpu = self.run_unit(job)
-        except Exception as exc:  # noqa: BLE001  (the job fails; the backfill goes on)
-            answer, cpu = {"status": "failed", "detail": f"{type(exc).__name__}: {exc}"}, 0.0
-        state = self.planner.state(job.recording, job.unit, job.region)[0] if answer.get("status") == "ok" else None
-        with self.changed:
-            job.wall_s, job.cpu_s = time.monotonic() - job.since, cpu
-            self.free_cores += job.reserved
-            self.free_memory += job.memory_gb
-            self.copies[job.unit.extractor] -= 1
-            if state == DONE:
-                self.end(job, "done")
-            else:
-                self.end(job, "failed", first_error(answer) if state is None
-                         else f"ran, but the bank has no entry ({state})")
-            self.note(step="ran" if job.status == "done" else "failed", **job.describe(), s=round(job.wall_s, 1),
-                      cpu_s=round(cpu, 1), tier=job.tier, requested=job.requested or None,
-                      error=job.detail if job.status == "failed" else None)
-            self.changed.notify_all()
-
-    def ready(self) -> list[Job]:
-        """Inside the lock: the jobs that may start, in the order they are offered."""
-        open_background = self.background_open()
-        ready = [j for j in self.jobs if j.status == "pending" and all(a.status == "done" for a in j.after)
-                 and (j.rank < RANKS["background"] or open_background)]
-        here = sorted((j for j in ready if not j.routed), key=Job.priority)
-        taken = sorted((j for j in ready if j.routed), key=Job.priority) \
-            if self.spool is None or self.schedule.overflow else []
-        return here + taken
-
-    def run(self) -> None:
-        last_collect = last_intake = time.monotonic()
-        with self.changed:
-            while True:
-                for job in self.jobs:
-                    if job.status == "pending" and any(a.status in ("failed", "blocked") for a in job.after):
-                        self.end(job, "blocked", "what it measures was not made")
-                        self.note(step="blocked", **job.describe())
-                stopping = self.intake is not None and self.stop()
-                held = self.hold_background()
-                started = 0
-                if not stopping:
-                    self.put_window()
-                    for job in self.ready():
-                        if not self.fits(job):
-                            if self.copies.get(job.unit.extractor, 0) < self.shape[job.unit.extractor]["copies"]:
-                                break  # it waits for cores or memory: nothing behind it jumps ahead
-                            continue  # its extractor's copies are all busy: the next may start
-                        self.start(job)
-                        started += 1
-                active = any(j.status in ("pending", "putting", "put", "running") for j in self.jobs)
-                running = any(j.status in ("running", "putting") for j in self.jobs)
-                waiting = any(j.status == "put" for j in self.jobs)
-                self.changed.release()
-                try:
-                    self.tick()
-                    if waiting and time.monotonic() - last_collect >= self.schedule.poll_seconds:
-                        self.collect()
-                        last_collect = time.monotonic()
-                    if self.intake is not None and not stopping \
-                            and time.monotonic() - last_intake >= self.schedule.poll_seconds:
-                        for job in self.intake():
-                            if all(job is not j for j in self.jobs):
-                                self.jobs.append(job)
-                        last_intake = time.monotonic()
-                finally:
-                    self.changed.acquire()
-                if stopping and not running:
-                    return
-                if not active and self.intake is None:
-                    return
-                if active and not (running or waiting or started or held or self.intake is not None
-                                   or time.monotonic() < self.put_paused_until):
-                    # With nothing running every ready job fits, so a pending one waits on itself.
-                    raise BackfillError("nothing can start: the plan waits on itself")
-                self.changed.wait(timeout=min(1.0, self.schedule.poll_seconds) if waiting or self.intake
-                                  else 0.05 if held else 5.0)
-
 
 
 # -- the command ---------------------------------------------------------------------
@@ -1237,52 +943,12 @@ def add_arguments(command: argparse.ArgumentParser) -> None:
                          help="with --follow, stop after this many seconds (default: until stopped)")
 
 
-class Steps:
-    """The archive-side steps, each `enrich.py` or World in a process of its
-    own as the 0.0.10 backfill ran them."""
-
-    def __init__(self, args: argparse.Namespace, note: Callable[..., None]):
-        self.args, self.note, self.failures = args, note, 0
-
-    def common(self) -> list[str]:
-        a = self.args
-        return ["--archive", a.archive, "--door", a.door, "--archive-command", a.archive_command,
-                "--ffmpeg", a.ffmpeg, "--ffprobe", a.ffprobe, *(["--staging", a.staging] if a.staging else [])]
-
-    def run(self, label: str, command: list[str], ok: tuple[int, ...] = (0,)) -> Any:
-        started = time.monotonic()
-        done = subprocess.run(command, capture_output=True, text=True)
-        try:
-            answer = json.loads(done.stdout) if done.stdout.strip() else None
-        except ValueError:
-            answer = done.stdout[-1500:]
-        good = done.returncode in ok
-        self.failures += 0 if good else 1
-        brief = answer if not isinstance(answer, dict) or len(json.dumps(answer)) < 3000 else {
-            k: answer.get(k) for k in ("status", "detail", "code")}
-        self.note(step=label, exit=done.returncode, ok=good, s=round(time.monotonic() - started, 1), answer=brief,
-                  stderr=done.stderr[-600:] if not good else None)
-        return answer
-
-    def enrich(self, label: str, *words: str, ok: tuple[int, ...] = (0,)) -> Any:
-        return self.run(label, [sys.executable, str(HERE / "enrich.py"), *words, *self.common()], ok)
-
-    def world(self) -> None:
-        a = self.args
-        self.run("World refresh", [a.world_python, str(HERE.parent / "world" / "world.py"), "refresh", a.archive,
-                                   "--store", a.world_store, "--archive-command", a.archive_command])
-        self.run("conformance", [a.conformance_python or a.world_python,
-                                 str(HERE.parent / "world" / "conformance.py"), "--store", a.world_store])
-
-    def propose(self, label: str, *extra: str, proposers: str | None = None) -> Any:
-        a = self.args
-        return self.enrich(label, "propose", "--all", "--proposers", proposers or a.proposers, "--bank", a.bank,
-                           *(["--config", a.config] if a.config else []), *extra, ok=(0, 3))
-
-
 def export_of(args: argparse.Namespace, env: dict[str, str] | None) -> dict[str, Any]:
-    done = subprocess.run([args.archive_command, "export"], cwd=args.archive, capture_output=True, text=True,
-                          env=env)
+    try:
+        done = subprocess.run([args.archive_command, "export"], cwd=args.archive, capture_output=True, text=True,
+                              env=env)
+    except OSError as exc:
+        raise BackfillError(f"archive export failed: {exc}") from exc
     try:
         answer = json.loads(done.stdout)
     except ValueError:
@@ -1292,24 +958,48 @@ def export_of(args: argparse.Namespace, env: dict[str, str] | None) -> dict[str,
     return answer
 
 
+def unprobed_of(export: dict[str, Any], archive: Path) -> list[str]:
+    """The Artifacts `enrich propose --all` lists as unprobed: current
+    Artifacts that no current audio_stream claim is about (their current
+    revision), whose content is here and sniffs as audio or video."""
+    current = heads(export["records"])
+    about: set[tuple[str, str]] = set()
+    for record in current.values():
+        if record["shape"] == "claim" and any(c.get("id") == STREAM and c.get("version") == "1"
+                                              for c in record.get("contracts", [])):
+            about.update((ref.get("id"), ref.get("revision_id")) for ref in record.get("refs", [])
+                         if ref.get("role") == "artifact")
+    found = []
+    for record in export["records"]:
+        if record["shape"] != "artifact" or current.get(record["object_id"]) is not record \
+                or (record["object_id"], record["revision_id"]) in about:
+            continue
+        path = content_path(archive, record["payload"]["content"]["digest"])
+        try:
+            media_type = extract.sniff_media_type(path) if path.is_file() else None
+        except OSError:
+            media_type = None
+        if media_type and media_type.startswith(("audio/", "video/")):
+            found.append(record["object_id"])
+    return found
+
+
 def discover(args: argparse.Namespace, env: dict[str, str] | None, steps: "Steps", planner: Planner,
              note: Callable[..., None], commit: bool) -> tuple[list[Recording], list[Recording]]:
-    """Probe what `propose --all` lists as unprobed, then every recording of
+    """Probe what `propose --all` would list as unprobed, then every recording of
     the archive (all, and those whose content is here), with its song
     regions and its place in the queue."""
-    names = args.proposers.strip()
-    # `propose --all` is what lists the unprobed; a failure here is not "none
-    # unprobed", so it stops the backfill rather than planning without them.
-    before = steps.propose("propose --all (dry run: which Artifacts are unprobed)", "--dry-run",
-                           proposers=names or PROPOSERS)
-    if not isinstance(before, dict) or before.get("status") == "failed":
-        raise BackfillError("propose --all --dry-run failed, so which Artifacts are unprobed is not known")
-    unprobed = [u["artifact"]["id"] for u in before.get("unprobed", [])]
+    # Read from the export, as `propose --all` finds them (an export that
+    # fails stops the backfill rather than planning without them); proposing
+    # nothing to learn this cost the whole archive's proposals as a dry run.
+    export = export_of(args, env)
+    unprobed = unprobed_of(export, Path(args.archive))
     note(step="unprobed audio or video Artifacts", count=len(unprobed))
     for artifact in unprobed:
         steps.enrich(f"probe {artifact}", "probe", "--artifact", artifact, *([] if commit else ["--dry-run"]),
                      ok=(0, 3))
-    export = export_of(args, env)
+    if unprobed and commit:
+        export = export_of(args, env)
     recordings = recordings_of(export["records"], Path(args.archive), set(unprobed))
     present = []
     for recording in recordings:
@@ -1321,154 +1011,6 @@ def discover(args: argparse.Namespace, env: dict[str, str] | None, steps: "Steps
     find_regions(present, export, Path(args.archive), planner.reader, note)
     prioritise(present)
     return recordings, present
-
-
-class Proposals:
-    """When to propose while the backfill runs (ADR 0112): once the fast
-    tier is all made (every recording usable), then in batches as background
-    units land, at most every `propose_every_seconds`; one at a time, each in
-    a thread of its own so the pool goes on. With no proposers, a proposal
-    is nothing, and usable is when the fast tier is made. A usable proposal
-    that fails makes nothing usable: the background goes on, and the next
-    proposal that succeeds (a batch, at most every `propose_every_seconds`,
-    or the last) is the usable one."""
-
-    def __init__(self, steps: "Steps", args: argparse.Namespace, note: Callable[..., None], started: float,
-                 every: float, enabled: bool):
-        self.steps, self.args, self.note, self.started, self.every = steps, args, note, started, every
-        self.enabled = enabled
-        self.runner: Runner | None = None
-        self.thread: threading.Thread | None = None
-        self.kind: str | None = None
-        self.fast_made = True  # fast work (or none) not yet proposed: the first proposal is the usable one
-        self.background_made = False
-        self.last = time.monotonic()
-        self.usable_s: float | None = None
-        self.usable_pending = False  # the usable proposal failed: the next good one is usable
-        self.lock = threading.Lock()
-
-    def settled(self, job: Job) -> None:
-        if job.status != "done":
-            return
-        if job.tier == "fast" and not job.requested:
-            self.fast_made = True
-        else:
-            self.background_made = True
-
-    def fast_left(self) -> bool:
-        assert self.runner is not None
-        with self.runner.changed:
-            return any(j.tier == "fast" and not j.requested and j.status in ("pending", "putting", "put", "running")
-                       for j in self.runner.jobs)
-
-    def hold_background(self) -> bool:
-        """Whether the fast tier's proposal is still to come or under way."""
-        with self.lock:
-            return self.fast_made or self.kind == "usable"
-
-    def busy(self) -> bool:
-        return self.thread is not None and self.thread.is_alive()
-
-    def tick(self) -> None:
-        if self.busy():
-            return
-        if self.fast_made and not self.fast_left():
-            self.begin("usable")
-        elif (self.background_made or self.usable_pending) and time.monotonic() - self.last >= self.every:
-            self.begin("background")
-
-    def begin(self, kind: str) -> None:
-        with self.lock:
-            self.kind = kind
-            if kind == "usable":
-                self.fast_made = False
-            else:
-                self.background_made = False
-        self.thread = threading.Thread(target=self.propose, args=(kind,), daemon=True)
-        self.thread.start()
-
-    def propose(self, kind: str) -> None:
-        failures = self.steps.failures
-        try:
-            if self.enabled:
-                self.steps.propose(f"propose --all ({'usable' if kind == 'usable' else 'background batch'})")
-                if kind == "usable" and self.args.world_store:
-                    self.steps.world()
-        except Exception as exc:  # noqa: BLE001  (a proposal that could not run is not usable; the pool goes on)
-            self.steps.failures += 1
-            self.note(step="proposal could not run", kind=kind, error=f"{type(exc).__name__}: {exc}"[-600:])
-        finally:
-            with self.lock:
-                self.last = time.monotonic()
-                self.kind = None
-                good = self.steps.failures == failures
-                if (kind == "usable" or self.usable_pending) and not good:
-                    self.usable_pending = True
-                    self.note(step="usable proposal failed", s=round(time.monotonic() - self.started, 1))
-                elif kind == "usable" or self.usable_pending:
-                    self.usable_pending = False
-                    first = self.usable_s is None
-                    if first:
-                        self.usable_s = round(time.monotonic() - self.started, 1)
-                    self.note(step="usable", s=round(time.monotonic() - self.started, 1), first=first)
-            if self.runner is not None:
-                with self.runner.changed:
-                    self.runner.changed.notify_all()
-
-    def finish(self) -> None:
-        if self.thread is not None:
-            self.thread.join()
-
-
-class Follow:
-    """`--follow`: every `poll_seconds`, the bank's new requests, first in
-    the queue; every `rescan_seconds`, new admissions (probed, then planned);
-    until `--follow-seconds` pass or the unit is stopped (SIGTERM, SIGINT)."""
-
-    def __init__(self, planning: Planning, args: argparse.Namespace, env: dict[str, str] | None, steps: "Steps",
-                 note: Callable[..., None], root: Path, by_digest: dict[str, Recording], present: list[Recording]):
-        self.planning, self.args, self.env, self.steps, self.note = planning, args, env, steps, note
-        self.root, self.by_digest, self.present = root, by_digest, present
-        self.until = time.monotonic() + args.follow_seconds if args.follow_seconds is not None else None
-        self.stopped = False
-        self.last_scan = time.monotonic()
-        self.reported: set[str] = set()
-
-    def stop(self) -> bool:
-        return self.stopped or (self.until is not None and time.monotonic() >= self.until)
-
-    def intake(self) -> list[Job]:
-        added: list[Job] = []
-        if time.monotonic() - self.last_scan >= self.planning.schedule.rescan_seconds:
-            self.last_scan = time.monotonic()
-            try:
-                _, present = discover(self.args, self.env, self.steps, self.planning.planner, self.note, True)
-            except (BackfillError, OSError) as exc:
-                self.note(step="rescan failed", error=str(exc)[-600:])
-                present = []
-            known = {r.object_id for r in self.present}
-            new = [r for r in present if r.object_id not in known]
-            if new:
-                self.present.extend(new)
-                prioritise(self.present)
-                for recording in new:
-                    self.by_digest[recording.digest] = recording
-                    added += self.planning.recording(recording)
-                self.note(step="new recordings", count=len(new), jobs=len(added))
-        try:
-            asked = bank.requests(self.root)
-        except (bank.BankError, OSError) as exc:
-            self.note(step="requests unreadable", error=str(exc)[-600:])
-            return added
-        for request in asked:
-            if request["key"] in self.planning.asked:
-                continue
-            jobs = self.planning.request(request, self.by_digest)
-            added += jobs
-            if jobs:
-                self.note(step="request planned", key=request["key"], jobs=[j.unit.name for j in jobs])
-        report(self.planning.result, self.root, self.note, self.reported, True)
-        return added
 
 
 def report(planned: Plan, root: Path, note: Callable[..., None], reported: set[str], commit: bool) -> None:
@@ -1563,8 +1105,8 @@ def main(args: argparse.Namespace, env: dict[str, str] | None = None,
     proposals = Proposals(steps, args, note, started, schedule.propose_every_seconds, bool(names))
     handlers: dict[int, Any] = {}
     if commit and (planned.jobs or args.follow):
-        follow = Follow(planned.planning, args, env, steps, note, root, {r.digest: r for r in present}, present) \
-            if args.follow else None
+        follow = Follow(planned.planning, args, env, steps, note, root, {r.digest: r for r in present}, present,
+                        discover, prioritise, report) if args.follow else None
         if follow is not None:
             follow.reported = reported
 
@@ -1590,6 +1132,7 @@ def main(args: argparse.Namespace, env: dict[str, str] | None = None,
                         args.config, intake=follow.intake if follow else None, stop=follow.stop if follow else None,
                         tick=proposals.tick, hold_background=proposals.hold_background, settled=settled)
         proposals.runner = runner
+        proposals.start(present, planned.jobs)
         made_from = time.monotonic()
         try:
             runner.run()
@@ -1627,16 +1170,15 @@ def main(args: argparse.Namespace, env: dict[str, str] | None = None,
     if names:
         if commit:
             steps.propose("propose --all (dry run)", "--dry-run")
-            before = steps.failures
-            steps.propose("propose --all (commit)")
-            if proposals.usable_pending and steps.failures == before:
+            committed = steps.proposed("propose --all (commit)", None)
+            if proposals.usable_pending and committed:
                 # The usable proposal failed and no batch succeeded since: the last proposal is the usable one.
                 proposals.usable_pending = False
                 proposals.usable_s = round(time.monotonic() - started, 1)
                 note(step="usable", s=proposals.usable_s, first=True)
             rerun = steps.propose("propose --all (rerun: must be unchanged)")
             if isinstance(rerun, dict) and rerun.get("status") not in ("unchanged", "nothing_proposed"):
-                steps.failures += 1
+                steps.failed()
                 note(step="rerun was not quiet", status=rerun.get("status"))
         else:
             steps.propose("propose --all (dry run)", "--dry-run")

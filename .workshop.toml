@@ -1,0 +1,217 @@
+# Archive's suites, services and proofs for agent-workshop's `wf`
+# (format: `wf check --help`, `wf lease --help`, `wf prove --help`).
+# `wf check --tier 30 --changed` before a commit; `wf check --tier night
+# --changed --on laptop` before a merge (an enrich change adds bench-horn's
+# hour). Without wf: `make check` and `make test` (AGENTS.md).
+#
+# A tier is the budget its suite met in a measured run through `wf check
+# --fresh` on the laptop, 2026-10: the figure above each suite. The Python
+# suites build Door and Archive with cabal first (the prelude); the figures
+# are with that build warm, and a Door change adds minutes to the first.
+
+keep = ["dist-newstyle"]
+prelude = """
+set -e
+cabal build -v0 exe:door exe:archive
+export ARCHIVE_TEST_DOOR="$(cabal list-bin door)" ARCHIVE_TEST_ARCHIVE="$(cabal list-bin archive)"
+export ARCHIVE_GIT_EXECUTABLE="$(realpath "$(command -v git)")"
+export ARCHIVE_GIT_ANNEX_EXECUTABLE="$(realpath "$(command -v git-annex)")"
+export archive_datadir="$PWD" ARCHIVE_REQUIRE_INTEGRATION=1
+"""
+
+# ---- tier 1 and 5: before every commit ----------------------------------------
+
+# Links, orphans, the specification's version, ADR index, licences: every
+# file counts (REUSE), so no paths. Measured: 0.4 s here, 1.3 s on the laptop.
+[suites.check]
+run = 'python3 scripts/check.py "$@"'
+timeout_seconds = 60
+tier = 1
+
+# Status claims and generated blocks in AGENTS, MAP, README, CONTEXT and docs/
+# (`lens stale`; decision records are history and left out).
+# Measured: 0.2 s; wf runs here, so it stays here.
+[suites.docs]
+run = 'wf vet --docs "$@"'
+where = "local"
+timeout_seconds = 60
+tier = 1
+
+# The library and both executables compile (-Werror). Measured: 0.3 s
+# warm; a Door change recompiles for minutes, so tier 300.
+[suites.build]
+run = 'cabal build -v0 lib:archive exe:door exe:archive "$@"'
+timeout_seconds = 1800
+tier = 300
+paths = ["door/**", "archive/**", "archive.cabal", "cabal.project"]
+
+# ---- before a merge, on the laptop (tiers 30 to night) --------------------------
+# HS: what the prelude builds, so every suite below depends on it.
+
+# door-test and archive-test are single sequential programs whose checks
+# share state, so there is no selection: `-- --test-show-details=direct`
+# streams them. Measured: 314 s.
+[suites.haskell]
+run = 'cabal test all "$@"'
+timeout_seconds = 3600
+parser = "cabal"
+tier = "night"
+paths = ["door/**", "archive/**", "spec/**", "archive.cabal", "cabal.project"]
+
+# Measured: 521 s.
+[suites.world]
+run = '$PYTHON -m unittest discover -s world/tests "$@"'
+timeout_seconds = 3600
+parser = "unittest"
+prelude = true
+tier = "night"
+paths = ["world/**", "enrich/**", "door/**", "archive/**", "spec/**", "archive.cabal", "cabal.project"]
+
+# Measured: 195 s.
+[suites.relay]
+run = '$PYTHON -m unittest discover -s relay/tests "$@"'
+timeout_seconds = 1800
+parser = "unittest"
+prelude = true
+tier = 300
+paths = ["relay/**", "world/**", "enrich/**", "door/**", "archive/**", "spec/**", "archive.cabal", "cabal.project"]
+
+# Measured: 9 s.
+[suites.enrich-tests]
+run = '$PYTHON -m unittest discover -s enrich/tests "$@"'
+timeout_seconds = 1800
+parser = "unittest"
+prelude = true
+tier = 30
+paths = ["enrich/**", "world/**", "fixture/**", "door/**", "archive/**", "spec/**", "archive.cabal", "cabal.project"]
+
+# Measured: 54 s.
+[suites.shadow]
+run = '$PYTHON -m unittest discover -s shadow -p "test_*.py" "$@"'
+timeout_seconds = 1800
+parser = "unittest"
+prelude = true
+tier = 300
+paths = ["shadow/**", "migration/**", "world/**", "door/**", "archive/**", "spec/**", "archive.cabal", "cabal.project"]
+
+# Measured: 6 s.
+[suites.migration]
+run = '$PYTHON -m unittest discover -s migration -p "test_*.py" "$@"'
+timeout_seconds = 1800
+parser = "unittest"
+prelude = true
+tier = 30
+paths = ["migration/**", "door/**", "archive/**", "spec/**", "archive.cabal", "cabal.project"]
+
+# Measured: 88 s.
+[suites.fixture]
+run = '$PYTHON -m unittest discover -s fixture -p "test_*.py" "$@"'
+timeout_seconds = 1800
+parser = "unittest"
+prelude = true
+tier = 300
+paths = ["fixture/**", "relay/**", "world/**", "enrich/**", "door/**", "archive/**", "spec/**", "archive.cabal", "cabal.project"]
+
+# The longest suite; one module with `-- -p test_bank.py`. Measured: 2050 s.
+[suites.enrich]
+run = '$ENRICH_PYTHON -m unittest discover -s enrich -p "test_*.py" "$@"'
+timeout_seconds = 3600
+parser = "unittest"
+prelude = true
+tier = "night"
+paths = ["enrich/**", "world/**", "fixture/**", "door/**", "archive/**", "spec/**", "archive.cabal", "cabal.project"]
+
+# Measured: 255 s.
+[suites.capture]
+run = '$ENRICH_PYTHON -m unittest discover -s capture -p "test_*.py" "$@"'
+timeout_seconds = 1800
+parser = "unittest"
+prelude = true
+tier = 300
+paths = ["capture/**", "enrich/**", "world/**", "door/**", "archive/**", "spec/**", "archive.cabal", "cabal.project"]
+
+# The bench (enrich/bench): its interpreter and its private data live outside
+# the repository on the x86-64 laptop only, so these run there. `bench` is
+# the harness's unit tests; `bench-horn` reruns every baseline of the horn
+# set and fails when a mean note F1 drops by more than 0.02. Cached by source
+# tree: after changing the data or a variant's environment, ask again with
+# --fresh. Measured: bench 3 s.
+[suites.bench]
+run = 'P="$HOME/archive-bench/envs/harness/bin/python"; test -x "$P" || { echo "bench: no $P; the bench runs on the x86-64 laptop (wf check --on laptop)"; exit 1; }; "$P" -m unittest discover -s enrich/bench -p "test_*.py" "$@"'
+timeout_seconds = 300
+parser = "unittest"
+tier = 30
+paths = ["enrich/**"]
+
+[suites.bench-horn]
+run = 'P="$HOME/archive-bench/envs/harness/bin/python"; test -x "$P" || { echo "bench-horn: no $P; the bench runs on the x86-64 laptop (wf check --on laptop)"; exit 1; }; ARCHIVE_BENCH_ROOT="$HOME/archive-bench" "$P" -m enrich.bench check horn-v1 "$@"'
+timeout_seconds = 3600
+parser = "plain"
+tier = "night"
+paths = ["enrich/**"]
+
+# ---- services, run, prove, observe ----------------------------------------------
+
+# A relay over the fixture archive (ADR 0062), for a client's worktree
+# (`wf lease relay`, or a client's [run] needs = ["relay"]). `build` runs once
+# per code key: it compiles Door and Archive in the exported tree and builds
+# the fixture there; every instance then serves its own copy-on-write clone of
+# that fixture (`data`), with commits on, role `scratch`, and the login
+# `ci@example.invalid` (fixture/serve.py). `/health` answers a local probe
+# without a login (ADR 0114). PYTHON must have world/requirements.txt; an
+# exported tree has no cabal.project.local, so name one in
+# ARCHIVE_CABAL_PROJECT_LOCAL when cabal needs it.
+[services.relay]
+build = '''
+set -e
+if [ -n "${ARCHIVE_CABAL_PROJECT_LOCAL:-}" ]; then cp "$ARCHIVE_CABAL_PROJECT_LOCAL" cabal.project.local; fi
+cabal build -v0 exe:door exe:archive
+mkdir -p .wf/fixture
+ARCHIVE_GIT_EXECUTABLE="$(realpath "$(command -v git)")" ARCHIVE_GIT_ANNEX_EXECUTABLE="$(realpath "$(command -v git-annex)")" \
+  archive_datadir="$PWD" "${PYTHON:-python3}" fixture/build.py .wf/fixture/archive \
+  --door "$(cabal list-bin door)" --archive "$(cabal list-bin archive)" > .wf/fixture/manifest.json
+'''
+cmd = '''
+ARCHIVE_GIT_EXECUTABLE="$(realpath "$(command -v git)")" ARCHIVE_GIT_ANNEX_EXECUTABLE="$(realpath "$(command -v git-annex)")" \
+  archive_datadir="$PWD" exec "${PYTHON:-python3}" fixture/serve.py --work "$WF_TMP/serve" --built "$WF_DATA" \
+  --port "$WF_PORT" --door "$(cabal list-bin door)" --archive "$(cabal list-bin archive)"
+'''
+ready = "http://127.0.0.1:$WF_PORT/health"
+data = ".wf/fixture"
+paths = ["relay/**", "world/**", "enrich/derived.py", "fixture/**", "door/**", "archive/**", "spec/**",
+         "archive.cabal", "cabal.project"]
+slots = 1
+timeout = 300
+# It builds Door with cabal, so it runs on the host config's default_host (the
+# laptop from the Mac).
+host = "any"
+
+# The same fixture relay in this checkout, built fresh (about a minute).
+[run]
+cmd = '''
+set -e
+cabal build -v0 exe:door exe:archive
+ARCHIVE_GIT_EXECUTABLE="$(realpath "$(command -v git)")" ARCHIVE_GIT_ANNEX_EXECUTABLE="$(realpath "$(command -v git-annex)")" \
+  archive_datadir="$PWD" exec "${PYTHON:-python3}" fixture/serve.py --work "$WF_TMP/serve" --port "$WF_PORT" \
+  --door "$(cabal list-bin door)" --archive "$(cabal list-bin archive)"
+'''
+ready = "http://127.0.0.1:$WF_PORT/health"
+url = "http://127.0.0.1:$WF_PORT"
+timeout = 600
+
+# Door's and Archive's command line, normalised (scripts/prove.py);
+# `wf prove --golden` compares with fixture/golden/.
+[prove.usage]
+transcript = "python3 scripts/prove.py usage"
+golden = "fixture/golden/usage.txt"
+timeout = 60
+
+[prove.fixture]
+transcript = "python3 scripts/prove.py fixture"
+golden = "fixture/golden/fixture.txt"
+timeout = 600
+
+# The fleet registry's Archive services (`wf observe archive`). Their /health
+# shows commit and build once they run a relay with ADR 0114.
+[observe]
+services = ["archive-relay", "archive-door", "archive-scratch-trial-relay"]

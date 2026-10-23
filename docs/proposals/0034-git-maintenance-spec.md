@@ -1,6 +1,6 @@
 # Draft specification amendment: coordinated Git maintenance
 
-This is draft wording for a release after `archive/0.0.2`. It is not part of
+This is draft wording for a release after `archive/0.0.2`. It is not part of <!-- lens: allow stale -->
 any archive's current specification. It depends on accepted
 [ADR 0034](../decisions/0034-git-object-store-coordination.md) and the accepted
 [durability amendment](0031-power-loss-spec.md).

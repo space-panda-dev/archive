@@ -128,3 +128,5 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0111](0111-pad-maps.md) | A pad map says what a sampler plays, and a proposer turns a session's MIDI into lineage |
 | [0112](0112-bulk-import-at-scale.md) | Bulk import at scale: song spans eagerly, the rest on demand, and eager everything as a fast mode |
 | [0113](0113-editing-lead-sheets.md) | Editing lead sheets: sketches, words under a Work's tune, open repeats, passages, and one save |
+| [0114](0114-relay-local-health.md) | A local probe reads the relay's liveness, commit and build without a tailnet identity |
+| [0115](0115-ci-skips-prose-only-pushes.md) | CI skips the build for a push that changes only prose no build reads, and cancels superseded runs |

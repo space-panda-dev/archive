@@ -83,7 +83,15 @@ the cut's (`audio/flac`), `region`, and `cut`, the cut's digest. It is filed
 under the content's directory like any entry, so deleting the content deletes
 it. Outputs are on the cut's timeline; a reader adds `start / rate` seconds
 (`Entry.offset`). A stem made over a region is content of its own and is
-measured whole. A reader takes the whole-content entry when there is one,
+measured whole, keyed by its own bits. The request tells an extractor where
+its input lies: `input.region` (with `input.source`, the content, for a cut
+of it; without, for a stem made over a region). Stems separate the source
+around the region on the whole run's segment grid; `notes-basic-pitch`,
+`f0-pesto` and `melody` lay their windows and rows on the whole run's grid
+from the region's start (a series grid's `first_centre` then says where the
+first row lies on the cut's timeline), so a region's entries are the whole
+run's over the region but at its edges (`python -m enrich.bench region`
+measures how close). A reader takes the whole-content entry when there is one,
 else a region entry whose region contains the span it needs and whose key
 the installed extractor gives that region (`bank.covering`); region entries
 are never stitched together.
@@ -508,7 +516,7 @@ parameters are in the manifest's descriptions and in the
 |---|---|---|---|
 | `beats-beatthis` | 1 | none | scalars `beat_count`, `downbeat_count`, `median_bpm`; events `beats`, `downbeats` |
 | `chords-chordino` | 1 | none | scalars `chord_count`, `seconds`; spans `chords` |
-| `chords-jiang` | 1 | none | scalars `chord_count`, `decoded_in_top3`; spans `chords`; files `readings` |
+| `chords-jiang` | 2 | none | scalars `chord_count`, `decoded_in_top3`; spans `chords`; files `readings` |
 | `frames` | 1 | none | series `hpcp`, `rms_db`, `centroid`, `rolloff`, `flatness`, `flux`, `onset_hfc`, `mfcc`, `melbands`; scalars `samples`, `seconds` |
 | `colour` | 3 | `frames`: centroid, hpcp, rms_db | series `colour`; files `palette`, `preview` |
 | `f0-pesto` | 2 | none | series `f0`, `level_db`; scalars `rows_from_tracker`, `loud_db` |
@@ -622,4 +630,4 @@ never read as a new one.
   `chords-chordino`'s matched 53%.
   `chords-jiang` (a learned large vocabulary, with weighted readings) and
   `chords-chordino` (a second opinion of another kind) replace it. Its last
-  source is `enrich/extractors/chords/` at the commit before its removal.
+  source is `enrich/extractors/chords/` at the commit before its removal. <!-- lens: allow stale -->

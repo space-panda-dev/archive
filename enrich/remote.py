@@ -183,6 +183,59 @@ class Spool:
         except ValueError as exc:
             raise RemoteError(f"spool {' '.join(arguments)} answered what is not JSON lines: {exc}") from exc
 
+    def directory(self) -> Path | None:
+        """The spool's directory, when the command names one (`--dir DIR`)
+        that this machine can read; None otherwise (`sudo -u`, `ssh`)."""
+        words = self.words
+        for index, word in enumerate(words[:-1]):
+            if word == "--dir":
+                found = Path(words[index + 1]).expanduser()
+                return found if (found / "pending").is_dir() and (found / "leased").is_dir() else None
+        return None
+
+    def tasks(self) -> dict[str, dict[str, Any]] | None:
+        """What the spool holds, task by task, read from its directory: a
+        pending task as `{"state": "pending"}`, a leased one with when it
+        was leased and last renewed (epoch seconds) and by which worker.
+        None when the directory cannot be read here.
+
+        A stopgap: Spool's CLI gives only counts (`status --json`), and this
+        reads its layout (`pending/<task>.json`; `leased/<lease>.json` with
+        `<lease>.renewed` holding epoch microseconds and `<lease>.worker`),
+        changing nothing. It goes once Spool answers per task itself."""
+        root = self.directory()
+        if root is None:
+            return None
+        found: dict[str, dict[str, Any]] = {}
+        try:
+            for path in (root / "pending").iterdir():
+                if path.suffix == ".json":
+                    found[path.stem] = {"state": "pending"}
+            for path in (root / "leased").iterdir():
+                if path.suffix != ".json":
+                    continue
+                try:
+                    task = json.loads(path.read_bytes())["task_id"]
+                    leased = path.stat().st_mtime
+                except (OSError, ValueError, KeyError, TypeError):
+                    continue  # renamed away (acked, failed, reclaimed) while being read
+                parts = path.stem.split("_")
+                if len(parts) > 2 and parts[0] == "lease" and parts[1].isdigit():
+                    leased = int(parts[1]) / 1e6
+                renewed = leased
+                try:
+                    renewed = max(leased, int(path.with_suffix(".renewed").read_text().strip()) / 1e6)
+                except (OSError, ValueError):
+                    pass
+                try:
+                    worker: str | None = path.with_suffix(".worker").read_text().strip() or None
+                except OSError:
+                    worker = None
+                found[task] = {"state": "leased", "leased_at": leased, "renewed_at": renewed, "worker": worker}
+        except OSError:
+            return None
+        return found
+
     def take(self, task: str, digest: str, path: Path) -> None:
         """One result attachment into `path`, which must not exist."""
         request = json.dumps({"task_id": task, "sha256": hex_of(digest)}).encode()
@@ -303,6 +356,10 @@ def put(catalog: bank.Catalog, root: Path, spool: Spool, extractor_id: str, cont
                "key": key, "parameters": catalog.parameters(extractor_id, parameters),
                "input": {"digest": actual, "media_type": media_type}}
     (root / "tmp").mkdir(parents=True, exist_ok=True)
+    if transport is not None:
+        held = put_again(root, spool, extractor, key, payload, actual, transport, content)
+        if held is not None:
+            return {**held, **answer, "transport": held["transport"]}
     staging = Path(tempfile.mkdtemp(prefix="put-", dir=root / "tmp"))
     try:
         travels, sent = content, actual
@@ -335,7 +392,58 @@ def put(catalog: bank.Catalog, root: Path, spool: Spool, extractor_id: str, cont
     statuses = [line.get("status") for line in lines if line.get("task_id") == task["task_id"]]
     if statuses not in (["inserted"], ["existing"]):
         raise RemoteError(f"spool put answered {lines!r}")
+    if "transport" in payload:
+        remember_transport(root, actual, transport, payload["transport"]["digest"], task["attachments"][0]["size"])
     return {"status": "put" if statuses == ["inserted"] else "existing", **answer}
+
+
+# A transport is encoded and checked (one encode, two decodes: about 0.01 s
+# per audio-second) only to be sent. What it came to is remembered beside
+# the bank's scratch, keyed by the content and codec (operational: lose it
+# and the next put encodes again), so a task put again (a backfill started
+# again while its task is with the spool) is offered as the very task Spool
+# holds, which Spool answers `existing` without reading its attachment.
+
+def transport_memo(root: Path, content: str, codec: str) -> Path:
+    return root / "tmp" / "transports" / f"{hex_of(content)}.{codec}.json"
+
+
+def remember_transport(root: Path, content: str, codec: str, digest: str, size: int) -> None:
+    path = transport_memo(root, content, codec)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_name(path.name + f".{os.getpid()}.partial")
+    partial.write_text(json.dumps({"content": content, "codec": codec, "digest": digest, "size": size}))
+    os.replace(partial, path)
+
+
+def put_again(root: Path, spool: Spool, extractor: bank.Extractor, key: str, payload: dict[str, Any],
+              content: str, codec: str, path: Path) -> dict[str, Any] | None:
+    """The answer when Spool already holds this task with the transport
+    remembered for this content; None when nothing is remembered, or Spool
+    does not hold it (then the transport is encoded and checked again)."""
+    try:
+        memo = json.loads(transport_memo(root, content, codec).read_text())
+    except (OSError, ValueError):
+        return None
+    if not (isinstance(memo, dict) and memo.get("content") == content and memo.get("codec") == codec
+            and isinstance(memo.get("digest"), str) and isinstance(memo.get("size"), int)):
+        return None
+    carried = {**payload, "transport": {"codec": codec, "digest": memo["digest"],
+                                        "media_type": TRANSPORTS[codec]["media_type"]}}
+    task = {"task_id": task_id(key), "capability": extract.spool_capability(extractor), "payload": carried,
+            "attachments": [{"sha256": hex_of(memo["digest"]), "size": memo["size"]}]}
+    empty = Path(tempfile.mkdtemp(prefix="put-again-", dir=root / "tmp"))
+    try:
+        empty.chmod(0o755)
+        lines = spool.lines("put", "--attachments", str(empty), given=bank.canonical(task) + b"\n")
+    except RemoteError:
+        return None  # not held: Spool found no attachment to stage
+    finally:
+        shutil.rmtree(empty, ignore_errors=True)
+    if [line.get("status") for line in lines if line.get("task_id") == task["task_id"]] != ["existing"]:
+        return None
+    return {"status": "existing", "transport": {"codec": codec, "bytes": memo["size"],
+                                                "content_bytes": path.stat().st_size, "remembered": True}}
 
 
 # -- work ------------------------------------------------------------------------

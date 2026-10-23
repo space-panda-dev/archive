@@ -530,3 +530,192 @@ whole-content only. Readers take region entries (`bank.RegionView`,
 data: confirm on the laptop with Demucs that a region's stems match the
 whole's above 90 dB (bass notes F1 at least 0.98), and add the bench's
 region test.
+
+## Amendment (2026-10-20): Jiang's memory is bounded (`chords-jiang` 2)
+
+Status: proposed on `fast3/jiang`; whether `chords-jiang` returns to the
+fast tier is the operator's.
+
+**Why it grew.** Version 1 held 16 channels of the whole recording's
+spectrogram in the networks' first layers, and librosa's tuning estimate
+held its whole short-time spectrum: about 2 GB plus 6 GB an hour.
+
+**What is the same.** The audio is decoded and resampled a block at a time,
+the tuning estimated and the constant-Q spectrogram computed a chunk at a
+time on the whole run's frame grid, the recurrent layer run a chunk at a
+time in each direction carrying its state, and the decoder keeps one row of
+scores: each gives version 1's values (the tuning and the decoder's choices
+exactly, the spectrogram to float rounding, 2.4e-7 relative). A recording
+of ten minutes or less runs the networks as version 1 did: on the laptop
+its spans and readings are byte for byte version 1's (a 554 s recording and
+a 240 s excerpt).
+
+**What differs, and the version.** Each convolutional layer normalises each
+channel over everything it is given (instance normalisation), so a single
+pass needs every layer's activations of the whole recording at once; doing
+it exactly a chunk at a time would cost about six passes of the network.
+Over ten minutes, version 2 measures those statistics over a sample of ten
+minutes of the recording (blocks of 64 frames spread evenly, each with the
+10 frames either side a frame's features can see) and then makes the
+features a chunk at a time with them. Its outputs can differ from a single
+pass, so it is version 2 (ADR 0074), a new key: version 1's entries are not
+read as version 2's. Normalising each ten-minute window by itself instead
+was measured and rejected: features 20-26% off and 94-98% of the time
+labelled alike. On a 240 s excerpt with the sample a third of it, 99.8% of
+the time is labelled alike (17%: 96.9%); version 1 itself labels 97.2% of
+the same passage alike when 12 s are cut from the end of the file, and 95.2%
+when they are cut from its start, so the sample's error is within how much
+the file's own extent already moves Jiang's labels. The agreement on whole
+long recordings is to be measured by a run queued after the live backfill.
+
+**Reservation.** `memory_gb` 2.0 and `memory_gb_per_hour` 0.8 (from the
+sizes held per hour, about 0.6 GB; to be replaced by the measured peak).
+With it a 93-minute recording reserves 3.2 GB, so three or four copies fit
+on the laptop beside the reserve, and Jiang could return to the fast tier
+(projected usable about 50 minutes on the shadow, against about 22 with it
+in the background).
+
+## Amendment (2026-10-20): the background keeps the cores busy, usable per recording, region measures on the grid
+
+Status: proposed on `fast3/integration3` (round 3, branches `fast3/sched`
+and `fast3/grid`); the numbers are the operator's to confirm once measured.
+
+**Why.** On the shadow copy (25 recordings, 22.8 h) the usable proposal was
+23% of time-to-usable (298 s after a 1015 s fast pass), and the background
+stalled: a job waiting for memory (a long recording's Jiang, 11.3 GB of 14)
+held every job behind it, and routed stems were offered to free laptop
+cores only once local work ran out, so 6 of 8 cores sat idle. Region notes
+(basic-pitch over a cut) agreed with the whole run only to F1 0.78, because
+basic-pitch, f0-pesto and melody lay their own windows from the cut's start,
+as Demucs did before its regions were aligned.
+
+**No head-of-line blocking** (`backfill_queue`). The first ready job that
+cannot start for cores or memory is the head. The pool works out when it
+will fit (the running jobs end by their recorded costs) and starts a later
+job now when it ends before then or takes only what the head will leave
+over: backfilling, as batch schedulers do (EASY). A head that has waited
+`reserve_after_seconds` (1200) anyway, because costs run long under load,
+is reserved for outright. A job wider than the machine starts only on an
+idle machine, as before.
+
+**Overflow by when it ends.** A routed job the worker is not holding runs
+here when it would end here sooner: its recorded cost over its reserved
+cores, against the worker's backlog ahead of it (what it holds and the
+routed jobs ahead, by `remote_cost`) over its tasks in flight plus its own
+time. Free cores take stems early, from the back of the worker's queue. A
+task put again reuses its remembered transport (`<bank>/tmp/transports/`).
+
+**Usable per recording** (`backfill_proposals`). A recording is proposed
+as soon as its own fast units settle, beside the pool: `propose --artifact`,
+or one `--all` when more than two wait. `usable` comes when the fast tier
+has settled everywhere and every recording's proposal has run; a failed
+proposal makes nothing usable and the next one that succeeds is the usable
+one. The projection counts `propose_seconds_per_recording` (12). Unprobed
+Artifacts are read from the export, not from a dry-run `propose --all`.
+
+**Region measures on the whole run's grid** (as the operator decided over
+accepting a region's transcription as its own). A measure of a stem made
+over a region is given the region (`Run(placed=...)`, from the stem entry's
+`timeline`). `notes-basic-pitch` windows a region as Basic Pitch windows the
+whole run and takes frame times from the whole run's grid; `f0-pesto` places
+its 160-sample rows and minute chunks on the whole run's; `melody` puts
+silence before the region so its 128-sample rows land on the whole run's
+(its gate, `loud_db` and chunk starts stay the region's own). Notes starting
+before the region are dropped. `extract.py region-equivalence` and
+`python -m enrich.bench region` measure a region against the whole run
+(`equivalence.region_measure`, bounds from the `stems` agree list). On bench
+clips with real Demucs: region stems within one sample step of the whole
+(three on one vocal stem), note F1 0.89-1.0, melody pitch p99 2-6 cents;
+`extract.py region-equivalence` exits 1 there because those values miss the
+`stems` bounds (F1 0.98), not because it fails. Those clips are no test of
+this: their vocal and bass stems are near silence (-67 to -90 dBFS a second;
+drums and other carry the mix), so a one-step stem difference moves a note.
+
+**The grid itself is exact.** Each measure run over a region of the very
+same stem FLAC (a 60 s cut of the 554 s recording's whole vocal and bass
+stems, 160-220 s, with sung vocals) against the whole run, so stems cannot
+differ: over 15-45 s, notes are identical (F1 1.0, 17 vocal and 13 bass
+notes, onsets within 1 ms), melody's 10,337 rows are
+bit-identical, and f0-pesto's rows are bit-identical but for 20-22 rows
+within 0.06 s of the region's start and 0.21 s of its end (what the whole
+run hears beyond the region). A start off the 10 ms grid (12.3456 s) is
+different: ffmpeg resamples to PESTO's 16 kHz at another phase, and every f0
+row differs a little (p99 33 cents); melody and notes stay identical but for
+the edges (melody within 1.9 s, one extra bass note 0.29 s in). Song regions
+start on whole seconds (`regions_of`), so `--songs` never makes such a
+region; `f0_pesto.py` says so. The region-equivalence gaps on the bench
+clips are therefore Demucs's own (a region's stems differ from the whole's
+by a step), not misalignment. Whole runs of the three are bit-identical to
+51c835e's (five entries compared), so their versions stand and their code
+digests are recorded.
+
+**A region measure has its own key.** Its output depends on where the
+region lies, so `extract.run_from`, `Bank.measured_over` and the planner key
+a measure of a stem made over a region with that stem's entry as a need
+(`Catalog.placed_by`): the stem's region entry key carries the region. Two
+regions' identical stems are measured twice; a whole stem's measures keep
+their keys. Region measures made before this (scratch banks only; the
+shadow ran `--eager`) are no longer found and are made again.
+
+### For the operator to confirm (round 3)
+
+- `reserve_after_seconds` 1200 and the overflow rule, once measured on a
+  copy of the shadow (expected: usable at the fast pass plus about 12 s,
+  the cores busy through the background).
+- An edge exclusion for region checks: proposed **2 s** at each end
+  (notes with an onset, rows with a centre, within 2 s of a region edge are
+  not compared). Measured on identical content the edge reaches 0.21 s
+  (f0), 0.29 s (one note) and 1.9 s (melody at an off-grid start); Basic
+  Pitch's window is 2 s, which bounds its reach. Song regions carry a 10 s
+  margin, so no song audio falls in it.
+- Whether `--songs` replaces `--eager` on the shadow once the real-Demucs
+  region check passes on audio with vocals and bass (the 554 s recording
+  over 160-220 s has sung vocals; no recording measured so far has an
+  audible bass stem).
+
+## Amendment (2026-10-21): the worker's leases
+
+Status: proposed on `fast3/macpath`; the Spool changes it leans on are the
+operator's to take to Spool.
+
+**Why.** On the live shadow run the Mac filed 8 stems tasks in about 4 h
+while 12 were given up and made on the laptop as well. The Mac was busy,
+but with the wrong tasks: the backfill's absent rule counted only filings,
+so a worker separating a 93-minute recording off the home network (about
+1180 s, 48% of it transfer) looked absent, and a given-up task stayed in the
+spool for the Mac to make again later. Spool leases in task-id order, and
+nothing withdraws a task, so stale tasks from earlier runs went first.
+
+**What the backfill now reads.** `remote.Spool.tasks` reads the spool's
+directory, when the `--spool` command names one this machine can read,
+and changes nothing in it: pending tasks, and leased ones with when they
+were leased and last renewed. Spool's CLI answers only counts; this read
+goes once it answers per task.
+
+**Held is not absent.** A put task leased and renewed within
+`lease_fresh_seconds` (300, Spool's reclaim age) is the worker's and is
+never also made here. The absent clock runs only for tasks nobody holds,
+from when the worker could have started them: its last filing, the put, or
+the end of its last lease seen. A given-up task that the worker leases
+after all, or that is filed before it starts here, is not made here. A job
+whose entry was made since the plan is not put. Without the directory the
+rule is the old one.
+
+**Put from the start.** Routed background jobs are put while the fast tier
+still runs here: a put holds no core here beyond its encode, and the live
+run's first put came 27 minutes in, after the usable proposal, with the Mac
+idle until then. What runs here keeps the tier order.
+
+**Costed as it runs.** The worker's pace, lease to filed per audio-second,
+replaces `remote_cost` once measured, for the absent allowance and the
+overflow rule: a worker off the home network is costed with its transfer.
+
+**Collected beside the pool.** Results are filed every `poll_seconds` by a
+collector thread, while anything is with the spool, also while puts are
+paused after a give-up and while the proposals run.
+
+**Left to Spool** (the operator's): withdrawing a task (pending: removed;
+leased: the next renew answers withdrawn and the worker stops it), leasing
+in put order, a per-task status read, and prefetch (lease and fetch the
+next task while the current one runs). Prefetch and a deeper
+`spool_in_flight` wait for withdraw, and for disk on the Mac.

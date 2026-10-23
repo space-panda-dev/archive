@@ -118,8 +118,9 @@ class RelayHarness:
 
     def call(self, method: str, path: str, body: object = None, login: str | None = LOGIN,
              origin: str | None = None, content_type: str = "application/json",
-             raw: bytes | None = None, accept_encoding: str | None = None) -> tuple[int, dict, object]:
-        headers = {}
+             raw: bytes | None = None, accept_encoding: str | None = None,
+             extra: dict[str, str] | None = None) -> tuple[int, dict, object]:
+        headers = dict(extra or {})
         if accept_encoding is not None:
             headers["Accept-Encoding"] = accept_encoding
         if login is not None:
@@ -249,11 +250,48 @@ class CallerChecks(Fixture):
 
     def test_a_request_without_an_allowed_login_is_refused_without_archive_details(self) -> None:
         harness = self.harness()
-        for login in (None, "someone@example.test", ""):
+        for login in ("someone@example.test", ""):
             with self.subTest(login=login):
                 status, _, answer = harness.call("GET", "/health", login=login)
                 self.assertEqual((status, answer["error"]["code"]), (403, "forbidden_identity"))
                 self.assertNotIn("archive", answer)
+        status, _, answer = harness.call("POST", "/world/query", {"query": "ASK {}", "projection": 1}, login=None)
+        self.assertEqual((status, answer["error"]["code"]), (403, "forbidden_identity"))
+
+    def test_a_local_probe_without_identity_gets_liveness_only(self) -> None:
+        # ADR 0114: no archive block, no caller, no World snapshot.
+        status, _, answer = self.harness().call("GET", "/health", login=None)
+        self.assertEqual(status, 503)
+        self.assertEqual(set(answer), {"ok", "healthy", "writes", "commit", "build"})
+        self.assertEqual((answer["ok"], answer["healthy"], answer["writes"]), (False, False, "dry-run"))
+
+    def test_a_forwarded_request_without_identity_is_refused(self) -> None:
+        harness = self.harness()
+        for extra in ({"X-Forwarded-For": "100.64.0.9"}, {"Forwarded": "for=100.64.0.9"},
+                      {"Tailscale-User-Name": "Someone"}, {"Origin": ORIGIN}):
+            with self.subTest(extra=extra):
+                status, _, answer = harness.call("GET", "/health", login=None, extra=extra)
+                self.assertEqual((status, answer["error"]["code"]), (403, "forbidden_identity"))
+                self.assertNotIn("archive", answer)
+
+    def test_health_names_the_commit_and_build(self) -> None:
+        with patch.dict(os.environ, {"ARCHIVE_COMMIT": "0" * 40, "ARCHIVE_BUILD": "nix-test"}):
+            harness = self.harness()
+        _, _, answer = harness.call("GET", "/health")
+        self.assertEqual((answer["result"]["commit"], answer["result"]["build"]), ("0" * 40, "nix-test"))
+        _, _, local = harness.call("GET", "/health", login=None)
+        self.assertEqual((local["commit"], local["build"]), ("0" * 40, "nix-test"))
+
+    def test_the_build_is_read_from_a_stamp_or_the_checkout(self) -> None:
+        stamped = self.tmp / "stamped"
+        stamped.mkdir()
+        (stamped / "commit.txt").write_text("a" * 40 + "\n")
+        unstamped = self.tmp / "unstamped"
+        unstamped.mkdir()
+        (unstamped / "commit.txt").write_text("$Format:%H$\n")
+        with patch.dict(os.environ, {"ARCHIVE_COMMIT": "", "ARCHIVE_BUILD": ""}):
+            self.assertEqual(relay.served_build(stamped), ("a" * 40, "export"))
+            self.assertEqual(relay.served_build(unstamped), (None, None))
 
     def test_origins_must_be_listed(self) -> None:
         harness = self.harness()

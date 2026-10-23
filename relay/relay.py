@@ -22,6 +22,7 @@ import re
 import shutil
 import socket
 import stat
+import subprocess
 import sys
 import tempfile
 import threading
@@ -80,6 +81,40 @@ ROUTES = {"/health": "GET", "/world/query": "POST", **{path: "POST" for path in 
           **TEMPLATE_ROUTES}
 TEMPLATES = [(template, re.compile(re.sub(r"\\\{([a-z]+)\\\}", "([^/?#]*)", re.escape(template))),
               re.findall(r"\{([a-z]+)\}", template)) for template in TEMPLATE_ROUTES]
+
+
+# Headers that mark a request as forwarded from elsewhere: tailscale serve
+# adds Tailscale-* and X-Forwarded-For, a browser adds Origin (ADR 0114).
+FORWARDED_HEADERS = ("Origin", "X-Forwarded-For", "Forwarded")
+
+
+def served_build(source: Path = Path(__file__).resolve().parent) -> tuple[str | None, str | None]:
+    """The commit and build this relay runs (ADR 0114). ARCHIVE_COMMIT and
+    ARCHIVE_BUILD when set (the Nix wrapper sets both); else the commit `git
+    archive` stamps into relay/commit.txt (build `export`); else the
+    checkout's HEAD (build `checkout`, or `checkout-dirty` with tracked
+    changes); null for whatever none of them says."""
+    commit, build = os.environ.get("ARCHIVE_COMMIT") or None, os.environ.get("ARCHIVE_BUILD") or None
+    if commit is None:
+        try:
+            stamped = (source / "commit.txt").read_text().strip()
+        except OSError:
+            stamped = ""
+        if re.fullmatch(r"[0-9a-f]{40}", stamped):
+            commit, build = stamped, build or "export"
+    git = shutil.which("git")
+    if commit is None and git is not None:
+        try:
+            head = subprocess.run([git, "-C", str(source), "rev-parse", "HEAD"], capture_output=True, text=True,
+                                  timeout=5)
+            if head.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", head.stdout.strip()):
+                changed = subprocess.run([git, "-C", str(source), "status", "--porcelain", "--untracked-files=no"],
+                                         capture_output=True, text=True, timeout=5)
+                commit = head.stdout.strip()
+                build = build or ("checkout-dirty" if changed.stdout.strip() else "checkout")
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return commit, build
 
 
 def route_of(path: str) -> tuple[str, dict[str, str]]:
@@ -706,6 +741,7 @@ class Relay(Served):
         private_directory(config.staging)
         self.config = config
         self.archive_id, _ = read_archive_manifest(config.archive_root)
+        self.commit, self.build = served_build()
         # The operator is the one caller who is not a member (ADR 0088).
         self.operator, self.circle = access.check_config(config.callers, config.circle)
         self.setup_served()
@@ -760,7 +796,8 @@ class Relay(Served):
         except (world.ProjectionError, OSError) as exc:
             world_state = {"status": "unavailable", "detail": str(exc)}
         healthy = door == "reachable" and world_state["status"] == "ok"
-        answer = {"healthy": healthy, "writes": self.config.writes, "door": door, "world": world_state}
+        answer = {"healthy": healthy, "writes": self.config.writes, "door": door, "world": world_state,
+                  "commit": self.commit, "build": self.build}
         return (HTTPStatus.OK if healthy else HTTPStatus.SERVICE_UNAVAILABLE), answer
 
     def query(self, body: Any) -> tuple[tuple, dict[str, Any]]:
@@ -912,6 +949,20 @@ def make_handler(relay: Relay) -> type[BaseHTTPRequestHandler]:
                 raise Refused("forbidden_origin", "this origin may not use the relay")
             return config.callers[login]
 
+        def _local_probe(self, route: str, method: str) -> bool:
+            """A GET /health from this machine itself, carrying no identity and
+            not forwarded: it is answered liveness only (ADR 0114)."""
+            if route != "/health" or method != "GET" or "Tailscale-User-Login" in self.headers:
+                return False
+            if any(name.lower().startswith("tailscale-") for name in self.headers.keys()):
+                return False
+            if any(self.headers.get(name) is not None for name in FORWARDED_HEADERS):
+                return False
+            try:
+                return ipaddress.ip_address(self.client_address[0]).is_loopback
+            except ValueError:
+                return False
+
         def _send(self, status: HTTPStatus, value: Any, allow: str | None = None, body: bytes | None = None,
                   compressed: bytes | None = None, headers: dict[str, str] | None = None) -> None:
             if body is None:
@@ -944,6 +995,12 @@ def make_handler(relay: Relay) -> type[BaseHTTPRequestHandler]:
             authorized = None
             route, named = route_of(self.path)
             try:
+                if self._local_probe(route, method):
+                    status, health = relay.health()
+                    self._send(status, {"ok": health["healthy"], "healthy": health["healthy"],
+                                        "writes": health["writes"], "commit": health["commit"],
+                                        "build": health["build"]})
+                    return
                 caller = relay.caller(self._agent())
                 authorized = caller
                 expected = ROUTES.get(route)

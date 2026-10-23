@@ -697,6 +697,44 @@ class Melody(unittest.TestCase):
 
 @needs_ffmpeg
 @needs_essentia
+class Region(unittest.TestCase):
+    """A region is measured on the whole run's rows (ADR 0112)."""
+
+    def test_a_region_lies_on_the_whole_runs_rows(self) -> None:
+        directory = scratch(self)
+        rate = 48000
+        rng = numpy.random.default_rng(11)
+        notes = rng.choice([60, 62, 64, 65, 67, 69, 71, 72], 20)
+        samples = numpy.concatenate([tone(0.5, midi_hz(n), rate=rate) for n in notes])
+        source = support.write_wav(directory / "tune.wav", samples, rate)
+        fields = dict(LENIENT)
+        code, answer = run_melody(directory, source, *configured(directory, fields))
+        self.assertEqual(code, 0, answer)
+        whole = entry_of(directory, source, fields)
+        start, end = 158500, 403200  # 3.302 s to 8.4 s
+        code, answer = run_melody(directory / "region", source, "--region", f"{start}:{end}:{rate}",
+                                  *configured(directory, fields))
+        self.assertEqual(code, 0, answer)
+        region = bank.covering(bank.Bank(directory / "region" / "bank", None, {"melody": fields}),
+                               bank.file_digest(source), "melody", start, end, rate)
+        offset = 145622  # the region's start at 44.1 kHz, to the nearest sample
+        grid = region.grid("pitch")
+        self.assertEqual(grid["first_centre"], 128 - offset % 128)
+        first = (offset + grid["first_centre"]) // 128
+        mine = region.series("pitch")[:, 0]
+        theirs = whole.series("pitch")[first:first + len(mine), 0]
+        self.assertEqual(len(mine), len(theirs))
+        self.assertAlmostEqual(region.scalar("samples"), (end - start) * 44100 / 48000, delta=1)  # resampled
+        both = (mine > 0) & (theirs > 0)
+        self.assertGreater(float(numpy.mean(both)), 0.8)  # anchor: a melody, not two silences
+        cents = numpy.abs(1200 * numpy.log2(mine[both] / theirs[both]))
+        self.assertLess(float(numpy.percentile(cents, 99)), 5)
+        self.assertGreater(float(numpy.mean((mine > 0) == (theirs > 0))), 0.95)
+        # Its notes are on the cut's timeline and none starts before it.
+        onsets = [n["start"] for n in region.items("notes")]
+        self.assertTrue(onsets and min(onsets) >= 0, onsets)
+
+
 class VocalStem(unittest.TestCase):
     """The sung line is measured on the vocal stem as content (ADR 0075):
     `--from stems/vocals`, with the separator's model replaced by the fixed

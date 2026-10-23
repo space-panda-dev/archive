@@ -47,6 +47,8 @@ spec = importlib.util.spec_from_file_location("f0_program", sys.argv[1])
 program = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(program)
 mode = os.environ.get("F0_FAKE", "peaks")
+if mode == "chunked":
+    program.CHUNK = 2 * program.RATE  # chunks of 2 s, so a short input has several
 if mode == "exit":
     print("the tracker crashed on purpose")
     sys.exit(1)
@@ -54,7 +56,19 @@ if mode == "exit":
 class Peaks:
     software = [{"name": "fake-tracker", "version": "1"}]
 
-    def track(self, signal):
+    def track(self, signal, first=None):
+        if mode != "chunked":
+            return self.peaks(signal)
+        # PESTO's shape: each chunk tracked alone, its edges heard against silence.
+        pitches, confidences = [], []
+        for start, end in program.chunks(len(signal), first):
+            pitch, confidence = self.peaks(signal[start:end])
+            keep = (end - start) // program.HOP if end < len(signal) else None
+            pitches.append(pitch[:keep])
+            confidences.append(confidence[:keep])
+        return numpy.concatenate(pitches), numpy.concatenate(confidences)
+
+    def peaks(self, signal):
         hop, size = program.HOP, 1024
         rows = len(signal) // hop + 1 + {"short": -7, "long": 5}.get(mode, 0)
         padded = numpy.pad(signal.astype(numpy.float64), (size // 2, size // 2 + hop * rows))
@@ -282,6 +296,62 @@ class Tracking(unittest.TestCase):
         for extractor_id in TRACKERS:
             self.assertEqual(answer["extractors"][extractor_id]["status"], "skipped")
             self.assertIn("f0-python", answer["extractors"][extractor_id]["reason"])
+
+
+class Region(unittest.TestCase):
+    """A region is tracked on the whole run's rows and minutes (ADR 0112)."""
+
+    def test_chunks_and_placement(self) -> None:
+        minute = f0_pesto.CHUNK
+        self.assertEqual(f0_pesto.chunks(10, None), [(0, 10)])
+        self.assertEqual(f0_pesto.chunks(2 * minute + 5), [(0, minute), (minute, 2 * minute),
+                                                           (2 * minute, 2 * minute + 5)])
+        self.assertEqual(f0_pesto.chunks(minute + 500, 320), [(0, 320), (320, minute + 320),
+                                                              (minute + 320, minute + 500)])
+        signal = numpy.ones(1000, dtype=numpy.float32)
+        placed, lead, first = f0_pesto.placed(signal, minute + 1601)
+        self.assertEqual((lead, first, len(placed), float(placed[:lead].sum())), (1, minute - 1600, 1001, 0.0))
+
+    @needs_ffmpeg
+    def test_a_region_is_the_whole_runs_rows_over_it(self) -> None:
+        directory = scratch(self)
+        rate = 48000
+        t = numpy.arange(7 * rate) / rate
+        # A glide, so every row has its own pitch: 200 Hz up to about 400.
+        phase = 2 * numpy.pi * (200 * t + 100 * t ** 2 / 7)
+        signal = 0.3 * sum(numpy.sin(h * phase) / h for h in range(1, 4))
+        audio = directory / "glide.wav"
+        with wave.open(str(audio), "wb") as writer:
+            writer.setnchannels(1)
+            writer.setsampwidth(2)
+            writer.setframerate(rate)
+            writer.writeframes(numpy.round(signal * 32767).astype("<i2").tobytes())
+        fake, env = fake_python(directory), {"F0_FAKE": "chunked"}
+        code, answer = run(directory, audio, "f0-pesto", program=fake, env=env)
+        self.assertEqual(code, 0, answer)
+        digest = bank.file_digest(audio)
+        whole = bank.Bank(directory / "bank").entry(digest, "f0-pesto")
+        # 2.500 s to 5.9 s: past one of the whole run's chunk edges (4 s), off its rows.
+        start, end = 120003, 283200
+        code, answer = run(directory / "region", audio, "f0-pesto", "--region", f"{start}:{end}:{rate}",
+                           program=fake, env=env)
+        self.assertEqual(code, 0, answer)
+        region = bank.covering(bank.Bank(directory / "region" / "bank"), digest, "f0-pesto", start, end, rate)
+        grid = region.grid("f0")
+        offset = start * 16000 // rate
+        self.assertEqual(grid["first_centre"], 159)  # the row after 40,001 is 40,160
+        self.assertEqual((offset + grid["first_centre"]) % 160, 0)
+        first = (offset + grid["first_centre"]) // 160
+        mine, theirs = region.series("f0"), whole.series("f0")
+        self.assertEqual(len(mine), (offset + (end - start) // 3) // 160 - first + 1)
+        # Rows whose 1,024 samples lie in the region are the whole run's.
+        inside = slice(4, len(mine) - 4)
+        numpy.testing.assert_allclose(mine[inside], theirs[first:first + len(mine)][inside], rtol=0, atol=1e-3)
+        self.assertGreater(float(mine[inside, 0].min()), 250)  # anchor: pitched rows, not two silences
+        levels = region.series("level_db")[:, 0]
+        numpy.testing.assert_allclose(levels[2:-2], whole.series("level_db")[first + 2:first + len(mine) - 2, 0],
+                                      rtol=0, atol=1e-3)
+
 
 
 @unittest.skipUnless(F0_PYTHON and Path(F0_PYTHON).is_file(),

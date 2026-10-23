@@ -1,0 +1,2 @@
+# relay/commit.txt names the commit in a `git archive` copy (ADR 0114).
+relay/commit.txt export-subst
