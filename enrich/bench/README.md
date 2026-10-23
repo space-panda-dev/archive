@@ -15,7 +15,7 @@ or writes an archive.
 | [`cost.py`](cost.py) | The backfill's cost gate: CPU seconds per audio-second of every backfill unit over one clip |
 | [`equivalence.py`](equivalence.py) | The stem equivalence check: `extract.py equivalence` over the root's clips (ADR 0090's amendment) |
 | [`region.py`](region.py) | The region check: `extract.py region-equivalence` over the same clips (ADR 0112) |
-| [`chords.py`](chords.py) | The chord bench: chord sets, references from a chart and tapped section downbeats, mir_eval chord, key, meter, downbeat and section scores, the `bank-proposers` variant, and its gate (ADR 0116, proposed) |
+| [`chords.py`](chords.py) | The chord bench: chord sets, references from a chart and tapped section downbeats, mir_eval chord, key, meter, downbeat and section scores, the `bank-proposers` variant, and its gate (ADR 0116) |
 | [`__main__.py`](__main__.py) | The command |
 | [`test_bench.py`](test_bench.py), [`test_chords.py`](test_chords.py) | The harness and the chord bench on tiny synthetic sets and invented charts |
 

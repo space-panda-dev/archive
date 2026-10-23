@@ -1,4 +1,4 @@
-"""The chord bench (ADR 0116 section 6, proposed): machine chords, key,
+"""The chord bench (ADR 0116 section 6): machine chords, key,
 meter, downbeats and sections scored against a chart placed on a recording.
 
 A chord set lives under the bench root like a note set, as

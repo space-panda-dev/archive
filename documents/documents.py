@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The `documents` command: importers of outside documents (ADR 0116, proposed).
+"""The `documents` command: importers of outside documents (ADR 0116).
 
     documents/documents.py ireal import FILE --archive DIR --staging DIR [--dry-run]
                                          [--retrieved-at DATE] [--proposals DIR]

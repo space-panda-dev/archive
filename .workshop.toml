@@ -45,7 +45,7 @@ timeout_seconds = 1800
 tier = 300
 paths = ["door/**", "archive/**", "archive.cabal", "cabal.project"]
 
-# The importers of outside documents (documents/, ADR 0116, proposed): the
+# The importers of outside documents (documents/, ADR 0116): the
 # iReal Pro codec, chart reader, chord grammar and exporter, standard library
 # and World only, with no Door and no prelude. Measured: 0.1 s here.
 [suites.documents]

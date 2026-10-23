@@ -689,7 +689,7 @@ def main(argv: list[str] | None = None) -> int:
     propose.add_arguments(proposing)
     common(proposing)
     aligning = commands.add_parser("align", help="place a chart's untimed claims on a recording's machine beats "
-                                                 "and chords and propose the timed claims (ADR 0116, proposed)")
+                                                 "and chords and propose the timed claims (ADR 0116)")
     import align_command
     align_command.add_arguments(aligning)
     common(aligning)

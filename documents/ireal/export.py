@@ -1,4 +1,4 @@
-"""Exporter `lead-sheet-ireal` version 1 (ADR 0116, section 5, proposed): one
+"""Exporter `lead-sheet-ireal` version 1 (ADR 0116, section 5): one
 untimed lead sheet revision of a Work as an iReal Pro link of one chart.
 
 It is a view of exact revisions, as ADR 0089's exports are: the relay runs it

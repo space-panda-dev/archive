@@ -1,5 +1,5 @@
 """Placing a chart on a recording (ADR 0077's designed alignment, built by
-ADR 0116 section 6, proposed): `enrich align`.
+ADR 0116 section 6): `enrich align`.
 
 A chart is three untimed claims about one document: a `meter_layers`
 version 2 claim (its bars, each with its chords at offsets), the `form` it

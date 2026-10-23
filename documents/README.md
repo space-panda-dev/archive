@@ -15,5 +15,5 @@ per document format; standard library only.
 file and a decisions template (never inside the repository or the archive);
 `ireal link DECISIONS --archive A` asserts what the operator confirmed.
 `tests/` runs them through the real Door (suite `documents-door`).
-ADR 0116 is proposed; [boundaries](../docs/boundaries.md) gains this
-directory on its acceptance.
+ADR 0116 is accepted; [boundaries](../docs/boundaries.md) lists this
+directory and its command.

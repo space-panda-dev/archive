@@ -1,6 +1,7 @@
 # 0116. iReal Pro charts are documents read into a Work's untimed claims, linked by a person, exported as a view, and aligned to recordings
 
-Status: proposed (2026-10-22). Builds on ADRs
+Status: accepted (operator, 2026-10-22); decision Q (whether `2` is add2 or
+sus2) stays open, and `2` is a text-only reading until it is settled. Builds on ADRs
 [0077](0077-chord-stacks-and-meter.md), [0079](0079-machine-harmony-claims.md),
 [0080](0080-key-and-tuning.md), [0083](0083-form-and-work-meter.md),
 [0084](0084-lead-sheets.md), [0085](0085-documents-lyrics-rights.md),
