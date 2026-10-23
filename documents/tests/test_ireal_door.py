@@ -130,6 +130,10 @@ class Import(unittest.TestCase):
         runs = {r["revision_id"]: r for r in self.claims("archive.claim/derivation_run")}
         heads = {r["revision_id"]: r for r in records}
         for meter in self.claims("archive.claim/meter_layers"):
+            # Meter layers version 3, the style its first bar's direction (ADR 0116, section 3).
+            self.assertIn({"id": "archive.claim/meter_layers", "version": "3"},
+                          [{k: c[k] for k in ("id", "version")} for c in meter["contracts"]])
+            self.assertEqual(meter["payload"]["layers"][0]["bars"][0]["directions"], [{"text": "Medium Swing"}])
             pins = {ref["role"]: ref for ref in meter["refs"]}
             used = {ref["id"] for ref in runs[pins["run"]["revision_id"]]["refs"] if ref["role"] == "used"}
             self.assertEqual(used, {playlist_id, pins["document"]["id"]})

@@ -311,6 +311,8 @@ RECHECKS: dict[tuple[str, str], Callable[[dict[str, Any], Lookups], Any]] = {
         record_view(r), _stream(r, l, FORM_SPANS_2), _one(r, "form", l)),
     METER_LAYERS_3: _meter(form.check_meter_layers_v3),
     LEAD_SHEET_2: lambda r, l: _lead_sheet(r, l, "2"),
+    # Specification 0.0.11 (ADR 0116, decision E).
+    exports.EXPORT_V2: lambda r, l: exports.check_export(record_view(r), targets(r, l.records), "2"),
 }
 
 

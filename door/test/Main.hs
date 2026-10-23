@@ -5285,7 +5285,7 @@ initLayoutCheck root =
   "test -f " <> quote (root <> "/archive.json")
   <> " && grep -Eq '^\\{\"archive_id\":\"urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\",\"layout\":\"archive/2\",\"spec\":\"archive/0.0.11\"\\}$' " <> quote (root <> "/archive.json")
   <> " && test -f " <> quote (root <> "/spec/0.0.11/VERSION") <> " && test -f " <> quote (root <> "/spec/0.0.11/archive-spec.md") <> " && test -f " <> quote (root <> "/spec/0.0.11/context.jsonld")
-  <> " && test \"$(find " <> quote (root <> "/contracts") <> " -type f | wc -l | tr -d ' ')\" = 68"
+  <> " && test \"$(find " <> quote (root <> "/contracts") <> " -type f | wc -l | tr -d ' ')\" = 69"
   <> " && test \"$(find " <> quote (root <> "/records") <> " -type f | wc -l | tr -d ' ')\" = 2"
   <> " && for f in " <> quote (root <> "/contracts") <> "/*.json; do test \"$(basename \"$f\" .json | cut -c8-)\" = \"$(shasum -a 256 \"$f\" | cut -d' ' -f1)\"; done"
   <> " && for f in " <> quote (root <> "/records") <> "/*/*/*.json; do grep -Eq '\"revision_id\":\"sha256:[0-9a-f]{64}\"' \"$f\"; done"
@@ -7553,7 +7553,8 @@ musicAndCreditProfileChecks = do
 
 -- | A 0.0.10 archive adopts 0.0.11 by one `door transition` (ADR 0068): the
 -- release is additive (its core context is 0.0.10's), the commit installs the
--- six bundles of ADR 0113 and the new version, and they are installed only
+-- six bundles of ADR 0113, export version 2 of ADR 0116, and the new version,
+-- and they are installed only
 -- after it. After the upgrade a sketch is admitted under its rules, no longer
 -- refused as an uninstalled contract.
 previousReleaseUpgradeChecks :: FilePath -> IO ()
@@ -7574,9 +7575,9 @@ previousReleaseUpgradeChecks parent = do
     (additiveUpgrade previous target == Right () && not (Set.null previousCatalog)
       && previousCatalog `Set.isProperSubsetOf` targetCatalog && not (KeyMap.null previousContext))
     ExitSuccess (show (additiveUpgrade previous target)) ""
-  assert "0.0.11 adds exactly the contract versions of ADR 0113"
+  assert "0.0.11 adds exactly the contract versions of ADRs 0113 and 0116"
     (sort (map (\(identifier, version, _) -> (identifier, version)) added)
-      == [ ("archive.claim/form", "2"), ("archive.claim/form_spans", "2"), ("archive.claim/lead_sheet", "2")
+      == [ ("archive.claim/export", "2"), ("archive.claim/form", "2"), ("archive.claim/form_spans", "2"), ("archive.claim/lead_sheet", "2")
          , ("archive.claim/melody", "2"), ("archive.claim/meter_layers", "3"), ("archive.claim/underlay", "1") ])
     ExitSuccess (show added) ""
   assert "0.0.11's core context is 0.0.10's"
@@ -7620,8 +7621,8 @@ previousReleaseUpgradeChecks parent = do
         ([ "M\tarchive.json", "A\tspec/0.0.11/VERSION", "A\tspec/0.0.11/archive-spec.md"
          , "A\tspec/0.0.11/context.jsonld", "A\t" <> recordRelative upgradeRevision ]
          <> [ "A\t" <> bundlePath entry | entry <- added ])
-  assert "the upgrade commit installs the six bundles, the release's documents, the record, and the manifest"
-    (sort (lines changes) == expectedChanges && length added == 6) ExitSuccess changes (unlines expectedChanges)
+  assert "the upgrade commit installs the seven bundles, the release's documents, the record, and the manifest"
+    (sort (lines changes) == expectedChanges && length added == 7) ExitSuccess changes (unlines expectedChanges)
   installedMatch <- mapM (\entry -> (==) <$> ByteString.readFile (root </> bundlePath entry)
     <*> ByteString.readFile ("spec" </> bundlePath entry)) added
   (statusCode, statusOut, statusErr) <- readCreateProcessWithExitCode

@@ -26,7 +26,7 @@ import unittest
 from pathlib import Path
 from typing import Any, Callable
 
-from world import form, lead_sheets, notes
+from world import exports, form, lead_sheets, notes
 from world.tests.test_door_agreement import (
     ROOT,
     Agreement,
@@ -87,6 +87,27 @@ METER: list[Case] = [
     ("meter-open", "a section that goes back", set_in(at("layers", 0, "bars", 3), "section", 1), False),
     ("meter-open", "a grouping that does not add up", set_in(at("layers", 0, "bars", 0), "grouping", [3, 2]), False),
     ("meter-open", "two bars in one section", set_in(at("layers", 0, "bars", 2), "section", 1), True),
+    # Written directions (ADR 0116, decision D).
+    ("meter-open", "no directions", delete_in(at("layers", 0, "bars", 0), "directions"), True),
+    ("meter-open", "an empty list of directions", set_in(at("layers", 0, "bars", 0), "directions", []), False),
+    ("meter-open", "nine directions on a bar",
+     set_in(at("layers", 0, "bars", 1), "directions", [{"text": f"cue {n}"} for n in range(9)]), False),
+    ("meter-open", "a direction of 201 characters",
+     set_in(at("layers", 0, "bars", 1), "directions", [{"text": "x" * 201}]), False),
+    ("meter-open", "a tempo with a trailing zero", set_in(at("layers", 0, "bars", 0, "directions", 0, "tempo"),
+                                                         "bpm", "160.0"), False),
+    ("meter-open", "a tempo of 999.999", set_in(at("layers", 0, "bars", 0, "directions", 0, "tempo"),
+                                               "bpm", "999.999"), True),
+    ("meter-open", "a tempo counted in a beat no note value has",
+     set_in(at("layers", 0, "bars", 0, "directions", 0, "tempo"), "beat", {"denominator": 3}), False),
+    ("meter-open", "a direction field no one defined", set_in(at("layers", 0, "bars", 0, "directions", 1),
+                                                             "lyric", True), False),
+]
+
+EXPORT: list[Case] = [
+    ("export-ireal", "the iReal export as admitted", keep, True),
+    ("export-ireal", "a format no version names", set_in(whole, "format", "irealpro"), False),
+    ("export-ireal", "an empty list of losses", set_in(whole, "losses", []), False),
 ]
 
 MELODY: list[Case] = [
@@ -135,7 +156,7 @@ WORLD_ONLY: list[tuple[str, str, Change]] = [
     ("form-spans-passes", "two passes for a section inside one repeat", set_in(at("spans", 1), "passes", [1, 1])),
 ]
 
-ALL = FORM + METER + MELODY + UNDERLAY + LEAD_SHEET
+ALL = FORM + METER + MELODY + UNDERLAY + LEAD_SHEET + EXPORT
 
 
 class Agreement011(unittest.TestCase):
@@ -199,6 +220,8 @@ class Agreement011(unittest.TestCase):
                 melody = self.one(record, "melody")
                 meter = self.one(self.by_revision[melody["revision_id"]], "meter") if melody else None
                 notes.check_underlay(claim, melody, None, self.one(record, "form"), meter)
+            elif exports.EXPORT_V2 in cited:
+                exports.check_export(claim, self.targets(), "2")
             elif ("archive.claim/lead_sheet", "2") in cited:
                 agents = {r["object_id"]: r["payload"].get("kind") for r in self.export["records"]
                           if r["shape"] == "entity"}
@@ -239,6 +262,9 @@ class Agreement011(unittest.TestCase):
     def test_lead_sheet_version_2(self):
         self.agree(LEAD_SHEET)
 
+    def test_export_version_2(self):
+        self.agree(EXPORT)
+
     def test_the_checks_d19_leaves_to_world(self):
         for key, label, change in WORLD_ONLY:
             with self.subTest(base=key, case=label):
@@ -251,7 +277,7 @@ class Agreement011(unittest.TestCase):
 
     def test_every_case_list_has_both_verdicts(self):
         for name, cases in (("form", FORM), ("meter", METER), ("melody", MELODY), ("underlay", UNDERLAY),
-                            ("lead sheet", LEAD_SHEET)):
+                            ("lead sheet", LEAD_SHEET), ("export", EXPORT)):
             with self.subTest(cases=name):
                 self.assertEqual({case[3] for case in cases}, {True, False})
 

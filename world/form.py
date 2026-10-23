@@ -29,7 +29,11 @@ ones keep their rules exactly:
   state its `precision`; a span with no section in a claim that pins a form
   is a departure;
 - `archive.claim/meter_layers` version 3: version 2, with an untimed claim's
-  form pinning form version 1 or 2.
+  form pinning form version 1 or 2, and (ADR 0116, decision D) an untimed
+  bar's optional `directions`: 1 to 8 written directions, each its `text`
+  and an optional target `tempo` in ADR 0106's shape. A direction is a
+  stated intention, never a reading of audio: tempo stays derived for every
+  timed claim (ADR 0077), and a timed bar never carries one.
 
 The `folded_chart` view (ADR 0113, version 1) folds a recording's chart into
 the written form's repeat signs where its form spans say so.
@@ -46,6 +50,7 @@ Played orders are computed views, never stored (INV-7).
 
 from __future__ import annotations
 
+import re
 from fractions import Fraction
 from itertools import combinations
 from typing import Any, Callable
@@ -94,6 +99,11 @@ MAX_ENDINGS = 16
 MAX_CHORDS_PER_BAR = 64
 MAX_INSTRUCTION = 200
 MAX_PASS = 999
+MAX_DIRECTIONS = 8
+MAX_DIRECTION = 200
+# A target tempo's `bpm` (ADR 0106): exact decimal text from 1 to 999 with at
+# most three places, one spelling for canonical JSON (no trailing zero).
+BPM = re.compile(r"[1-9][0-9]{0,2}(\.[0-9]{0,2}[1-9])?\Z")
 
 # A form spans version 2 alignment's precision, with a passage alignment's
 # meanings (ADR 0113). Unstated, a person's placement reads `approximate` and
@@ -680,7 +690,8 @@ def check_meter_layers_v3(claim: dict[str, Any], stream_claim: dict[str, Any] | 
     `corrects` and `derived_from` may pin version 2 or 3, and a timed claim's
     `meter` an untimed version 2 or 3 (Door's target-measure rule; an untimed
     version 2 payload is a version 3 payload, so either is checked here with
-    version 3's rules). Returns the layers; raises FormError."""
+    version 3's rules); an untimed bar may carry `directions` (ADR 0116).
+    Returns the layers; raises FormError."""
     return _check_meter(claim, stream_claim, untimed_claim, form_claim, sequence_claim, True)
 
 
@@ -796,7 +807,8 @@ def _check_untimed_meter(claim: dict[str, Any], form_claim: dict[str, Any] | Non
         last_section, last_entry, last_locator = 0, 0, 0
         for index, bar in enumerate(_list(layer["bars"], f"{at} bars", 1, MAX_BARS)):
             bat = f"{at} bar {index}"
-            _closed(bar, {"numerator", "denominator"}, {"grouping", "locator", "section", "chords"}, bat)
+            _closed(bar, {"numerator", "denominator"},
+                    {"grouping", "locator", "section", "chords"} | ({"directions"} if v3 else set()), bat)
             length = _check_signature(bar, bat)
             if "locator" in bar:
                 if not has_document:
@@ -812,6 +824,8 @@ def _check_untimed_meter(claim: dict[str, Any], form_claim: dict[str, Any] | Non
                 if not by_role["sequence"]:
                     raise FormError(f"{bat} holds chord entries but the claim pins no sequence")
                 last_entry = _check_chords(bar["chords"], length, entries, last_entry, bat)
+            if "directions" in bar:
+                check_directions(bar["directions"], f"{bat} directions")
     _check_roles(layers, where)
     seen = []
     for index, link in enumerate(_list(payload.get("modulations", []), f"{where} modulations", 0, MAX_BARS)):
@@ -825,6 +839,34 @@ def _check_untimed_meter(claim: dict[str, Any], form_claim: dict[str, Any] | Non
     if seen != sorted(set(seen)):
         raise FormError(f"{where} modulations must be distinct and in order of layer and bar")
     return layers
+
+
+def check_target_tempo(value: Any, where: str) -> dict[str, Any]:
+    """A target tempo in ADR 0106's shape: `bpm`, exact decimal text from 1
+    to 999 with at most three places, and an optional `beat`, the note value
+    counted. An intention, never a measurement. Returns it."""
+    tempo = _closed(value, {"bpm"}, {"beat"}, where)
+    if not isinstance(tempo["bpm"], str) or not BPM.match(tempo["bpm"]):
+        raise FormError(f"{where} bpm must be decimal text from 1 to 999 with at most three places, "
+                        "and no trailing zero")
+    if "beat" in tempo:
+        note_value(tempo["beat"], f"{where} beat")
+    return tempo
+
+
+def check_directions(value: Any, where: str) -> list[dict[str, Any]]:
+    """An untimed bar's written directions (ADR 0116, decision D): 1 to 8,
+    each `text` (1 to 200 characters, verbatim) and an optional target
+    `tempo`. A direction is never a lyric line; that is the asserter's to
+    keep, since the bar names no lyric. Returns them."""
+    directions = _list(value, where, 1, MAX_DIRECTIONS)
+    for index, item in enumerate(directions):
+        at = f"{where}[{index}]"
+        direction = _closed(item, {"text"}, {"tempo"}, at)
+        _text(direction["text"], f"{at} text", MAX_DIRECTION)
+        if "tempo" in direction:
+            check_target_tempo(direction["tempo"], f"{at} tempo")
+    return directions
 
 
 def _rising(value: int, previous: int, where: str, what: str) -> int:

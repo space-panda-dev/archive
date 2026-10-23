@@ -114,7 +114,7 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 | `door/src/Archive/Read/Core.hs` | 617 |
 | `door/src/Archive/GitSnapshot.hs` | 660 |
 | `door/src/Archive/ProcessPinned.c` | 799 |
-| `door/test/Main.hs` | 7843 |
+| `door/test/Main.hs` | 7844 |
 | `archive/test/Main.hs` | 1001 |
 <!-- /wf:gen -->
 
@@ -138,7 +138,7 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 <!-- wf:gen lines spec/archive-spec.md -->
 | file | lines |
 |---|---|
-| `spec/archive-spec.md` | 2741 |
+| `spec/archive-spec.md` | 2758 |
 <!-- /wf:gen -->
 
 Rules: never delete a version or a bundle an archive may cite; supersede it
@@ -206,7 +206,7 @@ speed), 0069 (media by digest), 0114 (local health).
 | file | lines |
 |---|---|
 | `relay/relay.py` | 1216 |
-| `relay/openapi.json` | 4724 |
+| `relay/openapi.json` | 4726 |
 | `relay/tests/test_relay.py` | 1194 |
 <!-- /wf:gen -->
 
@@ -384,7 +384,7 @@ catalog except the specification upgrade, so a new contract needs a plan step.
 <!-- wf:gen lines fixture/plan.json -->
 | file | lines |
 |---|---|
-| `fixture/plan.json` | 694 |
+| `fixture/plan.json` | 710 |
 <!-- /wf:gen -->
 
 ## Do not read

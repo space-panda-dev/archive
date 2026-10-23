@@ -2603,9 +2603,11 @@ arch:rights-personal-use-licence a skos:Concept ; skos:inScheme arch:rights ;
 ### D-19. Sketches, underlays, open repeats, passes, and lead sheet version 2 (ADR 0113)
 
 Specification 0.0.11 installs version 2 of `archive.claim/melody`,
-`archive.claim/form`, `archive.claim/form_spans`, and
-`archive.claim/lead_sheet`, version 3 of `archive.claim/meter_layers`, and
-version 1 of `archive.claim/underlay`. Every 0.0.10 contract bundle remains
+`archive.claim/form`, `archive.claim/form_spans`,
+`archive.claim/lead_sheet`, and `archive.claim/export`, version 3 of
+`archive.claim/meter_layers`, and version 1 of `archive.claim/underlay`.
+Meter layers version 3's written directions and export version 2 are ADR
+0116's (decisions D and E), folded into this release before it was cut. Every 0.0.10 contract bundle remains
 installed with its exact bytes, and every earlier claim keeps its meaning
 under its own contract; a new version does not supersede the one before it,
 and an asserter that needs none of its additions MAY write either. The
@@ -2649,7 +2651,15 @@ claim that pins a form is a **departure**, kept as played.
 **Meter layers version 3** is meter layers version 2 in which an untimed
 claim's `form` MAY pin form version 1 or 2; `corrects` and `derived_from`
 MAY pin meter layers version 2 or 3, and a timed claim's `meter` MAY pin an
-untimed version 2 or 3 claim.
+untimed version 2 or 3 claim. A bar of an untimed claim MAY carry
+`directions`, the **written directions** over it (a style, "Solos", "Repeat
+and Fade"): 1 to 8 objects, each with `text` (1 to 200 characters, the
+direction verbatim, never a lyric line) and optional `tempo` in ADR 0106's
+target-tempo shape: `bpm`, exact decimal text from 1 to 999 with at most
+three places and no trailing zero, and optional `beat`, a note value. A bar
+of a timed claim never carries `directions`. A direction's tempo, like a
+target tempo, is an intention, never a reading of audio; tempo stays derived
+for every timed claim.
 
 **Underlay** places a lyric document's syllables under the items of one
 Work-level melody, untimed. It pins exactly one `melody` (melody version 1
@@ -2680,6 +2690,11 @@ each of which places exactly the pinned `lyrics` document and pins a melody
 revision the lead sheet pins in `melody`. The order of `underlay` references
 is the asserter's precedence. A version 1 lead sheet's next revision MAY be
 version 2, keeping its agent, Work object, and `source` revision.
+
+**Export version 2** is export version 1 with one more format, `ireal`
+(media type `text/plain`, suffix `.irealb`: one `irealb://` link of one
+iReal Pro chart, ADR 0116), in ADR 0089's format table. Every version 1
+claim says the same in version 2.
 
 **Member contracts.** Melody version 2, underlay version 1, form version 2,
 form spans version 2, and lead sheet version 2 are member contracts (ADR
@@ -2719,7 +2734,9 @@ a melody that pins no untimed meter on that form; a form spans version 2
 span whose `passes` do not number the repeats around its section, exceed a
 fixed repeat's `times`, or, for a section in an ending, name a pass that does
 not take it; and an underlay's lines, words, and characters within the
-document, which the asserter checks where the bytes are.
+document, which the asserter checks where the bytes are. That a written
+direction is never a lyric line is the asserter's to keep: the bar names no
+lyric, so nothing checks it.
 
 ## 7. Not yet defined
 

@@ -317,6 +317,43 @@ class MeterV3Test(unittest.TestCase):
                  "refs": refs(("meter", METER_REF))}
         check_meter_layers_v3(claim, fixture_stream(), untimed_claim=untimed)
 
+    def test_directions_on_written_bars(self):
+        claim = self.jazz_meter()
+        bars = claim["payload"]["layers"][0]["bars"]
+        bars[0]["directions"] = [{"text": "Medium Swing", "tempo": {"bpm": "160"}},
+                                 {"text": "Intro vamp"}]
+        bars[3]["directions"] = [{"text": "Solos", "tempo": {"bpm": "72.125", "beat": {"denominator": 4, "dots": 1}}}]
+        check_meter_layers_v3(claim, form_claim=jazz(), sequence_claim=sequence_claim(4))
+        with self.assertRaises(HarmonyError):   # version 2 has no directions
+            check_meter_layers_v2(untimed_meter([sig(directions=[{"text": "Ballad"}])]))
+
+    def test_refuses_malformed_directions(self):
+        for name, directions in (
+                ("empty list", []),
+                ("nine", [{"text": f"d{n}"} for n in range(9)]),
+                ("empty text", [{"text": ""}]),
+                ("long text", [{"text": "x" * 201}]),
+                ("unknown field", [{"text": "Solos", "lyric": True}]),
+                ("bpm a number", [{"text": "Fast", "tempo": {"bpm": 160}}]),
+                ("bpm zero", [{"text": "Fast", "tempo": {"bpm": "0"}}]),
+                ("bpm four places", [{"text": "Fast", "tempo": {"bpm": "120.1234"}}]),
+                ("bpm trailing zero", [{"text": "Fast", "tempo": {"bpm": "120.50"}}]),
+                ("bpm over 999", [{"text": "Fast", "tempo": {"bpm": "1000"}}]),
+                ("bad beat", [{"text": "Fast", "tempo": {"bpm": "120", "beat": {"denominator": 3}}}])):
+            with self.subTest(name), self.assertRaises(HarmonyError):
+                check_meter_layers_v3(untimed_meter([sig(directions=directions)]))
+
+    def test_a_timed_bar_carries_no_directions(self):
+        untimed = self.jazz_meter()
+        layer = untimed["payload"]["layers"][0]
+        bars = [bar(i * SECOND, (i + 1) * SECOND, 4, 4, placed={"layer": 0, "bar": b})
+                for i, b in enumerate(bar_order(layer, jazz()["payload"]))]
+        bars[0]["directions"] = [{"text": "Medium Swing"}]
+        claim = {"payload": {"sample_rate": RATE, "layers": [{"bars": bars}], "alignment": MANUAL},
+                 "refs": refs(("meter", METER_REF))}
+        with self.assertRaises(HarmonyError):
+            check_meter_layers_v3(claim, fixture_stream(), untimed_claim=untimed)
+
     def test_refuses_what_version_2_refuses(self):
         claim = self.jazz_meter()
         claim["payload"]["layers"][0]["bars"][2]["section"] = 0

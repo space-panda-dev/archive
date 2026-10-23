@@ -19,10 +19,13 @@ makes that the ADR leaves open is named here:
 - **A bar with no chord** lists none and holds the chord before it.
 - **Alternates.** An attached `(chord)` is the entry's second reading, read
   with the entry's own reading as the chord before it (for `(W/X)`).
+- **Directions.** The importer's rule (`claims.chart_directions`): the style
+  and tempo as the first bar's first direction, each comment a direction on
+  its bar.
 
 `read(song)` gives the payloads; `records(...)` wraps them, with a Work, a
 composer credit and a lead sheet, as World's records an exporter is given.
-Standard library and World only.
+Standard library, World and the importer's direction rule only.
 """
 
 from __future__ import annotations
@@ -38,12 +41,13 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from world.contributions import check_contribution  # noqa: E402
-from world.form import check_form, check_meter_layers_v2  # noqa: E402
+from world.form import check_form, check_meter_layers_v3  # noqa: E402
 from world.harmony import check_chord_sequence_v2  # noqa: E402
 from world.lead_sheets import check_lead_sheet  # noqa: E402
 from world.tonality import check_key_sequence  # noqa: E402
 
 from chart import Chart, UnsupportedChart, read_chart  # noqa: E402
+from claims import chart_directions  # noqa: E402
 from symbols import read_key, reading_of  # noqa: E402
 
 UNMARKED = "unmarked"
@@ -185,14 +189,17 @@ def _bars(chart: Chart, section_of: dict[int, int]) -> tuple[list[dict[str, Any]
     return entries, bars
 
 
-def read(markup: str, key_field: str) -> dict[str, Any]:
-    """The payloads a chart's markup and key field read into: `sequence`
-    (chord_sequence v2), `form` (form v1), `meter` (untimed meter_layers v2,
-    one written layer) and `key` (key_sequence v1, or None for an empty key
-    field). Raises UnsupportedChart."""
+def read(markup: str, key_field: str, style: str = "", tempo: str = "") -> dict[str, Any]:
+    """The payloads a chart's markup, key field, style and tempo field read
+    into: `sequence` (chord_sequence v2), `form` (form v1), `meter` (untimed
+    meter_layers v3, one written layer, with its directions) and `key`
+    (key_sequence v1, or None for an empty key field). Raises
+    UnsupportedChart."""
     chart = read_chart(markup)
     form, section_of = _form(chart)
     entries, bars = _bars(chart, section_of)
+    for number, directions in chart_directions(chart, style, tempo).items():
+        bars[number - 1]["directions"] = directions
     if not entries:
         raise UnsupportedChart("no chords")
     key = read_key(key_field)
@@ -249,10 +256,10 @@ def records(title: str, composer: str, payloads: dict[str, Any], seed: str = "ch
                        ("archive.claim/chord_sequence", "2"))
     form = _record(seed + "/form", "claim", payloads["form"], [doc], ("archive.claim/form", "1"))
     meter = _record(seed + "/meter", "claim", payloads["meter"],
-                    [doc, _ref("form", form), _ref("sequence", sequence)], ("archive.claim/meter_layers", "2"))
+                    [doc, _ref("form", form), _ref("sequence", sequence)], ("archive.claim/meter_layers", "3"))
     check_chord_sequence_v2(_claim(sequence))
     check_form(_claim(form))
-    check_meter_layers_v2(_claim(meter), form_claim=_claim(form), sequence_claim=_claim(sequence))
+    check_meter_layers_v3(_claim(meter), form_claim=_claim(form), sequence_claim=_claim(sequence))
     work = _record(seed + "/work", "entity", {"kind": "musical_work", "label": title}, [])
     made = [document, sequence, form, meter, work]
     refs = [_ref("work", work), _ref("chords", sequence), _ref("meter", meter), _ref("form", form)]
@@ -269,8 +276,9 @@ def records(title: str, composer: str, payloads: dict[str, Any], seed: str = "ch
         made += [person, credit]
         check_contribution(_claim(credit), _targets(made))
         refs.append(_ref("credits", credit))
-    lead = _record(seed + "/lead", "claim", {"label": "iReal"}, refs, ("archive.claim/lead_sheet", "1"))
-    check_lead_sheet({**_claim(lead), "agent": lead["agent"]}, _targets(made), {lead["agent"]: "person"})
+    lead = _record(seed + "/lead", "claim", {"label": "iReal"}, refs, ("archive.claim/lead_sheet", "2"))
+    check_lead_sheet({**_claim(lead), "agent": lead["agent"]}, _targets(made), {lead["agent"]: "person"},
+                     version="2")
     made.append(lead)
     return made, {"id": lead["id"], "revision_id": lead["revision_id"]}
 

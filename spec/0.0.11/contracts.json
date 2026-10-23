@@ -92,6 +92,11 @@
       "digest": "sha256:7bb488e0e5e439781e6c62b14788d74c0eef6e00c2dc189927762561e79cb2d7"
     },
     {
+      "id": "archive.claim/export",
+      "version": "2",
+      "digest": "sha256:7a953e81cf031db95c6efafb38baaa4467e49395f1425d23a73d4bfe25ca9732"
+    },
+    {
       "id": "archive.claim/form",
       "version": "1",
       "digest": "sha256:f74bd259d62c85b1fd997610bf7c1d5cfb3311a3283c6d0322c9bcc82c93013b"
@@ -159,7 +164,7 @@
     {
       "id": "archive.claim/meter_layers",
       "version": "3",
-      "digest": "sha256:59f2cc8625e587f9abc319e16a70e941c999bad0b0495e69ba263ee3d0b22910"
+      "digest": "sha256:8cfb91bb89115ea64f527237f5a3ad3faf3407707303b96334badab11c7a4444"
     },
     {
       "id": "archive.claim/notes",

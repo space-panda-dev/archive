@@ -91,6 +91,14 @@ class Entries(unittest.TestCase):
         self.assertEqual(claims.sequence["entries"][0]["readings"], [{"text": "C2"}])
         self.assertEqual([symbol for symbol, _ in claims.text_only], ["C2", "F**"])
 
+    def test_style_tempo_and_comments_are_directions(self) -> None:
+        claims = chart_claims("[T44C <Solos>XyQ|F XyQ|G7<  >XyQ|C XyQZ", "C", "Bossa Nova", "132")
+        bars = claims.meter["layers"][0]["bars"]
+        self.assertEqual(bars[0]["directions"], [{"text": "Bossa Nova", "tempo": {"bpm": "132"}}, {"text": "Solos"}])
+        self.assertEqual([("directions" in bar) for bar in bars[1:]], [False, False, False])
+        bars = chart_claims("[T44C XyQZ", "C", "Ballad", "0").meter["layers"][0]["bars"]
+        self.assertEqual(bars[0]["directions"], [{"text": "Ballad"}])
+
     def test_the_key_field(self) -> None:
         self.assertEqual(chart_claims("[T44C XyQZ", "Eb-").key, {"regions": [{"readings": [
             {"collection": [1, 3, 5, 6, 8, 10, 11], "tonic": 3, "mode": "minor", "text": "Eb-"}]}]})
@@ -105,6 +113,13 @@ class Failures(unittest.TestCase):
                 ("T44{C XyQ|SF XyQ}G <D.S.>XyQZ", "World refuses the reading: form jump 0 lands inside a repeat"),
                 ("[T44 XyQ|p p p p Z", "no chords")):
             with self.subTest(markup=markup), self.assertRaisesRegex(UnsupportedChart, reason):
+                chart_claims(markup, "C")
+
+    def test_directions_this_reader_cannot_keep_fail_the_whole_chart(self) -> None:
+        for markup, reason in (
+                ("[T44<" + "x" * 201 + ">C XyQZ", "over 200 characters"),
+                ("[T44" + "".join(f"<note {n}>" for n in range(9)) + "C XyQZ", "more than 8 directions")):
+            with self.subTest(reason), self.assertRaisesRegex(UnsupportedChart, reason):
                 chart_claims(markup, "C")
 
 

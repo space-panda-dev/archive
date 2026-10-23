@@ -350,6 +350,7 @@ wsh:Bar a sh:NodeShape ;
   sh:property [ sh:path arch:end_sample ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
   sh:property [ sh:path arch:form_section ; sh:maxCount 1 ; rdfs:comment "version 2: the section of the pinned form the bar is in (revision 6)." ] ;
   sh:property [ sh:path arch:bar_chords ; sh:nodeKind sh:IRI ; rdfs:comment "version 2: a chord the written bar holds (revision 6)." ] ;
+  sh:property [ sh:path arch:bar_directions ; sh:maxCount 8 ; sh:nodeKind sh:IRI ; rdfs:comment "version 3: a direction written over the written bar (ADR 0116, revision 8)." ] ;
   sh:property [ sh:path arch:placed_from ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; rdfs:comment "version 2: the written bar a placed bar came from (revision 6)." ] ;
   sh:property [ sh:path arch:numerator ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
   sh:property [ sh:path arch:denominator ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ;
@@ -374,7 +375,7 @@ wsh:MetricModulation a sh:NodeShape ;
 
 wsh:NoteValue a sh:NodeShape ;
   rdfs:comment "A note value: its denominator and dots." ;
-  sh:targetObjectsOf arch:before_note, arch:after_note, arch:pulse_before, arch:pulse_after, arch:beat_unit ;
+  sh:targetObjectsOf arch:before_note, arch:after_note, arch:pulse_before, arch:pulse_after, arch:beat_unit, arch:target_beat ;
   sh:closed true ;
   sh:property [ sh:path arch:denominator ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
   sh:property [ sh:path arch:dots ; sh:maxCount 1 ; sh:datatype xsd:integer ] .
@@ -519,12 +520,12 @@ wsh:Claim0010 a sh:NodeShape ;
   sh:property [ sh:path arch:document_locator ; sh:maxCount 1 ; sh:datatype xsd:string ; rdfs:comment "catalogue_correspondence 1, recording_audio 1, tracklist 1." ] ;
   sh:property [ sh:path arch:document_url ; sh:maxCount 1 ; sh:datatype xsd:anyURI ; rdfs:comment "catalogue_correspondence 1, form 1, form_spans 1, key_regions 1, key_sequence 1, melody 1, notes 1, recording_audio 1, rights 1, tracklist 1, tuning 1." ] ;
   sh:property [ sh:path arch:exposure_class ; sh:maxCount 1 ; sh:datatype xsd:string ; rdfs:comment "publication_approval 2 (revision 7)." ] ;
-  sh:property [ sh:path arch:export_format ; sh:maxCount 1 ; sh:datatype xsd:string ; rdfs:comment "export 1." ] ;
-  sh:property [ sh:path arch:export_key ; sh:maxCount 1 ; sh:datatype xsd:string ; rdfs:comment "export 1." ] ;
-  sh:property [ sh:path arch:export_losses ; sh:datatype xsd:string ; rdfs:comment "export 1." ] ;
-  sh:property [ sh:path arch:export_options ; sh:maxCount 1 ; sh:datatype rdf:JSON ; rdfs:comment "export 1." ] ;
-  sh:property [ sh:path arch:export_software ; sh:nodeKind sh:IRI ; rdfs:comment "export 1." ] ;
-  sh:property [ sh:path arch:exporter ; sh:nodeKind sh:IRI ; rdfs:comment "export 1." ] ;
+  sh:property [ sh:path arch:export_format ; sh:maxCount 1 ; sh:datatype xsd:string ; rdfs:comment "export 1 and 2." ] ;
+  sh:property [ sh:path arch:export_key ; sh:maxCount 1 ; sh:datatype xsd:string ; rdfs:comment "export 1 and 2." ] ;
+  sh:property [ sh:path arch:export_losses ; sh:datatype xsd:string ; rdfs:comment "export 1 and 2." ] ;
+  sh:property [ sh:path arch:export_options ; sh:maxCount 1 ; sh:datatype rdf:JSON ; rdfs:comment "export 1 and 2." ] ;
+  sh:property [ sh:path arch:export_software ; sh:nodeKind sh:IRI ; rdfs:comment "export 1 and 2." ] ;
+  sh:property [ sh:path arch:exporter ; sh:nodeKind sh:IRI ; rdfs:comment "export 1 and 2." ] ;
   sh:property [ sh:path arch:external_entry ; sh:nodeKind sh:IRI ; rdfs:comment "catalogue_correspondence 1." ] ;
   sh:property [ sh:path arch:file_name ; sh:maxCount 1 ; sh:datatype xsd:string ; rdfs:comment "document_source 1." ] ;
   sh:property [ sh:path arch:form_jumps ; sh:nodeKind sh:IRI ; rdfs:comment "form 1." ] ;
@@ -532,7 +533,7 @@ wsh:Claim0010 a sh:NodeShape ;
   sh:property [ sh:path arch:form_sections ; sh:nodeKind sh:IRI ; rdfs:comment "form 1." ] ;
   sh:property [ sh:path arch:form_spans ; sh:nodeKind sh:IRI ; rdfs:comment "form_spans 1." ] ;
   sh:property [ sh:path arch:hold_rule ; sh:maxCount 1 ; sh:datatype xsd:string ; rdfs:comment "key_regions 1, timed_lyrics 1." ] ;
-  sh:property [ sh:path arch:joined ; sh:nodeKind sh:IRI ; rdfs:comment "export 1." ] ;
+  sh:property [ sh:path arch:joined ; sh:nodeKind sh:IRI ; rdfs:comment "export 1 and 2." ] ;
   sh:property [ sh:path arch:jurisdiction ; sh:maxCount 1 ; sh:datatype xsd:string ; rdfs:comment "rights 1." ] ;
   sh:property [ sh:path arch:key_anchor_form ; sh:nodeKind sh:IRI ; rdfs:comment "key_sequence 1." ] ;
   sh:property [ sh:path arch:key_anchor_sequence ; sh:nodeKind sh:IRI ; rdfs:comment "key_sequence 1." ] ;
@@ -555,7 +556,7 @@ wsh:Claim0010 a sh:NodeShape ;
   sh:property [ sh:path arch:measured_on_tuning ; sh:nodeKind sh:IRI ; rdfs:comment "key_regions 1, notes 1." ] ;
   sh:property [ sh:path arch:measured_stream ; sh:nodeKind sh:IRI ; rdfs:comment "form_spans 1, key_regions 1, melody_spans 1, notes 1, span_annotation 1, timed_lyrics 1, tuning 1." ] ;
   sh:property [ sh:path arch:media ; sh:nodeKind sh:IRI ; rdfs:comment "tracklist 1." ] ;
-  sh:property [ sh:path arch:media_type ; sh:maxCount 1 ; sh:datatype xsd:string ; rdfs:comment "document_source 1, export 1." ] ;
+  sh:property [ sh:path arch:media_type ; sh:maxCount 1 ; sh:datatype xsd:string ; rdfs:comment "document_source 1, export 1 and 2." ] ;
   sh:property [ sh:path arch:medium_position ; sh:maxCount 1 ; sh:datatype xsd:integer ; rdfs:comment "recording_audio 1." ] ;
   sh:property [ sh:path arch:melody_items ; sh:nodeKind sh:IRI ; rdfs:comment "melody 1." ] ;
   sh:property [ sh:path arch:melody_spans ; sh:nodeKind sh:IRI ; rdfs:comment "melody_spans 1." ] ;
@@ -572,7 +573,7 @@ wsh:Claim0010 a sh:NodeShape ;
   sh:property [ sh:path arch:publication_decision ; sh:maxCount 1 ; sh:datatype xsd:string ; rdfs:comment "publication_approval 2 (revision 7)." ] ;
   sh:property [ sh:path arch:recording_audio ; sh:nodeKind sh:IRI ; rdfs:comment "recording_audio 1." ] ;
   sh:property [ sh:path arch:reference_cents ; sh:maxCount 1 ; sh:datatype xsd:decimal ; rdfs:comment "tuning 1." ] ;
-  sh:property [ sh:path arch:rendered ; sh:nodeKind sh:IRI ; rdfs:comment "export 1." ] ;
+  sh:property [ sh:path arch:rendered ; sh:nodeKind sh:IRI ; rdfs:comment "export 1 and 2." ] ;
   sh:property [ sh:path arch:retrieved_at ; sh:maxCount 1 ; sh:datatype xsd:string ; rdfs:comment "catalogue_correspondence 1, document_source 1, recording_audio 1, rights 1, tracklist 1." ] ;
   sh:property [ sh:path arch:retrieved_from ; sh:maxCount 1 ; sh:datatype xsd:anyURI ; rdfs:comment "document_source 1." ] ;
   sh:property [ sh:path arch:rights_from ; sh:maxCount 1 ; sh:datatype xsd:string ; rdfs:comment "rights 1." ] ;
@@ -612,6 +613,21 @@ wsh:BarChords a sh:NodeShape ;
   sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
   sh:property [ sh:path arch:bar_offset ; sh:nodeKind sh:IRI ] ;
   sh:property [ sh:path arch:sequence_entry ] .
+
+wsh:BarDirection a sh:NodeShape ;
+  rdfs:comment "meter_layers 3: a direction written over a written bar, <{bar}:direction={n}>: its text and optional target tempo (ADR 0116, revision 8)." ;
+  sh:targetObjectsOf arch:bar_directions ;
+  sh:closed true ;
+  sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+  sh:property [ sh:path arch:direction_text ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path arch:direction_tempo ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
+
+wsh:TargetTempo a sh:NodeShape ;
+  rdfs:comment "A target tempo (ADR 0106's shape), <{direction}:tempo>: beats a minute and the beat counted; an intention, never a measurement (revision 8)." ;
+  sh:targetObjectsOf arch:direction_tempo ;
+  sh:closed true ;
+  sh:property [ sh:path arch:target_bpm ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:decimal ] ;
+  sh:property [ sh:path arch:target_beat ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
 
 wsh:BarOffset a sh:NodeShape ;
   rdfs:comment "Where in a bar something starts, a written length: count units of 1/unit of a whole note." ;

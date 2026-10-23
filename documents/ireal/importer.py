@@ -8,8 +8,10 @@ byte for byte, admitted in a batch of its own with one `ireal-chart`
 derivation run (its `used` pins the playlist and the chart document, its
 `parameters` the grammar's choices) and the run's claims about the chart
 document: the chart's `document_source` (derived from the playlist, by the
-run), `chord_sequence` v2, `form` v1, untimed `meter_layers` v2 and, when the
-key field is not empty, `key_sequence` v1.
+run), `chord_sequence` v2, `form` v1, untimed `meter_layers` v3 (with the chart's
+style, tempo and comments as written directions) and, when the key field is
+not empty, `key_sequence` v1. Meter layers version 3 is specification
+0.0.11's, so the archive must be at 0.0.11.
 
 Quiet reruns: content already an Artifact's is not admitted again, and a
 chart document some `ireal-chart` run with these parameters already used
@@ -53,7 +55,7 @@ RUN = ("archive.claim/derivation_run", "1")
 SOURCE = ("archive.claim/document_source", "1")
 SEQUENCE = ("archive.claim/chord_sequence", "2")
 FORM = ("archive.claim/form", "1")
-METER = ("archive.claim/meter_layers", "2")
+METER = ("archive.claim/meter_layers", "3")
 KEY = ("archive.claim/key_sequence", "1")
 CONTRACTS = (RUN, SOURCE, SEQUENCE, FORM, METER, KEY)
 MEDIA_TYPE = "text/plain"
@@ -189,7 +191,8 @@ def plan(data: bytes, filename: str, reader: adapter.ArchiveReader, staging: ada
             batch.add_content(link, _staged_name(chart_digest), staging, remote)
         item.document, item.batch = document, batch
         try:
-            read = chart_claims(song.music, song.key)
+            read = chart_claims(song.music, song.key, song.style,
+                                song.field("tempo") if song.scheme == "irealb" else "")
         except UnsupportedChart as error:
             item.status, item.reason, read = "failed", str(error), None
         started = now()

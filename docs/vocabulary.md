@@ -319,6 +319,9 @@ ratio. **Regrouping**: a link between adjacent bars where every note value
 keeps its length and the felt pulse moves (quarter to dotted quarter, the
 eighth unchanged). **Tempo** is derived from bars and beats, never stored; a
 set list's target tempo is a stated intention, not a tempo ([ADR 0106](decisions/0106-set-lists-and-clocks.md)).
+A **direction** is text written over an untimed bar, with an optional
+tempo: a chart's style, "Solos", "Repeat and Fade". A written direction's
+tempo, like a target tempo, is an intention ([ADR 0116](decisions/0116-ireal-charts.md)).
 
 **Document**: an outside source's admitted bytes (a transcription file, a
 saved chart) that a claim pins to say where its readings came from. A

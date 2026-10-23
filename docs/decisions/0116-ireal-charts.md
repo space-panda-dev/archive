@@ -6,9 +6,12 @@ sus2) stays open, and `2` is a text-only reading until it is settled. Builds on 
 [0080](0080-key-and-tuning.md), [0083](0083-form-and-work-meter.md),
 [0084](0084-lead-sheets.md), [0085](0085-documents-lyrics-rights.md),
 [0087](0087-tracklists-and-correspondence.md) and
-[0089](0089-practice-audio-and-exports.md); on acceptance it amends ADR
-0089's format table, and adds a field to ADR 0113's meter layers version 3
-before that version is installed (below). Nothing here is installed.
+[0089](0089-practice-audio-and-exports.md); it amends ADR 0089's format
+table (ADR 0089's amendment of 2026-10-22), and adds a field to ADR 0113's
+meter layers version 3. Decisions D and E are installed by specification
+0.0.11 (D-19), folded into that release before it was cut: meter layers
+version 3 carries `directions`, and `archive.claim/export` version 2 adds
+`ireal`.
 
 ## Context
 
@@ -202,9 +205,10 @@ version 4, version 3 plus this field. World's `world/form.py` checks it; a
 MusicXML or LilyPond export writes it as a `<direction>` with `<words>` and
 `<metronome>`. Tempo stays derived for every timed claim (ADR 0077); the
 vocabulary adds that a written direction's tempo, like a target tempo, is an
-intention. **Until accepted and installed, the importer writes no direction,**
-and style, tempo and comments are recoverable only from the chart document
-through the importer's decoder.
+intention. Accepted before ADR 0113's contracts were released, it is part of
+meter layers version 3 as installed by 0.0.11; the importer writes the
+chart's style, tempo and comments as directions, and the exporter reads
+them back.
 
 ### 4. Linking charts to Works and people
 
@@ -260,12 +264,13 @@ offsets, the form for marks, repeats, endings and jumps, the sequence for
 symbols, the first key region for the key field, the credits' `credited_as`
 for the composer, the Work's label for the title, and options `style`,
 `tempo` and `transpose` (ADR 0089's transposition; spelling by the key,
-ADR 0080) until directions exist. A stack's symbol is its verbatim `text`
+ADR 0080); `style` and `tempo` override the first bar's first direction,
+which the exporter otherwise writes as the style and tempo fields. A stack's symbol is its verbatim `text`
 when that parses under the grammar to the same stack, else the table's
 quality whose classes equal the stack's; repeated identical bars are written
 `x`. It is a view, filed by ADR 0089's export key; only a sent file is
-admitted, which needs `archive.claim/export` version 2 (version 1 plus this
-format; not installed).
+admitted, under `archive.claim/export` version 2 (version 1 plus this
+format; installed by 0.0.11).
 
 **Lost, and listed in the export's losses:** readings after the second (iReal
 holds one alternate), weights, uncertain tones beyond `7alt` and `11`'s
@@ -380,6 +385,8 @@ like `capture/`.
 - **U.** The `unmarked` placeholder label, or a form version that lets a
   section have no label.
 - **D.** `directions` on untimed bars, in meter layers version 3 or 4.
+  Installed by 0.0.11, in meter layers version 3.
 - **L.** Linking as in section 4, with no machine links.
 - **E.** The `ireal` format and `archive.claim/export` version 2.
+  Installed by 0.0.11.
 - **B.** The alignment and the chord bench as in section 6.

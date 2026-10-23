@@ -5,14 +5,19 @@ It is a view of exact revisions, as ADR 0089's exports are: the relay runs it
 as `export.py <input.json> <output> <losses.json>` (`relay/exporting.py`),
 the input holding the request and the records it renders as World reads them,
 and it writes the link and the list of what it lost. Nothing it writes is a
-claim; only a file a person sends is admitted, which needs
-`archive.claim/export` version 2 (not installed).
+claim; only a file a person sends is admitted, under `archive.claim/export`
+version 2 (specification 0.0.11).
 
 What it reads, all through the lead sheet's pins:
 
-- the bars: the first `written` layer of the first untimed meter claim (bar
-  lengths, time signatures, the sections bars fall in, and each chord's
-  offset); the chord sequence and form are the ones that meter pins;
+- the bars: the first `written` layer of the first untimed meter claim
+  (meter layers version 2 or 3: bar lengths, time signatures, the sections
+  bars fall in, and each chord's offset); the chord sequence and form are
+  the ones that meter pins;
+- the directions (meter layers version 3, ADR 0116 section 3): the first
+  bar's first direction is the style field, and its tempo, when iReal can
+  write it, the tempo field (the importer's rule, inverted); every other
+  direction is written as a comment `<text>` on its bar;
 - the chords: each entry's first reading as the chord, its second as the
   alternate `(chord)`; a reading keeps its verbatim `text` when that reads
   under grammar version 1 to the same stack, else the grammar table's first
@@ -23,7 +28,8 @@ What it reads, all through the lead sheet's pins:
   from the composer credits (`Composer Unknown` with none, since an empty
   field would write iReal's song separator); the title from the Work's
   label; options `style`, `tempo` and `transpose` (semitones, ADR 0089's
-  transposition).
+  transposition). An option overrides the first direction; with neither,
+  the style is `Medium Swing` and the tempo 0 (iReal's default).
 
 A chord at offset o of a bar of length L goes in cell k of n with k/n = o/L
 (the importer's placement rule, inverted); n is 4 when that places every
@@ -41,7 +47,11 @@ iReal mark where a mark is needed (written as a comment); section kinds
 other than intro and verse; jumps with `repeats_on_return`, more than one
 jump, more than three endings, endings that are not one pass each, nested
 repeats; melody, lyrics and underlays; chord claims other than the one the
-meter indexes; credits in a role other than composer.
+meter indexes; credits in a role other than composer; a first direction's
+tempo that is fractional, outside iReal's 40 to 300, or counted in a beat
+other than the first bar's denominator; tempos of other directions; and
+direction text iReal would read as a jump, Fine or repeat count, or that
+holds `<` or `>`.
 
 Where it differs from the ADR's wording: a text-only reading whose text is a
 single chord token of iReal's markup (the chart's own symbol, such as `C2`
@@ -63,7 +73,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from world.exports import transpose_key, transpose_reading  # noqa: E402
-from world.form import check_form, check_meter_layers_v2, is_untimed_meter  # noqa: E402
+from world.form import check_form, check_meter_layers_v3, is_untimed_meter  # noqa: E402
 from world.harmony import check_chord_sequence_v2  # noqa: E402
 from world.tonality import check_key_sequence, key_pitch_names  # noqa: E402
 
@@ -80,7 +90,7 @@ DEFAULT_STYLE = "Medium Swing"
 NO_COMPOSER = "Composer Unknown"
 
 LEAD_SHEET = {("archive.claim/lead_sheet", "1"), ("archive.claim/lead_sheet", "2")}
-METER = ("archive.claim/meter_layers", "2")
+METERS = {("archive.claim/meter_layers", "2"), ("archive.claim/meter_layers", "3")}
 KEY_SEQUENCE = ("archive.claim/key_sequence", "1")
 MARKS = {"A": None, "B": None, "C": None, "D": None, "i": "intro", "v": "verse"}
 UNMARKED = "unmarked"
@@ -124,16 +134,17 @@ def _claim(record: dict[str, Any]) -> dict[str, Any]:
     return {"payload": record["payload"], "refs": record["refs"], "revision_id": record["revision_id"]}
 
 
-def _check_options(options: dict[str, Any]) -> tuple[str, int, int]:
+def _check_options(options: dict[str, Any]) -> tuple[str | None, int | None, int]:
     unknown = set(options) - OPTIONS
     if unknown:
         raise ExportRefused(f"unknown options {sorted(unknown)}; this exporter takes {sorted(OPTIONS)}")
-    style = options.get("style", DEFAULT_STYLE)
-    tempo = options.get("tempo", 0)
+    style = options.get("style")
+    tempo = options.get("tempo")
     transpose = options.get("transpose", 0)
-    if not isinstance(style, str) or not style or "=" in style:
+    if style is not None and (not isinstance(style, str) or not style or "=" in style):
         raise ExportRefused("style must be text without '='")
-    if isinstance(tempo, bool) or not isinstance(tempo, int) or not (tempo == 0 or 40 <= tempo <= 300):
+    if tempo is not None and (isinstance(tempo, bool) or not isinstance(tempo, int)
+                              or not (tempo == 0 or 40 <= tempo <= 300)):
         raise ExportRefused("tempo must be 0 (iReal's default) or 40 to 300 beats a minute")
     if isinstance(transpose, bool) or not isinstance(transpose, int) or not -12 <= transpose <= 12:
         raise ExportRefused("transpose must be an integer from -12 to 12 semitones")
@@ -254,7 +265,7 @@ def render(request: dict[str, Any], records: list[dict[str, Any]]) -> tuple[byte
     title = (work.get("payload") or {}).get("label") or "Untitled"
 
     meters = [found.get(ref, "meter") for ref in _role(lead, "meter")]
-    meters = [m for m in meters if _contract(m) == METER and is_untimed_meter(_claim(m))]
+    meters = [m for m in meters if _contract(m) in METERS and is_untimed_meter(_claim(m))]
     if not meters:
         raise ExportRefused("the lead sheet pins no untimed meter claim, so there are no bars to write")
     meter = meters[0]
@@ -268,7 +279,8 @@ def render(request: dict[str, Any], records: list[dict[str, Any]]) -> tuple[byte
         check_chord_sequence_v2(_claim(sequence))
         if form is not None:
             check_form(_claim(form))
-        layers = check_meter_layers_v2(_claim(meter), form_claim=_claim(form) if form else None,
+        # A version 2 payload is a version 3 payload (world/form.py).
+        layers = check_meter_layers_v3(_claim(meter), form_claim=_claim(form) if form else None,
                                        sequence_claim=_claim(sequence))
     except ValueError as error:
         raise ExportRefused(f"an input breaks World's rules: {error}") from None
@@ -304,7 +316,8 @@ def render(request: dict[str, Any], records: list[dict[str, Any]]) -> tuple[byte
     key_field = _key_field(key, losses)
     names = _names(key)
 
-    markup = _markup(layer, entries, form["payload"] if form else None, names, losses)
+    style, tempo, first_is_style = _style_and_tempo(layer["bars"], style, tempo, losses)
+    markup = _markup(layer, entries, form["payload"] if form else None, names, losses, first_is_style)
     # An empty composer field next to the empty unused field would write
     # `===`, iReal's song separator, so a chart with no credit names none.
     composer = _composer(found, lead, losses) or NO_COMPOSER
@@ -314,6 +327,35 @@ def render(request: dict[str, Any], records: list[dict[str, Any]]) -> tuple[byte
     codec.decode_playlist(link)   # what it wrote, it reads
     ordered = list(dict.fromkeys(losses))
     return link, ordered
+
+
+def _style_and_tempo(bars: list[dict[str, Any]], style: str | None, tempo: int | None,
+                     losses: list[str]) -> tuple[str, int, bool]:
+    """The style and tempo fields: the options, else the first bar's first
+    direction (ADR 0116, section 3), else Medium Swing and 0. Returns them and
+    whether that direction is written as the fields (so not as a comment)."""
+    directions = bars[0].get("directions", []) if bars else []
+    first = directions[0] if directions else None
+    if first is None:
+        return (style or DEFAULT_STYLE), (tempo or 0), False
+    written = None
+    if "tempo" in first:
+        bpm, beat = first["tempo"]["bpm"], first["tempo"].get("beat")
+        if (bpm.isdigit() and 40 <= int(bpm) <= 300
+                and (beat is None or beat == {"denominator": bars[0]["denominator"]})):
+            written = int(bpm)
+        elif tempo is None:
+            losses.append("a direction's tempo iReal cannot write (fractional, outside 40 to 300, or "
+                          "counted in another beat)")
+    if tempo is None:
+        tempo = written or 0
+    if style is None:
+        if "=" in first["text"]:
+            losses.append("'=' in a style direction (iReal's field separator)")
+            style = first["text"].replace("=", "-")
+        else:
+            style = first["text"]
+    return style, tempo, True
 
 
 def _field(text: str, losses: list[str]) -> str:
@@ -358,7 +400,7 @@ def _key_field(key: dict[str, Any] | None, losses: list[str]) -> str:
 
 
 def _markup(layer: dict[str, Any], entries: list[dict[str, Any]], form: dict[str, Any] | None,
-            names: tuple[str, ...], losses: list[str]) -> str:
+            names: tuple[str, ...], losses: list[str], first_is_style: bool = False) -> str:
     bars = layer["bars"]
     count = len(bars)
     sections = form["sections"] if form else []
@@ -475,6 +517,19 @@ def _markup(layer: dict[str, Any], entries: list[dict[str, Any]], form: dict[str
             comment = _comment(label)
             if comment:
                 texts[index].insert(0, comment)
+
+    # Directions after the style: comments on their bars, after any label.
+    for index, bar in enumerate(bars):
+        for number, direction in enumerate(bar.get("directions", [])):
+            if index == 0 and number == 0 and first_is_style:
+                continue
+            if "tempo" in direction:
+                losses.append("tempos of directions other than the first bar's first")
+            comment = _comment(direction["text"])
+            if comment[1:-1] != direction["text"]:
+                losses.append("direction text iReal reads as a jump, Fine or count, or holding < or >")
+            if comment:
+                texts[index].append(comment)
 
     # Bars.
     out: list[str] = []

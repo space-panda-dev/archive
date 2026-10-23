@@ -9,11 +9,14 @@ Every example is synthetic (INV-23).
 import unittest
 
 from world.exports import (
+    FRACTIONAL_TEMPO_LOSS,
     LAST_TIME,
     OPEN_COUNT_LOSS,
     ExportError,
     form_marks,
+    lilypond_directions,
     lilypond_form,
+    musicxml_directions,
     musicxml_form,
     musicxml_lyric,
     refuse_sketch,
@@ -121,6 +124,29 @@ class StackedVerses(unittest.TestCase):
                          '<lyric number="2"><syllabic>begin</syllabic><text>2. lan</text><extend/></lyric>')
         with self.assertRaises(ExportError):
             musicxml_lyric(1, "x", "whole")
+
+
+class Directions(unittest.TestCase):
+    BAR = {"numerator": 6, "denominator": 8,
+           "directions": [{"text": "Easy <Waltz> & Co", "tempo": {"bpm": "60.5", "beat": {"denominator": 4, "dots": 1}}},
+                          {"text": "Solos", "tempo": {"bpm": "120"}}, {"text": 'Say "fine"'}]}
+
+    def test_musicxml_writes_words_and_a_metronome_with_no_sound(self):
+        xml = musicxml_directions(self.BAR)
+        self.assertEqual(xml.count("<direction placement=\"above\">"), 3)
+        self.assertIn("<words>Easy &lt;Waltz&gt; &amp; Co</words>", xml)
+        self.assertIn("<beat-unit>quarter</beat-unit><beat-unit-dot/><per-minute>60.5</per-minute>", xml)
+        # A tempo with no beat counts the bar's beat.
+        self.assertIn("<beat-unit>eighth</beat-unit><per-minute>120</per-minute>", xml)
+        self.assertNotIn("<sound", xml)
+        self.assertEqual(musicxml_directions({"numerator": 4, "denominator": 4}), "")
+
+    def test_lilypond_writes_one_tempo_and_marks_and_rounds(self):
+        text, losses = lilypond_directions(self.BAR)
+        self.assertEqual(text, '\\tempo "Easy <Waltz> & Co" 4. = 60 \\mark "Solos" \\mark "Say \\"fine\\""')
+        self.assertEqual(losses, [FRACTIONAL_TEMPO_LOSS])
+        self.assertEqual(lilypond_directions({"numerator": 4, "denominator": 4,
+                                              "directions": [{"text": "Ballad"}]}), ('\\tempo "Ballad"', []))
 
 
 class Sketches(unittest.TestCase):

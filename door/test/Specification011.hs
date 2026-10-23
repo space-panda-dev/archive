@@ -1,11 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Checks of the specification 0.0.11 bundles in Door's own evaluator
--- (D-19, ADR 0113): the catalog adds exactly the six contract versions; every
--- bundle loads; every profile rule the release adds is declared by some
--- bundle and refused when malformed; and the JSON Schema and record rules of
--- each new version accept and refuse the shapes the ADR states: a sketch, an
--- underlay, an open repeat, a span's passes, and a lead sheet's underlay.
+-- (D-19, ADRs 0113 and 0116): the catalog adds exactly the seven contract
+-- versions; every bundle loads; every profile rule the release adds is
+-- declared by some bundle and refused when malformed; and the JSON Schema and
+-- record rules of each new version accept and refuse the shapes the ADRs
+-- state: a sketch, an underlay, an open repeat, a span's passes, a lead
+-- sheet's underlay, a written bar's directions, and an iReal export.
 --
 -- Each check is a (label, passed, detail) row; Main asserts them.
 module Specification011 (specification011Checks) where
@@ -13,6 +14,7 @@ module Specification011 (specification011Checks) where
 import Archive.Door.Catalog (loadContractCatalog)
 import Archive.Door.Contracts (validateContractBundle, validateContractInstance)
 import Archive.Door.Json (decodeUnique)
+import Archive.Door.RecordRules (exportKey)
 import Archive.Door.RuleSyntax (release011RuleNames, releaseRuleNames)
 import qualified Data.Aeson.Key as Key
 import Data.Aeson (Value (..), (.=))
@@ -65,9 +67,9 @@ specification011Checks = do
         [ (identifier <> " " <> name, loadWith identifier version (adjust spoil (Key.fromText name)))
         | entry@(identifier, version, _) <- added, name <- declared release011RuleNames (schemaOf entry) ]
   pure $
-    [ ("the 0.0.11 catalog adds exactly ADR 0113's six contract versions to 0.0.10's and keeps every 0.0.10 entry",
+    [ ("the 0.0.11 catalog adds exactly ADR 0113's six contract versions and ADR 0116's export 2 to 0.0.10's and keeps every 0.0.10 entry",
         sort [(identifier, version) | (identifier, version, _) <- added]
-          == [ ("archive.claim/form", "2"), ("archive.claim/form_spans", "2"), ("archive.claim/lead_sheet", "2")
+          == [ ("archive.claim/export", "2"), ("archive.claim/form", "2"), ("archive.claim/form_spans", "2"), ("archive.claim/lead_sheet", "2")
              , ("archive.claim/melody", "2"), ("archive.claim/meter_layers", "3"), ("archive.claim/underlay", "1") ]
           && all (`elem` current) previous, show added)
     , ("every 0.0.11 bundle loads by its digest",
@@ -94,6 +96,8 @@ specification011Checks = do
     <> formChecks accepts refuses
     <> formSpansChecks accepts refuses
     <> leadSheetChecks accepts refuses
+    <> directionChecks accepts refuses
+    <> exportChecks accepts refuses
 
 -- | A rule with an unknown key.
 spoil :: Value -> Value
@@ -279,3 +283,81 @@ leadSheetChecks accepts refuses =
   where
     sheet = "{\"label\":\"A chart\"}"
     base = [ref "work" "01", ref "melody" "02"]
+
+-- | ADR 0116, decision D: a written (untimed) bar of meter layers version 3
+-- may carry 1 to 8 directions, each its text and an optional target tempo in
+-- ADR 0106's shape; a timed bar never does, and version 2 has no directions.
+directionChecks :: Judge -> Judge -> [Check]
+directionChecks accepts refuses =
+  [ accepts "an untimed bar carries written directions with a target tempo" "archive.claim/meter_layers" "3"
+      (instanceOf (untimed "[{\"text\":\"Medium Swing\",\"tempo\":{\"bpm\":\"160\"}},{\"text\":\"Solos\"}]") work)
+  , accepts "a direction's tempo may name its beat and three decimal places" "archive.claim/meter_layers" "3"
+      (instanceOf (untimed "[{\"text\":\"Slow\",\"tempo\":{\"bpm\":\"52.125\",\"beat\":{\"denominator\":4,\"dots\":1}}}]") work)
+  , accepts "a bar carries eight directions" "archive.claim/meter_layers" "3"
+      (instanceOf (untimed (directions 8)) work)
+  , refuses "a bar carries at most eight directions" "archive.claim/meter_layers" "3"
+      (instanceOf (untimed (directions 9)) work)
+  , refuses "a bar's directions are never an empty list" "archive.claim/meter_layers" "3"
+      (instanceOf (untimed "[]") work)
+  , refuses "a direction's text is never empty" "archive.claim/meter_layers" "3"
+      (instanceOf (untimed "[{\"text\":\"\"}]") work)
+  , refuses "a direction's text is at most 200 characters" "archive.claim/meter_layers" "3"
+      (instanceOf (untimed ("[{\"text\":\"" <> replicate 201 'a' <> "\"}]")) work)
+  , refuses "a direction needs its text" "archive.claim/meter_layers" "3"
+      (instanceOf (untimed "[{\"tempo\":{\"bpm\":\"120\"}}]") work)
+  , refuses "a direction has no other field" "archive.claim/meter_layers" "3"
+      (instanceOf (untimed "[{\"text\":\"Fade\",\"lyric\":\"la\"}]") work)
+  , refuses "a tempo's bpm is canonical decimal text, without a trailing zero" "archive.claim/meter_layers" "3"
+      (instanceOf (untimed "[{\"text\":\"Fast\",\"tempo\":{\"bpm\":\"92.50\"}}]") work)
+  , refuses "a tempo's bpm is text, never a number" "archive.claim/meter_layers" "3"
+      (instanceOf (untimed "[{\"text\":\"Fast\",\"tempo\":{\"bpm\":92}}]") work)
+  , refuses "a tempo's bpm is at least 1" "archive.claim/meter_layers" "3"
+      (instanceOf (untimed "[{\"text\":\"Still\",\"tempo\":{\"bpm\":\"0.5\"}}]") work)
+  , refuses "a tempo's bpm is below 1000" "archive.claim/meter_layers" "3"
+      (instanceOf (untimed "[{\"text\":\"Blur\",\"tempo\":{\"bpm\":\"1000\"}}]") work)
+  , refuses "a tempo has at most three decimal places" "archive.claim/meter_layers" "3"
+      (instanceOf (untimed "[{\"text\":\"Odd\",\"tempo\":{\"bpm\":\"92.1251\"}}]") work)
+  , refuses "a tempo needs its bpm" "archive.claim/meter_layers" "3"
+      (instanceOf (untimed "[{\"text\":\"Odd\",\"tempo\":{\"beat\":{\"denominator\":4}}}]") work)
+  , accepts "a timed bar without a direction (anchor)" "archive.claim/meter_layers" "3"
+      (instanceOf (timed "") timedRefs)
+  , refuses "a timed bar never carries a direction" "archive.claim/meter_layers" "3"
+      (instanceOf (timed ",\"directions\":[{\"text\":\"Solos\"}]") timedRefs)
+  , refuses "meter layers version 2 has no directions (anchor)" "archive.claim/meter_layers" "2"
+      (instanceOf (untimed "[{\"text\":\"Medium Swing\"}]") work)
+  ]
+  where
+    work = [ref "work" "01"]
+    timedRefs = [ref "source" "01", ref "stream" "02"]
+    untimed given = "{\"layers\":[{\"role\":\"written\",\"bars\":[{\"numerator\":4,\"denominator\":4,\"directions\":"
+      <> given <> "},{\"numerator\":4,\"denominator\":4}]}]}"
+    timed extra = "{\"sample_rate\":48000,\"layers\":[{\"bars\":[{\"start_sample\":0,\"end_sample\":10,"
+      <> "\"numerator\":4,\"denominator\":4" <> extra <> "}]}]}"
+    directions count = "[" <> joinWith "," (replicate count "{\"text\":\"Vamp\"}") <> "]"
+    joinWith separator = foldr1 (\a b -> a <> separator <> b)
+
+-- | ADR 0116, decision E: export version 2 is version 1 with the `ireal`
+-- format, whose media type is text/plain; version 1 never names it.
+exportChecks :: Judge -> Judge -> [Check]
+exportChecks accepts refuses =
+  [ accepts "an export version 2 admits a sent iReal chart" "archive.claim/export" "2"
+      (export "ireal" "text/plain")
+  , accepts "an export version 2 keeps version 1's formats" "archive.claim/export" "2"
+      (export "pdf" "application/pdf")
+  , refuses "an iReal export's media type is text/plain" "archive.claim/export" "2"
+      (export "ireal" "application/json")
+  , refuses "an export version 2 names no format ADR 0089's table lacks" "archive.claim/export" "2"
+      (export "midi" "audio/midi")
+  , refuses "an export version 1 has no iReal format (anchor)" "archive.claim/export" "1"
+      (export "ireal" "text/plain")
+  ]
+  where
+    export format media = keyed (instanceOf (exportPayload format media) [ref "artifact" "01", ref "rendered" "02"])
+    exportPayload format media = "{\"format\":\"" <> format <> "\",\"media_type\":\"" <> media
+      <> "\",\"exporter\":{\"id\":\"lead-sheet-ireal\",\"version\":\"1\"},\"key\":\"sha256:" <> replicate 64 'a' <> "\"}"
+    -- The payload's key made the one its request states (D-18).
+    keyed (Object instanceValue)
+      | Just (Object payload) <- KeyMap.lookup "payload" instanceValue =
+          let key = exportKey payload [("urn:uuid:00000000-0000-4000-8000-000000000002", "sha256:" <> Text.replicate 62 "0" <> "02")] []
+          in Object (KeyMap.insert "payload" (Object (KeyMap.insert "key" (String key) payload)) instanceValue)
+    keyed value = value

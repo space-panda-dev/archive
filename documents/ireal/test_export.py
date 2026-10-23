@@ -37,31 +37,71 @@ CHARTS = {
         "T44C(E-7)  |T34D-7  G7 |T68C^7 A7 E-7 |T54F^7 Bb7  |T12C   Z",
     "text-only symbols written back as the chart's tokens":
         "T44C2 F** |C*mine* G7 |CZ",
+    "comments as directions":
+        "[*AT44<Intro vamp>C |F |<Solos><Open>G7 |C<Repeat and Fade>Z",
 }
 
 
-def chart_records(markup: str, key: str = "C", title: str = "Paper Lanterns", composer: str = "Ada Example"):
-    payloads = stand_in.read(markup, key)
+def chart_records(markup: str, key: str = "C", title: str = "Paper Lanterns", composer: str = "Ada Example",
+                  style: str = "", tempo: str = ""):
+    payloads = stand_in.read(markup, key, style, tempo)
     records, pin = stand_in.records(title, composer, payloads)
     return payloads, records, pin
 
 
 def reread(link: bytes) -> tuple[codec.Song, dict]:
     song = codec.decode_playlist(link).songs[0]
-    return song, stand_in.read(song.music, song.key)
+    return song, stand_in.read(song.music, song.key, song.style, song.field("tempo"))
 
 
 class RoundTrip(unittest.TestCase):
     def test_every_chart_is_equal_in_claims_after_export(self) -> None:
         for name, markup in CHARTS.items():
             with self.subTest(name):
-                payloads, records, pin = chart_records(markup, "Eb-")
+                payloads, records, pin = chart_records(markup, "Eb-", style="Up Tempo Swing", tempo="220")
                 link, losses = render({**REQUEST, "rendered": [pin]}, records)
                 self.assertEqual(losses, [])
                 song, again = reread(link)
                 self.assertEqual(again, payloads)
-                self.assertEqual((song.title, song.composer, song.key, song.style),
-                                 ("Paper Lanterns", "Ada Example", "Eb-", export.DEFAULT_STYLE))
+                self.assertEqual((song.title, song.composer, song.key, song.style, song.field("tempo")),
+                                 ("Paper Lanterns", "Ada Example", "Eb-", "Up Tempo Swing", "220"))
+
+    def test_style_tempo_and_comments_are_directions_that_come_back(self) -> None:
+        payloads, records, pin = chart_records(CHARTS["comments as directions"], style="Bossa Nova", tempo="140")
+        bars = payloads["meter"]["layers"][0]["bars"]
+        self.assertEqual(bars[0]["directions"], [{"text": "Bossa Nova", "tempo": {"bpm": "140"}},
+                                                 {"text": "Intro vamp"}])
+        self.assertEqual(bars[2]["directions"], [{"text": "Solos"}, {"text": "Open"}])
+        self.assertEqual(bars[3]["directions"], [{"text": "Repeat and Fade"}])
+        link, losses = render({**REQUEST, "rendered": [pin]}, records)
+        self.assertEqual(losses, [])
+        song, again = reread(link)
+        self.assertEqual((song.style, song.field("tempo")), ("Bossa Nova", "140"))
+        self.assertEqual(again, payloads)
+
+    def test_a_chart_with_no_style_or_tempo_keeps_none(self) -> None:
+        payloads, records, pin = chart_records("T44C |G7 Z")
+        self.assertNotIn("directions", payloads["meter"]["layers"][0]["bars"][0])
+        link, _ = render({**REQUEST, "rendered": [pin]}, records)
+        song = codec.decode_playlist(link).songs[0]
+        self.assertEqual((song.style, song.field("tempo")), (export.DEFAULT_STYLE, "0"))
+        payloads, _, _ = chart_records("T44C |G7 Z", tempo="96")
+        self.assertNotIn("directions", payloads["meter"]["layers"][0]["bars"][0])
+
+    def test_options_override_the_directions_and_a_tempo_iReal_cannot_write_is_lost(self) -> None:
+        payloads, records, pin = chart_records("T44C |G7 Z", style="Ballad", tempo="60")
+        link, losses = render({**REQUEST, "rendered": [pin], "options": {"style": "Waltz", "tempo": 90}}, records)
+        song = codec.decode_playlist(link).songs[0]
+        self.assertEqual((song.style, song.field("tempo"), losses), ("Waltz", "90", []))
+        records = copy.deepcopy(records)
+        meter = next(r for r in records if r["contract"] == ["archive.claim/meter_layers", "3"])
+        bars = meter["payload"]["layers"][0]["bars"]
+        bars[0]["directions"][0]["tempo"] = {"bpm": "72.5"}
+        bars[1]["directions"] = [{"text": "Faster", "tempo": {"bpm": "120", "beat": {"denominator": 2}}}]
+        link, losses = render({**REQUEST, "rendered": [pin]}, records)
+        song = codec.decode_playlist(link).songs[0]
+        self.assertEqual((song.style, song.field("tempo")), ("Ballad", "0"))
+        self.assertEqual(len(losses), 2)
 
     def test_the_link_is_one_chart_in_the_canonical_encoding(self) -> None:
         _, records, pin = chart_records(CHARTS["bar repeats, slashes, N.C. and held bars"])
@@ -77,7 +117,8 @@ class RoundTrip(unittest.TestCase):
         music = codec.decode_playlist(link).songs[0].music
         # The second bar repeats the first; a held downbeat chord is a bar of its own entry, never x.
         self.assertEqual(music.count(" x "), 1)
-        self.assertEqual(reread(link)[1], stand_in.read("T44C7 F7 |C7 F7 |Bb7 |Bb7 |Bb7 Z", "C"))
+        self.assertEqual(reread(link)[1], stand_in.read("T44C7 F7 |C7 F7 |Bb7 |Bb7 |Bb7 Z", "C",
+                                                                export.DEFAULT_STYLE))
 
 
 class Transposition(unittest.TestCase):
@@ -179,7 +220,7 @@ class Refusals(unittest.TestCase):
 
     def test_inputs_that_break_worlds_rules_are_refused(self) -> None:
         records = copy.deepcopy(self.records)
-        meter = next(r for r in records if r["contract"] == ["archive.claim/meter_layers", "2"])
+        meter = next(r for r in records if r["contract"] == ["archive.claim/meter_layers", "3"])
         meter["payload"]["layers"][0]["bars"][0]["chords"][0]["entry"] = 7
         with self.assertRaisesRegex(ExportRefused, "World's rules"):
             render({**REQUEST, "rendered": [self.pin]}, records)

@@ -5,7 +5,10 @@ the placement's claims to Door under one derivation run.
 The run's `used` pins every revision read: the mix, its stream claim, the
 untimed meter claim, the form and the sequence it pins, and the machine's
 meter and chord claims. The meter and chord claims cite the machine claims
-in `derived_from`. A rerun on the same inputs and parameters is `unchanged`.
+in `derived_from`. The untimed meter may be version 2 or 3 (specification
+0.0.11, whose bars may carry directions); the timed meter is written at the
+same version, since a timed version 2 cannot pin an untimed version 3. A
+rerun on the same inputs and parameters is `unchanged`.
 A placement the method refuses proposes nothing and answers
 `nothing_proposed` with `code` `low_confidence`, the reason and the numbers.
 """
@@ -20,6 +23,7 @@ import align
 
 METER_V1 = ("archive.claim/meter_layers", "1")
 METER_V2 = ("archive.claim/meter_layers", "2")
+METER_V3 = ("archive.claim/meter_layers", "3")
 FORM = ("archive.claim/form", "1")
 FORM_SPANS = ("archive.claim/form_spans", "1")
 CHORDS_V1 = ("archive.claim/chord_stacks", "1")
@@ -35,7 +39,7 @@ def add_arguments(command: argparse.ArgumentParser) -> None:
     command.add_argument("--artifact", required=True, help="the mix Artifact's object identifier")
     command.add_argument("--stream", help="its audio_stream claim, when it has several")
     command.add_argument("--meter", required=True,
-                         help="the chart's untimed meter_layers version 2 claim (object identifier); its form and "
+                         help="the chart's untimed meter_layers version 2 or 3 claim (object identifier); its form and "
                               "chord sequence are the ones it pins")
     command.add_argument("--beats", help="the machine's timed meter_layers claim to place on, when there are several")
     command.add_argument("--chords", help="the machine's chord_stacks claim to compare with, when there are several")
@@ -73,7 +77,7 @@ def run(args: argparse.Namespace, env: dict[str, str], reader: adapter.ArchiveRe
         staging: adapter.Staging | None, choose_stream: Callable, pinned: Callable) -> tuple[int, dict[str, Any]]:
     form_tools = align.world_module("form")
     harmony = align.world_module("harmony")
-    for contract in (adapter.RUN_CONTRACT, METER_V2, CHORDS_V2):
+    for contract in (adapter.RUN_CONTRACT, CHORDS_V2):
         reader.citation(contract)
     started = adapter.now()
     artifact = reader.head(args.artifact)
@@ -81,16 +85,19 @@ def run(args: argparse.Namespace, env: dict[str, str], reader: adapter.ArchiveRe
         raise AlignCommandError(f"{args.artifact} is a {artifact['shape']}, not an Artifact")
     stream = choose_stream(reader, artifact, args.stream)
     untimed = reader.head(args.meter)
-    if not reader.cites(untimed, METER_V2) or not form_tools.is_untimed_meter(untimed):
-        raise AlignCommandError(f"{args.meter} is not an untimed meter_layers version 2 claim")
+    meter_contract = next((c for c in (METER_V3, METER_V2) if reader.cites(untimed, c)), None)
+    if meter_contract is None or not form_tools.is_untimed_meter(untimed):
+        raise AlignCommandError(f"{args.meter} is not an untimed meter_layers version 2 or 3 claim")
+    reader.citation(meter_contract)
+    check_meter = (form_tools.check_meter_layers_v3 if meter_contract == METER_V3
+                   else form_tools.check_meter_layers_v2)
     sequence_refs, form_refs = _ref(untimed, "sequence"), _ref(untimed, "form")
     if not sequence_refs:
         raise AlignCommandError(f"{args.meter} pins no chord sequence: there is nothing to place")
     sequence = pinned(reader, sequence_refs[0])
     form = pinned(reader, form_refs[0]) if form_refs else None
     claim = lambda record: {"payload": record["payload"], "refs": record["refs"], "revision_id": record["revision_id"]}
-    form_tools.check_meter_layers_v2(claim(untimed), form_claim=None if form is None else claim(form),
-                                     sequence_claim=claim(sequence))
+    check_meter(claim(untimed), form_claim=None if form is None else claim(form), sequence_claim=claim(sequence))
 
     def machine_meter(record: dict[str, Any]) -> bool:
         return (_about(record, artifact, stream) and not _ref(record, "meter")
@@ -99,7 +106,7 @@ def run(args: argparse.Namespace, env: dict[str, str], reader: adapter.ArchiveRe
     def machine_chords(record: dict[str, Any]) -> bool:
         return _about(record, artifact, stream) and not _ref(record, "sequence")
 
-    beats = _choose(reader, args.beats, (METER_V1, METER_V2), machine_meter,
+    beats = _choose(reader, args.beats, (METER_V1, METER_V2, METER_V3), machine_meter,
                     "a machine meter_layers claim with a beat-only layer about this stream")
     chords = _choose(reader, args.chords, (CHORDS_V1, CHORDS_V2), machine_chords,
                      "a machine chord_stacks claim about this stream")
@@ -121,8 +128,8 @@ def run(args: argparse.Namespace, env: dict[str, str], reader: adapter.ArchiveRe
     pin = lambda role, record: adapter.Pin(role, record["object_id"], record["revision_id"])
     derived = (pin("derived_from", beats), pin("derived_from", chords))
     outputs = [
-        (METER_V2, "meter", made["meter"], (pins["artifact"], pins["stream"], pin("meter", untimed), *derived),
-         lambda c: form_tools.check_meter_layers_v2(c, claim(stream), untimed_claim=claim(untimed))),
+        (meter_contract, "meter", made["meter"], (pins["artifact"], pins["stream"], pin("meter", untimed), *derived),
+         lambda c: check_meter(c, claim(stream), untimed_claim=claim(untimed))),
         (CHORDS_V2, "chords", made["chords"], (pins["artifact"], pins["stream"], pin("sequence", sequence), *derived),
          lambda c: harmony.check_chord_stacks_v2(c, claim(stream), claim(sequence))),
     ]

@@ -6,12 +6,15 @@ regenerable file, the `archive.claim/export` version 1 claim that admits a
 sent file, and the MusicXML `<harmony>` mapping ADR 0077 left unbuilt.
 ADR 0113's amendment adds a form's repeat signs in MusicXML and LilyPond
 (open repeats, their instructions, and last-time endings among them), the
-numbering of stacked verses, and the refusal of a sketch.
+numbering of stacked verses, and the refusal of a sketch. ADR 0116 adds the
+`ireal` format (an export request may name it; only `archive.claim/export`
+version 2 admits a sent one) and a written bar's directions as MusicXML
+`<direction>` with `<words>` and `<metronome>`, and as LilyPond `\tempo`.
 
-ADR 0089 is accepted. No specification release installs
-`archive.claim/export` yet, so Door cannot admit one; this module holds its
-rules as World would re-check them, so an importer can check a proposal
-before Door does (INV-2). It uses only the standard library.
+ADR 0089 is accepted, and specification 0.0.10 installs
+`archive.claim/export` version 1 (0.0.11 version 2); this module holds their
+rules as World re-checks them, so an importer can check a proposal before
+Door does (INV-2). It uses only the standard library.
 
 An export is a computed view: regenerable from the exact revisions it
 renders, never stored as a claim, and never a judgment between claims
@@ -35,14 +38,25 @@ from xml.sax.saxutils import escape
 from world.harmony import BANK_EXTRACTOR, BANK_OUTPUT, PITCH_NAMES, check_reading, stack_names
 
 EXPORT = ("archive.claim/export", "1")
+EXPORT_V2 = ("archive.claim/export", "2")
 
-# format -> (media type, file suffix). MusicXML is the uncompressed 4.0
-# score-partwise file; JAMS is JSON with its own suffix.
+# format -> (media type, file suffix): ADR 0089's table, with ADR 0116's row.
+# MusicXML is the uncompressed 4.0 score-partwise file; JAMS is JSON with its
+# own suffix; an iReal export is one `irealb://` link as plain text. This is
+# what an export request may name; what a claim may name is its version's
+# (CLAIM_FORMATS), so a request and a claim are checked against separate lists.
 FORMATS: dict[str, tuple[str, str]] = {
     "pdf": ("application/pdf", ".pdf"),
     "musicxml": ("application/vnd.recordare.musicxml+xml", ".musicxml"),
     "lilypond": ("text/x-lilypond", ".ly"),
     "jams": ("application/json", ".jams"),
+    "ireal": ("text/plain", ".irealb"),
+}
+# The formats each version of `archive.claim/export` admits: version 1
+# ADR 0089's four, version 2 (ADR 0116) those and `ireal`.
+CLAIM_FORMATS: dict[str, tuple[str, ...]] = {
+    "1": ("pdf", "musicxml", "lilypond", "jams"),
+    "2": ("pdf", "musicxml", "lilypond", "jams", "ireal"),
 }
 
 OBJECT_ID = re.compile(r"urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
@@ -190,7 +204,7 @@ def export_path(root: Path, key: str, export_format: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# archive.claim/export version 1
+# archive.claim/export versions 1 and 2
 
 
 EXPORT_ROLES = {"artifact": (1, 1), "rendered": (1, MAX_RENDERED), "joined": (0, MAX_JOINED)}
@@ -222,17 +236,21 @@ def _target_shape(targets: dict[str, dict[str, Any]], ref: dict[str, Any], shape
         raise ExportError(f"{where} must pin {'an Artifact' if shape == 'artifact' else 'a Claim'}")
 
 
-def check_export(claim: dict[str, Any], targets: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """Check an `archive.claim/export` version 1 claim against every rule of
-    ADR 0089. `targets` maps each pinned revision ID to what Door would find
+def check_export(claim: dict[str, Any], targets: dict[str, dict[str, Any]], version: str = "1") -> dict[str, Any]:
+    """Check an `archive.claim/export` claim against every rule of ADR 0089:
+    version 1, or version 2, which is version 1 with ADR 0116's `ireal`
+    format. `targets` maps each pinned revision ID to what Door would find
     there (`shape`, and `id`). Returns the payload; raises ExportError."""
-    where = "export"
+    if version not in CLAIM_FORMATS:
+        raise ExportError(f"export version must be one of {', '.join(CLAIM_FORMATS)}")
+    where = "export" if version == "1" else f"export v{version}"
+    formats = CLAIM_FORMATS[version]
     record = _closed(claim, {"payload", "refs"}, {"revision_id", "agent"}, where)
     payload = _closed(record["payload"], {"format", "media_type", "exporter", "key"},
                       {"options", "software", "losses"}, f"{where} payload")
     by_role = _refs_by_role(record["refs"], where)
-    if payload["format"] not in FORMATS:
-        raise ExportError(f"{where} format must be one of {', '.join(FORMATS)}")
+    if payload["format"] not in formats:
+        raise ExportError(f"{where} format must be one of {', '.join(formats)}")
     if payload["media_type"] != FORMATS[payload["format"]][0]:
         raise ExportError(f"{where} media_type of a {payload['format']} export is {FORMATS[payload['format']][0]}")
     _check_exporter(payload["exporter"], f"{where} exporter")
@@ -790,6 +808,65 @@ def musicxml_form(form_payload: dict[str, Any]) -> tuple[list[dict[str, list[str
 
 def _lily_text(text: str) -> str:
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+# A written bar's directions (ADR 0116, decision D) and what an export of
+# them loses.
+FRACTIONAL_TEMPO_LOSS = "a direction's fractional tempo (LilyPond writes whole beats a minute)"
+NOTE_TYPES = {1: "whole", 2: "half", 4: "quarter", 8: "eighth", 16: "16th", 32: "32nd", 64: "64th"}
+
+
+def _beat_of(tempo: dict[str, Any], bar: dict[str, Any]) -> tuple[int, int]:
+    """The note value a tempo counts, as (denominator, dots): its `beat`, or,
+    without one, the bar's own beat (its denominator), since a direction's
+    tempo without a beat counts whatever beat the band counts."""
+    beat = tempo.get("beat")
+    if beat is None:
+        return bar["denominator"], 0
+    return beat["denominator"], beat.get("dots", 0)
+
+
+def musicxml_directions(bar: dict[str, Any]) -> str:
+    """MusicXML for a written bar's directions, each a `<direction>` above the
+    staff with its text as `<words>` and its tempo, when it has one, as a
+    `<metronome>` (beat unit, dots, and the per-minute text exactly as
+    written). An intention, so no `<sound tempo>`: playback is not told a
+    tempo nobody measured. Empty for a bar with none."""
+    out = []
+    for direction in bar.get("directions", []):
+        inner = f"<direction-type><words>{escape(direction['text'])}</words></direction-type>"
+        tempo = direction.get("tempo")
+        if tempo is not None:
+            denominator, dots = _beat_of(tempo, bar)
+            inner += (f'<direction-type><metronome parentheses="no"><beat-unit>{NOTE_TYPES[denominator]}</beat-unit>'
+                      + "<beat-unit-dot/>" * dots + f"<per-minute>{escape(tempo['bpm'])}</per-minute>"
+                      "</metronome></direction-type>")
+        out.append(f'<direction placement="above">{inner}</direction>')
+    return "".join(out)
+
+
+def lilypond_directions(bar: dict[str, Any]) -> tuple[str, list[str]]:
+    """LilyPond for a written bar's directions, written before its music: one
+    with a tempo as `\\tempo "text" 4 = 120` (LilyPond counts whole beats a
+    minute, so a fractional tempo is rounded and is a loss), one without as
+    `\\tempo "text"`, and every one after the first as a `\\mark`, since a bar
+    holds one tempo mark. Returns the text and the losses."""
+    parts, losses = [], []
+    for index, direction in enumerate(bar.get("directions", [])):
+        text = _lily_text(direction["text"])
+        tempo = direction.get("tempo")
+        if index > 0:
+            parts.append(f"\\mark {text}")
+            continue
+        if tempo is None:
+            parts.append(f"\\tempo {text}")
+            continue
+        denominator, dots = _beat_of(tempo, bar)
+        bpm = Fraction(tempo["bpm"])
+        if bpm.denominator != 1 and FRACTIONAL_TEMPO_LOSS not in losses:
+            losses.append(FRACTIONAL_TEMPO_LOSS)
+        parts.append(f"\\tempo {text} {denominator}{'.' * dots} = {max(1, round(bpm))}")
+    return " ".join(parts), losses
 
 
 def lilypond_form(form_payload: dict[str, Any], music: list[str]) -> tuple[str, list[str]]:

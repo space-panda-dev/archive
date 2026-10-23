@@ -42,7 +42,10 @@ from claims import METHOD
 from symbols import GRAMMAR_VERSION
 
 CONTRIBUTION = ("archive.claim/contribution", "1")
-LEAD_SHEET = ("archive.claim/lead_sheet", "1")
+# Version 2: version 1 cannot pin the importer's meter layers version 3.
+LEAD_SHEET = ("archive.claim/lead_sheet", "2")
+# A reading imported before 0.0.11 cites meter layers version 2.
+METERS = (METER, ("archive.claim/meter_layers", "2"))
 PERFORMANCE_WORK = "archive.claim/performance_work"
 MUSICBRAINZ = "archive.claim/work_musicbrainz_correspondence"
 WORK_NAMESPACE = "archive.audio/song"
@@ -235,8 +238,9 @@ def chart_readings(reader: adapter.ArchiveReader, document: str) -> dict[str, di
         run = next((ref["revision_id"] for ref in refs if ref["role"] == "run"), None)
         if run not in runs or not any(ref["role"] == "document" and ref["id"] == document for ref in refs):
             continue
-        for name, contract in (("sequence", SEQUENCE), ("form", FORM), ("meter", METER), ("key", KEY)):
-            if reader.cites(record, contract):
+        for name, contracts in (("sequence", (SEQUENCE,)), ("form", (FORM,)), ("meter", METERS),
+                                ("key", (KEY,))):
+            if any(reader.cites(record, contract) for contract in contracts):
                 by_run.setdefault(run, {})[name] = {"id": record["object_id"], "revision_id": record["revision_id"]}
     complete = [run for run, found in by_run.items() if {"sequence", "form", "meter"} <= set(found)]
     if not complete:

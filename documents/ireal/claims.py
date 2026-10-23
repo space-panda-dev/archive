@@ -1,9 +1,10 @@
 """A read chart into the payloads of its claims (ADR 0116, sections 1 and 2).
 
-`chart_claims(song)` reads one chart (`codec.Song`) into the four payloads
-ADR 0116 names for a chart document: `chord_sequence` version 2, `form`
-version 1, untimed `meter_layers` version 2 and `key_sequence` version 1
-(none when the key field is empty). It returns payloads only; the
+`chart_claims(markup, key_field, style, tempo)` reads one chart into the
+four payloads ADR 0116 names for a chart document: `chord_sequence` version
+2, `form` version 1, untimed `meter_layers` version 3 (with the chart's
+written directions, section 3) and `key_sequence` version 1 (none when the
+key field is empty). It returns payloads only; the
 references (the document, the run, and the form and sequence the meter
 pins) are the importer's, since only it knows the revisions.
 
@@ -28,6 +29,14 @@ The rules this module adds to the reader's, all named in `PARAMETERS`:
   chord is on its downbeat and is the chord still sounding lists no chords
   (held), and otherwise each chord is a new entry copying the repeated
   entry's readings.
+- **Directions.** The first bar's first direction is the chart's style, with
+  its tempo (`bpm`, no beat) when the tempo field is a whole number above
+  zero (an `irealb` chart always has a style, since an empty one would
+  write the song separator; one with none has no first direction). Each
+  comment (staff text that is neither a jump, the Fine nor a
+  repeat count) is a direction on its bar, stripped of surrounding spaces,
+  in written order; an empty one is dropped. A comment over 200 characters,
+  or a bar with more than 8 directions, is a chart this reader cannot read.
 """
 
 from __future__ import annotations
@@ -45,7 +54,7 @@ REPOSITORY = Path(__file__).resolve().parents[2]
 if str(REPOSITORY) not in sys.path:
     sys.path.insert(0, str(REPOSITORY))
 
-from world.form import check_form, check_meter_layers_v2  # noqa: E402
+from world.form import MAX_DIRECTION, MAX_DIRECTIONS, check_form, check_meter_layers_v3  # noqa: E402
 from world.harmony import HarmonyError, check_chord_sequence_v2  # noqa: E402
 from world.tonality import TonalityError, check_key_sequence  # noqa: E402
 
@@ -68,6 +77,11 @@ PARAMETERS: dict[str, Any] = {
     "implied_extensions": "an extension implies the sevenths and ninths below it; a thirteenth leaves out the "
                           "eleventh; 7alt and 11 name uncertain tones",
     "minor_key": "natural minor",
+    "directions": "the first bar's first direction is the style, with the tempo field as bpm (no beat) when it "
+                  "is a whole number above zero, and none without a style; each comment "
+                  "that is not a jump, the Fine or a repeat count is a direction on its bar, stripped, in "
+                  "written order; an empty one is dropped; one over 200 characters or a ninth on a bar is "
+                  "not read",
 }
 
 # Placeholders for the references the importer adds; World's checks need a
@@ -235,10 +249,35 @@ def _at(offset: Fraction, bar: Bar) -> dict[str, int] | None:
     return {"count": length.numerator, "unit": length.denominator}
 
 
-def chart_claims(markup: str, key_field: str) -> ChartClaims:
-    """Read one chart's markup and key field into its claims' payloads.
-    Raises UnsupportedChart."""
+def _tempo(field_text: str) -> str | None:
+    text = field_text.strip()
+    return str(int(text)) if text.isdigit() and int(text) > 0 else None
+
+
+def chart_directions(chart: Chart, style: str, tempo: str) -> dict[int, list[dict[str, Any]]]:
+    """Each bar's written directions (ADR 0116, section 3), by bar number."""
+    out: dict[int, list[dict[str, Any]]] = {}
+    bpm = _tempo(tempo)
+    text = style.strip()
+    if text:
+        out[1] = [{"text": text} | ({"tempo": {"bpm": bpm}} if bpm else {})]
+    for number, comment in chart.comments:
+        stripped = comment.strip()
+        if not stripped:
+            continue
+        if len(stripped) > MAX_DIRECTION:
+            raise UnsupportedChart(f"a comment over {MAX_DIRECTION} characters (bar {number})")
+        out.setdefault(number, []).append({"text": stripped})
+        if len(out[number]) > MAX_DIRECTIONS:
+            raise UnsupportedChart(f"more than {MAX_DIRECTIONS} directions on bar {number}")
+    return out
+
+
+def chart_claims(markup: str, key_field: str, style: str = "", tempo: str = "") -> ChartClaims:
+    """Read one chart's markup, key field, style and tempo field into its
+    claims' payloads. Raises UnsupportedChart."""
     chart = read_chart(markup)
+    directions = chart_directions(chart, style, tempo)
     text_only: list[tuple[str, str]] = []
     bar_chords = _bar_chords(chart, text_only)
     form, of_bar = _form(chart)
@@ -261,6 +300,8 @@ def chart_claims(markup: str, key_field: str) -> ChartClaims:
                 entries.append({"readings": chord.readings})
         if listed:
             item["chords"] = listed
+        if bar.number in directions:
+            item["directions"] = directions[bar.number]
         bars.append(item)
     if not entries:
         raise UnsupportedChart("no chords")
@@ -282,7 +323,7 @@ def _check(sequence: dict, form: dict, meter: dict, key: dict | None) -> None:
         check_chord_sequence_v2(sequence_claim)
         form_claim = {"payload": form, "refs": [document, run]}
         check_form(form_claim)
-        check_meter_layers_v2({"payload": meter, "refs": [document, run, {"role": "form", **_STAND_IN},
+        check_meter_layers_v3({"payload": meter, "refs": [document, run, {"role": "form", **_STAND_IN},
                                                           {"role": "sequence", **_STAND_IN}]},
                               form_claim=form_claim, sequence_claim=sequence_claim)
         if key is not None:
