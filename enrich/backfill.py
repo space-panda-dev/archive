@@ -128,6 +128,8 @@ from backfill_queue import DONE, RANKS, BackfillError, Job, Runner, first_error,
 from regions import Region  # noqa: E402
 
 STREAM = "archive.claim/audio_stream"
+PARTS = "archive.claim/session_parts"
+SESSION_NAMESPACE = "archive.audio/session"  # capture/capture.py's, ADR 0048
 MODES = regions.MODES  # songs, eager, on-demand
 # The 0.0.10 backfill's set; not timed-lyrics, which answers not_yet.
 PROPOSERS = "chords-jiang,chords-chordino,beats,bass,key,tuning,notes,bass-line,sections"
@@ -453,6 +455,30 @@ def recordings_of(records: list[dict[str, Any]], archive: Path, unprobed: set[st
         found.append(Recording(record["object_id"], digest, content_path(archive, digest),
                                seconds.get(record["object_id"]), False, at=first.get(record["object_id"])))
     return found
+
+
+def later_sources(export: dict[str, Any]) -> set[str]:
+    """The Artifacts that are parts of a session's later source: in a
+    current parts claim whose first part does not name the session
+    (`session-` and its content digest, ADR 0048). The background analyses a
+    take once, from the session's first source (ADR 0070, amendment on
+    twins); a twin kept beside it is one of these."""
+    current = heads(export["records"])
+    digests = {record["object_id"]: record["payload"]["content"]["digest"]
+               for record in current.values() if record["shape"] == "artifact"}
+    later: set[str] = set()
+    for record in current.values():
+        if record["shape"] != "claim" or not cites(record, PARTS):
+            continue
+        sessions = [ref["id"] for ref in record.get("refs", []) if ref.get("role") == "session"]
+        parts = [ref["id"] for ref in record.get("refs", []) if ref.get("role") == "part"]
+        if len(sessions) != 1 or not parts or parts[0] not in digests:
+            continue
+        named = adapter.object_id(export["archive_id"], SESSION_NAMESPACE,
+                                  "session-" + digests[parts[0]].removeprefix("sha256:"))
+        if named != sessions[0]:
+            later.update(parts)
+    return later
 
 
 def find_regions(recordings: list[Recording], export: dict[str, Any], archive: Path, reader: bank.Bank,
@@ -1000,7 +1026,11 @@ def discover(args: argparse.Namespace, env: dict[str, str] | None, steps: "Steps
                      ok=(0, 3))
     if unprobed and commit:
         export = export_of(args, env)
-    recordings = recordings_of(export["records"], Path(args.archive), set(unprobed))
+    later = later_sources(export)
+    recordings = [recording for recording in recordings_of(export["records"], Path(args.archive), set(unprobed))
+                  if recording.object_id not in later]
+    if later:
+        note(step="later sources of their sessions; left out", count=len(later))
     present = []
     for recording in recordings:
         try:

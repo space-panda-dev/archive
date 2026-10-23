@@ -565,6 +565,29 @@ class Tiers(unittest.TestCase):
         self.assertEqual((planned.jobs, planned.answered), ([], [request["key"]]))
 
 
+class LaterSources(unittest.TestCase):
+    """ADR 0070, amendment on twins: the background analyses each take once,
+    so a part of a session's later source is left out."""
+    ARCHIVE = "urn:uuid:00000000-0000-4000-8000-000000000001"
+
+    def artifact(self, object_id: str, hexdigest: str) -> dict:
+        return {"object_id": object_id, "revision_id": "r-" + object_id, "shape": "artifact",
+                "payload": {"content": {"digest": "sha256:" + hexdigest, "size": 1}}, "refs": []}
+
+    def parts(self, object_id: str, session: str, *parts: str) -> dict:
+        return {"object_id": object_id, "revision_id": "r-" + object_id, "shape": "claim",
+                "contracts": [{"id": backfill.PARTS, "version": "1"}], "payload": {},
+                "refs": [{"role": "session", "id": session}] + [{"role": "part", "id": p} for p in parts]}
+
+    def test_parts_of_a_later_source_are_left_out_and_the_first_sources_kept(self) -> None:
+        import adapter
+        mix, mic, alone = "a" * 64, "b" * 64, "c" * 64
+        session = adapter.object_id(self.ARCHIVE, backfill.SESSION_NAMESPACE, "session-" + mix)
+        records = [self.artifact("mix", mix), self.artifact("mic", mic), self.artifact("alone", alone),
+                   self.parts("p1", session, "mix"), self.parts("p2", session, "mic")]
+        self.assertEqual(backfill.later_sources({"archive_id": self.ARCHIVE, "records": records}), {"mic"})
+
+
 class Real(unittest.TestCase):
     """The planner over a real bank directory: what failed is not retried."""
 

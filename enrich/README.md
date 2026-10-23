@@ -673,7 +673,10 @@ probes the audio and video Artifacts `propose --all` lists as unprobed,
 plans, runs the plan, proposes `--all` (dry run, commit, and a rerun that
 must answer `unchanged`), and, with `--world-store`, refreshes World and
 checks its conformance. A dry run probes and proposes with `--dry-run` and
-runs no extractor.
+runs no extractor. A part of a session's later source (a twin kept beside its
+take, [ADR 0070's amendment](../docs/decisions/0070-capture-import.md))
+is left out and counted in the log: each take is analysed once, from the
+session's first source.
 
 **Usable first** ([ADR 0112's amendment](../docs/decisions/0112-bulk-import-at-scale.md#amendment-2026-10-20-usable-first-the-rest-in-the-background)).
 Each unit is in the **fast tier** (it measures the content itself, prefers
