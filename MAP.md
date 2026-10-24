@@ -75,11 +75,11 @@ Build: [archive.cabal](archive.cabal): library `door/src`, executables
 | `door/app/Main.hs` | `main` dispatch: `admit`, `transition` (`--dry-run`), `serve --socket`, `verify`; `proposalDryRun`, `admissionCommit`, `transitionCommit`, `serve` |
 | `archive/app/Main.hs` | `main`: `init`, `maintenance repack/prune-packed`, `status`, `doctor`, `ls`, `show`, `export [--since]`; `current` is unsupported |
 | `door/src/Archive/Door/AdmissionDryRun.hs` | `dryRunAdmission`; re-exports the snapshot and proposal-contract APIs below |
-| `door/src/Archive/Door/Snapshot/` | `Load.loadSnapshot` (checkpointed or full read), `History` (immutable paths, upgrades, citation order), `Supersession` (heads, cycles), `Memo` (remembered snapshot, ADR 0054), `Data`, `Read` |
-| `door/src/Archive/Door/ProposalContracts.hs` | `validateProposalContracts` over `ContractCitations.hs`, `ReferenceTargets.hs` (what a reference must pin) and `TargetMeasures.hs` (payload bounded by the pinned Claim) |
+| `door/src/Archive/Door/Snapshot/` | `Load.loadSnapshot` (checkpointed or full read), `History` (immutable paths, upgrades, citation order), `Supersession` (heads, cycles), `Memo` (remembered snapshot, ADR 0054), `Data` (records typed by `RevisionId` and `ObjectId`), `Read`, `Problem` (`SnapshotProblem`, the integrity refusals) |
+| `door/src/Archive/Door/ProposalContracts.hs` | `validateProposalContracts` over `ContractCitations.hs`, `ReferenceTargets.hs` (what a reference must pin) and `TargetMeasures.hs` (payload bounded by the pinned Claim), whose refusals are `ContractRuleProblem.hs` |
 | `door/src/Archive/Door/AdmissionCommit.hs` | `commitAdmission`, `refreshVerificationCheckpoint` |
-| `door/src/Archive/Door/TransitionDryRun.hs` | `dryRunTransition`, `planTransition`; both planners' refusals are `PlanProblem.hs`, proposal-reading refusals `ProposalProblem.hs` |
-| `door/src/Archive/Door/Transition/` | `Dispatch.transitionDispatchTable` (contract id/version to kind), `Rules` (per kind), `Replay` (facts from history), `Upgrade` (prospective snapshot), `Plan`, `Problem` (rule and replay refusals) |
+| `door/src/Archive/Door/TransitionDryRun.hs` | `dryRunTransition`, `planTransition`; both planners' refusals are `PlanProblem.hs`, proposal-reading refusals `ProposalProblem.hs`; shared by both: `Distinct.hs` (repeated values) and `Json/Access.hs` (required fields, typed `FieldRefusal`) |
+| `door/src/Archive/Door/Transition/` | `Dispatch.transitionDispatchTable` (contract id/version to kind), `Rules` (per kind), `Replay` (facts from history), `Upgrade` (prospective snapshot), `Plan`, `Problem` (dispatch, upgrade request, rule and replay refusals) |
 | `door/src/Archive/Door/TransitionCommit.hs` | `commitTransition` |
 | `door/src/Archive/Door/Contracts.hs` | bundle loading; `validateSchema` checks a bundle's schema and its `x-archive-*` rule keywords; re-exports the parts below and renders their typed errors (`BundleError`) to the refusal text |
 | `door/src/Archive/Door/Contracts/` | `Schema.hs` keyword checks, `Evaluate.hs` evaluator and mismatch explanation, `SchemaError.hs` and `Profile/Error.hs` the typed refusals, `Pattern.hs` regex subset, `Pointer.hs`, `Context.hs` JSON-LD contexts, `Profile.hs` the `ProfileRule` type, parsed once per bundle, and `checkInstance`; `Profile/` each rule family's syntax and evaluator |
@@ -115,11 +115,11 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 <!-- wf:gen lines door/src/Archive/Door/AdmissionDryRun.hs door/src/Archive/Door/TransitionDryRun.hs door/src/Archive/Door/Contracts.hs door/src/Archive/Door/RecordCommit.hs door/src/Archive/Door/Bootstrap.hs door/src/Archive/Read/Core.hs door/src/Archive/GitSnapshot.hs door/src/Archive/ProcessPinned.c door/test/Main.hs archive/test/Main.hs -->
 | file | lines |
 |---|---|
-| `door/src/Archive/Door/AdmissionDryRun.hs` | 151 |
-| `door/src/Archive/Door/TransitionDryRun.hs` | 312 |
+| `door/src/Archive/Door/AdmissionDryRun.hs` | 152 |
+| `door/src/Archive/Door/TransitionDryRun.hs` | 321 |
 | `door/src/Archive/Door/Contracts.hs` | 332 |
 | `door/src/Archive/Door/RecordCommit.hs` | 572 |
-| `door/src/Archive/Door/Bootstrap.hs` | 467 |
+| `door/src/Archive/Door/Bootstrap.hs` | 471 |
 | `door/src/Archive/Read/Core.hs` | 611 |
 | `door/src/Archive/GitSnapshot.hs` | 661 |
 | `door/src/Archive/ProcessPinned.c` | 799 |
@@ -129,7 +129,7 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 
 <!-- wf:gen anchors door/src/Archive/Door/Contracts.hs#validateSchema door/src/Archive/Door/Transition/Dispatch.hs#transitionDispatchTable -->
 - `door/src/Archive/Door/Contracts.hs#validateSchema`: line 227
-- `door/src/Archive/Door/Transition/Dispatch.hs#transitionDispatchTable`: line 41
+- `door/src/Archive/Door/Transition/Dispatch.hs#transitionDispatchTable`: line 42
 <!-- /wf:gen -->
 
 ## Spec: what every archive must satisfy, copied into each
