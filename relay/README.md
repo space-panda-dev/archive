@@ -51,7 +51,8 @@ tailscale serve --bg --https=8450 8450
   "bank_root": "/path/to/derived-media",
   "practice_features": ["stems/bass", "stems/drums", "stems/other", "stems/vocals"],
   "renderers": {"practice-rubberband": {"version": "1", "command": ["/path/to/renderer"]}},
-  "exporters": {"lead-sheet-lilypond": {"version": "1", "command": ["/path/to/exporter"]}},
+  "exporters": {"lead-sheet-lilypond": {"version": "1", "command": ["/path/to/exporter"]},
+                "lead-sheet-ireal": {"version": "1", "command": ["/path/to/python3", "/path/to/archive/documents/ireal/export.py"]}},
   "render_timeout_seconds": 3600,
   "export_timeout_seconds": 120
 }
@@ -85,9 +86,11 @@ a practice answer), never as an empty result; without it the answers are
 `feature_not_made` and `stems_not_made`. The request is all the relay
 writes in the bank.
 `renderers` and `exporters` name programs installed on the relay's own host
-by an absolute path, each with the version that stands for its code. None is
-built yet; without one, practice renders and exports are refused
-(`renderer_unknown`, `exporter_unknown`). A renderer is never run on the
+by an absolute path, each with the version that stands for its code. One
+exporter is built: `lead-sheet-ireal` version 1 (`documents/ireal/export.py`,
+ADR 0116), which writes one untimed lead sheet as an iReal Pro link, format
+`ireal`. No renderer is built; without one configured, practice renders and
+exports are refused (`renderer_unknown`, `exporter_unknown`). A renderer is never run on the
 seedbox, and never separates stems: it mixes stems the bank already holds.
 
 ## Routes

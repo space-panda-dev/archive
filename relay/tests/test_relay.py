@@ -10,6 +10,7 @@ so, unless ARCHIVE_REQUIRE_INTEGRATION is set, when they fail.
 
 from __future__ import annotations
 
+import base64
 import http.client
 import io
 import gzip
@@ -27,6 +28,7 @@ import urllib.error
 import urllib.request
 import uuid
 from contextlib import redirect_stderr
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
@@ -38,6 +40,7 @@ sys.path.insert(0, str(ROOT / "relay"))
 
 import relay  # noqa: E402
 import world  # noqa: E402
+from world import documents  # noqa: E402
 
 BOOTSTRAP_EXPORT = ROOT / "world/tests/fixtures/bootstrap-export.json"
 # One archive at two snapshots, captured from Door, for reads across a refresh.
@@ -759,6 +762,216 @@ class DoorChecks(Fixture):
             status, _, answer = harness.call("POST", "/door/admit", entity_proposal(self.archive_id, "stale", spec=self.spec))
         self.assertEqual((status, answer["result"]["door"]["status"]), (200, "committed"))
         self.assertEqual(answer["result"]["world"], {"status": "stale", "detail": "ProjectionError: store is broken"})
+
+
+def writable(path: Path) -> None:
+    """Make a tree removable: git-annex leaves its object directories read-only."""
+    for directory, _, _ in os.walk(path):
+        os.chmod(directory, 0o700)
+
+
+# The fixture's lyric document with its second line edited; every line, word
+# and character offset the fixture's lyric claims name is still there.
+EDITED_LYRICS = "Fixture line one\nFixture line two, edited\n".encode()
+SAVED_AT = "2026-10-20T12:00:00Z"
+LYRIC_CLAIMS = {("archive.claim/timed_lyrics", "1"), ("archive.claim/underlay", "1")}
+STALE_LYRIC_LINKS = {"view": "archive.view/stale_lyric_links", "version": "1", "subject": {}}
+
+
+@needs_door
+class CoherentSaveChecks(Fixture):
+    """One save is one admission (ADR 0113, "One coherent save"). On the
+    published fixture archive, built through the real Door, the operator
+    edits a line of the words and a note and saves everything that changed
+    at once: the staged document and its source claim, a notes correction,
+    the lyric claims re-asserted against both, a melody, an underlay, and
+    the lead sheet's next revision, each pinned by the revision identifier
+    the batch gives it. A save made from a stale read lands nothing, and an
+    identical retry writes nothing."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.addCleanup(writable, self.tmp)
+        for variable, program in (("ARCHIVE_GIT_EXECUTABLE", "git"), ("ARCHIVE_GIT_ANNEX_EXECUTABLE", "git-annex")):
+            os.environ.setdefault(variable, os.path.realpath(shutil.which(program)))
+        os.environ.setdefault("archive_datadir", str(ROOT))
+        self.root = self.tmp / "archive"
+        built = subprocess.run([sys.executable, str(ROOT / "fixture/build.py"), str(self.root),
+                                "--door", DOOR, "--archive", ARCHIVE], capture_output=True, text=True)
+        self.assertEqual(built.returncode, 0, built.stderr)
+        manifest = json.loads(built.stdout)
+        self.archive_id, self.operator, self.objects = manifest["archive_id"], manifest["operator_id"], manifest["objects"]
+        self.spec = json.loads((self.root / "archive.json").read_text())["spec"]
+        self.installed = {}
+        for path in (self.root / "contracts").glob("sha256-*.json"):
+            bundle = json.loads(path.read_bytes())
+            self.installed[(bundle["id"], bundle["version"])] = "sha256:" + path.stem.removeprefix("sha256-")
+        self.socket = private(self.tmp / "door") / "door.sock"
+        door = subprocess.Popen([DOOR, "serve", "--socket", str(self.socket)], cwd=self.root, stderr=subprocess.DEVNULL)
+        self.addCleanup(door.wait, 30)
+        self.addCleanup(door.terminate)
+        for _ in range(200):
+            if self.socket.exists():
+                break
+            time.sleep(0.05)
+        self.assertTrue(self.socket.exists(), "door serve did not start")
+        self.store = self.tmp / "world-store"
+        world.refresh_served(self.root, self.store, archive_command=ARCHIVE)
+        self.relay = self.harness(archive_root=self.root, door_socket=self.socket, world_store=self.store,
+                                  archive_command=ARCHIVE, writes="commit", role="scratch",
+                                  callers={LOGIN: self.operator})
+
+    def head(self) -> str:
+        return subprocess.run(["git", "-C", str(self.root), "rev-parse", "HEAD"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+
+    def records(self) -> list[dict]:
+        """Every record revision of World's selected generation, as views read them."""
+        return list(relay.access.load(self.store, world.PROJECTION_VERSION, self.operator, None,
+                                      date.today()).by_revision.values())
+
+    def stale(self) -> list[dict]:
+        status, _, answer = self.relay.call("POST", "/world/view", STALE_LYRIC_LINKS)
+        self.assertEqual(status, 200, answer)
+        return answer["result"]["answer"]["stale"]
+
+    def draft(self, object_id: str, shape: str, payload: dict, refs: list[dict],
+              contract: tuple[str, str] | None = None, supersedes: str | None = None) -> dict:
+        draft = {"spec": self.spec, "object_id": object_id, "shape": shape, "by": "pkg:generic/archive-relay-test@0",
+                 "agent": self.operator, "payload": payload, "refs": refs,
+                 "supersedes": [] if supersedes is None else
+                 [{"role": "supersedes", "id": object_id, "revision_id": supersedes}]}
+        if contract is not None:
+            draft["contracts"] = [{"id": contract[0], "version": contract[1], "digest": self.installed[contract]}]
+        return draft
+
+    def save(self, row: dict) -> tuple[dict, dict[str, str], dict[str, str]]:
+        """The editor's save, in ADR 0113's dependency order, from the heads
+        World holds now: the proposal, the new revision of the lead sheet
+        and the words, and each lyric claim revision it re-asserts with the
+        revision that re-asserts it."""
+        heads = {r["object_id"]: r for r in self.records() if r["head"]}
+        fixture = {key: heads[entry["object_id"]] for key, entry in self.objects.items() if entry["object_id"] in heads}
+        drafts, identities, expected = [], [], []
+        moved: dict[str, dict[str, str]] = {}  # a pinned revision, and the one the save pins instead
+
+        def pin(draft: dict) -> dict[str, str]:
+            return {"id": draft["object_id"], "revision_id": relay.access.revision_of(draft)}
+
+        def new(name: str, namespace: str, shape: str, payload: dict, refs: list[dict],
+                contract: tuple[str, str] | None = None) -> dict[str, str]:
+            object_id = allocated(self.archive_id, namespace, "relay-save-" + name)
+            drafts.append(self.draft(object_id, shape, payload, refs, contract))
+            identities.append({"object_id": object_id, "namespace": namespace, "name": "relay-save-" + name})
+            expected.append({"object_id": object_id, "revision_id": None})
+            return pin(drafts[-1])
+
+        def ref(role: str, target: dict) -> dict:
+            return {"role": role, "id": target.get("id", target.get("object_id")), "revision_id": target["revision_id"]}
+
+        def revise(old: dict, payload: dict | None = None) -> dict[str, str]:
+            """The next revision of one of the operator's claims, its pins
+            moved to what this save makes (a payload's carried_by too)."""
+            text = json.dumps(old["payload"] if payload is None else payload)
+            for before, after in moved.items():
+                text = text.replace(before, after["revision_id"])
+            refs = [ref(r["role"], moved.get(r["revision_id"], r)) for r in old["refs"]]
+            drafts.append(self.draft(old["object_id"], "claim", json.loads(text), refs, tuple(old["contract"]),
+                                     supersedes=old["revision_id"]))
+            expected.append({"object_id": old["object_id"], "revision_id": old["revision_id"]})
+            return pin(drafts[-1])
+
+        work, old_lyrics, sung = fixture["work-a"], fixture["lyrics"], fixture["notes-sung"]
+        # 1. The edited words, staged, and what they are.
+        document = new("lyrics", "archive.core/artifact", "artifact",
+                       {"content": {"digest": row["digest"], "size": row["size"]}}, [])
+        new("lyrics-source", "archive.claim/document_source", "claim",
+            {"media_type": "text/plain", "kinds": ["lyrics"], "filename": "lyrics.txt", "retrieved_at": SAVED_AT},
+            [ref("document", document), ref("work", work), ref("derived_from", old_lyrics)],
+            ("archive.claim/document_source", "1"))
+        moved[old_lyrics["revision_id"]] = document
+        # 2. The music: a correction of the sung notes (a pitch, its onsets
+        # kept), and the tune measured again, on the open form's bars.
+        notes = dict(sung["payload"], notes=[dict(note) for note in sung["payload"]["notes"]])
+        notes["notes"][1]["pitch"] = 60
+        corrected = new("notes", "archive.claim/notes", "claim", notes,
+                        [ref(r["role"], r) for r in sung["refs"]] + [ref("corrects", sung)], ("archive.claim/notes", "1"))
+        moved[sung["revision_id"]] = corrected
+        measured = fixture["melody-measured"]
+        tune = dict(measured["payload"], notes=[dict(note) for note in measured["payload"]["notes"]])
+        tune["notes"][0]["pitch"] = 65
+        melody = new("melody", "archive.claim/melody", "claim", tune, [ref(r["role"], r) for r in measured["refs"]],
+                     ("archive.claim/melody", "2"))
+        # 3. Every lyric link to the old words or notes, re-asserted.
+        reasserted = {}
+        for old in sorted(heads.values(), key=lambda r: r["revision_id"]):
+            if tuple(old.get("contract") or ()) in LYRIC_CLAIMS and any(r["revision_id"] in moved for r in old["refs"]):
+                reasserted[old["revision_id"]] = revise(old)["revision_id"]
+        underlay = new("underlay", "archive.claim/underlay", "claim", {
+            "label": "Verse 1", "lines": [{"line": 1, "words": [{"word": 1, "items": [0]}, {"word": 2, "items": [1, 2]}]},
+                                          {"line": 2, "words": [{"word": 1, "items": [3]}]}]},
+            [ref("melody", melody), ref("document", document)], ("archive.claim/underlay", "1"))
+        # 4. The lead sheet's next revision, showing the new tune and words.
+        sheet = fixture["lead-sheet-v2"]
+        moved.update({fixture["melody-measured"]["revision_id"]: melody, fixture["underlay-verse"]["revision_id"]: underlay})
+        saved = revise(sheet, dict(sheet["payload"], label="Fixture chart, words edited"))
+        paths = [f"records/{index:02d}.json" for index in range(len(drafts))]
+        proposal = {"manifest": {"protocol": "archive-admission/1", "records": paths, "identities": identities,
+                                 "contents": [row], "expected_heads": expected},
+                    "records": dict(zip(paths, drafts))}
+        return proposal, {"lead-sheet-v2": saved["revision_id"], "lyrics": document["revision_id"]}, reasserted
+
+    def test_a_save_lands_whole_once_and_never_from_a_stale_read(self) -> None:
+        records = self.records()
+        sheet = next(r for r in records if r["object_id"] == self.objects["lead-sheet-v2"]["object_id"] and r["head"])
+        # Anchor: the fixture leaves no lyric link behind.
+        self.assertEqual(self.stale(), [])
+        status, _, staged = self.relay.call("POST", "/documents/stage", {
+            "media_type": "text/plain", "content": base64.b64encode(EDITED_LYRICS).decode(), "filename": "lyrics.txt"})
+        self.assertEqual(status, 200, staged)
+        row = {key: staged["result"][key] for key in ("digest", "size", "annex_key", "staging_remote")}
+        proposal, saved, reasserted = self.save(row)
+        # The timed lyrics, the syllables on the sung notes, and both underlays.
+        self.assertEqual(len(reasserted), 4)
+        before = self.head()
+        status, _, answer = self.relay.call("POST", "/door/admit", proposal)
+        self.assertEqual(status, 200, answer)
+        self.assertEqual((answer["result"]["door"]["status"], answer["result"]["world"]["status"]),
+                         ("committed", "refreshed"))
+        after = self.head()
+        self.assertNotEqual(after, before)
+        self.assertEqual(len(answer["result"]["door"]["revision_ids"]), len(proposal["records"]))
+        records = self.records()
+        heads = {r["revision_id"] for r in records if r["head"]}
+        self.assertIn(saved["lead-sheet-v2"], heads)
+        self.assertFalse(heads & set(reasserted))
+        # World reads the save back with nothing left behind ...
+        self.assertEqual(self.stale(), [])
+        # ... and would have listed the words left on the old document had
+        # the save not re-asserted them.
+        left = documents.stale_lyric_links([r for r in records if r["revision_id"] not in reasserted.values()])
+        self.assertEqual({entry["claim"] for entry in left}, set(reasserted))
+        self.assertEqual({entry["superseded_by"] for entry in left if entry["role"] == "document"}, {saved["lyrics"]})
+
+        # A save made from the read before the first: the lead sheet it
+        # revises has moved on, so nothing of it lands.
+        draft = dict(proposal["records"][proposal["manifest"]["records"][-1]])
+        draft.update(payload=dict(sheet["payload"], label="Fixture chart, edited elsewhere"),
+                     refs=[{"role": r["role"], "id": r["id"], "revision_id": r["revision_id"]} for r in sheet["refs"]],
+                     supersedes=[{"role": "supersedes", "id": sheet["object_id"], "revision_id": sheet["revision_id"]}])
+        stale = {"manifest": {"protocol": "archive-admission/1", "records": ["records/00.json"], "identities": [],
+                              "contents": [], "expected_heads": [{"object_id": sheet["object_id"],
+                                                                  "revision_id": sheet["revision_id"]}]},
+                 "records": {"records/00.json": draft}}
+        status, _, refused = self.relay.call("POST", "/door/admit", stale)
+        self.assertEqual((status, refused["error"]["code"]), (409, "expected_head_stale"))
+        self.assertEqual(self.head(), after)
+        self.assertEqual(self.records(), records)
+        # An identical retry of the first save is Door's retry: nothing is written.
+        status, _, again = self.relay.call("POST", "/door/admit", proposal)
+        self.assertEqual(status, 200, again)
+        self.assertEqual((again["result"]["door"]["retry"], again["result"]["door"]["revision_ids"], self.head()),
+                         (True, answer["result"]["door"]["revision_ids"], after))
 
 
 

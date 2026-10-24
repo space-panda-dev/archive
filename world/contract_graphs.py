@@ -1,5 +1,5 @@
-"""The claim graphs of specification 0.0.10's contracts (projection 6,
-revision 6).
+"""The claim graphs of specification 0.0.10's and 0.0.11's contracts
+(projection 6, revisions 6 and 8).
 
 World re-checks each claim with the module that holds its contract's rules
 (the table `RECHECKS`), and only then projects it, inside the graph of the
@@ -19,7 +19,10 @@ leaves to the core context, a term that would collide with an earlier shape,
 an index that names a node, and a value that names a concept. The claim
 revision of a contract new in 0.0.10 is typed `arch:Claim` in its own graph;
 the versions 2 of chord stacks, chord sequence, meter layers, and judgment
-keep the shapes of their versions 1.
+keep the shapes of their versions 1. Specification 0.0.11's versions (ADR
+0113: melody, form, form spans, and lead sheet version 2, and the underlay)
+are typed `arch:Claim` as their versions 1 are; meter layers version 3
+keeps version 2's shape, as its payload does.
 
 The module needs pyoxigraph only to build terms; the rules it re-checks are
 the standard-library modules beside it.
@@ -50,7 +53,16 @@ CHORD_SEQUENCE_2 = ("archive.claim/chord_sequence", "2")
 METER_LAYERS_2 = ("archive.claim/meter_layers", "2")
 JUDGMENT_2 = ("archive.assessment/judgment", "2")
 # Versions 2 of contracts 0.0.9 projects keep their versions 1's shapes.
-SECOND_VERSIONS = frozenset({CHORD_STACKS_2, CHORD_SEQUENCE_2, METER_LAYERS_2, JUDGMENT_2})
+# Specification 0.0.11's versions (ADR 0113).
+FORM_2 = form.FORM_V2
+FORM_SPANS_2 = form.FORM_SPANS_V2
+METER_LAYERS_3 = form.METER_LAYERS_V3
+MELODY_2 = notes.MELODY_V2
+UNDERLAY = notes.UNDERLAY
+LEAD_SHEET_2 = lead_sheets.LEAD_SHEET_V2
+SECOND_VERSIONS = frozenset({CHORD_STACKS_2, CHORD_SEQUENCE_2, METER_LAYERS_2, JUDGMENT_2, METER_LAYERS_3})
+# Meter layers version 3 is version 2's payload: one set of projection rules.
+METER_LAYERS = (METER_LAYERS_2, METER_LAYERS_3)
 
 
 class ContractGraphError(ValueError):
@@ -139,6 +151,14 @@ def pinned_view(record: dict[str, Any]) -> dict[str, Any]:
     return {"payload": record.get("payload"), "refs": record.get("refs", []), "revision_id": record["revision_id"]}
 
 
+def contracted_view(record: dict[str, Any]) -> dict[str, Any]:
+    """A pinned claim with its contract (id, version), for the modules of
+    ADR 0113 that check which version a pin names (world/notes.py)."""
+    view = pinned_view(record)
+    contract = contract_of(record)
+    return {**view, "contract": contract} if contract else view
+
+
 def _one(record: dict[str, Any], role: str, lookups: Lookups) -> dict[str, Any] | None:
     found = _pinned(record, role, lookups)
     return pinned_view(found[0]) if len(found) == 1 else None
@@ -193,10 +213,10 @@ def _span_annotation(record: dict[str, Any], lookups: Lookups) -> None:
                                     _one(record, "sequence", lookups), about, _agent_kind(record, lookups))
 
 
-def _lead_sheet(record: dict[str, Any], lookups: Lookups) -> None:
+def _lead_sheet(record: dict[str, Any], lookups: Lookups, version: str = "1") -> None:
     agent = record.get("agent")
     kinds = {agent: lookups.entity_kind(agent)} if isinstance(agent, str) else {}
-    lead_sheets.check_lead_sheet(record_view(record), targets(record, lookups.records), kinds)
+    lead_sheets.check_lead_sheet(record_view(record), targets(record, lookups.records), kinds, version=version)
     for earlier in record.get("supersedes", []):
         previous = lookups.records.get(earlier.get("revision_id")) if isinstance(earlier, dict) else None
         if previous is not None:
@@ -209,6 +229,32 @@ def _melody_spans(record: dict[str, Any], lookups: Lookups) -> None:
                              pinned_notes)
 
 
+def _melody_v2(record: dict[str, Any], lookups: Lookups) -> None:
+    meter = _pinned(record, "meter", lookups)
+    notes.check_melody(record_view(record), contracted_view(meter[0]) if len(meter) == 1 else None, version="2")
+
+
+def _underlay(record: dict[str, Any], lookups: Lookups) -> None:
+    """ADR 0113's underlay, with the melody, form, and the melody's meter it
+    reads. The document's bytes are not in an export, so its locators are
+    not checked here: the editor's adapter checks them before it proposes
+    (ADR 0113), and neither the relay nor Door reads the content."""
+    melodies = _pinned(record, "melody", lookups)
+    melody = contracted_view(melodies[0]) if len(melodies) == 1 else None
+    forms = _pinned(record, "form", lookups)
+    meter = None
+    if melody is not None and forms:
+        meters = _pinned(melodies[0], "meter", lookups)
+        meter = contracted_view(meters[0]) if len(meters) == 1 else None
+    notes.check_underlay(record_view(record), melody, None, contracted_view(forms[0]) if len(forms) == 1 else None,
+                         meter)
+
+
+def _meter(check: Callable[..., Any]) -> Callable[[dict[str, Any], Lookups], Any]:
+    return lambda r, l: check(record_view(r), _one(r, "stream", l), untimed_claim=_one(r, "meter", l),
+                              form_claim=_one(r, "form", l), sequence_claim=_one(r, "sequence", l))
+
+
 def _with_targets(check: Callable[..., Any]) -> Callable[[dict[str, Any], Lookups], Any]:
     return lambda record, lookups: check(record_view(record), targets(record, lookups.records))
 
@@ -218,16 +264,14 @@ def _with_operator(check: Callable[..., Any], contract: tuple[str, str]) -> Call
                                          _operator(lookups, contract))
 
 
-# Every contract specification 0.0.10 adds, and how World re-checks it. The
+# Every contract specification 0.0.10 or 0.0.11 adds, and how World re-checks it. The
 # conformance tests enumerate the catalogs against this table, so a contract
 # a release adds cannot be projected unchecked.
 RECHECKS: dict[tuple[str, str], Callable[[dict[str, Any], Lookups], Any]] = {
     CHORD_STACKS_2: lambda r, l: harmony.check_chord_stacks_v2(
         record_view(r), _stream(r, l, CHORD_STACKS_2), _one(r, "sequence", l)),
     CHORD_SEQUENCE_2: lambda r, l: harmony.check_chord_sequence_v2(record_view(r)),
-    METER_LAYERS_2: lambda r, l: form.check_meter_layers_v2(
-        record_view(r), _one(r, "stream", l), untimed_claim=_one(r, "meter", l), form_claim=_one(r, "form", l),
-        sequence_claim=_one(r, "sequence", l)),
+    METER_LAYERS_2: _meter(form.check_meter_layers_v2),
     JUDGMENT_2: _judgment,
     ("archive.claim/form", "1"): lambda r, l: form.check_form(record_view(r)),
     ("archive.claim/form_spans", "1"): lambda r, l: form.check_form_spans(
@@ -259,6 +303,16 @@ RECHECKS: dict[tuple[str, str], Callable[[dict[str, Any], Lookups], Any]] = {
     circle.PUBLICATION_APPROVAL_2: _with_targets(circle.check_publication_approval_v2),
     circle.PUBLICATION_WITHDRAWAL_2: lambda r, l: circle.check_publication_withdrawal_v2(
         record_view(r), targets(r, l.records), l.records.values()),
+    # Specification 0.0.11 (ADR 0113).
+    MELODY_2: _melody_v2,
+    UNDERLAY: _underlay,
+    FORM_2: lambda r, l: form.check_form_v2(record_view(r)),
+    FORM_SPANS_2: lambda r, l: form.check_form_spans_v2(
+        record_view(r), _stream(r, l, FORM_SPANS_2), _one(r, "form", l)),
+    METER_LAYERS_3: _meter(form.check_meter_layers_v3),
+    LEAD_SHEET_2: lambda r, l: _lead_sheet(r, l, "2"),
+    # Specification 0.0.11 (ADR 0116, decision E).
+    exports.EXPORT_V2: lambda r, l: exports.check_export(record_view(r), targets(r, l.records), "2"),
 }
 
 
@@ -306,6 +360,9 @@ TERMS: dict[tuple[str, str], str] = {
     ("archive.claim/export", "software.*.name"): FOAF + "name",
     ("archive.claim/export", "exporter.id"): "http://purl.org/dc/terms/identifier",
     ("archive.claim/tracklist", "media.*.tracks"): ARCH + "listed_tracks",
+    # An underlay's `passes` object holds a `passes` list; one term cannot
+    # name both the node and its numbers.
+    ("archive.claim/underlay", "passes.passes"): ARCH + "sung_pass_numbers",
 }
 
 # Arrays whose order or repetition is the meaning, projected as one text.
@@ -484,18 +541,21 @@ INDEXES: dict[tuple[tuple[str, str], str], tuple[tuple[str | None, str], ...]] =
     (CHORD_STACKS_2, "spans.*.entry"): (("sequence", "entry"),),
     (CHORD_SEQUENCE_2, "repeats.*.first"): ((None, "entry"),),
     (CHORD_SEQUENCE_2, "repeats.*.last"): ((None, "entry"),),
-    (METER_LAYERS_2, "modulations.*.layer"): ((None, "layer"),),
-    (METER_LAYERS_2, "layers.*.bars.*.chords.*.entry"): (("sequence", "entry"),),
-    (METER_LAYERS_2, "layers.*.bars.*.section"): (("form", "section"),),
+    **{(meter, path): anchor for meter in METER_LAYERS for path, anchor in (
+        ("modulations.*.layer", ((None, "layer"),)),
+        ("layers.*.bars.*.chords.*.entry", (("sequence", "entry"),)),
+        ("layers.*.bars.*.section", (("form", "section"),)))},
     (JUDGMENT_2, "entries.first"): (("assessment_of", "entry"),),
     (JUDGMENT_2, "entries.last"): (("assessment_of", "entry"),),
     (("archive.claim/span_annotation", "1"), "entries.first"): (("sequence", "entry"),),
     (("archive.claim/span_annotation", "1"), "entries.last"): (("sequence", "entry"),),
     (("archive.claim/form_spans", "1"), "spans.*.section"): (("form", "section"),),
+    (FORM_SPANS_2, "spans.*.section"): (("form", "section"),),
+    (UNDERLAY, "passes.repeat"): (("form", "repeat"),),
     (("archive.claim/key_regions", "1"), "regions.*.region"): (("sequence", "region"),),
     (("archive.claim/key_sequence", "1"), "regions.*.first"): (("chord_sequence", "entry"), ("form", "section")),
     (("archive.claim/key_sequence", "1"), "regions.*.last"): (("chord_sequence", "entry"), ("form", "section")),
-    **{(("archive.claim/form", "1"), path): ((None, "section"),) for path in (
+    **{(version, path): ((None, "section"),) for version in (("archive.claim/form", "1"), FORM_2) for path in (
         "repeats.*.first", "repeats.*.last", "repeats.*.endings.*.first", "repeats.*.endings.*.last",
         "jumps.*.after", "jumps.*.to", "jumps.*.coda", "jumps.*.coda_from", "jumps.*.fine")},
 }
@@ -522,11 +582,11 @@ def _special(graph: _Graph, owner: NamedNode, path: str, key: str, value: Any, r
         if base is not None and isinstance(value, int) and not isinstance(value, bool):
             graph.add(owner, graph.term(path, key)[0], NamedNode(f"{base}:{item}={value}"))
             return True
-    if contract == METER_LAYERS_2 and path == "modulations.*.bar":
+    if contract in METER_LAYERS and path == "modulations.*.bar":
         layer = _item(owner, record, "modulations")["layer"]
         graph.add(owner, TERMS[(contract[0], path)], NamedNode(f"{claim.value}:layer={layer}:bar={value}"))
         return True
-    if contract == METER_LAYERS_2 and path == "layers.*.bars.*.placed" and node_of("meter") is not None:
+    if contract in METER_LAYERS and path == "layers.*.bars.*.placed" and node_of("meter") is not None:
         # The written bar this bar was placed from, in the untimed meter it pins.
         graph.add(owner, graph.term(path, key)[0],
                   NamedNode(f"{node_of('meter')}:layer={value['layer']}:bar={value['bar']}"))
@@ -535,10 +595,15 @@ def _special(graph: _Graph, owner: NamedNode, path: str, key: str, value: Any, r
         # The notes claim revision a syllable's notes are of, as a pin.
         graph.add(owner, graph.term(path, key)[0], graph.record_uri(value))
         return True
+    if contract == UNDERLAY and path.endswith(".items") and node_of("melody") is not None:
+        # The melody items a word or syllable is sung on, as their nodes.
+        for index in value:
+            graph.add(owner, graph.term(path, key)[0], NamedNode(f"{node_of('melody')}:note={index}"))
+        return True
     if contract == ("archive.claim/melody_spans", "1") and path == "spans.*.notes":
         graph.add(owner, graph.term(path, key)[0], graph.record_uri(value))
         return True
-    if contract == ("archive.claim/lead_sheet", "1") and path == "parts.*.document":
+    if contract in (("archive.claim/lead_sheet", "1"), LEAD_SHEET_2) and path == "parts.*.document":
         # The index of the document reference the part was read from.
         documents_pinned = [r for r in record.get("refs", []) if r.get("role") == "document"]
         graph.add(owner, graph.term(path, key)[0], graph.record_uri(documents_pinned[value]["revision_id"]))

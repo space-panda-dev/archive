@@ -1,13 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | The profile rules specification 0.0.10 adds (D-18), as Door parses them
--- when a bundle loads.
+-- when a bundle loads, and the names of those 0.0.11 adds (D-19).
 --
 -- Every rule here is closed and root-only, names distinct fields, and is
 -- refused when unknown or malformed. The evaluators parse a rule through the
 -- same functions, so a rule that loads is the rule that is enforced.
 module Archive.Door.RuleSyntax
   ( releaseRuleNames
+  , release011RuleNames
   , validateReleaseRules
   , ruleAt
     -- * Typed rules
@@ -52,6 +53,7 @@ module Archive.Door.RuleSyntax
 import Archive.Door.RuleJson
 import Archive.Door.SpanRules (containedSpansRule)
 import Archive.Door.BeyondCircle (beyondCircleRule)
+import Archive.Door.PlacedItems (passListsRule, placedItemsRule)
 import Data.Aeson (Value (..))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -99,12 +101,24 @@ parsers =
   where
     (<$$) unit parse value = unit <$ parse value
 
--- | Parse every 0.0.10 rule at a schema's root. @nested@ checks the schema
--- each of @x-archive-when-pinned@'s maps makes, the root without the rule and
--- with the map's rules (the caller owns the earlier rules' parsers).
+-- | Every rule name specification 0.0.11 adds (D-19). Its parsers live with
+-- their evaluators in "Archive.Door.PlacedItems".
+release011RuleNames :: [Text]
+release011RuleNames = map fst parsers011
+
+parsers011 :: [(Text, Value -> Either Text ())]
+parsers011 =
+  [ ("x-archive-placed-items", \value -> () <$ placedItemsRule value)
+  , ("x-archive-pass-lists", \value -> () <$ passListsRule value)
+  ]
+
+-- | Parse every 0.0.10 and 0.0.11 rule at a schema's root. @nested@ checks
+-- the schema each of @x-archive-when-pinned@'s maps makes, the root without
+-- the rule and with the map's rules (the caller owns the earlier rules'
+-- parsers).
 validateReleaseRules :: (KeyMap.KeyMap Value -> Either Text ()) -> KeyMap.KeyMap Value -> Either Text ()
 validateReleaseRules nested schema = do
-  mapM_ (\(name, parse) -> maybe (Right ()) parse (KeyMap.lookup (Key.fromText name) schema)) parsers
+  mapM_ (\(name, parse) -> maybe (Right ()) parse (KeyMap.lookup (Key.fromText name) schema)) (parsers <> parsers011)
   case KeyMap.lookup "x-archive-when-pinned" schema of
     Nothing -> Right ()
     Just value -> do

@@ -11,6 +11,12 @@ any specification release:
 - `archive.claim/melody_spans`: which part's notes carry a recording's tune,
   span by span, citing those notes claims.
 
+ADR 0113 adds two more for the editing of lead sheets: `archive.claim/melody`
+version 2, whose pitch items may be unmeasured (a sketch), and
+`archive.claim/underlay` version 1, a lyric document's words under a
+Work-level melody's items, by index. The underlay reuses ADR 0085's syllable
+and locator checks from `world/documents.py`.
+
 This module holds their rules as World will re-check them when it projects
 such a claim, and the views (the tune's notes, its hand-offs, a Work-level
 melody laid on its bars). It uses only the standard library, so an importer
@@ -31,13 +37,18 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Any, Collection
 
-from world import harmony
+from world import documents, harmony
 
 NOTES = ("archive.claim/notes", "1")
 MELODY = ("archive.claim/melody", "1")
+MELODY_V2 = ("archive.claim/melody", "2")               # ADR 0113: a pitch item may be unmeasured
+UNDERLAY = ("archive.claim/underlay", "1")              # ADR 0113: words under a Work's tune
 MELODY_SPANS = ("archive.claim/melody_spans", "1")
 TUNING = ("archive.claim/tuning", "1")                # ADR 0080
 UNTIMED_METER = ("archive.claim/meter_layers", "2")   # ADR 0083, untimed form
+UNTIMED_METER_V3 = ("archive.claim/meter_layers", "3")  # ADR 0113, may pin form version 2
+FORM = ("archive.claim/form", "1")                      # ADR 0083, read by an underlay's passes
+FORM_V2 = ("archive.claim/form", "2")                   # ADR 0113, open repeats
 
 OBJECT_ID = re.compile(r"urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 REVISION_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
@@ -148,10 +159,19 @@ def _refs_by_role(refs: Any, counts: dict[str, tuple[int, int]], where: str) -> 
 
 
 def _given(claim: Any, ref: dict[str, Any], where: str) -> dict[str, Any]:
-    record = _closed(claim, {"payload", "refs"}, {"revision_id", "agent", "namespace", "version"}, where)
+    record = _closed(claim, {"payload", "refs"}, {"revision_id", "agent", "namespace", "version", "contract"}, where)
     if record.get("revision_id", ref["revision_id"]) != ref["revision_id"]:
         raise NotesError(f"{where} was given a claim other than the one it pins")
     return record
+
+
+def _given_contract(record: dict[str, Any], contracts: Collection[tuple[str, str]], where: str) -> None:
+    """A given pinned claim that says its contract (id, version), as Door's
+    targets do, must be one the role accepts; one that does not say is read
+    as given, Door having checked the pin."""
+    if "contract" in record and tuple(record["contract"]) not in contracts:
+        names = " or ".join(f"{c} version {v}" for c, v in sorted(contracts))
+        raise NotesError(f"{where} must be a Claim of {names}")
 
 
 def _about_source(claim: dict[str, Any], source: dict[str, Any], role: str, where: str) -> None:
@@ -356,14 +376,40 @@ MELODY_ROLES = {
     "corrects": (0, 8),      # melody v1 claims this one corrects
     "derived_from": (0, 8),  # ADR 0079: such as the recording-level melody it was transcribed from
 }
+# Version 2 (ADR 0113) has the same roles; what they may pin widens: `meter`
+# an untimed meter_layers v2 or v3, `corrects` and a melody in
+# `derived_from` a melody v1 or v2.
+MELODY_VERSIONS = ("1", "2")
+MELODY_V2_PINS = {
+    "meter": {UNTIMED_METER, UNTIMED_METER_V3},
+    "corrects": {MELODY, MELODY_V2},
+}
 
 
-def check_melody(claim: dict[str, Any], meter_claim: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-    """Check an `archive.claim/melody` version 1 claim: a Work's tune as one
-    line of notes and rests in written order, each a written length, with no
+def is_sketch(payload: Any) -> bool:
+    """Whether a melody payload is a sketch (ADR 0113): it holds a pitch item
+    with no `duration`, whose length is not known. A version 1 payload never
+    is one, since every item there has a duration."""
+    items = payload.get("notes") if isinstance(payload, dict) else None
+    return isinstance(items, list) and any(isinstance(item, dict) and "pitch" in item and "duration" not in item
+                                           for item in items)
+
+
+def check_melody(claim: dict[str, Any], meter_claim: dict[str, Any] | None = None, *,
+                 version: str = "1") -> list[dict[str, Any]]:
+    """Check an `archive.claim/melody` claim: a Work's tune as one line of
+    notes and rests in written order, each a written length, with no
     samples. Optionally given the untimed meter claim its `meter` reference
     pins, checks that the tune starts on one of its bars and fits in the
-    layer's written bars. Returns the items; raises NotesError."""
+    layer's written bars. Returns the items; raises NotesError.
+
+    `version` "2" (ADR 0113) lets a pitch item leave out `duration`: it is
+    unmeasured, and a melody with one is a sketch, which pins no `meter`,
+    has no `start`, and is never fitted to bars. A rest always has a
+    duration. Version 1's rules are otherwise version 2's, unchanged."""
+    if version not in MELODY_VERSIONS:
+        raise NotesError(f"melody version must be one of {MELODY_VERSIONS}")
+    sketchable = version == "2"
     where = "melody"
     record = _closed(claim, {"payload", "refs"}, {"revision_id", "agent"}, where)
     by_role = _refs_by_role(record["refs"], MELODY_ROLES, where)
@@ -378,7 +424,7 @@ def check_melody(claim: dict[str, Any], meter_claim: dict[str, Any] | None = Non
     _check_document_url(payload, has_document, where)
     items = _list(payload["notes"], f"{where} notes", 1, MAX_MELODY_NOTES)
     total = Fraction(0)
-    pitched = False
+    pitched = unmeasured = False
     for index, item in enumerate(items):
         at = f"{where} item {index}"
         if not isinstance(item, dict) or ("pitch" in item) == ("rest" in item):
@@ -388,17 +434,29 @@ def check_melody(claim: dict[str, Any], meter_claim: dict[str, Any] | None = Non
             if item["rest"] is not True:
                 raise NotesError(f"{at} rest must be true")
         else:
-            _closed(item, {"pitch", "duration"}, {"locator", "articulation"}, at)
+            if sketchable:
+                _closed(item, {"pitch"}, {"duration", "locator", "articulation"}, at)
+            else:
+                _closed(item, {"pitch", "duration"}, {"locator", "articulation"}, at)
             _int(item["pitch"], f"{at} pitch", 0, 127)
             _check_articulation(item, machine_only, at)
             pitched = True
-        total += note_length(item["duration"], f"{at} duration")
+        if "duration" in item:
+            total += note_length(item["duration"], f"{at} duration")
+        else:
+            unmeasured = True
         if "locator" in item:
             if not has_document:
                 raise NotesError(f"{at} has a locator but the claim pins no document")
             _int(_closed(item["locator"], {"bar"}, set(), f"{at} locator")["bar"], f"{at} locator bar", 1)
     if not pitched:
         raise NotesError(f"{where} holds only rests")
+    if unmeasured:
+        # A sketch is pitches in order, not yet laid in bars (ADR 0113).
+        if by_role["meter"]:
+            raise NotesError(f"{where} is a sketch (an item has no duration), so it pins no meter")
+        if "start" in payload:
+            raise NotesError(f"{where} is a sketch (an item has no duration), so it has no start")
     if "start" in payload:
         if not by_role["meter"]:
             raise NotesError(f"{where} names a start bar but pins no meter")
@@ -408,6 +466,9 @@ def check_melody(claim: dict[str, Any], meter_claim: dict[str, Any] | None = Non
         if "at" in start:
             note_length(start["at"], f"{where} start at", zero=True)
     if meter_claim is not None and by_role["meter"]:
+        if sketchable:
+            _given_contract(_given(meter_claim, by_role["meter"][0], f"{where} meter claim"),
+                            MELODY_V2_PINS["meter"], f"{where} meter claim")
         lengths = _written_bars(meter_claim, by_role["meter"][0], payload.get("start", {}), where)
         if total > sum(lengths, Fraction(0)):
             raise NotesError(f"{where} runs past the last written bar of its meter layer")
@@ -575,6 +636,237 @@ def tune_notes(payload: dict[str, Any], notes_claims: dict[str, dict[str, Any]],
             chosen = [by_onset[onset] for onset in sorted(by_onset)]
         tune += [{**note, "from": span["notes"]} for note in chosen]
     return tune
+
+
+# ---------------------------------------------------------------------------
+# Underlay: words under a Work's tune (ADR 0113), untimed, by melody item
+
+
+MAX_UNDERLAY_ITEMS = 64      # melody items one word or syllable is sung on
+MAX_PASSES = 999
+LAST = "last"                # the final pass of an open repeat, whatever its number
+UNDERLAY_ROLES = {
+    "melody": (1, 1),        # melody v1 or v2 (a sketch allowed): the items the words go under
+    "document": (1, 1),      # the plain-text lyric document whose lines and words are placed
+    "form": (0, 1),          # form v1 or v2, exactly with `passes`
+    "run": (0, 1),           # derivation_run v1, when a machine proposed it
+    "corrects": (0, 8),      # underlay v1 claims this one corrects
+    "derived_from": (0, 8),  # an underlay, or timed lyrics whose syllables were carried over
+}
+UNDERLAY_PINS = {"melody": {MELODY, MELODY_V2}, "form": {FORM, FORM_V2}, "corrects": {UNDERLAY}}
+
+
+def _from_documents(check: Any, *args: Any) -> Any:
+    """One of ADR 0085's checks in `world/documents.py`, raising NotesError."""
+    try:
+        return check(*args)
+    except documents.DocumentError as error:
+        raise NotesError(str(error)) from None
+
+
+def _check_items(value: Any, last: int, where: str) -> int:
+    """A word's or syllable's melody items: 1 to 64 strictly increasing
+    indices, the first after the last item of the one placed before it.
+    Returns its last item."""
+    for number, index in enumerate(_list(value, f"{where} items", 1, MAX_UNDERLAY_ITEMS)):
+        _int(index, f"{where} item {number}", 0)
+        if index <= last:
+            raise NotesError(f"{where} item {number} must come after the item before it: "
+                             "words never share or cross notes")
+        last = index
+    return last
+
+
+def _check_underlay_lines(value: Any, where: str) -> list[tuple[str, list[int]]]:
+    """An underlay's lines, words, and syllables, placed as ADR 0085 places a
+    lyric's (line and word numbers from 1, ascending; a syllable's
+    characters by its one check), each word or syllable on melody items in
+    document order. Returns (where, items) for each placed word or syllable."""
+    placed: list[tuple[str, list[int]]] = []
+    last_line, last_item = 0, -1
+    for index, line in enumerate(_list(value, f"{where} lines", 1, documents.MAX_LINES)):
+        at = f"{where} line {index}"
+        _closed(line, {"line", "words"}, set(), at)
+        if _int(line["line"], f"{at} line", 1) <= last_line:
+            raise NotesError(f"{at} must name a later line of the document than the line before it")
+        last_line, last_word = line["line"], 0
+        for number, word in enumerate(_list(line["words"], f"{at} words", 1, documents.MAX_WORDS)):
+            here = f"{at} word {number}"
+            if not isinstance(word, dict) or ("items" in word) == ("syllables" in word):
+                raise NotesError(f"{here} must hold exactly one of items or syllables")
+            _closed(word, {"word", "items" if "items" in word else "syllables"}, set(), here)
+            if _int(word["word"], f"{here} word", 1) <= last_word:
+                raise NotesError(f"{here} must name a later word of the line than the word before it")
+            last_word = word["word"]
+            if "items" in word:
+                last_item = _check_items(word["items"], last_item, here)
+                placed.append((here, word["items"]))
+                continue
+            number_before, char_before = 0, 0
+            syllables = _list(word["syllables"], f"{here} syllables", 1, documents.MAX_SYLLABLES)
+            for count, syllable in enumerate(syllables):
+                sat = f"{here} syllable {count}"
+                _closed(syllable, {"syllable", "start_char", "end_char", "items"}, set(), sat)
+                number_before, char_before = _from_documents(
+                    documents.check_syllable_place, syllable, number_before, char_before, sat)
+                last_item = _check_items(syllable["items"], last_item, sat)
+                placed.append((sat, syllable["items"]))
+    return placed
+
+
+def _check_passes(value: Any, where: str) -> dict[str, Any]:
+    """`passes`: a repeat index and 1 to 999 distinct ascending pass numbers
+    from 1, which may end with "last" (or be ["last"] alone)."""
+    passes = _closed(value, {"repeat", "passes"}, set(), f"{where} passes")
+    _int(passes["repeat"], f"{where} passes repeat", 0)
+    numbers = _list(passes["passes"], f"{where} passes passes", 1, MAX_PASSES)
+    previous = 0
+    for index, number in enumerate(numbers):
+        if number == LAST and index == len(numbers) - 1:
+            continue
+        if not isinstance(number, int) or isinstance(number, bool) or number <= previous:
+            raise NotesError(f"{where} passes must be distinct ascending pass numbers from 1, "
+                             f"which may end with {LAST!r}")
+        previous = number
+    return passes
+
+
+def _section_of(bars: list[Any], index: int, where: str) -> int:
+    bar = bars[index] if index < len(bars) else None
+    section = bar.get("section") if isinstance(bar, dict) else None
+    if not isinstance(section, int) or isinstance(section, bool):
+        raise NotesError(f"{where} lies in bar {index} of its meter, which names no form section")
+    return section
+
+
+def _span(repeat: Any, where: str) -> tuple[int, int]:
+    if not isinstance(repeat, dict):
+        raise NotesError(f"{where} must be an object")
+    first, last = repeat.get("first"), repeat.get("last")
+    if not all(isinstance(n, int) and not isinstance(n, bool) for n in (first, last)):
+        raise NotesError(f"{where} must give its first and last sections")
+    return first, last
+
+
+def _check_repeat_holds(placed: list[tuple[str, list[int]]], melody: dict[str, Any], meter: dict[str, Any],
+                        meter_ref: dict[str, Any], repeats: list[Any], chosen: int, where: str) -> None:
+    """ADR 0113's pass rule: the named repeat is the innermost repeat of the
+    form enclosing the section of every bar a named item sounds in, laying
+    the tune on its meter's bars from its start. Reads only what this needs
+    of the form and the meter; their own checks are the authority on the
+    rest."""
+    payload = melody["payload"]
+    for index, item in enumerate(payload["notes"]):
+        note_length(item.get("duration") if isinstance(item, dict) else None, f"{where} melody item {index} duration")
+    start = payload.get("start", {})
+    if not isinstance(start, dict):
+        raise NotesError(f"{where} melody start must be an object")
+    pieces = melody_in_bars(payload, _written_bars(meter, meter_ref, start, f"{where} melody"))
+    bars = meter["payload"]["layers"][start.get("layer", 0)]["bars"]
+    first_bar = start.get("bar", 0)
+    sounding: dict[int, set[int]] = {}
+    for piece in pieces:
+        sounding.setdefault(piece["item"], set()).add(piece["bar"] + first_bar)
+    sections = {_section_of(bars, bar, f"{at} item {item}")
+                for at, items in placed for item in items for bar in sorted(sounding[item])}
+    low, high = _span(repeats[chosen], f"{where} form repeat {chosen}")
+    if not all(low <= section <= high for section in sections):
+        raise NotesError(f"{where} names an item outside repeat {chosen} of its form")
+    for index, repeat in enumerate(repeats):
+        if index == chosen:
+            continue
+        first, last = _span(repeat, f"{where} form repeat {index}")
+        if low <= first and last <= high and (first, last) != (low, high) \
+                and all(first <= section <= last for section in sections):
+            raise NotesError(f"{where} names repeat {chosen}, but repeat {index} is the innermost "
+                             "enclosing every named item")
+
+
+def check_underlay(claim: dict[str, Any], melody_claim: dict[str, Any] | None = None,
+                   document_text: bytes | str | None = None, form_claim: dict[str, Any] | None = None,
+                   meter_claim: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Check an `archive.claim/underlay` version 1 claim (ADR 0113): one
+    lyric document's lines, words, and syllables placed under the items of
+    one Work-level melody, by index, optionally under named passes of one
+    repeat of a form. Returns the payload; raises NotesError.
+
+    Door checks only the shape; World checks the content, given what the
+    claim pins: with the melody claim, that every index is a pitch item of
+    it (and that a sketch's underlay names no passes); with the document's
+    bytes, that every line, word, and character is in it (ADR 0085's
+    locator rule, plain text); with the form claim, that the passes are
+    passes of the repeat; and with the melody's untimed meter as well, that
+    the meter pins the same form and the repeat is the innermost one
+    enclosing every named item."""
+    where = "underlay"
+    record = _closed(claim, {"payload", "refs"}, {"revision_id", "agent"}, where)
+    by_role = _refs_by_role(record["refs"], UNDERLAY_ROLES, where)
+    _check_derived_from(by_role, where)
+    payload = _closed(record["payload"], {"lines"}, {"label", "passes"}, f"{where} payload")
+    if "label" in payload:
+        _text(payload["label"], f"{where} label", MAX_TEXT)
+    if ("passes" in payload) != bool(by_role["form"]):
+        raise NotesError(f"{where} pins a form exactly when it names passes")
+    placed = _check_underlay_lines(payload["lines"], where)
+    passes = _check_passes(payload["passes"], where) if "passes" in payload else None
+
+    melody = None
+    if melody_claim is not None:
+        melody = _given(melody_claim, by_role["melody"][0], f"{where} melody claim")
+        _given_contract(melody, UNDERLAY_PINS["melody"], f"{where} melody claim")
+        items = melody["payload"].get("notes") if isinstance(melody["payload"], dict) else None
+        if not isinstance(items, list):
+            raise NotesError(f"{where} melody claim holds no notes")
+        for at, indices in placed:
+            for index in indices:
+                if index >= len(items) or not isinstance(items[index], dict) or "pitch" not in items[index]:
+                    raise NotesError(f"{at} names melody item {index}, which is no pitch item of its melody")
+    if document_text is not None:
+        data = document_text.encode("utf-8") if isinstance(document_text, str) else document_text
+        _from_documents(documents.check_placed_words, payload["lines"], data, "text", where)
+    if passes is None:
+        if form_claim is not None or meter_claim is not None:
+            raise NotesError(f"{where} names no passes, so it reads no form or meter")
+        return payload
+
+    meter_ref = None
+    if melody is not None:
+        if is_sketch(melody["payload"]):
+            raise NotesError(f"{where} names passes, but its melody is a sketch, which has no meter")
+        meters = [r for r in melody["refs"] if isinstance(r, dict) and r.get("role") == "meter"]
+        if len(meters) != 1:
+            raise NotesError(f"{where} names passes, but its melody pins no meter")
+        meter_ref = meters[0]
+    form_ref = by_role["form"][0]
+    form = None
+    if form_claim is not None:
+        form = _given(form_claim, form_ref, f"{where} form claim")
+        _given_contract(form, UNDERLAY_PINS["form"], f"{where} form claim")
+        repeats = form["payload"].get("repeats", []) if isinstance(form["payload"], dict) else None
+        if not isinstance(repeats, list) or passes["repeat"] >= len(repeats) \
+                or not isinstance(repeats[passes["repeat"]], dict):
+            raise NotesError(f"{where} passes name a repeat its form does not have")
+        repeat, numbers = repeats[passes["repeat"]], passes["passes"]
+        if "times" in repeat:
+            if numbers[-1] == LAST:
+                raise NotesError(f"{where} passes name {LAST!r} of a fixed repeat, whose passes are known")
+            if not isinstance(repeat["times"], int) or numbers[-1] > repeat["times"]:
+                raise NotesError(f"{where} passes name a pass past its repeat's times")
+    if meter_claim is not None:
+        if meter_ref is None:
+            raise NotesError(f"{where} reads its melody's meter, so it needs the melody claim")
+        meter = _given(meter_claim, meter_ref, f"{where} melody's meter claim")
+        _given_contract(meter, MELODY_V2_PINS["meter"], f"{where} melody's meter claim")
+        pinned = [(r.get("id"), r.get("revision_id")) for r in meter["refs"]
+                  if isinstance(r, dict) and r.get("role") == "form"]
+        if pinned != [(form_ref["id"], form_ref["revision_id"])]:
+            raise NotesError(f"{where} names passes, but its melody's meter does not pin the same form")
+        if form is not None and tuple(form.get("contract", ())) == FORM_V2 \
+                and tuple(meter.get("contract", ())) == UNTIMED_METER:
+            raise NotesError(f"{where} pins a form version 2, which only a meter layers version 3 pins")
+        if form is not None:
+            _check_repeat_holds(placed, melody, meter, meter_ref, repeats, passes["repeat"], where)
+    return payload
 
 
 # ---------------------------------------------------------------------------

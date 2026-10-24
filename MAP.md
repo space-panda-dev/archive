@@ -21,7 +21,9 @@ media to the operator's browser over the tailnet (ADR 0056, 0060).
 **enrich** (`enrich/`) runs machine tools (probe, detect, match, feature-bank
 extractors) and proposes their claims to Door under derivation runs (ADR
 0064, 0073, 0074). **capture** (`capture/`) imports a recorder card as
-sessions and runs the enrich chain (ADR 0070). **migration** (`migration/`)
+sessions and runs the enrich chain (ADR 0070). **documents** (`documents/`)
+holds importers of outside documents ([README](documents/README.md)); the iReal Pro importer, Work links,
+chord grammar and exporter (ADR 0116). **migration** (`migration/`)
 translates the V2 spike's records into Door proposals (ADR 0035, 0036,
 0047-0049). **shadow** (`shadow/`) compares and reviews shadow runs and makes
 scratch archives (ADR 0061, [runbook](docs/shadow-runbook.md)). **fixture**
@@ -42,11 +44,13 @@ module is `wf check enrich -- -p test_bank.py` and one test name is
 | check | 1 | 60s | `python3 scripts/check.py "$@"` |
 | docs | 1 | 60s | `wf vet --docs "$@"` |
 | build | 300 | 1800s | `cabal build -v0 lib:archive exe:door exe:archive "$@"` |
+| documents | 5 | 60s | `python3 -m unittest discover -s documents/ireal -p "test_*.py" "$@"` |
 | haskell | night | 3600s | `cabal test all "$@"` |
 | world | night | 3600s | `$PYTHON -m unittest discover -s world/tests "$@"` |
 | relay | 300 | 1800s | `$PYTHON -m unittest discover -s relay/tests "$@"` |
 | enrich-tests | 30 | 1800s | `$PYTHON -m unittest discover -s enrich/tests "$@"` |
 | shadow | 300 | 1800s | `$PYTHON -m unittest discover -s shadow -p "test_*.py" "$@"` |
+| documents-door | 30 | 1800s | `$PYTHON -m unittest discover -s documents/tests "$@"` |
 | migration | 30 | 1800s | `$PYTHON -m unittest discover -s migration -p "test_*.py" "$@"` |
 | fixture | 300 | 1800s | `$PYTHON -m unittest discover -s fixture -p "test_*.py" "$@"` |
 | enrich | night | 3600s | `$ENRICH_PYTHON -m unittest discover -s enrich -p "test_*.py" "$@"` |
@@ -104,28 +108,29 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 |---|---|
 | `door/src/Archive/Door/AdmissionDryRun.hs` | 1579 |
 | `door/src/Archive/Door/TransitionDryRun.hs` | 1119 |
-| `door/src/Archive/Door/Contracts.hs` | 2448 |
+| `door/src/Archive/Door/Contracts.hs` | 2449 |
 | `door/src/Archive/Door/RecordCommit.hs` | 3015 |
 | `door/src/Archive/Door/Bootstrap.hs` | 1627 |
 | `door/src/Archive/Read/Core.hs` | 617 |
 | `door/src/Archive/GitSnapshot.hs` | 660 |
 | `door/src/Archive/ProcessPinned.c` | 799 |
-| `door/test/Main.hs` | 7856 |
+| `door/test/Main.hs` | 7844 |
 | `archive/test/Main.hs` | 1001 |
 <!-- /wf:gen -->
 
 <!-- wf:gen anchors door/src/Archive/Door/Contracts.hs#validateSchema door/src/Archive/Door/TransitionDryRun.hs#transitionDispatchTable -->
-- `door/src/Archive/Door/Contracts.hs#validateSchema`: line 285
+- `door/src/Archive/Door/Contracts.hs#validateSchema`: line 286
 - `door/src/Archive/Door/TransitionDryRun.hs#transitionDispatchTable`: line 145
 <!-- /wf:gen -->
 
 ## Spec: what every archive must satisfy, copied into each
 
-- `spec/VERSION` (current `0.0.10`, unreleased); `spec/archive-spec.md`
-  is a byte copy of `spec/0.0.10/archive-spec.md`. Navigate by
+- `spec/VERSION` (current `0.0.11`); `spec/archive-spec.md`
+  is a byte copy of `spec/0.0.11/archive-spec.md`. Navigate by
   heading: `rg -n '^##' spec/archive-spec.md` (section 6, "Reading
-  commands", is most of it; D-18 holds 0.0.10's contracts).
-  Release notes: [docs/releases/0.0.10.md](docs/releases/0.0.10.md).
+  commands", is most of it; D-18 holds 0.0.10's contracts, D-19 0.0.11's).
+  Release notes: [docs/releases/0.0.11.md](docs/releases/0.0.11.md),
+  [docs/releases/0.0.10.md](docs/releases/0.0.10.md).
 - `spec/<version>/contracts.json` lists
   `{id, version, digest}`; each digest names `spec/contracts/sha256-<hex>.json`.
 - `spec/<version>/context.jsonld` is the JSON-LD context (ADR 0025).
@@ -133,7 +138,7 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 <!-- wf:gen lines spec/archive-spec.md -->
 | file | lines |
 |---|---|
-| `spec/archive-spec.md` | 2620 |
+| `spec/archive-spec.md` | 2758 |
 <!-- /wf:gen -->
 
 Rules: never delete a version or a bundle an archive may cite; supersede it
@@ -171,9 +176,9 @@ full rebuild (ADR 0055).
 | `world/world.py` | 2138 |
 | `world/harmony.py` | 1061 |
 | `world/contributions.py` | 810 |
-| `world/documents.py` | 1083 |
-| `world/notes.py` | 1365 |
-| `world/circle.py` | 765 |
+| `world/documents.py` | 1287 |
+| `world/notes.py` | 1657 |
+| `world/circle.py` | 770 |
 | `world/tests/test_world.py` | 1010 |
 <!-- /wf:gen -->
 
@@ -191,7 +196,8 @@ full rebuild (ADR 0055).
 `relay/relay.py` (`GET /media/{digest}/bank/{extractor}/{output}/{key}` serves a region entry's file by key): `DOOR_ROUTES`, `MEDIA_ROUTES`, `ROUTES`, `Relay`, `make_handler`, `main`.
 `relay/openapi.json` describes every route, answer, and refusal.
 `relay/metrics.py` (`GET /metrics`): `archive_counts` (from World's records), `BankCounter`, `media_counts`, `derived_bytes`, `Collector` (background counts, request durations), `exposition`.
-Tests: suite `relay`; `relay/tests/test_relay.py`, `test_media.py`, `test_metrics.py`. A local
+Tests: suite `relay`; `relay/tests/test_relay.py` (`CoherentSaveChecks`
+is ADR 0113's end-to-end save on the built fixture), `test_media.py`, `test_metrics.py`. A local
 probe's `GET /health` and `GET /metrics` need no login (ADR 0114, 0118). Every answer is validated against `openapi.json`, and Door refusals
 against `door/service.schema.json`.
 Rules: ADR 0054 (Door service), 0056, 0060 (interface and role), 0063 (read
@@ -201,8 +207,8 @@ speed), 0069 (media by digest), 0114 (local health), 0118 (metrics).
 | file | lines |
 |---|---|
 | `relay/relay.py` | 1292 |
-| `relay/openapi.json` | 4777 |
-| `relay/tests/test_relay.py` | 981 |
+| `relay/openapi.json` | 4779 |
+| `relay/tests/test_relay.py` | 1194 |
 <!-- /wf:gen -->
 
 <!-- wf:gen anchors relay/relay.py#DOOR_ROUTES relay/relay.py#MEDIA_ROUTES relay/relay.py#ROUTES relay/relay.py#Relay relay/relay.py#make_handler relay/relay.py#main -->
@@ -225,6 +231,7 @@ bank. Doc: [enrich/README.md](enrich/README.md) (one section per command,
 | `enrich/enrich.py` | `main`: `probe`, `detect`, `match`, `match-windows` (`run_probe`, `run_detect`, `run_match`, `run_match_windows`) |
 | `enrich/adapter.py` | `propose`: a tool result to a Door proposal (ADR 0064) |
 | `enrich/propose.py`, `proposers.py` | `enrich propose` (per-region runs where the whole read lacks a feature; `Context.region`, `shift_of`); `PROPOSERS` (registry at the end): bank features as claims, the bass line and vocal bleed filter (`bass_line`, `read_bass_line`, `drop_bleed`), lines built from `f0-pesto` (`build_line`), forced alignment declared and refused `not_yet` |
+| `enrich/align.py`, `align_command.py` | `enrich align` (ADR 0116 section 6): `chart_of` (World's played bars, `beats_of`), `machine_of`, `place` (DP over played bar and beat, twelve transpositions, `Refused` when unsure), `payloads` (timed meter, chord stacks, form spans); the command reads the archive and proposes one run; tests `enrich/tests/test_align.py` (suite `enrich-tests`) |
 | `enrich/note_builder.py` | `build`: one note per held pitch from a pitch track and its level (ADR 0086); settings `VOICE`, `BASS`; tests `enrich/test_note_builder.py` |
 | `enrich/probe.py`, `detector.py` | stream facts (0065), span suggestions (0066; presets and the talk gate, 0091) |
 | `enrich/match.py`, `cover.py`, `windows.py` | work matching (0067, 0071, 0072) |
@@ -244,11 +251,13 @@ bank. Doc: [enrich/README.md](enrich/README.md) (one section per command,
 Tests: suite `enrich`, `enrich/test_<topic>.py` by command or extractor
 family (`git ls-files 'enrich/test_*'`; `test_bank` is the longest, `test_extractors`
 runs all extractors together); suite `enrich-tests` is
-`enrich/tests/test_media.py`.
+`enrich/tests/` (`test_media.py`, `test_align.py`).
 The bench (`enrich/bench/`, [README](enrich/bench/README.md)) scores note
 transcribers against private sets outside the repository, and gates the
 backfill's CPU seconds per audio-second (`cost.py`, `python -m enrich.bench cost`), and checks a region's
-entries against the whole run's (`region.py`, `python -m enrich.bench region`); suites `bench` and
+entries against the whole run's (`region.py`, `python -m enrich.bench region`), and scores machine
+chords, key, meter, downbeats and sections against charts placed on recordings (`chords.py`, `python -m
+enrich.bench chords`, ADR 0116); suites `bench` and
 `bench-horn`. The `enrich` suite does not discover it (no `__init__.py`).
 Rules: enrichment never changes its inputs (INV-9); every claim carries its
 run and provenance (ADR 0064, [provenance](docs/provenance.md)); an
@@ -273,8 +282,8 @@ shipped extractors").
 <!-- wf:gen lines enrich/README.md enrich/enrich.py enrich/adapter.py enrich/proposers.py enrich/detector.py enrich/cover.py enrich/extract.py enrich/bank.py enrich/remote.py enrich/backfill.py enrich/backfill_queue.py enrich/extractors/stems/stems.py enrich/extractors/quality/quality.py enrich/extractors/tonal/tonal.py enrich/extractors/structure/structure.py enrich/extractors/rhythm/meter.py enrich/test_bank.py docs/feature-bank.md -->
 | file | lines |
 |---|---|
-| `enrich/README.md` | 1172 |
-| `enrich/enrich.py` | 722 |
+| `enrich/README.md` | 1225 |
+| `enrich/enrich.py` | 738 |
 | `enrich/adapter.py` | 609 |
 | `enrich/proposers.py` | 1059 |
 | `enrich/detector.py` | 674 |
@@ -294,7 +303,7 @@ shipped extractors").
 <!-- /wf:gen -->
 
 <!-- wf:gen anchors enrich/enrich.py#main enrich/bank.py#Catalog enrich/bank.py#Bank enrich/bank.py#check_equivalence enrich/test_bank.py#SHIPPED -->
-- `enrich/enrich.py#main`: line 635
+- `enrich/enrich.py#main`: line 643
 - `enrich/bank.py#Catalog`: line 452
 - `enrich/bank.py#Bank`: line 1106
 - `enrich/bank.py#check_equivalence`: line 909
@@ -316,6 +325,30 @@ Rules: ADR 0070; capture proposes, Door commits (INV-2).
 | `capture/capture.py` | 704 |
 | `capture/test_capture.py` | 855 |
 <!-- /wf:gen -->
+
+## documents (Python)
+
+Purpose: importers of outside documents (ADR 0116).
+`documents/documents.py`: the command line, `ireal import|candidates|link`.
+`documents/ireal/codec.py`: `decode_playlist`, `chart_link`, `encode_chart`,
+`encode_playlist`, `unscramble`; `chart.py`: `read_chart`, `UnsupportedChart`;
+`symbols.py`: `GRAMMAR_VERSION`, `QUALITIES`, `read_symbol`, `reading_of`,
+`symbol_of`, `read_key`; `claims.py`: `chart_claims` (chord sequence, form,
+written meter layer, key sequence), `PARAMETERS`; `batches.py`: Door proposal
+directories with revisions planned ahead, `combined` for a dry run's groups;
+`importer.py`: `run_import` (playlist and chart documents, `ireal-chart` runs,
+quiet reruns); `links.py`: `candidates` (a private candidates file and a
+decisions template), `run_link` (the operator's Work links, composer
+contributions, `lead_sheet`); `export.py`:
+exporter `lead-sheet-ireal` 1 (`render`, `playlist`, `page`, `main` as
+`relay/exporting.py` runs an exporter); `stand_in.py`: World's records of a chart
+as the importer reads it, for the exporter's round trip.
+Tests: suite `documents` (tier 5, local; `documents/ireal/test_*.py`,
+readings checked with World's `check_reading_v2` and `check_key_reading`);
+suite `documents-door` (tier 30, prelude; `documents/tests`: import, rerun,
+link and candidates through the real Door in a scratch archive);
+`test_export` reads, exports and reads again: equal in claims. Invented
+charts only: no real titles or charts.
 
 ## migration (Python)
 
@@ -352,7 +385,7 @@ catalog except the specification upgrade, so a new contract needs a plan step.
 <!-- wf:gen lines fixture/plan.json -->
 | file | lines |
 |---|---|
-| `fixture/plan.json` | 634 |
+| `fixture/plan.json` | 710 |
 <!-- /wf:gen -->
 
 ## Do not read

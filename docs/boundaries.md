@@ -83,6 +83,8 @@ enrich/enrich.py detect          suggest an audio stream's spans and propose the
 enrich/enrich.py match           score a selection against each Work's linked occurrences and propose matches
 enrich/enrich.py propose         read a recording's feature bank entries as claims and propose them to Door
 capture/capture.py import        admit a recorder card's new recordings as sessions, then enrich them
+documents/documents.py ireal     import an iReal Pro playlist's charts, list link candidates, propose the operator's links
+enrich/enrich.py align           place a chart's untimed claims on a recording's beats and chords
 ```
 
 `door serve --socket <path>` runs Door for one archive (the working
@@ -171,6 +173,12 @@ read the bank, never audio, and propose each one's claims with a derivation
 run ([ADR 0079](decisions/0079-machine-harmony-claims.md)); they check each
 claim with World's standard-library contract checks first, the one import
 `enrich/` makes from `world/`.
+
+[`documents/`](../documents/README.md) holds importers of outside documents,
+one module per format ([ADR 0116](decisions/0116-ireal-charts.md)); the first
+is iReal Pro. Like `capture/`, it admits content (each chart verbatim) and reads
+it into claims under a run, checking every draft with World's standard-library
+checks first; standard library only.
 
 [`capture/`](../capture/README.md) holds the native importer of new recordings
 ([ADR 0070](decisions/0070-capture-import.md)). `capture import` hashes a

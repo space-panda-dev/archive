@@ -74,6 +74,9 @@ tuning, notes, and optional chord names and diagrams per beat.
 
 ## A chart importer
 
+The iReal Pro importer is built to this design in `documents/ireal/`
+([ADR 0116](decisions/0116-ireal-charts.md)).
+
 A chart is a page of chord symbols, from a website or a saved file: symbols
 over lyrics with no bars, or a bar grid (as in an iReal Pro or ChordPro
 chart) with a stated meter.

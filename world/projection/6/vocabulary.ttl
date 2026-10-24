@@ -360,3 +360,24 @@ arch:start_char a rdf:Property ; rdfs:comment "timed_lyrics 1: where a syllable 
 arch:timed_syllables a rdf:Property ; rdfs:comment "timed_lyrics 1: one syllable node of a word (revision 7)." .
 arch:withdrawal_reason a rdf:Property ; rdfs:comment "publication_withdrawal 2: why the approval is withdrawn. Minted by World, since arch:reason names a judgment's (revision 7)." .
 arch:word_syllable a rdf:Property ; rdfs:comment "timed_lyrics 1: a syllable's number in its word (revision 7)." .
+
+# Revision 8: specification 0.0.11 (ADR 0113).
+arch:alignment_precision a rdf:Property ; rdfs:comment "form_spans 2: what is known about the span boundaries, rough, approximate, or exact, whoever placed them (revision 8)." .
+arch:carrying_items a rdf:Property ; rdfs:comment "underlay 1: one melody item a word or syllable is sung on, the item's node in the pinned melody; several are a melisma (revision 8)." .
+arch:carrying_melody a rdf:Property ; rdfs:comment "underlay 1: the Work-level melody revision whose items carry the words (revision 8)." .
+arch:chosen_underlay a rdf:Property ; rdfs:comment "lead_sheet 2: an underlay the lead sheet shows, the words under its melody (revision 8)." .
+arch:pass_form a rdf:Property ; rdfs:comment "underlay 1: the form revision whose repeat the named passes are of (revision 8)." .
+arch:played_on_return a rdf:Property ; rdfs:comment "form_spans 2: true when the span is played on a D.C. or D.S. return (revision 8)." .
+arch:played_passes a rdf:Property ; rdfs:comment "form_spans 2: the pass of one repeat around the span's section, outer first (revision 8)." .
+arch:repeat_index a rdf:Property ; rdfs:comment "underlay 1: the repeat of the pinned form whose passes the words go under, the repeat's node (revision 8)." .
+arch:repeat_instruction a rdf:Property ; rdfs:comment "form 2: the source's own words for how a repeat is played, verbatim; nothing parses them (revision 8)." .
+arch:sung_pass_numbers a rdf:Property ; rdfs:comment "underlay 1: one pass of the named repeat the words are sung under, a number or last. Minted by World, since arch:sung_passes names the node that holds them (revision 8)." .
+arch:sung_passes a rdf:Property ; rdfs:comment "underlay 1: the repeat and passes the words are sung under (revision 8)." .
+arch:underlay_lines a rdf:Property ; rdfs:comment "underlay 1: one placed line of the lyric document (revision 8)." .
+arch:underlay_syllables a rdf:Property ; rdfs:comment "underlay 1: one syllable of a placed word, by its characters in the word (revision 8)." .
+arch:underlay_words a rdf:Property ; rdfs:comment "underlay 1: one placed word of a line (revision 8)." .
+arch:bar_directions a rdf:Property ; rdfs:comment "meter_layers 3, a written bar: one direction written over it, its text and optional target tempo, an intention and never a reading of audio (ADR 0116, revision 8)." .
+arch:direction_text a rdf:Property ; rdfs:comment "meter_layers 3: a direction's text, verbatim, such as a style or Solos; never a lyric line (revision 8)." .
+arch:direction_tempo a rdf:Property ; rdfs:comment "meter_layers 3: a direction's target tempo node, ADR 0106's shape; tempo stays derived for every timed claim (revision 8)." .
+arch:target_bpm a rdf:Property ; rdfs:comment "A target tempo's beats a minute, xsd:decimal: an intention (ADR 0106), on a direction since meter_layers 3 (revision 8)." .
+arch:target_beat a rdf:Property ; rdfs:comment "A target tempo's beat, the note value counted; absent, whatever beat the band counts (ADR 0106, revision 8)." .
