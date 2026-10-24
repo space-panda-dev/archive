@@ -130,3 +130,4 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0113](0113-editing-lead-sheets.md) | Editing lead sheets: sketches, words under a Work's tune, open repeats, passages, and one save |
 | [0114](0114-relay-local-health.md) | A local probe reads the relay's liveness, commit and build without a tailnet identity |
 | [0115](0115-ci-skips-prose-only-pushes.md) | CI skips the build for a push that changes only prose no build reads, and cancels superseded runs |
+| [0117](0117-ci-builds-haskell-once-and-runs-suites-side-by-side.md) | CI builds the Haskell package once, caches it, and runs the suites side by side |
