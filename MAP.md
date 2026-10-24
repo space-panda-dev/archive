@@ -95,6 +95,9 @@ Build: [archive.cabal](archive.cabal): library `door/src`, executables
 Tests: suite `haskell`. `door/test/Main.hs` and `archive/test/Main.hs`
 are single sequential programs of named `assert "..."` checks with no
 filter; find one with `rg -n 'assert "<words>' door/test/Main.hs`.
+QuickCheck properties of the pure parts (pattern engine, JSON Pointer, RFC
+8785 canonicalisation, operation journal encoding, hex) sit one module per
+subject in `door/test/*Properties.hs`, under door-test's `properties` group.
 Rules: INV-1, INV-2, INV-5; record envelope ADR 0022; admission ADR 0023;
 transitions ADR 0028, 0030; power-loss durability is accepted but not yet met
 (ADR 0031, see README status); executables are configured, never taken from
@@ -120,7 +123,7 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 | `door/src/Archive/Read/Core.hs` | 611 |
 | `door/src/Archive/GitSnapshot.hs` | 661 |
 | `door/src/Archive/ProcessPinned.c` | 799 |
-| `door/test/Main.hs` | 7884 |
+| `door/test/Main.hs` | 7869 |
 | `archive/test/Main.hs` | 1015 |
 <!-- /wf:gen -->
 
