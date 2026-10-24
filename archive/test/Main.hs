@@ -13,7 +13,7 @@ import qualified Data.Set as Set
 import Archive.Door.RecordCommit (withArchiveWriteLock)
 import Archive.Door.MutationError (MutationError (..))
 import qualified Data.Text as Text
-import Data.List (sort)
+import Data.List (isPrefixOf, sort)
 import GHC.Stack (HasCallStack)
 import System.Directory
   ( createDirectory
@@ -32,11 +32,11 @@ import System.Directory
   , setOwnerWritable
   , setPermissions
   )
-import System.Environment (getEnvironment, setEnv)
+import System.Environment (getEnvironment, lookupEnv, setEnv)
 import System.Exit (ExitCode (ExitFailure, ExitSuccess))
 import System.FilePath ((</>))
-import System.FilePath (takeDirectory)
-import System.IO (hClose, openTempFile)
+import System.FilePath (takeDirectory, takeFileName)
+import System.IO (hClose, hPutStrLn, openTempFile, stderr)
 import System.Process
   ( CreateProcess (cwd, env)
   , proc
@@ -97,11 +97,26 @@ sharedArchiveChecks root = do
 initialized :: (FilePath -> IO ()) -> IO ()
 initialized check = withArchive $ \root -> initialize root >> check root
 
+-- | Runs the action in a fresh temporary directory and removes it, with the
+-- siblings the checks make beside it (named after it, such as
+-- @ROOT-proposal-NAME@ and @ROOT-repack-git@), however the action ends: a
+-- failing case no longer stops the run. With ARCHIVE_TEST_KEEP set to
+-- anything non-empty they are kept and the directory's path printed, so a
+-- failure can be inspected.
 withArchive :: (FilePath -> IO ()) -> IO ()
 withArchive action = do
   temporary <- getTemporaryDirectory
-  bracket (newDirectory temporary) removePathForcibly action
+  bracket (newDirectory temporary) (release temporary) action
   where
+    release temporary directory = do
+      keep <- maybe False (not . null) <$> lookupEnv "ARCHIVE_TEST_KEEP"
+      if keep
+        then hPutStrLn stderr ("ARCHIVE_TEST_KEEP: kept " <> directory)
+        else do
+          let siblingPrefix = takeFileName directory <> "-"
+          siblings <- filter (siblingPrefix `isPrefixOf`) <$> listDirectory temporary
+          mapM_ (removePathForcibly . (temporary </>)) siblings
+          removePathForcibly directory
     newDirectory directory = do
       (path, handle) <- openTempFile directory "archive-reader"
       hClose handle

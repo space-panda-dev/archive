@@ -104,7 +104,17 @@ import Data.Word (Word64)
 import GHC.Float (castWord64ToDouble)
 import GHC.Stack (HasCallStack)
 import Numeric (showHex)
-import Control.Exception (AsyncException (UserInterrupt), bracket, bracket_, throwIO, try)
+import Control.Exception
+  ( AsyncException (UserInterrupt)
+  , SomeAsyncException
+  , SomeException
+  , bracket
+  , bracket_
+  , evaluate
+  , fromException
+  , throwIO
+  , try
+  )
 import Control.Concurrent (forkIO, threadDelay, throwTo)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar, tryReadMVar)
 import System.Timeout (timeout)
@@ -132,6 +142,7 @@ import System.Directory
   , setPermissions
   )
 import System.Environment (getEnvironment, lookupEnv, setEnv, unsetEnv)
+import System.IO (hPutStrLn, stderr)
 import System.Process
   ( CreateProcess (cwd, env, std_err, std_out)
   , StdStream (CreatePipe, NoStream)
@@ -277,12 +288,14 @@ main = do
     , ("GIT_CONFIG_KEY_1", "gc.auto"), ("GIT_CONFIG_VALUE_1", "0")
     ]
   -- The release modules' rows are read before the tree is built, because
-  -- tasty fixes its tree before running it and each row is its own case.
-  specification010 <- specification010Checks
-  rules010 <- rules010Checks
-  beyondCircle010 <- beyondCircle010Checks
-  specification011 <- specification011Checks
-  rules011 <- rules011Checks
+  -- tasty fixes its tree before running it and each row is its own case;
+  -- 'rowGroup' turns an exception while reading them into that group's
+  -- failure instead of stopping the suite before any case runs.
+  specification010 <- rowGroup "specification010Checks" (releaseRows specification010Checks)
+  rules010 <- rowGroup "rules010Checks" (releaseRows rules010Checks)
+  beyondCircle010 <- rowGroup "beyondCircle010Checks" (releaseRows beyondCircle010Checks)
+  specification011 <- rowGroup "specification011Checks" (releaseRows specification011Checks)
+  rules011 <- rowGroup "rules011Checks" (releaseRows rules011Checks)
   -- One case per named check, in the old order. The cases share the process
   -- environment (the checks setEnv the Git executables) and fixed temporary
   -- paths, so they run one at a time: the suite is built without -threaded.
@@ -314,11 +327,11 @@ main = do
     , testCase "windowMatchAdmissionChecks" (withProposalTemporaryRoot windowMatchAdmissionChecks)
     , testCase "windowMatchProfileChecks" windowMatchProfileChecks
     , testCase "musicAndCreditProfileChecks" musicAndCreditProfileChecks
-    , checkGroup "specification010Checks" specification010
-    , checkGroup "rules010Checks" rules010
-    , checkGroup "beyondCircle010Checks" beyondCircle010
-    , checkGroup "specification011Checks" specification011
-    , checkGroup "rules011Checks" rules011
+    , specification010
+    , rules010
+    , beyondCircle010
+    , specification011
+    , rules011
     , testCase "previousReleaseUpgradeChecks" (withProposalTemporaryRoot previousReleaseUpgradeChecks)
     , testCase "specificationUpgradeRefusalChecks" (withProposalTemporaryRoot specificationUpgradeRefusalChecks)
     , testCase "earlierSpecificationChecks" (withProposalTemporaryRoot earlierSpecificationChecks)
@@ -379,6 +392,32 @@ main = do
 checkGroup :: TestName -> [(String, Bool, String)] -> TestTree
 checkGroup name rows = testGroup name
   [testCase label (assert label passed ExitSuccess detail "") | (label, passed, detail) <- rows]
+
+-- | A check's result row: its label, whether it passed, and the exit code,
+-- output and errors 'assert' reports when it did not.
+type Row = (String, Bool, ExitCode, String, String)
+
+-- | A release module's (label, passed, detail) rows as 'Row's.
+releaseRows :: IO [(String, Bool, String)] -> IO [Row]
+releaseRows = fmap (map (\(label, passed, detail) -> (label, passed, ExitSuccess, detail, "")))
+
+-- | One test case per row of rows computed before the tree is fixed. An
+-- exception while computing them, or while forcing their labels, becomes this
+-- group's one failing case, so the rest of the suite still runs; a row whose
+-- result throws fails its own case only.
+rowGroup :: TestName -> IO [Row] -> IO TestTree
+rowGroup name compute = do
+  computed <- try (compute >>= \rows -> evaluate (sum (map rowLabelLength rows)) >> pure rows)
+    :: IO (Either SomeException [Row])
+  case computed of
+    Left problem
+      | Just (_ :: SomeAsyncException) <- fromException problem -> throwIO problem
+      | otherwise -> pure (testGroup name
+          [testCase "rows" (assertFailure ("computing the rows failed: " <> show problem))])
+    Right rows -> pure (testGroup name
+      [testCase label (assert label passed code output errors) | (label, passed, code, output, errors) <- rows])
+  where
+    rowLabelLength (label, _, _, _, _) = length label
 
 -- | UUIDv5 allocation is total: a bad archive UUID is a Left, not a crash.
 uuidV5Checks :: IO ()
@@ -706,16 +745,39 @@ comparesDifferent label first second = do
   assert label (firstRevision /= secondRevision) ExitSuccess (firstRevision <> "\n" <> secondRevision) ""
 
 withTemporaryRoot :: (FilePath -> IO ()) -> IO ()
-withTemporaryRoot action = do
-  (code, output, errors) <- shell "mktemp -d /tmp/archive-phase4-tests.XXXXXX"
-  if code /= ExitSuccess then assertFailure ("mktemp: " <> errors) else do
-    let parent = trim output
+withTemporaryRoot action =
+  withScratchDirectory "/tmp/archive-phase4-tests.XXXXXX" $ \parent -> do
     shellChecked ("mkdir " <> quote (parent <> "/empty"))
     action (parent <> "/missing")
     action (parent <> "/empty")
     symlinkRootCheck parent
     subprocessFailureCheck parent
-    removePathForcibly parent
+
+-- | Runs the action in a fresh directory made by @mktemp -d TEMPLATE@ and
+-- removes it however the action ends, because a failing case no longer stops
+-- the run and would otherwise leave its directory behind. With
+-- ARCHIVE_TEST_KEEP set to anything non-empty the directory is kept and its
+-- path printed, so a failure can be inspected.
+withScratchDirectory :: String -> (FilePath -> IO a) -> IO a
+withScratchDirectory template action = do
+  (code, output, errors) <- shell ("mktemp -d " <> template)
+  when (code /= ExitSuccess) (assertFailure ("mktemp: " <> errors))
+  bracket (pure (trim output)) release action
+  where
+    release scratch = do
+      keep <- maybe False (not . null) <$> lookupEnv "ARCHIVE_TEST_KEEP"
+      if keep
+        then hPutStrLn stderr ("ARCHIVE_TEST_KEEP: kept " <> scratch)
+        else removePathForcibly scratch
+
+-- | Runs the action with the environment variable NAME set to VALUE, and
+-- restores NAME's earlier value, or its absence, however the action ends:
+-- the cases share the process environment, and a failing case no longer stops
+-- the run, so a setting left behind would leak into the cases after it.
+withEnv :: String -> String -> IO a -> IO a
+withEnv name value action = do
+  previous <- lookupEnv name
+  bracket_ (setEnv name value) (maybe (unsetEnv name) (setEnv name) previous) action
 
 directoryBarrierChecks :: FilePath -> IO ()
 directoryBarrierChecks parent = do
@@ -746,11 +808,7 @@ directoryBarrierChecks parent = do
       pure result
 
 withGitHistoryRoot :: (FilePath -> IO ()) -> IO ()
-withGitHistoryRoot action = do
-  (code, output, errors) <- shell "mktemp -d /tmp/archive-git-history-tests.XXXXXX"
-  if code /= ExitSuccess
-    then assertFailure ("mktemp: " <> errors)
-    else bracket (pure (trim output)) removePathForcibly action
+withGitHistoryRoot = withScratchDirectory "/tmp/archive-git-history-tests.XXXXXX"
 
 gitSnapshotHistoryChecks :: FilePath -> IO ()
 gitSnapshotHistoryChecks parent = do
@@ -842,11 +900,9 @@ gitSnapshotRootSwapChecks parent = do
     <> " -c user.name=test -c user.email=test@example.invalid commit --allow-empty -q -m victim")
   writeFile (victim <> "/selected.txt") "victim\n"
   commitGitHistory victim "selected victim"
-  oldGit <- lookupEnv "ARCHIVE_GIT_EXECUTABLE"
   realGit <- findExecutable "git" >>= maybe
     (ioError (userError "snapshot root-swap fixture cannot find Git")) pure
-  bracket_ (setEnv "ARCHIVE_GIT_EXECUTABLE" realGit)
-    (maybe (unsetEnv "ARCHIVE_GIT_EXECUTABLE") (setEnv "ARCHIVE_GIT_EXECUTABLE") oldGit) $ do
+  withEnv "ARCHIVE_GIT_EXECUTABLE" realGit $ do
       resolved <- resolveSnapshot root
       snapshot <- case resolved of
         Left problem -> do
@@ -886,20 +942,15 @@ configuredGitExecutableChecks parent = do
   makeExecutable decoy
   makeExecutable selected
   oldPath <- lookupEnv "PATH"
-  oldGit <- lookupEnv "ARCHIVE_GIT_EXECUTABLE"
-  let restore name value = maybe (unsetEnv name) (setEnv name) value
-  bracket_ (setEnv "PATH" (decoyBin <> ":" <> maybe "" id oldPath))
-    (restore "PATH" oldPath) $
-      bracket_ (setEnv "ARCHIVE_GIT_EXECUTABLE" realGit)
-        (restore "ARCHIVE_GIT_EXECUTABLE" oldGit) $ do
+  withEnv "PATH" (decoyBin <> ":" <> maybe "" id oldPath) $
+      withEnv "ARCHIVE_GIT_EXECUTABLE" realGit $ do
           result <- resolveSnapshot root
           assert "ambient PATH Git cannot substitute for operator configuration"
             (not (isLeft result)) ExitSuccess (show result) ""
           ambientCalled <- doesPathExist ambientMarker
           assert "ambient PATH Git shim was not invoked" (not ambientCalled)
             ExitSuccess (show ambientCalled) ""
-  bracket_ (setEnv "ARCHIVE_GIT_EXECUTABLE" selected)
-    (restore "ARCHIVE_GIT_EXECUTABLE" oldGit) $ do
+  withEnv "ARCHIVE_GIT_EXECUTABLE" selected $ do
       result <- resolveSnapshot root
       selectedCalled <- doesPathExist selectedMarker
       assert "configured absolute Git executable is invoked directly"
@@ -922,14 +973,11 @@ configuredGitExecutableChecks parent = do
         ExitSuccess (show readResult) ""
       assert "replacement executable is not called after identity refusal"
         (not replacementCalled) ExitSuccess (show replacementCalled) ""
-  bracket_ (setEnv "ARCHIVE_GIT_EXECUTABLE" "git")
-    (restore "ARCHIVE_GIT_EXECUTABLE" oldGit) $ do
+  withEnv "ARCHIVE_GIT_EXECUTABLE" "git" $ do
       result <- resolveGitExecutable
       assert "relative Git executable configuration fails closed" (isLeft result)
         ExitSuccess (show result) ""
-  oldAnnex <- lookupEnv "ARCHIVE_GIT_ANNEX_EXECUTABLE"
-  bracket_ (setEnv "ARCHIVE_GIT_ANNEX_EXECUTABLE" "git-annex")
-    (restore "ARCHIVE_GIT_ANNEX_EXECUTABLE" oldAnnex) $ do
+  withEnv "ARCHIVE_GIT_ANNEX_EXECUTABLE" "git-annex" $ do
       result <- resolveAnnexExecutable
       assert "relative git-annex configuration fails closed" (isLeft result)
         ExitSuccess (show result) ""
@@ -1206,10 +1254,7 @@ subprocessFailureCheck parent = do
       filePermissions <- getPermissions path
       setPermissions path (setOwnerExecutable True filePermissions))
     [barrierGit, barrierAnnex]
-  oldAnnexForBarrier <- lookupEnv "ARCHIVE_GIT_ANNEX_EXECUTABLE"
-  let restoreBarrierAnnex = maybe (unsetEnv "ARCHIVE_GIT_ANNEX_EXECUTABLE")
-        (setEnv "ARCHIVE_GIT_ANNEX_EXECUTABLE") oldAnnexForBarrier
-  bracket_ (setEnv "ARCHIVE_GIT_ANNEX_EXECUTABLE" barrierAnnex) restoreBarrierAnnex $ do
+  withEnv "ARCHIVE_GIT_ANNEX_EXECUTABLE" barrierAnnex $ do
     (barrierCode, barrierOutput, barrierErrors) <- archiveCommandWithPath barrierGit
       ["init", "--operator", "alice", barrierRoot] ""
     fifoPresent <- doesPathExist barrierFifo
@@ -1370,10 +1415,7 @@ bootstrapGitDirectorySwapCheck parent = do
       filePermissions <- getPermissions path
       setPermissions path (setOwnerExecutable True filePermissions))
     [fakeGit, fakeAnnex]
-  oldAnnex <- lookupEnv "ARCHIVE_GIT_ANNEX_EXECUTABLE"
-  let restoreAnnex = maybe (unsetEnv "ARCHIVE_GIT_ANNEX_EXECUTABLE")
-        (setEnv "ARCHIVE_GIT_ANNEX_EXECUTABLE") oldAnnex
-  bracket_ (setEnv "ARCHIVE_GIT_ANNEX_EXECUTABLE" fakeAnnex) restoreAnnex $ do
+  withEnv "ARCHIVE_GIT_ANNEX_EXECUTABLE" fakeAnnex $ do
     (code, output, errors) <- archiveCommandWithPath fakeGit
       ["init", "--operator", "alice", root] ""
     victimPreserved <- doesFileExist (root <> "/.git/sentinel")
@@ -1417,10 +1459,7 @@ bootstrapProcessRootSwapCheck parent = do
       <> "fi\nexec " <> quote realGit <> " \"$@\"\n")
   writeFile fakeAnnex "#!/bin/sh\nexit 0\n"
   mapM_ makeExecutable [fakeGit, fakeAnnex]
-  oldAnnex <- lookupEnv "ARCHIVE_GIT_ANNEX_EXECUTABLE"
-  let restoreAnnex = maybe (unsetEnv "ARCHIVE_GIT_ANNEX_EXECUTABLE")
-        (setEnv "ARCHIVE_GIT_ANNEX_EXECUTABLE") oldAnnex
-  bracket_ (setEnv "ARCHIVE_GIT_ANNEX_EXECUTABLE" fakeAnnex) restoreAnnex $ do
+  withEnv "ARCHIVE_GIT_ANNEX_EXECUTABLE" fakeAnnex $ do
     (code, output, errors) <- archiveCommandWithPath fakeGit
       ["init", "--operator", "alice", root] ""
     sentinelPresent <- doesFileExist (root <> "/.archive-init-lock/keep")
@@ -1485,12 +1524,7 @@ bootstrapSymlinkDescendantCheck parent = do
 -- proposal are both made on disk so that these tests exercise the manifest,
 -- descriptor traversal, UUID allocation, and committed-record checks together.
 withProposalTemporaryRoot :: (FilePath -> IO ()) -> IO ()
-withProposalTemporaryRoot action = do
-  (code, output, errors) <- shell "mktemp -d /tmp/archive-admission-proposals.XXXXXX"
-  if code /= ExitSuccess then assertFailure ("mktemp: " <> errors) else do
-    let parent = trim output
-    action parent
-    removePathForcibly parent
+withProposalTemporaryRoot = withScratchDirectory "/tmp/archive-admission-proposals.XXXXXX"
 
 indexReservationInterruptionCheck :: FilePath -> IO ()
 indexReservationInterruptionCheck parent = do
@@ -1617,16 +1651,12 @@ uncertainRefOutcomeCheck parent = do
       <> "exit \"$status\"\n")
   permissions <- getPermissions fakeGit
   setPermissions fakeGit (setOwnerExecutable True permissions)
-  environment <- getEnvironment
-  let restoreExecutable = case lookup "ARCHIVE_GIT_EXECUTABLE" environment of
-        Just value -> setEnv "ARCHIVE_GIT_EXECUTABLE" value
-        Nothing -> unsetEnv "ARCHIVE_GIT_EXECUTABLE"
   headBefore <- gitHead root
   commitsBefore <- gitCommitCount root
   recordsBefore <- recordCount root
   loadedProposal <- readTransitionProposal proposal >>= either
     (ioError . userError . Text.unpack) pure
-  typedResult <- bracket_ (setEnv "ARCHIVE_GIT_EXECUTABLE" fakeGit) restoreExecutable
+  typedResult <- withEnv "ARCHIVE_GIT_EXECUTABLE" fakeGit
     (commitTransition root loadedProposal)
   headAfter <- gitHead root
   commitsAfter <- gitCommitCount root
@@ -3154,13 +3184,13 @@ admissionRecheckChecks parent = do
   writeFile wrapper ("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" <> callLog
     <> "'\nexec '" <> realGit <> "' \"$@\"\n")
   setFileMode wrapper 0o755
-  setEnv "ARCHIVE_GIT_EXECUTABLE" wrapper
-  planned <- dryRunAdmissionForCommit root parsed
-  plan <- either (ioError . userError . show) pure planned
-  writeFile callLog ""
-  unchanged <- recheckAdmissionForCommit root parsed plan
-  unchangedCalls <- lines <$> readFile callLog
-  setEnv "ARCHIVE_GIT_EXECUTABLE" realGit
+  (plan, unchanged, unchangedCalls) <- withEnv "ARCHIVE_GIT_EXECUTABLE" wrapper $ do
+    planned <- dryRunAdmissionForCommit root parsed
+    plan <- either (ioError . userError . show) pure planned
+    writeFile callLog ""
+    unchanged <- recheckAdmissionForCommit root parsed plan
+    unchangedCalls <- lines <$> readFile callLog
+    pure (plan, unchanged, unchangedCalls)
   assert "an unchanged HEAD keeps the plan without reading the archive again"
     (unchanged == Right plan
       && not (null unchangedCalls)
@@ -3206,11 +3236,7 @@ checkpointChecks parent = do
           ["records/entity.json"] [(objectId, "archive.core/entity", name)]
           [(objectId, Nothing)] []) ["records/entity.json", entityDraft objectId]
         readAdmissionProposal path >>= either (ioError . userError . Text.unpack) pure
-      withBomb action = do
-        setEnv "ARCHIVE_GIT_EXECUTABLE" bomb
-        result <- action
-        setEnv "ARCHIVE_GIT_EXECUTABLE" realGit
-        pure result
+      withBomb action = withEnv "ARCHIVE_GIT_EXECUTABLE" bomb action
       checkpointNames expected = do
         loaded <- readCheckpoint root
         current <- gitHead root
@@ -6774,11 +6800,7 @@ specificationUpgradeChecks parent = do
   realGit <- findExecutable "git" >>= maybe (ioError (userError "upgrade fixture cannot find git")) pure
   let bombDirectory = parent </> "upgrade-git"
       bomb = bombDirectory </> "git"
-      withBomb action = do
-        setEnv "ARCHIVE_GIT_EXECUTABLE" bomb
-        result <- action
-        setEnv "ARCHIVE_GIT_EXECUTABLE" realGit
-        pure result
+      withBomb action = withEnv "ARCHIVE_GIT_EXECUTABLE" bomb action
       runProposal name = do
         objectId <- allocatedObjectId archiveId "archive.derivation/run" name
         let draft = contractRecord "claim" runContract runPayload [] objectId
