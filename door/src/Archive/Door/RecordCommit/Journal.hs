@@ -45,8 +45,7 @@ import Archive.Door.RecordCommit.JournalFormat
   , OperationJournalOf (..)
   , PendingEntry
   , PendingJournal
-  , encodeOperationJournal
-  , gitObjectNameText
+  , encodeCheckedJournal
   , operationJournalByteLimit
   , parseOperationJournal
   )
@@ -76,26 +75,30 @@ data JournalIdentity = JournalIdentity DeviceID FileID deriving (Eq, Show)
 operationJournalName :: FilePath
 operationJournalName = "archive-door-operation"
 
-createOperationJournal :: Fd -> PendingJournal -> IO (Either Text ())
-createOperationJournal gitFd journal = runExceptT $ do
-  bytes <- except (encodeOperationJournal journal)
+-- | Returns the typed journal encoding validated, which the writer carries
+-- from here on.
+createOperationJournal :: Fd -> PendingJournal -> IO (Either Text OperationJournal)
+createOperationJournal gitFd pending = runExceptT $ do
+  (journal, bytes) <- except (encodeCheckedJournal pending)
   fd <- orFail ("could not reserve Door operation journal: " <>) $ tryIO $
     openFdAt (Just gitFd) operationJournalName WriteOnly
       defaultFileFlags { creat = Just ownerFileModes, exclusive = True, nofollow = True, cloexec = True }
   ExceptT $ Exception.bracket (pure fd) closeFd $ \journalFd ->
     tryIO (writeAll journalFd bytes >> syncStrongFdOrFail journalFd >> syncDirectoryFdOrFail gitFd)
+  pure journal
 
 -- | Replace the journal only while it still holds what this operation last
 -- wrote: the replacement is written and synchronized under a fresh name,
--- renamed over the journal, and the rename synchronized.
-replaceOperationJournal :: Fd -> PendingJournal -> PendingJournal -> IO (Either Text ())
+-- renamed over the journal, and the rename synchronized. Returns the typed
+-- replacement encoding validated.
+replaceOperationJournal :: Fd -> OperationJournal -> PendingJournal -> IO (Either Text OperationJournal)
 replaceOperationJournal gitFd expected replacement = runExceptT $ do
   current <- ExceptT (readOperationJournal gitFd)
   case current of
     Nothing -> throwE "Door operation journal disappeared during mutation"
-    Just (journal, _) -> require (fmap gitObjectNameText journal == expected)
+    Just (journal, _) -> require (journal == expected)
       "Door operation journal changed during mutation"
-  bytes <- except (encodeOperationJournal replacement)
+  (checked, bytes) <- except (encodeCheckedJournal replacement)
   temporary <- lift freshJournalTemporaryName
   fd <- orFail ("could not create replacement operation journal: " <>) $ tryIO $
     openFdAt (Just gitFd) temporary WriteOnly
@@ -104,6 +107,7 @@ replaceOperationJournal gitFd expected replacement = runExceptT $ do
     ExceptT (tryIO (writeAll temporaryFd bytes >> syncStrongFdOrFail temporaryFd))
     ExceptT (tryIO (renameAt gitFd temporary operationJournalName))
     orFail ("could not sync operation journal directory: " <>) (syncFd gitFd)
+  pure checked
 
 -- | Remove the journal only while its contents and inode are still the ones
 -- recovery reconciled, re-proving the inode immediately before the unlink.

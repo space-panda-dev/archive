@@ -16,6 +16,7 @@ module Archive.Door.RecordCommit.JournalFormat
   , OperationJournalOf (..)
   , PendingEntry
   , PendingJournal
+  , encodeCheckedJournal
   , encodeOperationJournal
   , gitObjectNameText
   , operationJournalByteLimit
@@ -86,8 +87,15 @@ operationJournalByteLimit :: Int
 operationJournalByteLimit = 16 * 1024 * 1024
 
 encodeOperationJournal :: PendingJournal -> Either Text ByteString.ByteString
-encodeOperationJournal journal = do
-  _ <- validateJournal journal
+encodeOperationJournal = fmap snd . encodeCheckedJournal
+
+-- | The journal's bytes together with the typed journal its validation
+-- produced. Encoding is where the writer's Git object names are checked, so
+-- the writer keeps this typed value from the journal it publishes and never
+-- checks those names a second time.
+encodeCheckedJournal :: PendingJournal -> Either Text (OperationJournal, ByteString.ByteString)
+encodeCheckedJournal journal = do
+  checked <- validateJournal journal
   let header =
         [ "archive-door-operation\t1"
         , "old\t" <> journalOldHead journal
@@ -112,7 +120,7 @@ encodeOperationJournal journal = do
   let bytes = TextEncoding.encodeUtf8 body
   unlessEither (ByteString.length bytes <= operationJournalByteLimit)
     "Door operation journal exceeds the size limit"
-  pure bytes
+  pure (checked, bytes)
 
 parseOperationJournal :: ByteString.ByteString -> Either Text OperationJournal
 parseOperationJournal bytes = do

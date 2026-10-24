@@ -203,7 +203,7 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
 
     cleanupUncommitted = withPinnedRecords rootFd pinnedRecords $ \recordsFd -> runExceptT $ do
       ExceptT oldHistoryClear
-      let records = map journalToInstalled (journalEntries journal)
+      records <- except (traverse journalToInstalled (journalEntries journal))
       orFail ("could not prove cleanup ownership for interrupted record batch: " <>)
         (cleanupInstalled executable rootPath rootFd gitFd recordsFd records)
       ExceptT cleanupTemporariesOnly
@@ -340,13 +340,19 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
       | Text.pack (journalPath entry) == path = Just entry
       | otherwise = findEntry path rest
 
-journalToInstalled :: JournalEntry -> InstalledRecord
-journalToInstalled entry = InstalledRecord
-  { installedRecordPath = journalPath entry
-  , installedRecordBlob = maybe "" gitObjectNameText (journalBlob entry)
-  , installedRecordDevice = maybe 0 id (journalDevice entry)
-  , installedRecordFile = maybe 0 id (journalFile entry)
-  }
+-- | An installing journal's entry as the record it installed. Validation
+-- gave every such entry its blob, device and inode, and only an installing
+-- journal reaches here; an entry without them is refused in the
+-- validator's own words rather than given placeholder values.
+journalToInstalled :: JournalEntry -> Either Text InstalledRecord
+journalToInstalled entry = case (journalBlob entry, journalDevice entry, journalFile entry) of
+  (Just blob, Just device, Just inode) -> Right InstalledRecord
+    { installedRecordPath = journalPath entry
+    , installedRecordBlob = blob
+    , installedRecordDevice = device
+    , installedRecordFile = inode
+    }
+  _ -> Left "journal phase and record ownership fields disagree"
 
 removePreparingTemporary :: Fd -> FilePath -> IO (Either Text ())
 removePreparingTemporary gitFd name = runExceptT $ do

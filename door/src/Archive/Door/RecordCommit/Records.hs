@@ -40,6 +40,7 @@ import Archive.Door.RecordCommit.Descriptors
 import Archive.Door.RecordCommit.Failure (failText, orFail, require, tryIO, tryPresent)
 import Archive.Door.RecordCommit.Git (gitBlobForFd, gitBlobsForFds, runGit)
 import Archive.Door.RecordCommit.Journal (JournalEntryOf (..), PendingEntry)
+import Archive.Door.RecordCommit.ObjectName (GitObjectName, gitObjectNameText)
 import Archive.Door.RecordCommit.Paths (RecordLocation (..), uniqueSorted, validateRecordPath)
 import Archive.Executables (Executable)
 import qualified Control.Exception as Exception
@@ -68,14 +69,18 @@ import System.Posix.Types (DeviceID, Fd, FileID)
 
 -- The record path is removable only while it still names the inode installed
 -- by this operation and that inode still hashes to the Git blob installed in
--- the temporary index.
+-- the temporary index. The blob is the one the installing journal names, so
+-- it was checked when that journal was encoded.
 data InstalledRecord = InstalledRecord
   { installedRecordPath :: FilePath
-  , installedRecordBlob :: Text
+  , installedRecordBlob :: GitObjectName
   , installedRecordDevice :: DeviceID
   , installedRecordFile :: FileID
   }
 
+-- | A staged record. Its blob is Git's output, still text: it is checked
+-- only when the installing journal that names it is encoded, and
+-- 'installPreparedAll' takes the checked name from that journal.
 data PreparedRecord = PreparedRecord
   { preparedRecordPath :: FilePath
   , preparedRecordBlob :: Text
@@ -308,7 +313,9 @@ preparedToJournal prepared = JournalEntry
 closePrepared :: [PreparedRecord] -> IO ()
 closePrepared = mapM_ (closeFd . preparedRecordFd)
 
-installPreparedAll :: Executable -> FilePath -> Fd -> Fd -> Fd -> [PreparedRecord]
+-- | Install each prepared record, paired with the blob name the published
+-- installing journal holds for it.
+installPreparedAll :: Executable -> FilePath -> Fd -> Fd -> Fd -> [(PreparedRecord, GitObjectName)]
                    -> IO (Either Text [InstalledRecord])
 installPreparedAll executable rootPath rootFd gitFd recordsFd prepared =
   withTrackedDescriptors (tryIO . go)
@@ -322,8 +329,9 @@ installPreparedAll executable rootPath rootFd gitFd recordsFd prepared =
         >>= either failText pure
       mapM confirm (zip linked blobs)
 
-    linkOne :: (Fd -> IO ()) -> PreparedRecord -> IO (PreparedRecord, RecordLocation, FileStatus, Fd)
-    linkOne track record = case validateRecordPath (preparedRecordPath record) of
+    linkOne :: (Fd -> IO ()) -> (PreparedRecord, GitObjectName)
+            -> IO ((PreparedRecord, GitObjectName), RecordLocation, FileStatus, Fd)
+    linkOne track (record, journaledBlob) = case validateRecordPath (preparedRecordPath record) of
       Left problem -> failText problem
       Right filename -> do
         withDirectoryChain recordsFd (recordLocationDirectories filename) True $ \directoryFd ->
@@ -334,9 +342,9 @@ installPreparedAll executable rootPath rootFd gitFd recordsFd prepared =
         status <- getFdStatus installedFd
         unless (isRegularFile status && sameDeviceAndFile sourceStatus status) $
           failText "record target does not match its prepared inode"
-        pure (record, filename, sourceStatus, installedFd)
+        pure ((record, journaledBlob), filename, sourceStatus, installedFd)
 
-    confirm ((record, filename, sourceStatus, _), actual)
+    confirm (((record, journaledBlob), filename, sourceStatus, _), actual)
       | actual /= preparedRecordBlob record = failText "linked record blob changed during installation"
       | otherwise = do
           current <- Exception.try (openRecordTarget recordsFd filename)
@@ -350,7 +358,7 @@ installPreparedAll executable rootPath rootFd gitFd recordsFd prepared =
                 failText "record target changed during installation"
               pure InstalledRecord
                 { installedRecordPath = preparedRecordPath record
-                , installedRecordBlob = preparedRecordBlob record
+                , installedRecordBlob = journaledBlob
                 , installedRecordDevice = deviceID sourceStatus
                 , installedRecordFile = fileID sourceStatus
                 }
@@ -383,7 +391,7 @@ cleanupInstalled executable rootPath rootFd gitFd recordsFd installed = do
               case blob of
                 Left problem -> failText
                   ("refusing to remove record target because its blob identity could not be checked: " <> problem)
-                Right actual | Text.strip actual /= installedRecordBlob record ->
+                Right actual | Text.strip actual /= gitObjectNameText (installedRecordBlob record) ->
                   failText ("refusing to remove record target with changed blob identity: " <> Text.pack relative)
                 Right _ -> do
                   current <- Exception.try (openRecordTarget recordsFd filename)

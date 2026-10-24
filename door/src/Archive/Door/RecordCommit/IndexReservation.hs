@@ -8,7 +8,6 @@
 module Archive.Door.RecordCommit.IndexReservation
   ( IndexReservation
   , attachJournal
-  , detachJournal
   , reservedIndex
   , runIndexGit
   , withNewIndexReservation
@@ -19,10 +18,11 @@ import Archive.Door.RecordCommit.Failure (failText, require, tryIO)
 import Archive.Door.RecordCommit.Git (runGit)
 import Archive.Door.RecordCommit.Journal
   ( JournalIndex (..)
+  , OperationJournal
   , OperationJournalOf (..)
-  , PendingJournal
   , replaceOperationJournal
   )
+import Archive.Door.RecordCommit.ObjectName (gitObjectNameText)
 import Archive.Executables (Executable)
 import qualified Control.Exception as Exception
 import Control.Monad.Trans.Class (lift)
@@ -61,7 +61,7 @@ data IndexReservation = IndexReservation
   , reservationOwned :: IORef OwnedIndex
   -- | The batch's current journal once it is published, so a replacement
   -- of the index inode is journaled before the next Git child runs.
-  , reservationJournal :: IORef (Maybe (IORef PendingJournal))
+  , reservationJournal :: IORef (Maybe (IORef OperationJournal))
   }
 
 -- | A descriptor that keeps the owned index inode from being reused while
@@ -77,13 +77,10 @@ reservedIndex reservation = do
   owned <- readIORef (reservationOwned reservation)
   pure (reservationName reservation, ownedIndexIdentity owned)
 
--- | Journal every later change of the owned index inode in this journal.
-attachJournal :: IndexReservation -> IORef PendingJournal -> IO ()
+-- | Journal every later change of the owned index inode in this published
+-- journal.
+attachJournal :: IndexReservation -> IORef OperationJournal -> IO ()
 attachJournal reservation journal = writeIORef (reservationJournal reservation) (Just journal)
-
--- | Stop journaling index changes: the journal was never published.
-detachJournal :: IndexReservation -> IO ()
-detachJournal reservation = writeIORef (reservationJournal reservation) Nothing
 
 reserveIndex :: Fd -> IO (Either Text IndexReservation)
 reserveIndex gitFd = runExceptT $ do
@@ -150,8 +147,8 @@ persistIndexJournal gitFd reservation = do
       if updated == journal
         then pure (Right ())
         else runExceptT $ do
-          ExceptT (replaceOperationJournal gitFd journal updated)
-          lift (writeIORef journalRef updated)
+          written <- ExceptT (replaceOperationJournal gitFd journal (fmap gitObjectNameText updated))
+          lift (writeIORef journalRef written)
 
 verifyIndexReservation :: Fd -> IndexReservation -> IO (Either Text ())
 verifyIndexReservation gitFd reservation = do
