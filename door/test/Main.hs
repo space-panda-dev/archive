@@ -92,16 +92,19 @@ import qualified Data.ByteString.Lazy.Char8 as LazyByteString
 import Data.IORef (newIORef, modifyIORef', readIORef)
 import Data.Foldable (foldlM, toList)
 import Data.List (isPrefixOf, sort)
-import Control.Monad (when)
+import Control.Monad (unless, when)
 import qualified Data.Text as Text
 import Data.Word (Word64)
 import GHC.Float (castWord64ToDouble)
+import GHC.Stack (HasCallStack)
 import Numeric (showHex)
 import Control.Exception (AsyncException (UserInterrupt), bracket, bracket_, throwIO, try)
 import Control.Concurrent (forkIO, threadDelay, throwTo)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar, tryReadMVar)
 import System.Timeout (timeout)
-import System.Exit (ExitCode (ExitFailure, ExitSuccess), exitFailure)
+import System.Exit (ExitCode (ExitFailure, ExitSuccess))
+import Test.Tasty (TestName, TestTree, defaultMain, testGroup)
+import Test.Tasty.HUnit (assertFailure, testCase)
 import System.Directory
   ( createDirectory
   , createDirectoryIfMissing
@@ -295,17 +298,115 @@ main = do
     , ("GIT_CONFIG_KEY_0", "maintenance.auto"), ("GIT_CONFIG_VALUE_0", "false")
     , ("GIT_CONFIG_KEY_1", "gc.auto"), ("GIT_CONFIG_VALUE_1", "0")
     ]
-  withTemporaryRoot directoryBarrierChecks
-  recordPathChecks
-  rfc8785NumberChecks
+  -- The release modules' rows are read before the tree is built, because
+  -- tasty fixes its tree before running it and each row is its own case.
+  specification010 <- specification010Checks
+  rules010 <- rules010Checks
+  beyondCircle010 <- beyondCircle010Checks
+  specification011 <- specification011Checks
+  rules011 <- rules011Checks
+  -- One case per named check, in the old order. The cases share the process
+  -- environment (the checks setEnv the Git executables) and fixed temporary
+  -- paths, so they run one at a time: the suite is built without -threaded.
+  defaultMain $ testGroup "door-test"
+    [ testCase "directoryBarrierChecks" (withTemporaryRoot directoryBarrierChecks)
+    , testCase "recordPathChecks" recordPathChecks
+    , testCase "rfc8785NumberChecks" rfc8785NumberChecks
+    , testCase "uuidV5Checks" uuidV5Checks
+    , checkGroup "identityVectorChecks" identityVectorChecks
+    , testCase "versionedContextChecks" versionedContextChecks
+    , testCase "audioContractChecks" audioContractChecks
+    , testCase "identifierChecks" identifierChecks
+    , testCase "envelopeChecks" envelopeChecks
+    , testCase "batchRevisionChecks" batchRevisionChecks
+    , testCase "subprocessCaptureLimitChecks" subprocessCaptureLimitChecks
+    , testCase "typedPlannerErrorChecks" typedPlannerErrorChecks
+    , testCase "initChecks" (withTemporaryRoot initChecks)
+    , testCase "gitSnapshotHistoryChecks" (withGitHistoryRoot gitSnapshotHistoryChecks)
+    , testCase "gitSnapshotRootSwapChecks" (withGitHistoryRoot gitSnapshotRootSwapChecks)
+    , testCase "configuredGitExecutableChecks" (withGitHistoryRoot configuredGitExecutableChecks)
+    , testCase "proposalChecks" (withProposalTemporaryRoot proposalChecks)
+    , testCase "worldContractAdmissionChecks" (withProposalTemporaryRoot worldContractAdmissionChecks)
+    , testCase "reviewContractAdmissionChecks" (withProposalTemporaryRoot reviewContractAdmissionChecks)
+    , testCase "reviewContractProfileChecks" reviewContractProfileChecks
+    , testCase "migrationContractAdmissionChecks" (withProposalTemporaryRoot migrationContractAdmissionChecks)
+    , testCase "migrationContractProfileChecks" migrationContractProfileChecks
+    , testCase "derivationContractAdmissionChecks" (withProposalTemporaryRoot derivationContractAdmissionChecks)
+    , testCase "derivationContractProfileChecks" derivationContractProfileChecks
+    , testCase "windowMatchAdmissionChecks" (withProposalTemporaryRoot windowMatchAdmissionChecks)
+    , testCase "windowMatchProfileChecks" windowMatchProfileChecks
+    , testCase "musicAndCreditProfileChecks" musicAndCreditProfileChecks
+    , checkGroup "specification010Checks" specification010
+    , checkGroup "rules010Checks" rules010
+    , checkGroup "beyondCircle010Checks" beyondCircle010
+    , checkGroup "specification011Checks" specification011
+    , checkGroup "rules011Checks" rules011
+    , testCase "previousReleaseUpgradeChecks" (withProposalTemporaryRoot previousReleaseUpgradeChecks)
+    , testCase "specificationUpgradeRefusalChecks" (withProposalTemporaryRoot specificationUpgradeRefusalChecks)
+    , testCase "earlierSpecificationChecks" (withProposalTemporaryRoot earlierSpecificationChecks)
+    , testCase "specificationUpgradeRuleChecks" specificationUpgradeRuleChecks
+    , testCase "specificationUpgradeChecks" (withProposalTemporaryRoot specificationUpgradeChecks)
+    , testCase "forgedUpgradeChecks" (withProposalTemporaryRoot forgedUpgradeChecks)
+    , testCase "forgedUpgradeHistoryChecks" (withProposalTemporaryRoot forgedUpgradeHistoryChecks)
+    , testCase "specificationUpgradeServiceChecks" (withProposalTemporaryRoot specificationUpgradeServiceChecks)
+    , testCase "specificationUpgradeRecoveryChecks" (withProposalTemporaryRoot specificationUpgradeRecoveryChecks)
+    , testCase "transitionDispatchCatalogChecks" transitionDispatchCatalogChecks
+    , testCase "contractCatalogChecks" contractCatalogChecks
+    , testCase "refusalCodeSchemaChecks" refusalCodeSchemaChecks
+    , testCase "publicationTransitionChecks" (withProposalTemporaryRoot publicationTransitionChecks)
+    , testCase "controlPlaneInputLimitChecks" (withProposalTemporaryRoot controlPlaneInputLimitChecks)
+    , testCase "subprocessOutputLimitChecks" (withProposalTemporaryRoot subprocessOutputLimitChecks)
+    , testCase "subprocessCaptureInterruptionChecks" (withProposalTemporaryRoot subprocessCaptureInterruptionChecks)
+    , testCase "historicalReplayChecks" (withProposalTemporaryRoot historicalReplayChecks)
+    , testCase "persistentAdmissionChecks" (withProposalTemporaryRoot persistentAdmissionChecks)
+    , testCase "admissionRecheckChecks" (withProposalTemporaryRoot admissionRecheckChecks)
+    , testCase "checkpointChecks" (withProposalTemporaryRoot checkpointChecks)
+    , testCase "rememberedSnapshotChecks" (withProposalTemporaryRoot rememberedSnapshotChecks)
+    , testCase "serviceChecks" (withProposalTemporaryRoot serviceChecks)
+    , testCase "fileModeChecks" (withProposalTemporaryRoot fileModeChecks)
+    , testCase "initMaintenanceChecks" (withProposalTemporaryRoot initMaintenanceChecks)
+    , testCase "contentAdmissionChecks" (withProposalTemporaryRoot contentAdmissionChecks)
+    , testCase "gitObjectStoreTopologyChecks" (withProposalTemporaryRoot gitObjectStoreTopologyChecks)
+    , testCase "gitObjectStoreBarrierFailureChecks" (withProposalTemporaryRoot gitObjectStoreBarrierFailureChecks)
+    , testCase "operationJournalSizeCheck" (withProposalTemporaryRoot operationJournalSizeCheck)
+    , testCase "operationJournalKillRecoveryCheck" (withProposalTemporaryRoot operationJournalKillRecoveryCheck)
+    , testCase "indexRecoveryRecordBatchChecks" (withProposalTemporaryRoot indexRecoveryRecordBatchChecks)
+    , testCase "indexRecoveryRefusalChecks" (withProposalTemporaryRoot indexRecoveryRefusalChecks)
+    , testCase "indexRecoveryTransitionCheck" (withProposalTemporaryRoot indexRecoveryTransitionCheck)
+    , testCase "persistentRecordParentSymlinkCheck" (withProposalTemporaryRoot persistentRecordParentSymlinkCheck)
+    , testCase "persistentRecordParentSwapCheck" (withProposalTemporaryRoot persistentRecordParentSwapCheck)
+    , testCase "persistentRecordCleanupOwnershipCheck" (withProposalTemporaryRoot persistentRecordCleanupOwnershipCheck)
+    , testCase "persistentRecordCleanupFifoCheck" (withProposalTemporaryRoot persistentRecordCleanupFifoCheck)
+    , testCase "persistentGitDirectorySwapCheck" (withProposalTemporaryRoot persistentGitDirectorySwapCheck)
+    , testCase "persistentArchiveRootSwapCheck" (withProposalTemporaryRoot persistentArchiveRootSwapCheck)
+    , testCase "pinnedGitPermissionCheck" (withProposalTemporaryRoot pinnedGitPermissionCheck)
+    , testCase "persistentTransitionChecks" (withProposalTemporaryRoot persistentTransitionChecks)
+    , testCase "indexReservationInterruptionCheck" (withProposalTemporaryRoot indexReservationInterruptionCheck)
+    , testCase "indexReservationIdentityCheck" (withProposalTemporaryRoot indexReservationIdentityCheck)
+    , testCase "uncertainRefOutcomeCheck" (withProposalTemporaryRoot uncertainRefOutcomeCheck)
+    , testCase "postRefSyncFailureCheck" (withProposalTemporaryRoot postRefSyncFailureCheck)
+    , testCase "processLockCheck" (withProposalTemporaryRoot processLockCheck)
+    , testCase "interruptedInitCheck" (withProposalTemporaryRoot interruptedInitCheck)
+    , testCase "commandLineChecks" commandLineChecks
+    ]
+
+-- | One test case per row, so a failing row leaves the other rows' results.
+checkGroup :: TestName -> [(String, Bool, String)] -> TestTree
+checkGroup name rows = testGroup name
+  [testCase label (assert label passed ExitSuccess detail "") | (label, passed, detail) <- rows]
+
+-- | UUIDv5 allocation is total: a bad archive UUID is a Left, not a crash.
+uuidV5Checks :: IO ()
+uuidV5Checks = do
   assert "UUIDv5 refuses an invalid archive UUID without throwing"
     (case (parseIdentityNamespace "archive.core/entity", parseIdentityName "person") of
       (Right namespace, Right name) -> isLeft (uuidV5 "not-a-uuid" namespace name)
       _ -> False)
     ExitSuccess "" ""
-  mapM_ (\(label, passed, detail) -> assert label passed ExitSuccess detail "") identityVectorChecks
-  versionedContextChecks
-  audioContractChecks
+
+-- | The identifier smart constructors and the stored envelope's revision.
+identifierChecks :: IO ()
+identifierChecks = do
   assert "object identifier smart constructor accepts a canonical UUID URN"
     ((objectIdText <$> parseObjectId (Text.pack entity)) == Right (Text.pack entity))
     ExitSuccess "" ""
@@ -344,6 +445,11 @@ main = do
         == Left "revision_id must be sha256 followed by 64 lowercase hexadecimal characters"
       Left _ -> False)
     ExitSuccess "" ""
+
+-- | Single drafts through the dry-run validator: what an envelope admits
+-- and the exact refusal of each malformed one.
+envelopeChecks :: IO ()
+envelopeChecks = do
   succeeds "dry-run uses RFC 8785 identity and retains spec" (entityDraft entity)
   succeeds "dry-run canonicalises the closed artifact payload" (artifactDraft entity)
   succeeds "specification 0.0.5 admits its installed musical_work kind"
@@ -383,6 +489,10 @@ main = do
   refuses "a dangling reference is refused" (claimDraft claim missingObject) ("reference " <> missingObject <> " does not name an admitted object")
   refusesSilently "claim contract validation stays unsupported without an initialized archive" ("[" <> entityDraft entity <> "," <> claimDraft claim entity <> "]") "claim contracts require an initialized archive"
 
+-- | Batches that cite the base revision of an entity computed first, so the
+-- revision and the checks that pin it stay one case.
+batchRevisionChecks :: IO ()
+batchRevisionChecks = do
   baseRevision <- revisionOf (entityDraft entity)
   refuses "a revision cannot supersede another object" ("[" <> entityDraft entity <> "," <> superseding claim entity baseRevision <> "]") "a revision may supersede only the same object"
   accepts "a revision may explicitly supersede the same object and shape" ("[" <> entityDraft entity <> "," <> superseding entity entity baseRevision <> "]")
@@ -395,76 +505,9 @@ main = do
   accepts "an identical revision is an idempotent retry" ("[" <> entityDraft entity <> "," <> entityDraft entity <> "]")
   refusesSilently "a refused batch emits no successful prefix" ("[" <> entityDraft entity <> "," <> claimDraft claim missingObject <> "]") ("reference " <> missingObject <> " does not name an admitted object")
 
-  subprocessCaptureLimitChecks
-  typedPlannerErrorChecks
-
-  withTemporaryRoot initChecks
-  withGitHistoryRoot gitSnapshotHistoryChecks
-  withGitHistoryRoot gitSnapshotRootSwapChecks
-  withGitHistoryRoot configuredGitExecutableChecks
-  withProposalTemporaryRoot proposalChecks
-  withProposalTemporaryRoot worldContractAdmissionChecks
-  withProposalTemporaryRoot reviewContractAdmissionChecks
-  reviewContractProfileChecks
-  withProposalTemporaryRoot migrationContractAdmissionChecks
-  migrationContractProfileChecks
-  withProposalTemporaryRoot derivationContractAdmissionChecks
-  derivationContractProfileChecks
-  withProposalTemporaryRoot windowMatchAdmissionChecks
-  windowMatchProfileChecks
-  musicAndCreditProfileChecks
-  specification010Checks >>= mapM_ (\(label, passed, detail) -> assert label passed ExitSuccess detail "")
-  rules010Checks >>= mapM_ (\(label, passed, detail) -> assert label passed ExitSuccess detail "")
-  beyondCircle010Checks >>= mapM_ (\(label, passed, detail) -> assert label passed ExitSuccess detail "")
-  specification011Checks >>= mapM_ (\(label, passed, detail) -> assert label passed ExitSuccess detail "")
-  rules011Checks >>= mapM_ (\(label, passed, detail) -> assert label passed ExitSuccess detail "")
-  withProposalTemporaryRoot previousReleaseUpgradeChecks
-  withProposalTemporaryRoot specificationUpgradeRefusalChecks
-  withProposalTemporaryRoot earlierSpecificationChecks
-  specificationUpgradeRuleChecks
-  withProposalTemporaryRoot specificationUpgradeChecks
-  withProposalTemporaryRoot forgedUpgradeChecks
-  withProposalTemporaryRoot forgedUpgradeHistoryChecks
-  withProposalTemporaryRoot specificationUpgradeServiceChecks
-  withProposalTemporaryRoot specificationUpgradeRecoveryChecks
-  transitionDispatchCatalogChecks
-  contractCatalogChecks
-  refusalCodeSchemaChecks
-  withProposalTemporaryRoot publicationTransitionChecks
-  withProposalTemporaryRoot controlPlaneInputLimitChecks
-  withProposalTemporaryRoot subprocessOutputLimitChecks
-  withProposalTemporaryRoot subprocessCaptureInterruptionChecks
-  withProposalTemporaryRoot historicalReplayChecks
-  withProposalTemporaryRoot persistentAdmissionChecks
-  withProposalTemporaryRoot admissionRecheckChecks
-  withProposalTemporaryRoot checkpointChecks
-  withProposalTemporaryRoot rememberedSnapshotChecks
-  withProposalTemporaryRoot serviceChecks
-  withProposalTemporaryRoot fileModeChecks
-  withProposalTemporaryRoot initMaintenanceChecks
-  withProposalTemporaryRoot contentAdmissionChecks
-  withProposalTemporaryRoot gitObjectStoreTopologyChecks
-  withProposalTemporaryRoot gitObjectStoreBarrierFailureChecks
-  withProposalTemporaryRoot operationJournalSizeCheck
-  withProposalTemporaryRoot operationJournalKillRecoveryCheck
-  withProposalTemporaryRoot indexRecoveryRecordBatchChecks
-  withProposalTemporaryRoot indexRecoveryRefusalChecks
-  withProposalTemporaryRoot indexRecoveryTransitionCheck
-  withProposalTemporaryRoot persistentRecordParentSymlinkCheck
-  withProposalTemporaryRoot persistentRecordParentSwapCheck
-  withProposalTemporaryRoot persistentRecordCleanupOwnershipCheck
-  withProposalTemporaryRoot persistentRecordCleanupFifoCheck
-  withProposalTemporaryRoot persistentGitDirectorySwapCheck
-  withProposalTemporaryRoot persistentArchiveRootSwapCheck
-  withProposalTemporaryRoot pinnedGitPermissionCheck
-  withProposalTemporaryRoot persistentTransitionChecks
-  withProposalTemporaryRoot indexReservationInterruptionCheck
-  withProposalTemporaryRoot indexReservationIdentityCheck
-  withProposalTemporaryRoot uncertainRefOutcomeCheck
-  withProposalTemporaryRoot postRefSyncFailureCheck
-  withProposalTemporaryRoot processLockCheck
-  withProposalTemporaryRoot interruptedInitCheck
-
+-- | Door's command line refuses stdin proposals and a bare admit.
+commandLineChecks :: IO ()
+commandLineChecks = do
   commandRefuses "stdin admission is refused" ["admit", "--dry-run"] "admission requires --proposal DIRECTORY"
   commandRefuses "transition stdin is refused" ["transition", "--dry-run"] "transition requires --proposal DIRECTORY"
   commandRefuses "persistent admission requires a proposal" ["admit"] "admit requires --proposal DIRECTORY"
@@ -656,20 +699,19 @@ revisionOf :: String -> IO String
 revisionOf input = do
   (code, output, errors) <- dryRun input
   if code /= ExitSuccess then do
-    putStrLn ("not ok - cannot compute revision: " <> errors)
-    exitFailure
+    assertFailure ("cannot compute revision: " <> errors)
   else case after "\"revision_id\":\"" output of
-    Nothing -> putStrLn "not ok - command did not return revision_id" >> exitFailure
+    Nothing -> assertFailure "command did not return revision_id"
     Just suffix -> pure (takeWhile (/= '"') suffix)
 
 canonicalRevisionOf :: String -> IO String
 canonicalRevisionOf input = do
   value <- case decodeUnique (LazyByteString.pack input) of
-    Left problem -> putStrLn ("not ok - revision fixture JSON: " <> problem) >> exitFailure
+    Left problem -> assertFailure ("revision fixture JSON: " <> problem)
     Right parsed -> pure parsed
   case canonicalizeDraft value of
-    Left problem -> putStrLn ("not ok - cannot canonicalize revision fixture: "
-      <> Text.unpack problem) >> exitFailure
+    Left problem -> assertFailure ("cannot canonicalize revision fixture: "
+      <> Text.unpack problem)
     Right (revision, _) -> pure (Text.unpack revision)
 
 comparesDifferent :: String -> String -> String -> IO ()
@@ -681,7 +723,7 @@ comparesDifferent label first second = do
 withTemporaryRoot :: (FilePath -> IO ()) -> IO ()
 withTemporaryRoot action = do
   (code, output, errors) <- shell "mktemp -d /tmp/archive-phase4-tests.XXXXXX"
-  if code /= ExitSuccess then putStrLn ("not ok - mktemp: " <> errors) >> exitFailure else do
+  if code /= ExitSuccess then assertFailure ("mktemp: " <> errors) else do
     let parent = trim output
     shellChecked ("mkdir " <> quote (parent <> "/empty"))
     action (parent <> "/missing")
@@ -722,7 +764,7 @@ withGitHistoryRoot :: (FilePath -> IO ()) -> IO ()
 withGitHistoryRoot action = do
   (code, output, errors) <- shell "mktemp -d /tmp/archive-git-history-tests.XXXXXX"
   if code /= ExitSuccess
-    then putStrLn ("not ok - mktemp: " <> errors) >> exitFailure
+    then assertFailure ("mktemp: " <> errors)
     else bracket (pure (trim output)) removePathForcibly action
 
 gitSnapshotHistoryChecks :: FilePath -> IO ()
@@ -748,8 +790,7 @@ gitSnapshotHistoryChecks parent = do
   snapshotResult <- resolveSnapshot root
   snapshot <- case snapshotResult of
     Left problem -> do
-      assert "history fixture resolves as a Git snapshot" False (ExitFailure 1) "" (show problem)
-      exitFailure
+      failCheck "history fixture resolves as a Git snapshot" (ExitFailure 1) "" (show problem)
     Right value -> pure value
   history <- linearHistory snapshot
   (code, output, errors) <- readProcessWithExitCode "git"
@@ -776,8 +817,7 @@ gitSnapshotHistoryChecks parent = do
   shallowResult <- resolveSnapshot shallow
   shallowSnapshot <- case shallowResult of
     Left problem -> do
-      assert "shallow fixture resolves as a Git snapshot" False (ExitFailure 1) "" (show problem)
-      exitFailure
+      failCheck "shallow fixture resolves as a Git snapshot" (ExitFailure 1) "" (show problem)
     Right value -> pure value
   shallowHistory <- linearHistory shallowSnapshot
   assert "shallow history is refused as unprovable" (isLeft shallowHistory)
@@ -795,8 +835,7 @@ gitSnapshotHistoryChecks parent = do
   mergedResult <- resolveSnapshot root
   mergedSnapshot <- case mergedResult of
     Left problem -> do
-      assert "merge fixture resolves as a Git snapshot" False (ExitFailure 1) "" (show problem)
-      exitFailure
+      failCheck "merge fixture resolves as a Git snapshot" (ExitFailure 1) "" (show problem)
     Right value -> pure value
   mergedHistory <- linearHistory mergedSnapshot
   assert "merge history is refused by the linear-history seam" (isLeft mergedHistory)
@@ -826,9 +865,8 @@ gitSnapshotRootSwapChecks parent = do
       resolved <- resolveSnapshot root
       snapshot <- case resolved of
         Left problem -> do
-          assert "root-swap fixture resolves before pathname replacement" False
+          failCheck "root-swap fixture resolves before pathname replacement"
             (ExitFailure 1) "" (show problem)
-          exitFailure
         Right value -> pure value
       renameDirectory root renamedRoot
       createDirectoryLink victim root
@@ -1464,7 +1502,7 @@ bootstrapSymlinkDescendantCheck parent = do
 withProposalTemporaryRoot :: (FilePath -> IO ()) -> IO ()
 withProposalTemporaryRoot action = do
   (code, output, errors) <- shell "mktemp -d /tmp/archive-admission-proposals.XXXXXX"
-  if code /= ExitSuccess then putStrLn ("not ok - mktemp: " <> errors) >> exitFailure else do
+  if code /= ExitSuccess then assertFailure ("mktemp: " <> errors) else do
     let parent = trim output
     action parent
     removePathForcibly parent
@@ -4940,8 +4978,7 @@ requiredField :: String -> String -> IO String
 requiredField name value = case jsonStringField name value of
   Just result -> pure result
   Nothing -> do
-    putStrLn ("not ok - fixture output has no " <> name)
-    exitFailure
+    assertFailure ("fixture output has no " <> name)
 
 allocatedObjectId :: String -> String -> String -> IO String
 allocatedObjectId archiveId namespace name = do
@@ -4985,7 +5022,7 @@ contractCitationMatching root contractId wantedVersion = do
     (code == ExitSuccess && length fields == 2) code output errors
   case fields of
     [version, digest] -> pure (contractId, version, "sha256:" <> digest)
-    _ -> putStrLn "not ok - contract fixture has no version and digest" >> exitFailure
+    _ -> assertFailure "contract fixture has no version and digest"
 
 transitionDraftFromArchive :: FilePath -> String -> String -> IO String
 transitionDraftFromArchive root contractId objectId = do
@@ -5093,10 +5130,10 @@ commitArtifactFixtureWithDigest root objectId digest =
 commitDraftFixture :: FilePath -> String -> IO String
 commitDraftFixture root draft = do
   value <- case decodeUnique (LazyByteString.pack draft) of
-    Left problem -> putStrLn ("not ok - entity fixture JSON: " <> problem) >> exitFailure
+    Left problem -> assertFailure ("entity fixture JSON: " <> problem)
     Right parsed -> pure parsed
   (revision, stored) <- case finalizeStored "2026-01-01T00:00:00Z" value of
-    Left problem -> putStrLn ("not ok - entity fixture writer: " <> Text.unpack problem) >> exitFailure
+    Left problem -> assertFailure ("entity fixture writer: " <> Text.unpack problem)
     Right result -> pure result
   let relative = recordRelative (Text.unpack revision)
   createDirectoryIfMissing True (takeDirectory (root </> relative))
@@ -5117,10 +5154,10 @@ commitDraftBatchFixture root drafts = do
   where
     writeOne draft = do
       value <- case decodeUnique (LazyByteString.pack draft) of
-        Left problem -> putStrLn ("not ok - batch fixture JSON: " <> problem) >> exitFailure
+        Left problem -> assertFailure ("batch fixture JSON: " <> problem)
         Right parsed -> pure parsed
       (revision, stored) <- case finalizeStored "2026-01-01T00:00:00Z" value of
-        Left problem -> putStrLn ("not ok - batch fixture writer: " <> Text.unpack problem) >> exitFailure
+        Left problem -> assertFailure ("batch fixture writer: " <> Text.unpack problem)
         Right result -> pure result
       let relative = recordRelative (Text.unpack revision)
       createDirectoryIfMissing True (takeDirectory (root </> relative))
@@ -5351,13 +5388,14 @@ trim = dropWhileEnd (`elem` [' ', '\n', '\r', '\t']) . dropWhile (`elem` [' ', '
 dropWhileEnd :: (a -> Bool) -> [a] -> [a]
 dropWhileEnd predicate = reverse . dropWhile predicate . reverse
 
-assert :: String -> Bool -> ExitCode -> String -> String -> IO ()
-assert label passed code output errors = if passed then putStrLn ("ok - " <> label) else do
-  putStrLn ("not ok - " <> label)
-  putStrLn ("exit: " <> show code)
-  putStrLn ("stdout: " <> output)
-  putStrLn ("stderr: " <> errors)
-  exitFailure
+-- | Fails the running test case with the label and the command's result.
+assert :: HasCallStack => String -> Bool -> ExitCode -> String -> String -> IO ()
+assert label passed code output errors = unless passed (failCheck label code output errors)
+
+-- | The failure 'assert' raises, for the fixtures that cannot go on.
+failCheck :: HasCallStack => String -> ExitCode -> String -> String -> IO a
+failCheck label code output errors = assertFailure (unlines
+  [label, "exit: " <> show code, "stdout: " <> output, "stderr: " <> errors])
 
 contains :: String -> String -> Bool
 contains needle haystack = any (needle `prefixOf`) (tails haystack)

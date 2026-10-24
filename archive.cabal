@@ -207,6 +207,8 @@ test-suite door-test
     , directory
     , network
     , process
+    , tasty
+    , tasty-hunit
     , text
     , time
     , unix
@@ -230,6 +232,8 @@ test-suite archive-test
     , directory
     , filepath
     , process
+    , tasty
+    , tasty-hunit
     , text
   default-language: GHC2021
   ghc-options: -Wall -Werror

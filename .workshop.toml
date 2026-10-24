@@ -60,11 +60,13 @@ paths = ["documents/**", "world/harmony.py", "world/tonality.py", "world/form.py
 # ---- before a merge, on the laptop (tiers 30 to night) --------------------------
 # HS: what the prelude builds, so every suite below depends on it.
 
-# door-test and archive-test are single sequential programs whose checks
-# share state, so there is no selection: `-- --test-show-details=direct`
-# streams them. Measured: 314 s.
+# door-test and archive-test are tasty trees of sequential cases (they share
+# the process environment), streamed as they run. Arguments after `--` go to
+# tasty in both suites, each as one --test-option: `-- -p proposalChecks`
+# runs that case (a pattern neither tree matches runs nothing and passes).
+# Measured: 314 s.
 [suites.haskell]
-run = 'cabal test all "$@"'
+run = 'n=$#; for a do set -- "$@" "--test-option=$a"; done; shift $n; cabal test all --test-show-details=direct "$@"'
 timeout_seconds = 3600
 parser = "cabal"
 tier = "night"

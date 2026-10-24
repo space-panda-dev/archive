@@ -8,7 +8,7 @@
 -- state: a sketch, an underlay, an open repeat, a span's passes, a lead
 -- sheet's underlay, a written bar's directions, and an iReal export.
 --
--- Each check is a (label, passed, detail) row; Main asserts them.
+-- Each check is a (label, passed, detail) row; Main makes each a test case.
 module Specification011 (specification011Checks) where
 
 import Archive.Door.Catalog (loadContractCatalog)
