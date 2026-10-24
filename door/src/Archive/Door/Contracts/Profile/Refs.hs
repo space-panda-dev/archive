@@ -17,81 +17,81 @@ module Archive.Door.Contracts.Profile.Refs
   ) where
 
 import Archive.Door.Contracts.Fields (requireExactKeys, requiredText, requiredStrings, unique)
+import Archive.Door.Contracts.Profile.Error (RuleError (..), RuleViolation (..))
 import Data.Aeson (Value (..))
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Foldable (toList)
 import Data.List (sort)
 import Data.Text (Text)
-import Data.Text qualified as Text
 
 -- | A rule that names one reference role and nothing else
 -- (@x-archive-unique-sorted-refs@, @x-archive-distinct-track-content@,
 -- @x-archive-ordered-distinct-refs@): the role.
-roleRule :: Text -> Value -> Either Text Text
+roleRule :: Text -> Value -> Either RuleError Text
 roleRule label (Object fields) = do
   requireExactKeys label ["role"] fields
   requiredText "role" fields
-roleRule label _ = Left (label <> " must be an object")
+roleRule label _ = Left (RuleNotObject label)
 
 -- | @x-archive-distinct-refs@: at least two distinct roles whose references
 -- must name different objects.
-distinctRefsRule :: Value -> Either Text [Text]
+distinctRefsRule :: Value -> Either RuleError [Text]
 distinctRefsRule (Object fields) = do
   requireExactKeys "distinct references rule" ["roles"] fields
   names <- requiredStrings "roles" fields
   if length names >= 2 && length names == length (unique names)
     then Right names
-    else Left "distinct references rule must name at least two distinct roles"
-distinctRefsRule _ = Left "distinct references rule must be an object"
+    else Left TooFewDistinctRoles
+distinctRefsRule _ = Left (RuleNotObject "distinct references rule")
 
-checkDistinctRefs :: [Text] -> KeyMap.KeyMap Value -> Either Text ()
+checkDistinctRefs :: [Text] -> KeyMap.KeyMap Value -> Either RuleViolation ()
 checkDistinctRefs roles instanceValue = do
   refs <- instanceReferences instanceValue
   objects <- concat <$> mapM (\role -> referencesWithRole role refs >>= mapM refObject) roles
   if length objects == length (unique objects)
     then Right ()
-    else Left ("references in roles " <> Text.intercalate ", " roles <> " must name different objects")
+    else Left (RolesShareObject roles)
 
-checkOrderedDistinctRefs :: Text -> KeyMap.KeyMap Value -> Either Text ()
+checkOrderedDistinctRefs :: Text -> KeyMap.KeyMap Value -> Either RuleViolation ()
 checkOrderedDistinctRefs role instanceValue = do
   refs <- instanceReferences instanceValue
   objects <- referencesWithRole role refs >>= mapM refObject
   if length objects == length (unique objects)
     then Right ()
-    else Left (role <> " references must name different objects")
+    else Left (RoleRepeatsObject role)
 
-referencesWithRole :: Text -> [Value] -> Either Text [Value]
+referencesWithRole :: Text -> [Value] -> Either RuleViolation [Value]
 referencesWithRole role refs = do
   roles <- mapM refRole refs
   pure [ref | (ref, actual) <- zip refs roles, actual == role]
   where
     refRole (Object fields) = requiredText "role" fields
-    refRole _ = Left "contract instance reference must be an object"
+    refRole _ = Left (NotObject "contract instance reference")
 
-refObject :: Value -> Either Text Text
+refObject :: Value -> Either RuleViolation Text
 refObject (Object fields) = requiredText "id" fields
-refObject _ = Left "contract instance reference must be an object"
+refObject _ = Left (NotObject "contract instance reference")
 
-checkSortedRefs :: Text -> KeyMap.KeyMap Value -> Either Text ()
+checkSortedRefs :: Text -> KeyMap.KeyMap Value -> Either RuleViolation ()
 checkSortedRefs role instanceValue = do
   refs <- instanceReferences instanceValue
   mapM_ (validateRefRole role) refs
   keys <- mapM refKey refs
   if not (null keys) && keys == sort (unique keys) && length keys == length (unique keys)
     then Right ()
-    else Left "references must be nonempty, unique, and sorted by object and revision"
+    else Left RefsNotSorted
 
-instanceReferences :: KeyMap.KeyMap Value -> Either Text [Value]
+instanceReferences :: KeyMap.KeyMap Value -> Either RuleViolation [Value]
 instanceReferences instanceValue = case KeyMap.lookup "refs" instanceValue of
   Just (Array values) -> Right (toList values)
-  _ -> Left "contract instance refs must be an array"
+  _ -> Left RefsNotArray
 
-validateRefRole :: Text -> Value -> Either Text ()
+validateRefRole :: Text -> Value -> Either RuleViolation ()
 validateRefRole expected (Object fields) = do
   actual <- requiredText "role" fields
-  if actual == expected then Right () else Left ("reference role must be " <> expected)
-validateRefRole _ _ = Left "contract instance reference must be an object"
+  if actual == expected then Right () else Left (WrongRole expected)
+validateRefRole _ _ = Left (NotObject "contract instance reference")
 
-refKey :: Value -> Either Text (Text, Text)
+refKey :: Value -> Either RuleViolation (Text, Text)
 refKey (Object fields) = (,) <$> requiredText "id" fields <*> requiredText "revision_id" fields
-refKey _ = Left "contract instance reference must be an object"
+refKey _ = Left (NotObject "contract instance reference")

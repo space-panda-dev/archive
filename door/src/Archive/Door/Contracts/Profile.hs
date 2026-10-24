@@ -32,6 +32,7 @@ import Archive.Door.Contracts.Profile.Arrays
   , nestedRangesRule
   , subsetRule
   )
+import Archive.Door.Contracts.Profile.Error (RuleError (..), RuleViolation (..))
 import Archive.Door.Contracts.Profile.Music
   ( BarBeats
   , MetricModulations
@@ -90,6 +91,7 @@ import Archive.Door.SpanRules (SequentialSpans, sequentialSpansRule, validateSeq
 import Data.Aeson (Value (..))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.Bifunctor (bimap, first)
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
 
@@ -141,7 +143,7 @@ data ProfileRule
 -- | Parse the profile rules at a schema's root, in a fixed order: the first
 -- malformed rule in that order is the one refused, and the instance checks
 -- run in the same order, so the first broken rule is the one reported.
-parseProfileRules :: KeyMap.KeyMap Value -> Either Text [ProfileRule]
+parseProfileRules :: KeyMap.KeyMap Value -> Either RuleError [ProfileRule]
 parseProfileRules fields = do
   referenceTargets <- rule "x-archive-reference-targets" (fmap RuleReferenceTargets . referenceTargetRules)
   orderedSpans <- rule "x-archive-ordered-sample-spans" (fmap RuleOrderedSampleSpans . orderedSpansRule)
@@ -155,10 +157,10 @@ parseProfileRules fields = do
   orderedDistinct <- rule "x-archive-ordered-distinct-refs"
     (fmap RuleOrderedDistinctRefs . roleRule "ordered distinct references rule")
   case (KeyMap.member "x-archive-distinct-track-content" fields, KeyMap.member "x-archive-track-sample-spans" fields) of
-    (True, False) -> Left "distinct track content rule requires a track sample spans rule"
+    (True, False) -> Left DistinctContentWithoutSpans
     _ -> Right ()
   instants <- rule "x-archive-ordered-instants" (fmap RuleOrderedInstants . orderedInstantsRule)
-  sequential <- rule "x-archive-sequential-spans" (fmap RuleSequentialSpans . sequentialSpansRule)
+  sequential <- rule "x-archive-sequential-spans" (bimap ForeignRule RuleSequentialSpans . sequentialSpansRule)
   measure <- fmap RuleTargetMeasure <$> targetMeasureRule schema
   subject <- fmap RuleSameSubject <$> sameSubjectRule schema
   window <- fmap RuleSpanWindow <$> spanWindowRule schema
@@ -200,12 +202,12 @@ rulesFor (PinnedForms role pinned unpinned) instanceValue
   | otherwise = unpinned
 
 -- | Check an instance against a bundle's rules, in their parse order.
-checkProfile :: ProfileRules -> Value -> Either Text ()
+checkProfile :: ProfileRules -> Value -> Either RuleViolation ()
 checkProfile rules (Object instanceValue) = mapM_ (`checkInstance` instanceValue) (rulesFor rules instanceValue)
-checkProfile _ _ = Left "contract profile requires an object instance"
+checkProfile _ _ = Left InstanceNotObject
 
 -- | Check one rule against an instance (@{payload, refs}@).
-checkInstance :: ProfileRule -> KeyMap.KeyMap Value -> Either Text ()
+checkInstance :: ProfileRule -> KeyMap.KeyMap Value -> Either RuleViolation ()
 checkInstance profileRule instanceValue = case profileRule of
   RuleOrderedSampleSpans rule -> checkOrderedSpans rule instanceValue
   RuleUniqueSortedRefs role -> checkSortedRefs role instanceValue
@@ -214,7 +216,8 @@ checkInstance profileRule instanceValue = case profileRule of
   RuleDistinctRefs roles -> checkDistinctRefs roles instanceValue
   RuleOrderedDistinctRefs role -> checkOrderedDistinctRefs role instanceValue
   RuleOrderedInstants rule -> checkOrderedInstants rule instanceValue
-  RuleSequentialSpans rules -> requiredObject "payload" instanceValue >>= validateSequentialSpans rules
+  RuleSequentialSpans rules -> requiredObject "payload" instanceValue
+    >>= first ForeignViolation . validateSequentialSpans rules
   RuleAscendingItems paths -> checkAscendingItems paths instanceValue
   RulePitchStacks rule -> checkPitchStacks rule instanceValue
   RuleBarBeats rule -> checkBarBeats rule instanceValue

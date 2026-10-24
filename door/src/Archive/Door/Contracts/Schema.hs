@@ -14,6 +14,7 @@ import Archive.Door.Contracts.Fields (unique)
 import Archive.Door.Contracts.Pattern (compilePattern)
 import Archive.Door.Contracts.Pointer (resolvePointer)
 import Archive.Door.Contracts.Profile (profileRuleNames)
+import Archive.Door.Contracts.SchemaError (Requirement (..), SchemaError (..), schemaPath)
 import Archive.Door.SchemaObjectKeywords
   ( objectKeywordNames
   , objectKeywordSchemas
@@ -22,22 +23,24 @@ import Archive.Door.SchemaObjectKeywords
 import Data.Aeson (Value (..))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.Bifunctor (first)
 import Data.Foldable (toList)
+import Data.Maybe (fromMaybe)
 import Data.Scientific (floatingOrInteger)
 import Data.Text (Text)
 import Data.Text qualified as Text
 
-walkSchema :: Value -> [Text] -> Value -> Either Text ()
+walkSchema :: Value -> [Text] -> Value -> Either SchemaError ()
 walkSchema root path (Object fields) = do
   if not (null path) && any ((`KeyMap.member` fields) . Key.fromText) profileRuleNames
-    then Left "contract profile rules are allowed only at the schema root"
+    then Left ProfileRuleBelowRoot
     else pure ()
   rejectUnknownSchemaKeywords path fields
   validateRef root fields
   validateSchemaKeywordTypes fields
   mapM_ (\(key, value) -> walkSchema root (Key.toText key : path) value)
     (nestedSchemas fields)
-walkSchema _ path _ = Left (schemaPath path <> " must be an object")
+walkSchema _ path _ = Left (NodeNotObject path)
 
 -- The evaluator deliberately supports a small, closed subset of 2020-12.  A
 -- bundle is specification-owned data, so silently accepting a new keyword
@@ -53,24 +56,23 @@ schemaKeywords =
   , "examples", "readOnly", "writeOnly"
   ] <> objectKeywordNames <> profileRuleNames
 
-rejectUnknownSchemaKeywords :: [Text] -> KeyMap.KeyMap Value -> Either Text ()
+rejectUnknownSchemaKeywords :: [Text] -> KeyMap.KeyMap Value -> Either SchemaError ()
 rejectUnknownSchemaKeywords path fields =
   case filter (`notElem` schemaKeywords) (map (Key.toText . fst) (KeyMap.toList fields)) of
     [] -> Right ()
-    names -> Left (schemaPath path <> " contains unsupported keyword(s): "
-      <> Text.intercalate ", " names)
+    names -> Left (UnsupportedKeywords path names)
 
-validateRef :: Value -> KeyMap.KeyMap Value -> Either Text ()
+validateRef :: Value -> KeyMap.KeyMap Value -> Either SchemaError ()
 validateRef root fields = case KeyMap.lookup "$ref" fields of
   Nothing -> Right ()
   Just (String ref)
     | Text.isPrefixOf "#" ref -> case resolvePointer root ref of
         Just _ -> Right ()
-        Nothing -> Left "contract schema contains an unresolved local $ref"
-    | otherwise -> Left "contract schema contains a remote $ref"
-  Just _ -> Left "contract schema $ref must be a string"
+        Nothing -> Left UnresolvedRef
+    | otherwise -> Left RemoteRef
+  Just _ -> Left (KeywordMust "$ref" BeString)
 
-validateSchemaKeywordTypes :: KeyMap.KeyMap Value -> Either Text ()
+validateSchemaKeywordTypes :: KeyMap.KeyMap Value -> Either SchemaError ()
 validateSchemaKeywordTypes fields = do
   maybe (Right ()) validateTypeKeyword (KeyMap.lookup "type" fields)
   maybe (Right ()) (const (Right ())) (KeyMap.lookup "const" fields)
@@ -96,124 +98,121 @@ validateSchemaKeywordTypes fields = do
   validateSchemaKeyword "contains" fields
   mapM_ (`validateSchemaKeyword` fields) ["not", "if", "then", "else"]
   if not (KeyMap.member "if" fields) && (KeyMap.member "then" fields || KeyMap.member "else" fields)
-    then Left "contract schema then/else require if"
+    then Left ThenElseWithoutIf
     else Right ()
   validateContainsBounds fields
-  validateObjectKeywordTypes fields
+  first ForeignSchema (validateObjectKeywordTypes fields)
 
-validateTypeKeyword :: Value -> Either Text ()
+validateTypeKeyword :: Value -> Either SchemaError ()
 validateTypeKeyword (String name)
   | name `elem` typeNames = Right ()
-  | otherwise = Left "contract schema has an unsupported type"
+  | otherwise = Left UnsupportedType
 validateTypeKeyword (Array names)
-  | null namesList = Left "contract schema type array must not be empty"
-  | length namesList /= length (unique namesList) = Left "contract schema type array has duplicates"
+  | null namesList = Left (KeywordMust "type array" NotBeEmpty)
+  | length namesList /= length (unique namesList) = Left TypeArrayDuplicates
   | all (`elem` typeNames) namesList = Right ()
-  | otherwise = Left "contract schema has an unsupported type"
+  | otherwise = Left UnsupportedType
   where
-    namesList = case traverse asString (toList names) of
-      Right values -> values
-      Left _ -> []
-    asString :: Value -> Either Text Text
-    asString (String name) = Right name
-    asString _ = Left "contract schema type must contain only strings"
-validateTypeKeyword _ = Left "contract schema type must be a string or array"
+    -- An array holding a non-string reads as empty, and is refused as one.
+    namesList = fromMaybe [] (traverse asString (toList names))
+    asString (String name) = Just name
+    asString _ = Nothing
+validateTypeKeyword _ = Left (KeywordMust "type" BeStringOrArray)
 
 typeNames :: [Text]
 typeNames = ["null", "boolean", "object", "array", "number", "integer", "string"]
 
-validateEnumKeyword :: Value -> Either Text ()
+validateEnumKeyword :: Value -> Either SchemaError ()
 validateEnumKeyword (Array values)
-  | null (toList values) = Left "contract schema enum must not be empty"
+  | null (toList values) = Left (KeywordMust "enum" NotBeEmpty)
   | otherwise = Right ()
-validateEnumKeyword _ = Left "contract schema enum must be an array"
+validateEnumKeyword _ = Left (KeywordMust "enum" BeArray)
 
-validateRequiredKeyword :: Value -> Either Text ()
+validateRequiredKeyword :: Value -> Either SchemaError ()
 validateRequiredKeyword (Array values)
   | length names == length (toList values)
       && all validName names && length names == length (unique names) = Right ()
-  | otherwise = Left "contract schema required must contain unique strings"
+  | otherwise = Left (KeywordMust "required" ContainUniqueStrings)
   where
     names = [name | String name <- toList values]
     validName name = not (Text.null name)
-validateRequiredKeyword _ = Left "contract schema required must be an array"
+validateRequiredKeyword _ = Left (KeywordMust "required" BeArray)
 
-validatePropertiesKeyword :: Value -> Either Text ()
+validatePropertiesKeyword :: Value -> Either SchemaError ()
 validatePropertiesKeyword (Object _) = Right ()
-validatePropertiesKeyword _ = Left "contract schema properties must be an object"
+validatePropertiesKeyword _ = Left (KeywordMust "properties" BeObject)
 
-validateDefsKeyword :: Value -> Either Text ()
+validateDefsKeyword :: Value -> Either SchemaError ()
 validateDefsKeyword (Object _) = Right ()
-validateDefsKeyword _ = Left "contract schema $defs must be an object"
+validateDefsKeyword _ = Left (KeywordMust "$defs" BeObject)
 
-validateAdditionalKeyword :: Value -> Either Text ()
+validateAdditionalKeyword :: Value -> Either SchemaError ()
 validateAdditionalKeyword (Bool _) = Right ()
 validateAdditionalKeyword value@(Object _) = validateSchemaKeywordValue "additionalProperties" value
-validateAdditionalKeyword _ = Left "contract schema additionalProperties must be boolean or schema"
+validateAdditionalKeyword _ = Left (KeywordMust "additionalProperties" BeBooleanOrSchema)
 
-validateArrayKeyword :: Text -> KeyMap.KeyMap Value -> Either Text ()
+validateArrayKeyword :: Text -> KeyMap.KeyMap Value -> Either SchemaError ()
 validateArrayKeyword name fields = case KeyMap.lookup (Key.fromText name) fields of
   Nothing -> Right ()
   Just (Array _) -> Right ()
-  Just _ -> Left ("contract schema " <> name <> " must be an array")
+  Just _ -> Left (KeywordMust name BeArray)
 
 -- | @anyOf@ (specification 0.0.9): a nonempty array of schemas, at least one
 -- of which the instance must satisfy.
-validateNonEmptyArrayKeyword :: Text -> KeyMap.KeyMap Value -> Either Text ()
+validateNonEmptyArrayKeyword :: Text -> KeyMap.KeyMap Value -> Either SchemaError ()
 validateNonEmptyArrayKeyword name fields = case KeyMap.lookup (Key.fromText name) fields of
   Nothing -> Right ()
   Just (Array values) | not (null values) -> Right ()
-  Just _ -> Left ("contract schema " <> name <> " must be a nonempty array")
+  Just _ -> Left (KeywordMust name BeNonEmptyArray)
 
-validateUniqueItemsKeyword :: Value -> Either Text ()
+validateUniqueItemsKeyword :: Value -> Either SchemaError ()
 validateUniqueItemsKeyword (Bool _) = Right ()
-validateUniqueItemsKeyword _ = Left "contract schema uniqueItems must be a boolean"
+validateUniqueItemsKeyword _ = Left (KeywordMust "uniqueItems" BeBoolean)
 
-validateSchemaKeyword :: Text -> KeyMap.KeyMap Value -> Either Text ()
+validateSchemaKeyword :: Text -> KeyMap.KeyMap Value -> Either SchemaError ()
 validateSchemaKeyword name fields = maybe (Right ()) (validateSchemaKeywordValue name)
   (KeyMap.lookup (Key.fromText name) fields)
 
-validateSchemaKeywordValue :: Text -> Value -> Either Text ()
+validateSchemaKeywordValue :: Text -> Value -> Either SchemaError ()
 validateSchemaKeywordValue _ (Object _) = Right ()
-validateSchemaKeywordValue name _ = Left ("contract schema " <> name <> " must be a schema object")
+validateSchemaKeywordValue name _ = Left (KeywordMust name BeSchemaObject)
 
-validateIntegerKeyword :: Text -> Value -> Either Text ()
+validateIntegerKeyword :: Text -> Value -> Either SchemaError ()
 validateIntegerKeyword name (Number value) =
   case floatingOrInteger value :: Either Double Integer of
     Right integer | integer >= 0 -> Right ()
-    _ -> Left ("contract schema " <> name <> " must be a non-negative integer")
-validateIntegerKeyword name _ = Left ("contract schema " <> name <> " must be a non-negative integer")
+    _ -> Left (KeywordMust name BeNonNegativeInteger)
+validateIntegerKeyword name _ = Left (KeywordMust name BeNonNegativeInteger)
 
-validateNumberKeyword :: Text -> Value -> Either Text ()
+validateNumberKeyword :: Text -> Value -> Either SchemaError ()
 validateNumberKeyword _ (Number _) = Right ()
-validateNumberKeyword name _ = Left ("contract schema " <> name <> " must be a number")
+validateNumberKeyword name _ = Left (KeywordMust name BeNumber)
 
-validateStringKeyword :: Value -> Either Text ()
-validateStringKeyword value@(String _) = compilePattern value >> Right ()
-validateStringKeyword _ = Left "contract schema pattern must be a string"
+validateStringKeyword :: Value -> Either SchemaError ()
+validateStringKeyword value = () <$ first BadPattern (compilePattern value)
 
-validateFormatKeyword :: Value -> Either Text ()
+validateFormatKeyword :: Value -> Either SchemaError ()
 validateFormatKeyword (String "date-time") = Right ()
-validateFormatKeyword _ = Left "contract schema format must be date-time"
+validateFormatKeyword _ = Left (KeywordMust "format" BeDateTime)
 
-validateContainsBounds :: KeyMap.KeyMap Value -> Either Text ()
+validateContainsBounds :: KeyMap.KeyMap Value -> Either SchemaError ()
 validateContainsBounds fields = do
   let containsPresent = KeyMap.member "contains" fields
   if not containsPresent && (KeyMap.member "minContains" fields || KeyMap.member "maxContains" fields)
-    then Left "contract schema minContains/maxContains require contains"
+    then Left ContainsBoundsWithoutContains
     else pure ()
   minValue <- integerValue "minContains" (KeyMap.lookup "minContains" fields)
   maxValue <- integerValue "maxContains" (KeyMap.lookup "maxContains" fields)
   case (minValue, maxValue) of
-    (Just lower, Just upper) | lower > upper -> Left "contract schema minContains exceeds maxContains"
+    (Just lower, Just upper) | lower > upper -> Left MinContainsExceedsMax
     _ -> Right ()
 
-integerValue :: Text -> Maybe Value -> Either Text (Maybe Integer)
+integerValue :: Text -> Maybe Value -> Either SchemaError (Maybe Integer)
 integerValue _ Nothing = Right Nothing
 integerValue name (Just (Number value)) = case floatingOrInteger value :: Either Double Integer of
   Right integer | integer >= 0 -> Right (Just integer)
-  _ -> Left ("contract schema " <> name <> " must be a non-negative integer")
-integerValue name (Just _) = Left ("contract schema " <> name <> " must be a non-negative integer")
+  _ -> Left (KeywordMust name BeNonNegativeInteger)
+integerValue name (Just _) = Left (KeywordMust name BeNonNegativeInteger)
 
 nestedSchemas :: KeyMap.KeyMap Value -> [(Key.Key, Value)]
 nestedSchemas fields = concatMap one (KeyMap.toList fields) <> objectKeywordSchemas fields
@@ -238,7 +237,3 @@ nestedSchemas fields = concatMap one (KeyMap.toList fields) <> objectKeywordSche
         Object _ -> [(key, value)]
         _ -> []
       _ -> []
-
-schemaPath :: [Text] -> Text
-schemaPath [] = "contract schema"
-schemaPath path = "contract schema at " <> Text.intercalate "." (reverse path)

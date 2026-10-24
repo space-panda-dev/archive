@@ -19,6 +19,7 @@ import Archive.Door.Contracts.Fields
   , requiredObject
   , requiredText
   )
+import Archive.Door.Contracts.Profile.Error (RuleError (..), RuleViolation (..))
 import Archive.Door.Contracts.Profile.Refs
   ( instanceReferences
   , refObject
@@ -41,12 +42,12 @@ data OrderedSpans = OrderedSpans
   , orderedSpansRate :: Text
   } deriving (Eq, Show)
 
-orderedSpansRule :: Value -> Either Text OrderedSpans
+orderedSpansRule :: Value -> Either RuleError OrderedSpans
 orderedSpansRule (Object fields) = do
   requireExactKeys "ordered sample spans rule" ["payload", "role", "start", "end", "rate"] fields
   OrderedSpans <$> requiredText "payload" fields <*> requiredText "role" fields
     <*> requiredText "start" fields <*> requiredText "end" fields <*> requiredText "rate" fields
-orderedSpansRule _ = Left "ordered sample spans rule must be an object"
+orderedSpansRule _ = Left (RuleNotObject "ordered sample spans rule")
 
 -- | @x-archive-track-sample-spans@: the payload array @payload@ holds
 -- tracks, each an array @pieces@ of spans, and the references in @role@
@@ -60,26 +61,26 @@ data TrackSpans = TrackSpans
   , trackSpansRate :: Text
   } deriving (Eq, Show)
 
-trackSpansRule :: Value -> Either Text TrackSpans
+trackSpansRule :: Value -> Either RuleError TrackSpans
 trackSpansRule (Object fields) = do
   requireExactKeys "track sample spans rule" ["payload", "pieces", "role", "start", "end", "rate"] fields
   TrackSpans <$> requiredText "payload" fields <*> requiredText "pieces" fields
     <*> requiredText "role" fields <*> requiredText "start" fields <*> requiredText "end" fields
     <*> requiredText "rate" fields
-trackSpansRule _ = Left "track sample spans rule must be an object"
+trackSpansRule _ = Left (RuleNotObject "track sample spans rule")
 
 -- | Spans are grouped by track, and references of the span role follow the
 -- tracks in order.  Bounds are compared only between consecutive spans of one
 -- track that pin the same Artifact object: different recordings have
 -- different clocks, so their sample offsets are not comparable here.
-checkTrackSpans :: TrackSpans -> KeyMap.KeyMap Value -> Either Text ()
+checkTrackSpans :: TrackSpans -> KeyMap.KeyMap Value -> Either RuleViolation ()
 checkTrackSpans rule instanceValue = do
   tracks <- trackPieces (trackSpansPayload rule) (trackSpansPieces rule) instanceValue
   refs <- instanceReferences instanceValue
   roleRefs <- referencesWithRole (trackSpansRole rule) refs
   let spanCount = sum (map length tracks)
   if null tracks || any null tracks || spanCount /= length roleRefs
-    then Left "track spans and span references must be nonempty and equal in number"
+    then Left TrackSpanCount
     else pure ()
   pieceObjects <- mapM refObject roleRefs
   let pinned = splitPlaces (map length tracks) pieceObjects
@@ -90,30 +91,30 @@ checkTrackSpans rule instanceValue = do
       let consecutive = zip (zip objects bounds) (drop 1 (zip objects bounds))
       if all (\((left, (_, leftEnd)), (right, (rightStart, _))) -> left /= right || rightStart >= leftEnd) consecutive
         then Right ()
-        else Left "spans of one track that pin the same Artifact must not overlap or run backwards"
+        else Left TrackSpansOverlap
     spanBounds (Object piece) = do
       start <- requiredInteger (trackSpansStart rule) piece
       end <- requiredInteger (trackSpansEnd rule) piece
       rate <- requiredInteger (trackSpansRate rule) piece
       if start >= 0 && end > start && rate > 0
         then Right (start, end)
-        else Left "sample span requires 0 <= start < end and positive sample rate"
-    spanBounds _ = Left "sample span must be an object"
+        else Left BadSampleSpan
+    spanBounds _ = Left (NotObject "sample span")
 
 -- | Each track's spans, from the payload array @payloadName@ of tracks that
 -- each hold the array @piecesName@.
-trackPieces :: Text -> Text -> KeyMap.KeyMap Value -> Either Text [[Value]]
+trackPieces :: Text -> Text -> KeyMap.KeyMap Value -> Either RuleViolation [[Value]]
 trackPieces payloadName piecesName instanceValue = do
   payload <- requiredObject "payload" instanceValue
   tracks <- case KeyMap.lookup (Key.fromText payloadName) payload of
     Just (Array values) -> Right (toList values)
-    _ -> Left "track sample spans payload must be an array"
+    _ -> Left (NotArray "track sample spans payload")
   mapM pieces tracks
   where
     pieces (Object track) = case KeyMap.lookup (Key.fromText piecesName) track of
       Just (Array values) -> Right (toList values)
-      _ -> Left "track must contain a span array"
-    pieces _ = Left "track must be an object"
+      _ -> Left TrackWithoutSpans
+    pieces _ = Left (NotObject "track")
 
 -- | For a schema with a distinct-track-content rule, the span role and the
 -- number of span references in each track, in reference order.  Door needs
@@ -122,7 +123,7 @@ trackPieces payloadName piecesName instanceValue = do
 --
 -- It reads the schema's rules as they are written rather than as a loaded
 -- bundle holds them, because admission calls it with a schema in hand.
-distinctTrackContentRule :: Value -> Value -> Either Text (Maybe (Text, [Int]))
+distinctTrackContentRule :: Value -> Value -> Either RuleViolation (Maybe (Text, [Int]))
 distinctTrackContentRule (Object schema) (Object instanceValue) =
   case (KeyMap.lookup "x-archive-distinct-track-content" schema, KeyMap.lookup "x-archive-track-sample-spans" schema) of
     (Nothing, _) -> Right Nothing
@@ -133,24 +134,24 @@ distinctTrackContentRule (Object schema) (Object instanceValue) =
       spanRole <- requiredText "role" spansRule
       tracks <- trackPieces payloadName piecesName instanceValue
       if role /= spanRole
-        then Left "distinct track content rule must name the span reference role"
+        then Left (BrokenRule DistinctContentRole)
         else Right (Just (role, map length tracks))
-    _ -> Left "distinct track content rule requires a track sample spans rule"
-distinctTrackContentRule _ _ = Left "contract profile requires an object instance"
+    _ -> Left (BrokenRule DistinctContentWithoutSpans)
+distinctTrackContentRule _ _ = Left InstanceNotObject
 
 splitPlaces :: [Int] -> [a] -> [[a]]
 splitPlaces [] _ = []
 splitPlaces (count : counts) values = take count values : splitPlaces counts (drop count values)
 
-checkOrderedSpans :: OrderedSpans -> KeyMap.KeyMap Value -> Either Text ()
+checkOrderedSpans :: OrderedSpans -> KeyMap.KeyMap Value -> Either RuleViolation ()
 checkOrderedSpans rule instanceValue = do
   payload <- requiredObject "payload" instanceValue
   pieces <- case KeyMap.lookup (Key.fromText (orderedSpansPayload rule)) payload of
     Just (Array values) -> Right (toList values)
-    _ -> Left "ordered sample spans payload must be an array"
+    _ -> Left (NotArray "ordered sample spans payload")
   refs <- instanceReferences instanceValue
   if null pieces || length pieces /= length refs
-    then Left "ordered sample spans and piece references must have equal nonzero length"
+    then Left OrderedSpanCount
     else pure ()
   mapM_ validatePiece pieces
   mapM_ (validateRefRole (orderedSpansRole rule)) refs
@@ -161,5 +162,5 @@ checkOrderedSpans rule instanceValue = do
       rate <- requiredInteger (orderedSpansRate rule) piece
       if start >= 0 && end > start && rate > 0
         then Right ()
-        else Left "sample span requires 0 <= start < end and positive sample rate"
-    validatePiece _ = Left "sample span must be an object"
+        else Left BadSampleSpan
+    validatePiece _ = Left (NotObject "sample span")

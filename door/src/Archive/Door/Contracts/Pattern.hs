@@ -4,6 +4,8 @@
 -- their matcher. Pure: nothing here reads a schema beyond the pattern text.
 module Archive.Door.Contracts.Pattern
   ( ContractPattern
+  , PatternError (..)
+  , renderPatternError
   , compilePattern
   , matchesPattern
   ) where
@@ -25,22 +27,54 @@ data PatternNode
 
 newtype ContractPattern = ContractPattern [PatternNode]
 
-compilePattern :: Value -> Either Text ContractPattern
-compilePattern (String patternText) = parsePattern patternText
-compilePattern _ = Left "contract schema pattern must be a string"
+-- | Why a pattern is outside the supported subset. The bundle is refused
+-- with the text 'renderPatternError' gives, which the suites compare.
+data PatternError
+  = PatternNotString
+  | UnbalancedGroup
+  | NotAnchored
+  | UnsupportedEscape
+  | UnterminatedClass
+  | UnsupportedGroupSyntax
+  | UnsupportedSyntax
+  | Incomplete
+  | EmptyClass
+  | UnsupportedClass
+  | UnterminatedQuantifier
+  | InvalidCount
+  deriving (Eq, Show)
 
-parsePattern :: Text -> Either Text ContractPattern
+renderPatternError :: PatternError -> Text
+renderPatternError problem = "contract schema pattern " <> case problem of
+  PatternNotString -> "must be a string"
+  UnbalancedGroup -> "has an unbalanced group"
+  NotAnchored -> "must be anchored"
+  UnsupportedEscape -> "uses an unsupported escape"
+  UnterminatedClass -> "has an unterminated class"
+  UnsupportedGroupSyntax -> "uses unsupported group syntax"
+  UnsupportedSyntax -> "uses unsupported syntax"
+  Incomplete -> "is incomplete"
+  EmptyClass -> "has an empty class"
+  UnsupportedClass -> "uses an unsupported character class"
+  UnterminatedQuantifier -> "has an unterminated quantifier"
+  InvalidCount -> "quantifier must be a valid count"
+
+compilePattern :: Value -> Either PatternError ContractPattern
+compilePattern (String patternText) = parsePattern patternText
+compilePattern _ = Left PatternNotString
+
+parsePattern :: Text -> Either PatternError ContractPattern
 parsePattern source = case Text.uncons source of
   Just ('^', rest) | Just (body, '$') <- Text.unsnoc rest -> do
     (alternatives, remaining) <- parseAlternatives (Text.unpack body)
     case (alternatives, remaining) of
       ([sequence'], []) -> Right (ContractPattern sequence')
       (_, []) -> Right (ContractPattern [PatternGroup alternatives])
-      _ -> Left "contract schema pattern has an unbalanced group"
-  _ -> Left "contract schema pattern must be anchored"
+      _ -> Left UnbalancedGroup
+  _ -> Left NotAnchored
 
 -- | Parse alternatives up to an unconsumed ')' or the end of input.
-parseAlternatives :: String -> Either Text ([[PatternNode]], String)
+parseAlternatives :: String -> Either PatternError ([[PatternNode]], String)
 parseAlternatives input = do
   (first, rest) <- parseSequence input
   case rest of
@@ -49,7 +83,7 @@ parseAlternatives input = do
       Right (first : others, remaining)
     _ -> Right ([first], rest)
 
-parseSequence :: String -> Either Text ([PatternNode], String)
+parseSequence :: String -> Either PatternError ([PatternNode], String)
 parseSequence input = case input of
   [] -> Right ([], [])
   ')' : _ -> Right ([], input)
@@ -60,48 +94,48 @@ parseSequence input = case input of
     (nodes, rest) <- parseSequence afterQuantifier
     Right (node : nodes, rest)
 
-parseAtom :: String -> Either Text (PatternNode, String)
+parseAtom :: String -> Either PatternError (PatternNode, String)
 parseAtom input = case input of
   '\\' : character : rest
     | character `elem` ('-' : metaCharacters) -> Right (PatternLiteral character, rest)
-    | otherwise -> Left "contract schema pattern uses an unsupported escape"
+    | otherwise -> Left UnsupportedEscape
   '[' : rest -> case break (== ']') rest of
     (body, ']' : afterClass) -> do
       characters <- parseClass body
       Right (PatternClass characters, afterClass)
-    _ -> Left "contract schema pattern has an unterminated class"
-  '(' : '?' : _ -> Left "contract schema pattern uses unsupported group syntax"
+    _ -> Left UnterminatedClass
+  '(' : '?' : _ -> Left UnsupportedGroupSyntax
   '(' : rest -> do
     (alternatives, remaining) <- parseAlternatives rest
     case remaining of
       ')' : afterGroup -> Right (PatternGroup alternatives, afterGroup)
-      _ -> Left "contract schema pattern has an unbalanced group"
+      _ -> Left UnbalancedGroup
   character : rest
-    | character `elem` metaCharacters -> Left "contract schema pattern uses unsupported syntax"
+    | character `elem` metaCharacters -> Left UnsupportedSyntax
     | otherwise -> Right (PatternLiteral character, rest)
-  [] -> Left "contract schema pattern is incomplete"
+  [] -> Left Incomplete
 
 metaCharacters :: String
 metaCharacters = ".*+?()|{}[]\\^$"
 
 -- | A class is a nonempty run of ASCII letters and digits and ranges between
 -- them; negation and escapes inside classes are unsupported.
-parseClass :: String -> Either Text [Char]
-parseClass [] = Left "contract schema pattern has an empty class"
+parseClass :: String -> Either PatternError [Char]
+parseClass [] = Left EmptyClass
 parseClass body = go body
   where
     go [] = Right []
     go (low : '-' : high : rest)
       | classCharacter low && classCharacter high && low <= high = (enumFromTo low high <>) <$> go rest
-      | otherwise = Left "contract schema pattern uses an unsupported character class"
+      | otherwise = Left UnsupportedClass
     go (character : rest)
       | classCharacter character = (character :) <$> go rest
-      | otherwise = Left "contract schema pattern uses an unsupported character class"
+      | otherwise = Left UnsupportedClass
     classCharacter character =
       ('0' <= character && character <= '9') || ('a' <= character && character <= 'z')
         || ('A' <= character && character <= 'Z')
 
-parseQuantifier :: PatternNode -> String -> Either Text (PatternNode, String)
+parseQuantifier :: PatternNode -> String -> Either PatternError (PatternNode, String)
 parseQuantifier atom input = case input of
   '?' : rest -> Right (PatternRepeat atom 0 (Just 1), rest)
   '*' : rest -> Right (PatternRepeat atom 0 Nothing, rest)
@@ -110,10 +144,10 @@ parseQuantifier atom input = case input of
     (bounds, '}' : afterBounds) -> do
       (lower, upper) <- parseBounds bounds
       Right (PatternRepeat atom lower upper, afterBounds)
-    _ -> Left "contract schema pattern has an unterminated quantifier"
+    _ -> Left UnterminatedQuantifier
   _ -> Right (atom, input)
 
-parseBounds :: String -> Either Text (Int, Maybe Int)
+parseBounds :: String -> Either PatternError (Int, Maybe Int)
 parseBounds bounds = case break (== ',') bounds of
   (exact, []) -> do
     count <- natural exact
@@ -131,7 +165,7 @@ parseBounds bounds = case break (== ',') bounds of
       | not (null digits) && all (\character -> '0' <= character && character <= '9') digits
           && length digits <= 6 = Right (read digits)
       | otherwise = invalid
-    invalid = Left "contract schema pattern quantifier must be a valid count"
+    invalid = Left InvalidCount
 
 matchesPattern :: ContractPattern -> Text -> Bool
 matchesPattern (ContractPattern nodes) value = any null (matchSequence nodes (Text.unpack value))

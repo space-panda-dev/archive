@@ -20,13 +20,15 @@ import Archive.Door.Contracts.Fields
   , requiredObject
   , requiredText
   , unique
-  , validateNamedFieldsRule
   )
+import Archive.Door.Contracts.Profile.Error (RuleError (..), RuleViolation (..))
 import Archive.Door.Contracts.Profile.Paths (descend, pathHolders, requiredPath)
+import Archive.Door.Contracts.Profile.Syntax (validateNamedFieldsRule)
 import Archive.Door.SpanRules (withinGroups)
 import Data.Aeson (Value (..))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.Bifunctor (first)
 import Data.Foldable (toList)
 import Data.List (sort)
 import Data.Scientific (floatingOrInteger)
@@ -49,7 +51,7 @@ data PitchStacks = PitchStacks
   , pitchStacksVoicing :: Text
   } deriving (Eq, Show)
 
-pitchStacksRule :: Value -> Either Text PitchStacks
+pitchStacksRule :: Value -> Either RuleError PitchStacks
 pitchStacksRule (Object fields) = do
   let names = ["bass", "tones", "uncertain", "classes", "voicing"]
   requireExactKeys "pitch stacks rule" ("payload" : names) fields
@@ -58,10 +60,10 @@ pitchStacksRule (Object fields) = do
   case named of
     [bass, tones, uncertain, classes, voicing] | length named == length (unique named) ->
       Right (PitchStacks path bass tones uncertain classes voicing)
-    _ -> Left "pitch stacks rule must name distinct fields"
-pitchStacksRule _ = Left "pitch stacks rule must be an object"
+    _ -> Left (FieldsNotDistinct "pitch stacks rule")
+pitchStacksRule _ = Left (RuleNotObject "pitch stacks rule")
 
-checkPitchStacks :: PitchStacks -> KeyMap.KeyMap Value -> Either Text ()
+checkPitchStacks :: PitchStacks -> KeyMap.KeyMap Value -> Either RuleViolation ()
 checkPitchStacks (PitchStacks path bassName tonesName uncertainName classesName voicingName) instanceValue = do
   payload <- requiredObject "payload" instanceValue
   holders <- pathHolders (path <> [bassName]) payload
@@ -78,35 +80,35 @@ checkPitchStacks (PitchStacks path bassName tonesName uncertainName classesName 
         Nothing -> Right []
         Just (Array values) -> mapM (\group -> case group of
           Object groupFields -> integers classesName groupFields
-          _ -> Left (uncertainName <> " must contain objects")) (toList values)
-        Just _ -> Left (uncertainName <> " must be an array")
+          _ -> Left (NotObjects uncertainName)) (toList values)
+        Just _ -> Left (NotArray uncertainName)
       let certain = Set.fromList (bass : tones)
           unsure = concat groups
       if Set.null (Set.fromList unsure `Set.intersection` certain) && length unsure == length (unique unsure)
         then Right ()
-        else Left (uncertainName <> " must not name the bass, a tone, or a class of another group")
+        else Left (UncertainOverlaps uncertainName)
       if groups == sort groups
         then Right ()
-        else Left (uncertainName <> " groups must be in ascending order of their " <> classesName)
+        else Left (UncertainUnordered uncertainName classesName)
       case KeyMap.lookup (Key.fromText voicingName) fields of
         Nothing -> Right ()
         Just _ -> do
           notes <- integers voicingName fields
           case notes of
             lowest : upper
-              | lowest `mod` 12 /= bass -> Left (voicingName <> "'s lowest note must be the bass")
+              | lowest `mod` 12 /= bass -> Left (VoicingBass voicingName)
               | otherwise -> do
                   let above = Set.fromList (map (`mod` 12) upper)
                   if Set.fromList tones `Set.isSubsetOf` above
                       && above `Set.isSubsetOf` Set.fromList (tones <> unsure)
                     then Right ()
-                    else Left (voicingName <> "'s upper notes must sound every tone and only tones or uncertain classes")
-            [] -> Left (voicingName <> " must not be empty")
+                    else Left (VoicingTones voicingName)
+            [] -> Left (NotEmpty voicingName)
     integers name fields = case KeyMap.lookup (Key.fromText name) fields of
       Just (Array values) -> mapM (\item -> case item of
         Number value | Right integer <- (floatingOrInteger value :: Either Double Integer) -> Right integer
-        _ -> Left (name <> " must contain integers")) (toList values)
-      _ -> Left (name <> " must be an array")
+        _ -> Left (NotIntegers name)) (toList values)
+      _ -> Left (NotArray name)
 
 -- | @x-archive-bar-beats@: every bar @payload@ reaches has an integer
 -- @numerator@; its optional @grouping@ MUST sum to the numerator, and its
@@ -122,7 +124,7 @@ data BarBeats = BarBeats
   , barBeatsBeats :: Text
   } deriving (Eq, Show)
 
-barBeatsRule :: Value -> Either Text BarBeats
+barBeatsRule :: Value -> Either RuleError BarBeats
 barBeatsRule (Object fields) = do
   let names = ["start", "end", "numerator", "grouping", "beats"]
   requireExactKeys "bar beats rule" ("payload" : names) fields
@@ -131,10 +133,10 @@ barBeatsRule (Object fields) = do
   case named of
     [start, end, numerator, grouping, beats] | length named == length (unique named) ->
       Right (BarBeats path start end numerator grouping beats)
-    _ -> Left "bar beats rule must name distinct fields"
-barBeatsRule _ = Left "bar beats rule must be an object"
+    _ -> Left (FieldsNotDistinct "bar beats rule")
+barBeatsRule _ = Left (RuleNotObject "bar beats rule")
 
-checkBarBeats :: BarBeats -> KeyMap.KeyMap Value -> Either Text ()
+checkBarBeats :: BarBeats -> KeyMap.KeyMap Value -> Either RuleViolation ()
 checkBarBeats (BarBeats path startName endName numeratorName groupingName beatsName) instanceValue = do
   payload <- requiredObject "payload" instanceValue
   let bars = concatMap (\value -> case value of
@@ -151,25 +153,25 @@ checkBarBeats (BarBeats path startName endName numeratorName groupingName beatsN
           groups <- integerArray groupingName fields
           if sum groups == numerator
             then Right (fromIntegral (length groups))
-            else Left (groupingName <> " must add up to the bar's " <> numeratorName)
+            else Left (GroupingSum groupingName numeratorName)
       case KeyMap.lookup (Key.fromText beatsName) fields of
         Nothing -> Right ()
         Just _ -> do
           beats <- integerArray beatsName fields
           if fromIntegral (length beats) /= count
-            then Left (beatsName <> " must hold one sample per counted beat")
+            then Left (BeatCount beatsName)
             else if take 1 beats /= [start]
               || not (and (zipWith (<) beats (drop 1 beats)))
               || any (>= end) beats
-              then Left (beatsName <> " must start on the bar's downbeat and rise within the bar")
+              then Left (BeatsMisplaced beatsName)
               else Right ()
-    _ -> Left "bar must be an object") bars
+    _ -> Left (NotObject "bar")) bars
   where
     integerArray name fields = case KeyMap.lookup (Key.fromText name) fields of
       Just (Array values) -> mapM (\item -> case item of
         Number value | Right integer <- (floatingOrInteger value :: Either Double Integer) -> Right integer
-        _ -> Left (name <> " must contain integers")) (toList values)
-      _ -> Left (name <> " must be an array")
+        _ -> Left (NotIntegers name)) (toList values)
+      _ -> Left (NotArray name)
 
 -- | @x-archive-metric-modulations@: each element of the payload array
 -- @payload@ joins bar @bar@ of layer @layer@ (positions in the payload
@@ -192,7 +194,7 @@ data MetricModulations = MetricModulations
   , modulationsDots :: Text
   } deriving (Eq, Show)
 
-metricModulationsRule :: Value -> Either Text MetricModulations
+metricModulationsRule :: Value -> Either RuleError MetricModulations
 metricModulationsRule value = do
   let names = [ "payload", "layers", "bars", "start", "end", "layer", "bar", "pulse_before", "pulse_after"
               , "denominator", "dots" ]
@@ -204,10 +206,10 @@ metricModulationsRule value = do
         [payload, layers, bars, start, end, layer, bar, pulseBefore, pulseAfter, denominator, dots]
           | length named == length (unique named) ->
               Right (MetricModulations payload layers bars start end layer bar pulseBefore pulseAfter denominator dots)
-        _ -> Left "metric modulations rule must name distinct fields"
-    _ -> Left "metric modulations rule must be an object"
+        _ -> Left (FieldsNotDistinct "metric modulations rule")
+    _ -> Left (RuleNotObject "metric modulations rule")
 
-checkMetricModulations :: MetricModulations -> KeyMap.KeyMap Value -> Either Text ()
+checkMetricModulations :: MetricModulations -> KeyMap.KeyMap Value -> Either RuleViolation ()
 checkMetricModulations
   (MetricModulations payloadName layersName barsName startName endName layerName barName
     pulseBeforeName pulseAfterName denominatorName dotsName)
@@ -216,8 +218,8 @@ checkMetricModulations
   links <- case KeyMap.lookup (Key.fromText payloadName) payload of
     Nothing -> Right []
     Just (Array values) -> Right (toList values)
-    Just _ -> Left (payloadName <> " must be an array")
-  layers <- withinGroups (Just layersName) payload
+    Just _ -> Left (NotArray payloadName)
+  layers <- first ForeignViolation (withinGroups (Just layersName) payload)
   places <- mapM (\link -> case link of
     Object fields -> do
       layer <- requiredInteger layerName fields
@@ -225,29 +227,29 @@ checkMetricModulations
       bars <- case drop (fromIntegral layer) layers of
         chosen : _ | layer >= 0 -> case KeyMap.lookup (Key.fromText barsName) chosen of
           Just (Array values) -> Right (toList values)
-          _ -> Left (payloadName <> " must join bars of a layer that holds " <> barsName)
-        _ -> Left (layerName <> " must name a layer of the claim")
+          _ -> Left (LayerWithoutBars payloadName barsName)
+        _ -> Left (NoSuchLayer layerName)
       (previous, this) <- case drop (fromIntegral bar - 1) bars of
         Object earlier : Object later : _ | bar >= 1 -> Right (earlier, later)
-        _ -> Left (barName <> " must name a bar after the first of its layer")
+        _ -> Left (NoEarlierBar barName)
       previousEnd <- requiredInteger endName previous
       thisStart <- requiredInteger startName this
       if previousEnd /= thisStart
-        then Left (payloadName <> " must join bars that are adjacent")
+        then Left (BarsNotAdjacent payloadName)
         else Right ()
       case (KeyMap.lookup (Key.fromText pulseBeforeName) fields, KeyMap.lookup (Key.fromText pulseAfterName) fields) of
         (Just (Object before), Just (Object after)) -> do
           (beforeTop, beforeBottom) <- noteLength before
           (afterTop, afterBottom) <- noteLength after
           if beforeTop * afterBottom == afterTop * beforeBottom
-            then Left (payloadName <> " must move the pulse to a note value of another length")
+            then Left (PulseUnmoved payloadName)
             else Right ()
         _ -> Right ()
       pure (layer, bar)
-    _ -> Left (payloadName <> " must contain objects")) links
+    _ -> Left (NotObjects payloadName)) links
   if places == sort places && length places == length (unique places)
     then Right ()
-    else Left (payloadName <> " must be distinct and in order of layer and bar")
+    else Left (LinksOutOfOrder payloadName)
   where
     -- A note value's length in whole notes as (numerator, denominator):
     -- (2^(dots+1) - 1) / (denominator * 2^dots).
@@ -257,5 +259,5 @@ checkMetricModulations
         Nothing -> Right 0
         Just _ -> requiredInteger dotsName fields
       if denominator <= 0 || dots < 0
-        then Left (denominatorName <> " and " <> dotsName <> " must be a note value")
+        then Left (NotNoteValue denominatorName dotsName)
         else Right (2 ^ (dots + 1) - 1, denominator * 2 ^ dots :: Integer)

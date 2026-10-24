@@ -23,10 +23,11 @@ import Archive.Door.Contracts.Fields
   ( objectValue
   , requireExactKeys
   , requiredText
-  , validateNamedFieldsRule
   )
+import Archive.Door.Contracts.Profile.Error (RuleError (..))
 import Archive.Door.Contracts.Profile.Paths (payloadPaths, requiredPath)
 import Archive.Door.Contracts.Profile.ReferenceTargets (requireSingleClaimTarget)
+import Archive.Door.Contracts.Profile.Syntax (validateNamedFieldsRule)
 import Data.Aeson (Value (..))
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Text (Text)
@@ -51,7 +52,7 @@ data TargetMeasureRule = TargetMeasureRule
   , targetMeasureOptional :: Bool
   } deriving (Eq, Show)
 
-targetMeasureRule :: Value -> Either Text (Maybe TargetMeasureRule)
+targetMeasureRule :: Value -> Either RuleError (Maybe TargetMeasureRule)
 targetMeasureRule schema@(Object fields) = case KeyMap.lookup "x-archive-target-measure" fields of
   Nothing -> Right Nothing
   Just value -> do
@@ -67,7 +68,7 @@ targetMeasureRule schema@(Object fields) = case KeyMap.lookup "x-archive-target-
     within <- optionalWithin rule
     requireSingleClaimTarget "target measure rule" schema role
     pure (Just (TargetMeasureRule role rate count payload end within optional))
-targetMeasureRule _ = Left "contract schema must be an object"
+targetMeasureRule _ = Left RuleSchemaNotObject
 
 -- | @x-archive-same-subject@: the Claim pinned in @role@ has exactly one
 -- @subject@ reference, and it MUST pin the same object and revision as this
@@ -81,7 +82,7 @@ data SameSubjectRule = SameSubjectRule
   , sameSubjectOptional :: Bool
   } deriving (Eq, Show)
 
-sameSubjectRule :: Value -> Either Text (Maybe SameSubjectRule)
+sameSubjectRule :: Value -> Either RuleError (Maybe SameSubjectRule)
 sameSubjectRule schema@(Object fields) = case KeyMap.lookup "x-archive-same-subject" fields of
   Nothing -> Right Nothing
   Just value -> do
@@ -93,11 +94,11 @@ sameSubjectRule schema@(Object fields) = case KeyMap.lookup "x-archive-same-subj
     subject <- requiredText "subject" rule
     equals <- requiredText "equals" rule
     if role == equals
-      then Left "same subject rule must compare two different roles"
+      then Left SameSubjectOneRole
       else Right ()
     requireSingleClaimTarget "same subject rule" schema role
     pure (Just (SameSubjectRule role subject equals optional))
-sameSubjectRule _ = Left "contract schema must be an object"
+sameSubjectRule _ = Left RuleSchemaNotObject
 
 -- | @x-archive-span-window@: the record pins one Claim in @role@ whose
 -- payload holds an integer @rate@ field and an array @spans@ of objects with
@@ -114,7 +115,7 @@ data SpanWindowRule = SpanWindowRule
   , spanWindowSpans :: Text
   } deriving (Eq, Show)
 
-spanWindowRule :: Value -> Either Text (Maybe SpanWindowRule)
+spanWindowRule :: Value -> Either RuleError (Maybe SpanWindowRule)
 spanWindowRule schema@(Object fields) = case KeyMap.lookup "x-archive-span-window" fields of
   Nothing -> Right Nothing
   Just value -> do
@@ -128,36 +129,36 @@ spanWindowRule schema@(Object fields) = case KeyMap.lookup "x-archive-span-windo
     end <- requiredText "end" rule
     spans <- requiredText "spans" rule
     if start == end
-      then Left "span window rule must name two distinct bound fields"
+      then Left WindowBoundsSame
       else Right ()
     requireSingleClaimTarget "span window rule" schema role
     pure (Just (SpanWindowRule role rate payload start end spans))
-spanWindowRule _ = Left "contract schema must be an object"
+spanWindowRule _ = Left RuleSchemaNotObject
 
 -- | A rule with named fields that may also name @within@ (specification
 -- 0.0.9): a payload array whose elements each hold the rule's array.
-validateWithinFieldsRule :: Text -> [Text] -> Value -> Either Text ()
+validateWithinFieldsRule :: Text -> [Text] -> Value -> Either RuleError ()
 validateWithinFieldsRule label names value@(Object fields) =
   validateOptionalFieldsRule label (names <> ["within" | KeyMap.member "within" fields]) value
-validateWithinFieldsRule label _ _ = Left (label <> " must be an object")
+validateWithinFieldsRule label _ _ = Left (RuleNotObject label)
 
 -- | A rule with named fields that may also say @optional@: true
 -- (specification 0.0.9), so that it applies only to records that have what
 -- it reads. @optional@ false is refused: absence says it.
-validateOptionalFieldsRule :: Text -> [Text] -> Value -> Either Text ()
+validateOptionalFieldsRule :: Text -> [Text] -> Value -> Either RuleError ()
 validateOptionalFieldsRule label names value@(Object fields) = do
   validateNamedFieldsRule label names (Object (KeyMap.delete "optional" fields))
   _ <- optionalFlag fields
   pure (const () value)
-validateOptionalFieldsRule label _ _ = Left (label <> " must be an object")
+validateOptionalFieldsRule label _ _ = Left (RuleNotObject label)
 
-optionalFlag :: KeyMap.KeyMap Value -> Either Text Bool
+optionalFlag :: KeyMap.KeyMap Value -> Either RuleError Bool
 optionalFlag rule = case KeyMap.lookup "optional" rule of
   Nothing -> Right False
   Just (Bool True) -> Right True
-  Just _ -> Left "a rule's optional must be true when present"
+  Just _ -> Left OptionalNotTrue
 
-optionalWithin :: KeyMap.KeyMap Value -> Either Text (Maybe Text)
+optionalWithin :: KeyMap.KeyMap Value -> Either RuleError (Maybe Text)
 optionalWithin rule = case KeyMap.lookup "within" rule of
   Nothing -> Right Nothing
   Just _ -> Just <$> requiredText "within" rule
@@ -171,7 +172,7 @@ data TargetSamplesRule = TargetSamplesRule
   , targetSamplesPaths :: [[Text]]
   } deriving (Eq, Show)
 
-targetSamplesRule :: Value -> Either Text (Maybe TargetSamplesRule)
+targetSamplesRule :: Value -> Either RuleError (Maybe TargetSamplesRule)
 targetSamplesRule schema@(Object fields) = case KeyMap.lookup "x-archive-target-samples" fields of
   Nothing -> Right Nothing
   Just value -> do
@@ -179,12 +180,12 @@ targetSamplesRule schema@(Object fields) = case KeyMap.lookup "x-archive-target-
     requireExactKeys "target samples rule" ["role", "count", "paths"] rule
     role <- requiredText "role" rule
     count <- requiredText "count" rule
-    paths <- maybe (Left "target samples rule requires paths") (payloadPaths "target samples rule paths")
+    paths <- maybe (Left (PathsMissing "target samples rule")) (payloadPaths "target samples rule paths")
       (KeyMap.lookup "paths" rule)
-    if null paths then Left "target samples rule must name at least one path" else Right ()
+    if null paths then Left (NoPath "target samples rule") else Right ()
     requireSingleClaimTarget "target samples rule" schema role
     pure (Just (TargetSamplesRule role count paths))
-targetSamplesRule _ = Left "contract schema must be an object"
+targetSamplesRule _ = Left RuleSchemaNotObject
 
 -- | @x-archive-target-index@: every integer the @path@ reaches MUST be a
 -- position in the payload array @array@ of the Claim the record pins in
@@ -196,7 +197,7 @@ data TargetIndexRule = TargetIndexRule
   , targetIndexArray :: Text
   } deriving (Eq, Show)
 
-targetIndexRule :: Value -> Either Text (Maybe TargetIndexRule)
+targetIndexRule :: Value -> Either RuleError (Maybe TargetIndexRule)
 targetIndexRule schema@(Object fields) = case KeyMap.lookup "x-archive-target-index" fields of
   Nothing -> Right Nothing
   Just value -> do
@@ -207,7 +208,7 @@ targetIndexRule schema@(Object fields) = case KeyMap.lookup "x-archive-target-in
     array <- requiredText "array" rule
     requireSingleClaimTarget "target index rule" schema role
     pure (Just (TargetIndexRule role path array))
-targetIndexRule _ = Left "contract schema must be an object"
+targetIndexRule _ = Left RuleSchemaNotObject
 
 -- | @x-archive-target-bound@: when this record's payload has the integer
 -- @field@, the record pins one Claim in @role@, and @field@ MUST NOT exceed
@@ -219,7 +220,7 @@ data TargetBoundRule = TargetBoundRule
   , targetBoundBound :: Text
   } deriving (Eq, Show)
 
-targetBoundRule :: Value -> Either Text (Maybe TargetBoundRule)
+targetBoundRule :: Value -> Either RuleError (Maybe TargetBoundRule)
 targetBoundRule schema@(Object fields) = case KeyMap.lookup "x-archive-target-bound" fields of
   Nothing -> Right Nothing
   Just value -> do
@@ -230,4 +231,4 @@ targetBoundRule schema@(Object fields) = case KeyMap.lookup "x-archive-target-bo
     bound <- requiredText "bound" rule
     requireSingleClaimTarget "target bound rule" schema role
     pure (Just (TargetBoundRule role field bound))
-targetBoundRule _ = Left "contract schema must be an object"
+targetBoundRule _ = Left RuleSchemaNotObject

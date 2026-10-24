@@ -10,6 +10,7 @@ module Archive.Door.Contracts.Profile.ReferenceTargets
   ) where
 
 import Archive.Door.Contracts.Fields (objectValue, requireExactKeys, requiredText, unique)
+import Archive.Door.Contracts.Profile.Error (RuleError (..), TargetProblem (..))
 import Data.Aeson (Value (..))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -34,32 +35,32 @@ data ReferenceTargetRule = ReferenceTargetRule
 
 -- | The value of @x-archive-reference-targets@: each role's rule, refusing
 -- an empty role.
-referenceTargetRules :: Value -> Either Text [(Text, ReferenceTargetRule)]
+referenceTargetRules :: Value -> Either RuleError [(Text, ReferenceTargetRule)]
 referenceTargetRules (Object roles) = mapM validateRole (KeyMap.toList roles)
   where
     validateRole (role, value)
-      | Text.null (Key.toText role) = Left "contract reference target role must not be empty"
+      | Text.null (Key.toText role) = target RoleEmpty
       | otherwise = (,) (Key.toText role) <$> parseTargetRule True value
-referenceTargetRules _ = Left "contract reference targets must be an object"
+referenceTargetRules _ = target TargetsNotObject
 
 -- | One role's target rule, checked strictly. With @any@ (specification
 -- 0.0.9) it lists at least two alternative rules, none of which may itself
 -- name @any@ or @many@; @many@ then belongs to the role.
-parseTargetRule :: Bool -> Value -> Either Text ReferenceTargetRule
+parseTargetRule :: Bool -> Value -> Either RuleError ReferenceTargetRule
 parseTargetRule allowAny value = do
   fields <- objectValue "contract reference target rule" value
   if KeyMap.member "any" fields
     then do
-      if allowAny then Right () else Left "contract reference target alternatives must not nest"
+      if allowAny then Right () else target AlternativesNest
       requireExactKeys "contract reference target rule" (["any"] <> ["many" | KeyMap.member "many" fields]) fields
       alternatives <- case KeyMap.lookup "any" fields of
         Just (Array values) | length values >= 2 -> mapM (parseTargetRule False) (toList values)
-        _ -> Left "contract reference target any must list at least two rules"
+        _ -> target TooFewAlternatives
       if any referenceTargetMany alternatives
-        then Left "contract reference target alternatives must not name many"
+        then target AlternativesNameMany
         else Right ()
       if length alternatives /= length (unique alternatives)
-        then Left "contract reference target alternatives must differ"
+        then target AlternativesSame
         else Right ()
       many <- optionalMany fields
       pure ReferenceTargetRule
@@ -75,7 +76,7 @@ parseTargetRule allowAny value = do
       kind <- case KeyMap.lookup "kind" fields of
         Nothing -> Right Nothing
         Just (String value') | not (Text.null value') -> Right (Just value')
-        _ -> Left "contract reference target kind must be a non-empty string"
+        _ -> target KindNotString
       kinds <- optionalKinds fields
       targetContract <- optionalTargetContract fields
       many <- optionalMany fields
@@ -86,38 +87,38 @@ parseTargetRule allowAny value = do
             <> ["many" | KeyMap.member "many" fields]
       requireExactKeys "contract reference target rule" expectedKeys fields
       if (kind /= Nothing || not (null kinds)) && shapes /= ["entity"]
-        then Left "contract reference target kind is valid only for entity shape"
+        then target KindWithoutEntity
         else if kind /= Nothing && not (null kinds)
-          then Left "contract reference target may name kind or kinds, not both"
+          then target KindAndKinds
           else if targetContract /= Nothing && shapes /= ["claim"]
-            then Left "contract reference target contract is valid only for claim shape"
+            then target ContractWithoutClaim
             else if many && kind /= Nothing
-              then Left "repeated Entity kind rules are unsupported"
+              then target ManyWithKind
               else Right ()
       pure (ReferenceTargetRule shapes kind kinds targetContract many [])
 
 -- | A target rule names one record shape in `shape`, or, for a role that may
 -- pin records of several shapes, a set of at least two in `shapes`.
-targetShapes :: KeyMap.KeyMap Value -> Either Text [Text]
+targetShapes :: KeyMap.KeyMap Value -> Either RuleError [Text]
 targetShapes fields = case (KeyMap.lookup "shape" fields, KeyMap.lookup "shapes" fields) of
-  (Just _, Just _) -> Left "contract reference target may name shape or shapes, not both"
+  (Just _, Just _) -> target ShapeAndShapes
   (Just (String shape), Nothing) -> (: []) <$> knownShape shape
-  (Just _, Nothing) -> Left "contract reference target shape must be a string"
+  (Just _, Nothing) -> target ShapeNotString
   (Nothing, Just (Array values)) -> do
     names <- mapM shapeName (toList values)
     if length names < 2 || length names /= length (unique names)
-      then Left "contract reference target shapes must be a set of at least two shapes"
+      then target ShapesNotSet
       else mapM knownShape names
-  (Nothing, Just _) -> Left "contract reference target shapes must be an array"
-  (Nothing, Nothing) -> Left "contract reference target rule requires shape or shapes"
+  (Nothing, Just _) -> target ShapesNotArray
+  (Nothing, Nothing) -> target NoShape
   where
     shapeName (String name) = Right name
-    shapeName _ = Left "contract reference target shapes must contain strings"
+    shapeName _ = target ShapesNotStrings
     knownShape shape
       | shape `elem` ["artifact", "assessment", "claim", "entity"] = Right shape
-      | otherwise = Left "contract reference target shape must be artifact, assessment, claim, or entity"
+      | otherwise = target UnknownShape
 
-optionalTargetContract :: KeyMap.KeyMap Value -> Either Text (Maybe (Text, Text))
+optionalTargetContract :: KeyMap.KeyMap Value -> Either RuleError (Maybe (Text, Text))
 optionalTargetContract fields = case KeyMap.lookup "contract" fields of
   Nothing -> Right Nothing
   Just (Object citation) -> do
@@ -125,40 +126,43 @@ optionalTargetContract fields = case KeyMap.lookup "contract" fields of
     identifier <- requiredText "id" citation
     version <- requiredText "version" citation
     pure (Just (identifier, version))
-  Just _ -> Left "contract reference target contract must be an object"
+  Just _ -> target ContractNotObject
 
-optionalKinds :: KeyMap.KeyMap Value -> Either Text [Text]
+optionalKinds :: KeyMap.KeyMap Value -> Either RuleError [Text]
 optionalKinds fields = case KeyMap.lookup "kinds" fields of
   Nothing -> Right []
   Just (Array values) -> do
     names <- mapM kindName (toList values)
     if null names || length names /= length (unique names)
-      then Left "contract reference target kinds must be a nonempty set"
+      then target KindsNotSet
       else Right names
-  Just _ -> Left "contract reference target kinds must be an array"
+  Just _ -> target KindsNotArray
   where
     kindName (String value) | not (Text.null value) = Right value
-    kindName _ = Left "contract reference target kinds must contain non-empty strings"
+    kindName _ = target KindsNotStrings
 
-optionalMany :: KeyMap.KeyMap Value -> Either Text Bool
+optionalMany :: KeyMap.KeyMap Value -> Either RuleError Bool
 optionalMany fields = case KeyMap.lookup "many" fields of
   Nothing -> Right False
   Just (Bool value) -> Right value
-  Just _ -> Left "contract reference target many must be a boolean"
+  Just _ -> target ManyNotBoolean
+
+target :: TargetProblem -> Either RuleError a
+target = Left . TargetRule
 
 -- | The rules that read a pinned Claim's payload or references need that
 -- role to name exactly one Claim: its target rule says so.
-requireSingleClaimTarget :: Text -> Value -> Text -> Either Text ()
+requireSingleClaimTarget :: Text -> Value -> Text -> Either RuleError ()
 requireSingleClaimTarget label schema role = do
   targets <- contractReferenceTargets schema
   case lookup role targets of
     Just rule | referenceTargetShapes rule == ["claim"] && not (referenceTargetMany rule) -> Right ()
-    _ -> Left (label <> " role must have a single Claim reference target rule")
+    _ -> Left (NotSingleClaimTarget label)
 
-contractReferenceTargets :: Value -> Either Text [(Text, ReferenceTargetRule)]
+contractReferenceTargets :: Value -> Either RuleError [(Text, ReferenceTargetRule)]
 contractReferenceTargets (Object fields) = case KeyMap.lookup (Key.fromText "x-archive-reference-targets") fields of
   Nothing -> Right []
   Just (Object roles) -> mapM (\(role, rule) -> (,) (Key.toText role) <$> parseTargetRule True rule)
     (KeyMap.toList roles)
-  Just _ -> Left "contract reference targets must be an object"
-contractReferenceTargets _ = Left "contract schema must be an object"
+  Just _ -> target TargetsNotObject
+contractReferenceTargets _ = Left RuleSchemaNotObject

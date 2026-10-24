@@ -5,14 +5,19 @@
 -- context, which may add terms but never redefine a core one or import
 -- another context.
 module Archive.Door.Contracts.Context
-  ( validateCoreContext
+  ( ContextError (..)
+  , renderContextError
+  , validateCoreContext
   , validateCoreContextForSpecification
   , validateContractContext
   ) where
 
 import Archive.Door.Contracts.Fields
-  ( expect
+  ( FieldError (..)
+  , FromFieldError (..)
+  , expect
   , objectValue
+  , renderFieldError
   , requireExactKeys
   , requiredObject
   , requiredText
@@ -25,7 +30,49 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import qualified Data.Set as Set
 
-validateCoreContext :: Value -> Either Text ()
+-- | Why a context is refused. The text 'renderContextError' gives is the
+-- refusal the suites compare.
+data ContextError
+  = ContextField FieldError
+  | UnknownTermCatalog
+  | TermsNotForSpecification
+  | JsonLdVersion
+  | NotProtected
+  | RedefinesCoreTerm Text
+  | BadTermName
+  | EmptyTermDefinition
+  | TermDefinitionNotStringOrObject
+  | DefinitionUnknownKeys [Text]
+  | EmptyDefinitionId
+  | EmptyDefinitionType
+  | DefinitionTypeNotString
+  -- | A context (named by the label) holding these directives.
+  | ForbiddenDirectives Text [Text]
+  | MissingCoreTerm Text
+  deriving (Eq, Show)
+
+instance FromFieldError ContextError where
+  fieldError = ContextField
+
+renderContextError :: ContextError -> Text
+renderContextError problem = case problem of
+  ContextField field -> renderFieldError field
+  UnknownTermCatalog -> "core context has an unknown term catalog"
+  TermsNotForSpecification -> "core context terms do not match the selected specification version"
+  JsonLdVersion -> "core context @version must be 1.1"
+  NotProtected -> "core context @protected must be true"
+  RedefinesCoreTerm term -> "contract context redefines core term or prefix: " <> term
+  BadTermName -> "contract context term name must be non-empty and not a directive"
+  EmptyTermDefinition -> "contract context term definition must not be empty"
+  TermDefinitionNotStringOrObject -> "contract context term definition must be a string or object"
+  DefinitionUnknownKeys names -> "contract context definition has unknown keys: " <> Text.intercalate ", " names
+  EmptyDefinitionId -> "contract context definition @id must not be empty"
+  EmptyDefinitionType -> "contract context definition @type must not be empty"
+  DefinitionTypeNotString -> "contract context definition @type must be a string"
+  ForbiddenDirectives label names -> label <> " contains forbidden directive(s): " <> Text.intercalate ", " names
+  MissingCoreTerm name -> "core context is missing " <> name
+
+validateCoreContext :: Value -> Either ContextError ()
 validateCoreContext (Object outer) = do
   requireExactKeys "core context" ["@context"] outer
   inner <- requiredObject "@context" outer
@@ -33,7 +80,7 @@ validateCoreContext (Object outer) = do
   let actualKeys = Set.fromList (map Key.toText (KeyMap.keys inner))
   keys <- case filter ((== actualKeys) . Set.fromList) [creditContextKeys, reviewContextKeys, worldContextKeys, coreContextKeys] of
     catalog : _ -> Right catalog
-    [] -> Left "core context has an unknown term catalog"
+    [] -> Left UnknownTermCatalog
   requireExactKeys "core context terms" keys inner
   expectJsonLdVersion inner
   expectProtected inner
@@ -95,9 +142,9 @@ validateCoreContext (Object outer) = do
     , "assessment", "label", "id", "content", "digest", "size"
     ]
   pure ()
-validateCoreContext _ = Left "core context must be a JSON object"
+validateCoreContext _ = Left (ContextField (NotJsonObject "core context"))
 
-validateCoreContextForSpecification :: Text -> Value -> Either Text ()
+validateCoreContextForSpecification :: Text -> Value -> Either ContextError ()
 validateCoreContextForSpecification specification value = do
   validateCoreContext value
   context <- objectValue "core context" value >>= requiredObject "@context"
@@ -117,7 +164,7 @@ validateCoreContextForSpecification specification value = do
         _ -> Set.empty
   if not (Set.null expected) && keys == expected
     then Right ()
-    else Left "core context terms do not match the selected specification version"
+    else Left TermsNotForSpecification
 
 coreContextKeys :: [Text]
 coreContextKeys =
@@ -141,63 +188,63 @@ reviewContextKeys = worldContextKeys <> ["recording_session"]
 creditContextKeys :: [Text]
 creditContextKeys = reviewContextKeys <> ["release", "recording"]
 
-expectJsonLdVersion :: KeyMap.KeyMap Value -> Either Text ()
+expectJsonLdVersion :: KeyMap.KeyMap Value -> Either ContextError ()
 expectJsonLdVersion fields = case KeyMap.lookup "@version" fields of
   Just (Number value) | value == 1.1 -> Right ()
-  _ -> Left "core context @version must be 1.1"
+  _ -> Left JsonLdVersion
 
-expectProtected :: KeyMap.KeyMap Value -> Either Text ()
+expectProtected :: KeyMap.KeyMap Value -> Either ContextError ()
 expectProtected fields = case KeyMap.lookup "@protected" fields of
   Just (Bool True) -> Right ()
-  _ -> Left "core context @protected must be true"
+  _ -> Left NotProtected
 
-checkCoreString :: KeyMap.KeyMap Value -> (Text, Text) -> Either Text ()
+checkCoreString :: KeyMap.KeyMap Value -> (Text, Text) -> Either ContextError ()
 checkCoreString fields (name, expected) =
   requiredText name fields >>= expect (name <> " mapping") expected
 
-validateCoreObjectMapping :: KeyMap.KeyMap Value -> Text -> Text -> Text -> Either Text ()
+validateCoreObjectMapping :: KeyMap.KeyMap Value -> Text -> Text -> Text -> Either ContextError ()
 validateCoreObjectMapping fields name expectedId expectedType = do
   mapping <- requiredObject name fields
   requireExactKeys (name <> " mapping") ["@id", "@type"] mapping
   requiredText "@id" mapping >>= expect (name <> " @id") expectedId
   requiredText "@type" mapping >>= expect (name <> " @type") expectedType
 
-validateContractContext :: KeyMap.KeyMap Value -> Either Text ()
+validateContractContext :: KeyMap.KeyMap Value -> Either ContextError ()
 validateContractContext context = do
   rejectContextDirectives "contract context" context
   mapM_ validateTermDefinition (KeyMap.toList context)
   pure ()
 
-validateTermDefinition :: (Key.Key, Value) -> Either Text ()
+validateTermDefinition :: (Key.Key, Value) -> Either ContextError ()
 validateTermDefinition (key, value)
   | Key.toText key `elem` coreContextNames =
-      Left ("contract context redefines core term or prefix: " <> Key.toText key)
+      Left (RedefinesCoreTerm (Key.toText key))
   | Text.null (Key.toText key) || "@" `Text.isPrefixOf` Key.toText key =
-      Left "contract context term name must be non-empty and not a directive"
+      Left BadTermName
   | otherwise = case value of
       String term
-        | Text.null term -> Left "contract context term definition must not be empty"
+        | Text.null term -> Left EmptyTermDefinition
         | otherwise -> pure ()
       Object definition -> validateTermDefinitionObject definition
-      _ -> Left "contract context term definition must be a string or object"
+      _ -> Left TermDefinitionNotStringOrObject
 
-validateTermDefinitionObject :: KeyMap.KeyMap Value -> Either Text ()
+validateTermDefinitionObject :: KeyMap.KeyMap Value -> Either ContextError ()
 validateTermDefinitionObject definition = do
   let allowed = ["@id", "@type"]
       unknown = filter (`notElem` allowed) (map (Key.toText . fst) (KeyMap.toList definition))
   case unknown of
     [] -> pure ()
-    names -> Left ("contract context definition has unknown keys: " <> Text.intercalate ", " names)
+    names -> Left (DefinitionUnknownKeys names)
   identifier <- requiredText "@id" definition
   if Text.null identifier
-    then Left "contract context definition @id must not be empty"
+    then Left EmptyDefinitionId
     else pure ()
   case KeyMap.lookup "@type" definition of
     Nothing -> pure ()
     Just (String value)
-      | Text.null value -> Left "contract context definition @type must not be empty"
+      | Text.null value -> Left EmptyDefinitionType
       | otherwise -> pure ()
-    Just _ -> Left "contract context definition @type must be a string"
+    Just _ -> Left DefinitionTypeNotString
 
 coreContextNames :: [Text]
 coreContextNames =
@@ -212,21 +259,20 @@ coreContextNames =
   , "staging_remote", "skos", "musical_work", "recording_session", "release", "recording"
   ]
 
-rejectContextDirectives :: Text -> KeyMap.KeyMap Value -> Either Text ()
+rejectContextDirectives :: Text -> KeyMap.KeyMap Value -> Either ContextError ()
 rejectContextDirectives label fields = do
   let forbidden = filter (`KeyMap.member` fields) ["@context", "@import"]
   case forbidden of
     [] -> pure ()
-    names -> Left (label <> " contains forbidden directive(s): "
-      <> Text.intercalate ", " (map Key.toText names))
+    names -> Left (ForbiddenDirectives label (map Key.toText names))
   mapM_ (rejectNestedDirectives label . snd) (KeyMap.toList fields)
 
-rejectNestedDirectives :: Text -> Value -> Either Text ()
+rejectNestedDirectives :: Text -> Value -> Either ContextError ()
 rejectNestedDirectives label (Object fields) = rejectContextDirectives label fields
 rejectNestedDirectives label (Array values) = mapM_ (rejectNestedDirectives label) (toList values)
 rejectNestedDirectives _ _ = pure ()
 
-requiredKey :: KeyMap.KeyMap Value -> Text -> Either Text ()
+requiredKey :: KeyMap.KeyMap Value -> Text -> Either ContextError ()
 requiredKey fields name
   | KeyMap.member (Key.fromText name) fields = Right ()
-  | otherwise = Left ("core context is missing " <> name)
+  | otherwise = Left (MissingCoreTerm name)

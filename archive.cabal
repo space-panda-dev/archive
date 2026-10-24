@@ -49,6 +49,7 @@ library
     , Archive.Door.Contracts.Pointer
     , Archive.Door.Contracts.Profile
     , Archive.Door.Contracts.Profile.Arrays
+    , Archive.Door.Contracts.Profile.Error
     , Archive.Door.Contracts.Profile.Music
     , Archive.Door.Contracts.Profile.Paths
     , Archive.Door.Contracts.Profile.Payload
@@ -56,7 +57,9 @@ library
     , Archive.Door.Contracts.Profile.ReferenceTargets
     , Archive.Door.Contracts.Profile.Refs
     , Archive.Door.Contracts.Profile.Spans
+    , Archive.Door.Contracts.Profile.Syntax
     , Archive.Door.Contracts.Schema
+    , Archive.Door.Contracts.SchemaError
     , Archive.Door.Hex
     , Archive.Door.Identity
     , Archive.Door.Json

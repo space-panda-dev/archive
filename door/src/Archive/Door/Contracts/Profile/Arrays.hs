@@ -23,9 +23,10 @@ import Archive.Door.Contracts.Fields
   , requiredText
   , requiredStrings
   , unique
-  , validateNamedFieldsRule
   )
+import Archive.Door.Contracts.Profile.Error (RuleError (..), RuleViolation (..))
 import Archive.Door.Contracts.Profile.Paths (pathHolders, pathValues, payloadPaths, requiredPath)
+import Archive.Door.Contracts.Profile.Syntax (validateNamedFieldsRule)
 import Data.Aeson (Value (..))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -38,18 +39,18 @@ import Data.Text qualified as Text
 -- | @x-archive-ascending-items@: @paths@ names arrays of the payload whose
 -- items MUST strictly ascend: all integers in numeric order, or all strings
 -- in code point order, and no item twice. The rule is its paths.
-ascendingItemsRule :: Value -> Either Text [[Text]]
+ascendingItemsRule :: Value -> Either RuleError [[Text]]
 ascendingItemsRule (Object fields) = do
   requireExactKeys "ascending items rule" ["paths"] fields
-  paths <- maybe (Left "ascending items rule requires paths") (payloadPaths "ascending items rule paths")
+  paths <- maybe (Left (PathsMissing "ascending items rule")) (payloadPaths "ascending items rule paths")
     (KeyMap.lookup "paths" fields)
-  if null paths then Left "ascending items rule must name at least one path" else Right paths
-ascendingItemsRule _ = Left "ascending items rule must be an object"
+  if null paths then Left (NoPath "ascending items rule") else Right paths
+ascendingItemsRule _ = Left (RuleNotObject "ascending items rule")
 
 data Ordered = OrderedInteger Integer | OrderedText Text
   deriving (Eq, Ord)
 
-checkAscendingItems :: [[Text]] -> KeyMap.KeyMap Value -> Either Text ()
+checkAscendingItems :: [[Text]] -> KeyMap.KeyMap Value -> Either RuleViolation ()
 checkAscendingItems paths instanceValue = do
   payload <- requiredObject "payload" instanceValue
   mapM_ (checkPath payload) paths
@@ -64,12 +65,12 @@ checkAscendingItems paths instanceValue = do
           let sameKind = all isInteger items || not (any isInteger items)
           if sameKind && and (zipWith (<) items (drop 1 items))
             then Right ()
-            else Left (named <> " must be distinct items in ascending order")
-        Just _ -> Left (named <> " must be an array")) reached
+            else Left (NotAscending named)
+        Just _ -> Left (NotArray named)) reached
     orderedItem _ (Number value) | Right integer <- (floatingOrInteger value :: Either Double Integer) =
       Right (OrderedInteger integer)
     orderedItem _ (String text) = Right (OrderedText text)
-    orderedItem named _ = Left (named <> " must contain integers or strings")
+    orderedItem named _ = Left (NotIntegersOrStrings named)
     isInteger (OrderedInteger _) = True
     isInteger _ = False
 
@@ -82,17 +83,17 @@ data Subset = Subset
   , subsetOf :: Text
   } deriving (Eq, Show)
 
-subsetRule :: Value -> Either Text Subset
+subsetRule :: Value -> Either RuleError Subset
 subsetRule (Object fields) = do
   requireExactKeys "subset rule" ["payload", "items", "of"] fields
   path <- requiredPath "payload" fields
   items <- requiredText "items" fields
   others <- requiredText "of" fields
-  if items == others then Left "subset rule must name two different arrays" else Right ()
+  if items == others then Left SubsetOfItself else Right ()
   pure (Subset path items others)
-subsetRule _ = Left "subset rule must be an object"
+subsetRule _ = Left (RuleNotObject "subset rule")
 
-checkSubset :: Subset -> KeyMap.KeyMap Value -> Either Text ()
+checkSubset :: Subset -> KeyMap.KeyMap Value -> Either RuleViolation ()
 checkSubset rule instanceValue = do
   payload <- requiredObject "payload" instanceValue
   holders <- pathHolders (subsetPath rule <> [items]) payload
@@ -100,7 +101,7 @@ checkSubset rule instanceValue = do
     (Nothing, _) -> Right ()
     (Just (Array chosen), Just (Array pool))
       | all (`elem` toList pool) (toList chosen) -> Right ()
-    _ -> Left (items <> " must be among " <> others)) holders
+    _ -> Left (NotSubset items others)) holders
   where
     items = subsetItems rule
     others = subsetOf rule
@@ -116,7 +117,7 @@ data DocumentOrder = DocumentOrder
   , documentOrderWithin :: [Text]
   } deriving (Eq, Show)
 
-documentOrderRule :: Value -> Either Text DocumentOrder
+documentOrderRule :: Value -> Either RuleError DocumentOrder
 documentOrderRule (Object fields) = do
   requireExactKeys "document order rule" ["payload", "locator", "line", "within"] fields
   payload <- requiredText "payload" fields
@@ -124,16 +125,16 @@ documentOrderRule (Object fields) = do
   line <- requiredText "line" fields
   within <- requiredStrings "within" fields
   if null within || length within /= length (unique within)
-    then Left "document order rule must name distinct within fields"
+    then Left WithinNotDistinct
     else Right (DocumentOrder payload locator line within)
-documentOrderRule _ = Left "document order rule must be an object"
+documentOrderRule _ = Left (RuleNotObject "document order rule")
 
-checkDocumentOrder :: DocumentOrder -> KeyMap.KeyMap Value -> Either Text ()
+checkDocumentOrder :: DocumentOrder -> KeyMap.KeyMap Value -> Either RuleViolation ()
 checkDocumentOrder rule instanceValue = do
   payload <- requiredObject "payload" instanceValue
   elements <- case KeyMap.lookup (Key.fromText payloadName) payload of
     Just (Array values) -> Right (toList values)
-    _ -> Left (payloadName <> " must be an array")
+    _ -> Left (NotArray payloadName)
   positions <- concat <$> mapM (\element -> case element of
     Object fields -> case KeyMap.lookup (Key.fromText locatorName) fields of
       Nothing -> Right []
@@ -143,11 +144,11 @@ checkDocumentOrder rule instanceValue = do
           name : _ -> requiredInteger name locator
           [] -> Right 0
         pure [(line, inner)]
-      Just _ -> Left (locatorName <> " must be an object")
-    _ -> Left (payloadName <> " must contain objects")) elements
+      Just _ -> Left (NotObject locatorName)
+    _ -> Left (NotObjects payloadName)) elements
   if and (zipWith (<=) positions (drop 1 positions))
     then Right ()
-    else Left (payloadName <> " located in the document must not go backwards")
+    else Left (DocumentBackwards payloadName)
   where
     payloadName = documentOrderPayload rule
     locatorName = documentOrderLocator rule
@@ -164,7 +165,7 @@ data NestedRanges = NestedRanges
   , nestedRangesOf :: Text
   } deriving (Eq, Show)
 
-nestedRangesRule :: Value -> Either Text NestedRanges
+nestedRangesRule :: Value -> Either RuleError NestedRanges
 nestedRangesRule value = do
   validateNamedFieldsRule "nested ranges rule" ["payload", "first", "last", "of"] value
   case value of
@@ -173,16 +174,16 @@ nestedRangesRule value = do
       first <- requiredText "first" fields
       lastName <- requiredText "last" fields
       ofName <- requiredText "of" fields
-      if first == lastName then Left "nested ranges rule must name two bound fields" else Right ()
+      if first == lastName then Left RangeBoundsSame else Right ()
       pure (NestedRanges payload first lastName ofName)
-    _ -> Left "nested ranges rule must be an object"
+    _ -> Left (RuleNotObject "nested ranges rule")
 
-checkNestedRanges :: NestedRanges -> KeyMap.KeyMap Value -> Either Text ()
+checkNestedRanges :: NestedRanges -> KeyMap.KeyMap Value -> Either RuleViolation ()
 checkNestedRanges rule instanceValue = do
   payload <- requiredObject "payload" instanceValue
   size <- case KeyMap.lookup (Key.fromText ofName) payload of
     Just (Array values) -> Right (fromIntegral (length values) :: Integer)
-    _ -> Left (ofName <> " must be an array")
+    _ -> Left (NotArray ofName)
   ranges <- case KeyMap.lookup (Key.fromText payloadName) payload of
     Nothing -> Right []
     Just (Array values) -> mapM (\element -> case element of
@@ -191,16 +192,16 @@ checkNestedRanges rule instanceValue = do
         lastPosition <- requiredInteger (nestedRangesLast rule) fields
         if 0 <= first && first <= lastPosition && lastPosition < size
           then Right (first, lastPosition)
-          else Left (payloadName <> " must be ranges of positions in " <> ofName)
-      _ -> Left (payloadName <> " must contain objects")) (toList values)
-    Just _ -> Left (payloadName <> " must be an array")
+          else Left (NotRanges payloadName ofName)
+      _ -> Left (NotObjects payloadName)) (toList values)
+    Just _ -> Left (NotArray payloadName)
   let keys = [(first, negate lastPosition) | (first, lastPosition) <- ranges]
   if keys == sort keys && length keys == length (unique keys)
     then Right ()
-    else Left (payloadName <> " must be distinct and in order of first position, outer before inner")
+    else Left (RangesOutOfOrder payloadName)
   let crossing (a, b) (c, d) = (c > a && c <= b && d > b) || (a > c && a <= d && b > d)
   if or [crossing x y | (index, x) <- zip [0 :: Int ..] ranges, y <- drop (index + 1) ranges]
-    then Left (payloadName <> " must nest or be apart, never cross")
+    then Left (RangesCross payloadName)
     else Right ()
   where
     payloadName = nestedRangesPayload rule

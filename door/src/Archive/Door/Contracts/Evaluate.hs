@@ -13,29 +13,30 @@ import Archive.Door.Contracts.Pattern (compilePattern, matchesPattern)
 import Archive.Door.Contracts.Pointer (instancePointer, resolvePointer)
 import Archive.Door.Contracts.Schema
   ( rejectUnknownSchemaKeywords
-  , schemaPath
   , validateRef
   , validateSchemaKeywordTypes
   )
+import Archive.Door.Contracts.SchemaError (Requirement (..), SchemaError (..), schemaPath)
 import Archive.Door.SchemaObjectKeywords (evaluateObjectKeywords, objectKeywordNames)
 import Data.Aeson (Value (..))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.Bifunctor (first)
 import Data.Foldable (toList)
 import Data.Scientific (floatingOrInteger)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (UTCTime, ZonedTime, defaultTimeLocale, parseTimeM)
 
-evaluateSchema :: Value -> [Text] -> Value -> Value -> Either Text Bool
+evaluateSchema :: Value -> [Text] -> Value -> Value -> Either SchemaError Bool
 evaluateSchema root path (Object fields) value = do
   validateSchemaNodeForEvaluation root path fields
   referenced <- case KeyMap.lookup "$ref" fields of
     Nothing -> pure Nothing
     Just (String reference) -> case resolvePointer root reference of
       Just target -> pure (Just target)
-      Nothing -> Left "contract schema contains an unresolved local $ref"
-    Just _ -> Left "contract schema $ref must be a string"
+      Nothing -> Left UnresolvedRef
+    Just _ -> Left (KeywordMust "$ref" BeString)
   referenceMatch <- maybe (pure True) (\target -> evaluateSchema root path target value) referenced
   keywordMatch <- and <$> sequence
     [ evaluateType fields value
@@ -53,9 +54,9 @@ evaluateSchema root path (Object fields) value = do
     , evaluateObjectKeywords (\schema item -> evaluateSchema root ("propertyNames" : path) schema item) fields value
     ]
   pure (referenceMatch && keywordMatch)
-evaluateSchema _ path _ _ = Left (schemaPath path <> " must be an object")
+evaluateSchema _ path _ _ = Left (NodeNotObject path)
 
-validateSchemaNodeForEvaluation :: Value -> [Text] -> KeyMap.KeyMap Value -> Either Text ()
+validateSchemaNodeForEvaluation :: Value -> [Text] -> KeyMap.KeyMap Value -> Either SchemaError ()
 validateSchemaNodeForEvaluation root path fields = do
   rejectUnknownSchemaKeywords path fields
   validateRef root fields
@@ -67,7 +68,7 @@ validateSchemaNodeForEvaluation root path fields = do
 -- 'evaluateSchema' answered no; it descends into the first failing
 -- property, item, @allOf@ branch, @$ref@, or applicable @then@/@else@, and
 -- otherwise names the keyword at the node where the instance fails.
-explainMismatch :: Value -> [Text] -> [Text] -> Value -> Value -> Either Text Text
+explainMismatch :: Value -> [Text] -> [Text] -> Value -> Value -> Either SchemaError Text
 explainMismatch root path location (Object fields) value = do
   let fails schemaPath' schema item = not <$> evaluateSchema root schemaPath' schema item
       at = instancePointer location
@@ -181,18 +182,18 @@ explainMismatch _ path location _ _ = Right (instancePointer location <> " does 
 leafKeywords :: [Text]
 leafKeywords = ["type", "const", "enum", "minimum", "maximum", "pattern", "minLength", "maxLength", "format"]
 
-evaluateType :: KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateType :: KeyMap.KeyMap Value -> Value -> Either SchemaError Bool
 evaluateType fields value = case KeyMap.lookup "type" fields of
   Nothing -> Right True
   Just typeValue -> do
     names <- case typeValue of
       String name -> Right [name]
       Array values -> mapM asString (toList values)
-      _ -> Left "contract schema type must be a string or array"
+      _ -> Left (KeywordMust "type" BeStringOrArray)
     pure (any (`valueHasType` value) names)
   where
     asString (String name) = Right name
-    asString _ = Left "contract schema type must contain only strings"
+    asString _ = Left (KeywordMust "type" ContainOnlyStrings)
 
 valueHasType :: Text -> Value -> Bool
 valueHasType "null" Null = True
@@ -206,39 +207,39 @@ valueHasType "integer" (Number value) = case floatingOrInteger value :: Either D
 valueHasType "string" (String _) = True
 valueHasType _ _ = False
 
-evaluateConst :: KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateConst :: KeyMap.KeyMap Value -> Value -> Either SchemaError Bool
 evaluateConst fields value = Right (maybe True (== value) (KeyMap.lookup "const" fields))
 
-evaluateEnum :: KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateEnum :: KeyMap.KeyMap Value -> Value -> Either SchemaError Bool
 evaluateEnum fields value = Right (maybe True (value `elem`) (arrayValues <$> KeyMap.lookup "enum" fields))
   where
     arrayValues (Array values) = toList values
     arrayValues _ = []
 
-evaluateMinimum :: KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateMinimum :: KeyMap.KeyMap Value -> Value -> Either SchemaError Bool
 evaluateMinimum fields (Number value) = case KeyMap.lookup "minimum" fields of
   Nothing -> Right True
   Just (Number lower) -> Right (value >= lower)
-  Just _ -> Left "contract schema minimum must be a number"
+  Just _ -> Left (KeywordMust "minimum" BeNumber)
 evaluateMinimum _ _ = Right True
 
-evaluateMaximum :: KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateMaximum :: KeyMap.KeyMap Value -> Value -> Either SchemaError Bool
 evaluateMaximum fields (Number value) = case KeyMap.lookup "maximum" fields of
   Nothing -> Right True
   Just (Number upper) -> Right (value <= upper)
-  Just _ -> Left "contract schema maximum must be a number"
+  Just _ -> Left (KeywordMust "maximum" BeNumber)
 evaluateMaximum _ _ = Right True
 
-evaluateObject :: Value -> [Text] -> KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateObject :: Value -> [Text] -> KeyMap.KeyMap Value -> Value -> Either SchemaError Bool
 evaluateObject root path fields (Object object) = do
   requiredMatch <- case KeyMap.lookup "required" fields of
     Nothing -> Right True
     Just (Array names) -> pure (all (`KeyMap.member` object) [Key.fromText name | String name <- toList names])
-    Just _ -> Left "contract schema required must be an array"
+    Just _ -> Left (KeywordMust "required" BeArray)
   properties <- case KeyMap.lookup "properties" fields of
     Nothing -> Right KeyMap.empty
     Just (Object definitions) -> Right definitions
-    Just _ -> Left "contract schema properties must be an object"
+    Just _ -> Left (KeywordMust "properties" BeObject)
   propertyMatch <- and <$> mapM (validateProperty properties) (KeyMap.toList object)
   pure (requiredMatch && propertyMatch)
   where
@@ -254,12 +255,12 @@ hasObjectOnlyConstraint :: KeyMap.KeyMap Value -> Bool
 hasObjectOnlyConstraint fields = any (`KeyMap.member` fields)
   ["required", "properties"]
 
-evaluateArray :: Value -> [Text] -> KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateArray :: Value -> [Text] -> KeyMap.KeyMap Value -> Value -> Either SchemaError Bool
 evaluateArray root path fields (Array values) = do
   itemMatch <- case KeyMap.lookup "items" fields of
     Nothing -> Right True
     Just (Object itemSchema) -> and <$> mapM (evaluateSchema root ("items" : path) (Object itemSchema)) (toList values)
-    Just _ -> Left "contract schema items must be a schema object"
+    Just _ -> Left (KeywordMust "items" BeSchemaObject)
   minMatch <- compareArrayBound "minItems" (>=) fields (toList values)
   maxMatch <- compareArrayBound "maxItems" (<=) fields (toList values)
   containsMatch <- case KeyMap.lookup "contains" fields of
@@ -270,14 +271,14 @@ evaluateArray root path fields (Array values) = do
           lower = maybe 1 id (integerField "minContains" fields)
           upper = integerField "maxContains" fields
       pure (count >= lower && maybe True (count <=) upper)
-    Just _ -> Left "contract schema contains must be a schema object"
+    Just _ -> Left (KeywordMust "contains" BeSchemaObject)
   uniqueMatch <- case KeyMap.lookup "uniqueItems" fields of
     Nothing -> Right True
     Just (Bool False) -> Right True
     -- JSON equality: aeson compares objects by their members and numbers by
     -- value, as JSON Schema's uniqueItems does.
     Just (Bool True) -> Right (length (toList values) == length (unique (toList values)))
-    Just _ -> Left "contract schema uniqueItems must be a boolean"
+    Just _ -> Left (KeywordMust "uniqueItems" BeBoolean)
   pure (itemMatch && minMatch && maxMatch && containsMatch && uniqueMatch)
 evaluateArray _ _ fields _ = pure (not (hasArrayOnlyConstraint fields))
 
@@ -285,7 +286,7 @@ hasArrayOnlyConstraint :: KeyMap.KeyMap Value -> Bool
 hasArrayOnlyConstraint fields = any (`KeyMap.member` fields)
   ["items", "minItems", "maxItems", "uniqueItems", "contains", "minContains", "maxContains"]
 
-compareArrayBound :: Text -> (Integer -> Integer -> Bool) -> KeyMap.KeyMap Value -> VectorLike -> Either Text Bool
+compareArrayBound :: Text -> (Integer -> Integer -> Bool) -> KeyMap.KeyMap Value -> VectorLike -> Either SchemaError Bool
 compareArrayBound name comparison fields values = case integerField name fields of
   Nothing -> Right True
   Just bound -> Right (lengthLike values `comparison` bound)
@@ -304,40 +305,40 @@ integerField name fields = case KeyMap.lookup (Key.fromText name) fields of
     _ -> Nothing
   _ -> Nothing
 
-evaluateString :: KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateString :: KeyMap.KeyMap Value -> Value -> Either SchemaError Bool
 evaluateString fields (String value) = do
   patternMatch <- case KeyMap.lookup "pattern" fields of
     Nothing -> Right True
-    Just patternValue -> matchesPattern <$> compilePattern patternValue <*> pure value
+    Just patternValue -> (`matchesPattern` value) <$> first BadPattern (compilePattern patternValue)
   lengthMatch <- case KeyMap.lookup "minLength" fields of
     Nothing -> Right True
     Just (Number number) -> case floatingOrInteger number :: Either Double Integer of
       Right lower -> Right (fromIntegral (Text.length value) >= (lower :: Integer))
-      Left _ -> Left "contract schema minLength must be an integer"
-    Just _ -> Left "contract schema minLength must be an integer"
+      Left _ -> Left (KeywordMust "minLength" BeInteger)
+    Just _ -> Left (KeywordMust "minLength" BeInteger)
   -- Data.Text counts Unicode scalar values, which is JSON Schema's
   -- code-point definition of string length.
   maxLengthMatch <- case KeyMap.lookup "maxLength" fields of
     Nothing -> Right True
     Just (Number number) -> case floatingOrInteger number :: Either Double Integer of
       Right upper -> Right (fromIntegral (Text.length value) <= (upper :: Integer))
-      Left _ -> Left "contract schema maxLength must be an integer"
-    Just _ -> Left "contract schema maxLength must be an integer"
+      Left _ -> Left (KeywordMust "maxLength" BeInteger)
+    Just _ -> Left (KeywordMust "maxLength" BeInteger)
   formatMatch <- case KeyMap.lookup "format" fields of
     Nothing -> Right True
     Just (String "date-time") -> Right (validDateTime value)
-    Just _ -> Left "contract schema format must be date-time"
+    Just _ -> Left (KeywordMust "format" BeDateTime)
   pure (patternMatch && lengthMatch && maxLengthMatch && formatMatch)
 evaluateString _ _ = Right True
 
-evaluateAllOf :: Value -> [Text] -> KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateAllOf :: Value -> [Text] -> KeyMap.KeyMap Value -> Value -> Either SchemaError Bool
 evaluateAllOf root path fields value = case KeyMap.lookup "allOf" fields of
   Nothing -> Right True
   Just (Array schemas) -> and <$> mapM (\schema -> evaluateSchema root ("allOf" : path) schema value) (toList schemas)
-  Just _ -> Left "contract schema allOf must be an array"
+  Just _ -> Left (KeywordMust "allOf" BeArray)
 
 -- | @not@ (specification 0.0.9): the instance must not satisfy the schema.
-evaluateNot :: Value -> [Text] -> KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateNot :: Value -> [Text] -> KeyMap.KeyMap Value -> Value -> Either SchemaError Bool
 evaluateNot root path fields value = case KeyMap.lookup "not" fields of
   Nothing -> Right True
   Just schema -> not <$> evaluateSchema root ("not" : path) schema value
@@ -346,7 +347,7 @@ evaluateNot root path fields value = case KeyMap.lookup "not" fields of
 -- satisfies @if@ it must satisfy @then@, and otherwise @else@; an absent
 -- branch is satisfied. Both branches are evaluated, so a malformed branch is
 -- refused whichever applies.
-evaluateConditional :: Value -> [Text] -> KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateConditional :: Value -> [Text] -> KeyMap.KeyMap Value -> Value -> Either SchemaError Bool
 evaluateConditional root path fields value = case KeyMap.lookup "if" fields of
   Nothing -> Right True
   Just condition -> do
@@ -360,12 +361,12 @@ evaluateConditional root path fields value = case KeyMap.lookup "if" fields of
 
 -- | Every branch is evaluated, so a malformed branch is refused even when an
 -- earlier one matched; the instance must satisfy at least one.
-evaluateAnyOf :: Value -> [Text] -> KeyMap.KeyMap Value -> Value -> Either Text Bool
+evaluateAnyOf :: Value -> [Text] -> KeyMap.KeyMap Value -> Value -> Either SchemaError Bool
 evaluateAnyOf root path fields value = case KeyMap.lookup "anyOf" fields of
   Nothing -> Right True
   Just (Array schemas) | not (null schemas) ->
     or <$> mapM (\schema -> evaluateSchema root ("anyOf" : path) schema value) (toList schemas)
-  Just _ -> Left "contract schema anyOf must be a nonempty array"
+  Just _ -> Left (KeywordMust "anyOf" BeNonEmptyArray)
 
 validDateTime :: Text -> Bool
 validDateTime value
