@@ -21,8 +21,9 @@ then every Python suite one after another, then the image. A run took 26 to
 ## Decision
 
 **The Haskell package reads only its own files.** `flake.nix` builds it from
-`archive.cabal`, `cabal.project`, `door/`, `archive/`, and `spec/` (its data
-files, which its tests also read). A change elsewhere leaves its derivation
+`archive.cabal`, `cabal.project`, `door/`, `archive/`, `spec/` (its data
+files, which its tests also read), and `fixture/plan.json`, which a Door test
+checks. A change elsewhere leaves its derivation
 unchanged.
 
 **Three Python checks instead of one.** `checks.python` runs World with its
@@ -48,7 +49,7 @@ a newer push cancels the older run; `main` keeps every run.
 ## Consequences
 
 - A branch without a pull request gets no CI run; open one, even a draft.
-- A test the Haskell suites run that starts reading a file outside those five
+- A test the Haskell suites run that starts reading a file outside those
   paths must add it to `haskellSource` and to the cache key in `ci.yml`, or a
   change to that file would reuse a stale build.
 - The cache relies on the cache.nixos.org substitutes for everything it

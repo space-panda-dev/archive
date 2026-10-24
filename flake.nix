@@ -18,12 +18,12 @@
       '';
 
       # What the Haskell package reads: its Cabal files, its sources and
-      # tests, and the specification (its data files, which the tests also
-      # read). A change anywhere else leaves the build, and CI's cached copy
+      # tests, the specification (its data files, which the tests also
+      # read), and the fixture's plan, which a Door test checks. A change anywhere else leaves the build, and CI's cached copy
       # of it, unchanged (ADR 0117).
       haskellSource = nixpkgs.lib.fileset.toSource {
         root = ./.;
-        fileset = nixpkgs.lib.fileset.unions [ ./archive.cabal ./cabal.project ./door ./archive ./spec ];
+        fileset = nixpkgs.lib.fileset.unions [ ./archive.cabal ./cabal.project ./door ./archive ./spec ./fixture/plan.json ];
       };
 
       # Door and the archive command. Building runs `cabal test all`.

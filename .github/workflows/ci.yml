@@ -43,7 +43,7 @@ jobs:
       # and the flake; the other jobs restore by the same key.
       - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
-          primary-key: nix-archive-${{ hashFiles('flake.nix', 'flake.lock', 'archive.cabal', 'cabal.project', 'door/**', 'archive/**', 'spec/**') }}
+          primary-key: nix-archive-${{ hashFiles('flake.nix', 'flake.lock', 'archive.cabal', 'cabal.project', 'door/**', 'archive/**', 'spec/**', 'fixture/plan.json') }}
           restore-prefixes-first-match: nix-archive-
           # Keep the package's closure (rooted by result-archive); drop the
           # compiler and other build-only paths, which cache.nixos.org serves.
@@ -70,7 +70,7 @@ jobs:
       - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
       - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
-          primary-key: nix-archive-${{ hashFiles('flake.nix', 'flake.lock', 'archive.cabal', 'cabal.project', 'door/**', 'archive/**', 'spec/**') }}
+          primary-key: nix-archive-${{ hashFiles('flake.nix', 'flake.lock', 'archive.cabal', 'cabal.project', 'door/**', 'archive/**', 'spec/**', 'fixture/plan.json') }}
           restore-prefixes-first-match: nix-archive-
           save: false
       - run: nix build -L .#checks.x86_64-linux.${{ matrix.check }}
@@ -86,7 +86,7 @@ jobs:
       - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
       - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
-          primary-key: nix-archive-${{ hashFiles('flake.nix', 'flake.lock', 'archive.cabal', 'cabal.project', 'door/**', 'archive/**', 'spec/**') }}
+          primary-key: nix-archive-${{ hashFiles('flake.nix', 'flake.lock', 'archive.cabal', 'cabal.project', 'door/**', 'archive/**', 'spec/**', 'fixture/plan.json') }}
           restore-prefixes-first-match: nix-archive-
           save: false
       - run: nix build -L .#image -o image
