@@ -215,33 +215,35 @@ envelope objectId shape payload refs extra =
   <> "\",\"agent\":\"" <> person <> "\",\"payload\":" <> payload
   <> ",\"refs\":" <> refs <> ",\"supersedes\":[]" <> extra <> "}"
 
-recordPathChecks :: IO ()
-recordPathChecks = do
+recordPathChecks :: Recorder -> IO ()
+recordPathChecks check = do
   let valid = recordRelative zeroDigest
-  assert "the record layout fans out by the digest's first two character pairs (ADR 0053)"
+  check "the record layout fans out by the digest's first two character pairs (ADR 0053)"
     (valid == "records/00/00/sha256-0000000000000000000000000000000000000000000000000000000000000000.json")
     ExitSuccess valid ""
-  assert "RecordCommit accepts a digest-addressed relative record path"
+  check "RecordCommit accepts a digest-addressed relative record path"
     (either (const False) (const True) (validateRecordPath valid))
     ExitSuccess "" ""
-  assert "RecordCommit refuses the flat archive/1 record path"
+  check "RecordCommit refuses the flat archive/1 record path"
     (isLeft (validateRecordPath "records/sha256-0000000000000000000000000000000000000000000000000000000000000000.json"))
     ExitSuccess "" ""
-  assert "RecordCommit refuses a fan-out that does not match the digest"
+  check "RecordCommit refuses a fan-out that does not match the digest"
     (isLeft (validateRecordPath "records/01/00/sha256-0000000000000000000000000000000000000000000000000000000000000000.json"))
     ExitSuccess "" ""
-  assert "RecordCommit rejects traversal at the mutation seam"
+  check "RecordCommit rejects traversal at the mutation seam"
     (isLeft (validateRecordPath "records/../outside.json"))
     ExitSuccess "" ""
-  assert "RecordCommit rejects absolute paths at the mutation seam"
+  check "RecordCommit rejects absolute paths at the mutation seam"
     (isLeft (validateRecordPath "/tmp/outside.json"))
     ExitSuccess "" ""
-  assert "RecordCommit rejects a malformed digest path at the mutation seam"
+  check "RecordCommit rejects a malformed digest path at the mutation seam"
     (isLeft (validateRecordPath "records/not-a-digest.json"))
     ExitSuccess "" ""
 
-rfc8785NumberChecks :: IO ()
-rfc8785NumberChecks = mapM_ check rfc8785Numbers
+rfc8785NumberChecks :: TestTree
+rfc8785NumberChecks = testGroup "rfc8785NumberChecks"
+  [ testCase ("RFC 8785 Appendix B number " <> showHexWord64 bits) (check (bits, expected))
+  | (bits, expected) <- rfc8785Numbers ]
   where
     check (bits, expected) = do
       let original = case decodeUnique (LazyByteString.pack (claimDraft claim entity)) of
@@ -287,99 +289,94 @@ main = do
     , ("GIT_CONFIG_KEY_0", "maintenance.auto"), ("GIT_CONFIG_VALUE_0", "false")
     , ("GIT_CONFIG_KEY_1", "gc.auto"), ("GIT_CONFIG_VALUE_1", "0")
     ]
-  -- The release modules' rows are read before the tree is built, because
-  -- tasty fixes its tree before running it and each row is its own case;
-  -- 'rowGroup' turns an exception while reading them into that group's
-  -- failure instead of stopping the suite before any case runs.
-  specification010 <- rowGroup "specification010Checks" (releaseRows specification010Checks)
-  rules010 <- rowGroup "rules010Checks" (releaseRows rules010Checks)
-  beyondCircle010 <- rowGroup "beyondCircle010Checks" (releaseRows beyondCircle010Checks)
-  specification011 <- rowGroup "specification011Checks" (releaseRows specification011Checks)
-  rules011 <- rowGroup "rules011Checks" (releaseRows rules011Checks)
-  -- One case per named check, in the old order. The cases share the process
-  -- environment (the checks setEnv the Git executables) and fixed temporary
-  -- paths, so they run one at a time: the suite is built without -threaded.
-  defaultMain $ testGroup "door-test"
-    [ testCase "directoryBarrierChecks" (withTemporaryRoot directoryBarrierChecks)
-    , testCase "recordPathChecks" recordPathChecks
-    , testCase "rfc8785NumberChecks" rfc8785NumberChecks
-    , testCase "uuidV5Checks" uuidV5Checks
-    , checkGroup "identityVectorChecks" identityVectorChecks
-    , testCase "versionedContextChecks" versionedContextChecks
-    , testCase "audioContractChecks" audioContractChecks
-    , testCase "identifierChecks" identifierChecks
-    , testCase "envelopeChecks" envelopeChecks
-    , testCase "batchRevisionChecks" batchRevisionChecks
-    , testCase "subprocessCaptureLimitChecks" subprocessCaptureLimitChecks
-    , testCase "typedPlannerErrorChecks" typedPlannerErrorChecks
-    , testCase "initChecks" (withTemporaryRoot initChecks)
-    , testCase "gitSnapshotHistoryChecks" (withGitHistoryRoot gitSnapshotHistoryChecks)
-    , testCase "gitSnapshotRootSwapChecks" (withGitHistoryRoot gitSnapshotRootSwapChecks)
-    , testCase "configuredGitExecutableChecks" (withGitHistoryRoot configuredGitExecutableChecks)
-    , testCase "proposalChecks" (withProposalTemporaryRoot proposalChecks)
-    , testCase "worldContractAdmissionChecks" (withProposalTemporaryRoot worldContractAdmissionChecks)
-    , testCase "reviewContractAdmissionChecks" (withProposalTemporaryRoot reviewContractAdmissionChecks)
-    , testCase "reviewContractProfileChecks" reviewContractProfileChecks
-    , testCase "migrationContractAdmissionChecks" (withProposalTemporaryRoot migrationContractAdmissionChecks)
-    , testCase "migrationContractProfileChecks" migrationContractProfileChecks
-    , testCase "derivationContractAdmissionChecks" (withProposalTemporaryRoot derivationContractAdmissionChecks)
-    , testCase "derivationContractProfileChecks" derivationContractProfileChecks
-    , testCase "windowMatchAdmissionChecks" (withProposalTemporaryRoot windowMatchAdmissionChecks)
-    , testCase "windowMatchProfileChecks" windowMatchProfileChecks
-    , testCase "musicAndCreditProfileChecks" musicAndCreditProfileChecks
-    , specification010
-    , rules010
-    , beyondCircle010
-    , specification011
-    , rules011
-    , testCase "previousReleaseUpgradeChecks" (withProposalTemporaryRoot previousReleaseUpgradeChecks)
-    , testCase "specificationUpgradeRefusalChecks" (withProposalTemporaryRoot specificationUpgradeRefusalChecks)
-    , testCase "earlierSpecificationChecks" (withProposalTemporaryRoot earlierSpecificationChecks)
-    , testCase "specificationUpgradeRuleChecks" specificationUpgradeRuleChecks
-    , testCase "specificationUpgradeChecks" (withProposalTemporaryRoot specificationUpgradeChecks)
-    , testCase "forgedUpgradeChecks" (withProposalTemporaryRoot forgedUpgradeChecks)
-    , testCase "forgedUpgradeHistoryChecks" (withProposalTemporaryRoot forgedUpgradeHistoryChecks)
-    , testCase "specificationUpgradeServiceChecks" (withProposalTemporaryRoot specificationUpgradeServiceChecks)
-    , testCase "specificationUpgradeRecoveryChecks" (withProposalTemporaryRoot specificationUpgradeRecoveryChecks)
-    , testCase "transitionDispatchCatalogChecks" transitionDispatchCatalogChecks
-    , testCase "contractCatalogChecks" contractCatalogChecks
-    , testCase "refusalCodeSchemaChecks" refusalCodeSchemaChecks
-    , testCase "publicationTransitionChecks" (withProposalTemporaryRoot publicationTransitionChecks)
-    , testCase "controlPlaneInputLimitChecks" (withProposalTemporaryRoot controlPlaneInputLimitChecks)
-    , testCase "subprocessOutputLimitChecks" (withProposalTemporaryRoot subprocessOutputLimitChecks)
-    , testCase "subprocessCaptureInterruptionChecks" (withProposalTemporaryRoot subprocessCaptureInterruptionChecks)
-    , testCase "historicalReplayChecks" (withProposalTemporaryRoot historicalReplayChecks)
-    , testCase "persistentAdmissionChecks" (withProposalTemporaryRoot persistentAdmissionChecks)
-    , testCase "admissionRecheckChecks" (withProposalTemporaryRoot admissionRecheckChecks)
-    , testCase "checkpointChecks" (withProposalTemporaryRoot checkpointChecks)
-    , testCase "rememberedSnapshotChecks" (withProposalTemporaryRoot rememberedSnapshotChecks)
-    , testCase "serviceChecks" (withProposalTemporaryRoot serviceChecks)
-    , testCase "fileModeChecks" (withProposalTemporaryRoot fileModeChecks)
-    , testCase "initMaintenanceChecks" (withProposalTemporaryRoot initMaintenanceChecks)
-    , testCase "contentAdmissionChecks" (withProposalTemporaryRoot contentAdmissionChecks)
-    , testCase "gitObjectStoreTopologyChecks" (withProposalTemporaryRoot gitObjectStoreTopologyChecks)
-    , testCase "gitObjectStoreBarrierFailureChecks" (withProposalTemporaryRoot gitObjectStoreBarrierFailureChecks)
-    , testCase "operationJournalSizeCheck" (withProposalTemporaryRoot operationJournalSizeCheck)
-    , testCase "operationJournalKillRecoveryCheck" (withProposalTemporaryRoot operationJournalKillRecoveryCheck)
-    , testCase "indexRecoveryRecordBatchChecks" (withProposalTemporaryRoot indexRecoveryRecordBatchChecks)
-    , testCase "indexRecoveryRefusalChecks" (withProposalTemporaryRoot indexRecoveryRefusalChecks)
-    , testCase "indexRecoveryTransitionCheck" (withProposalTemporaryRoot indexRecoveryTransitionCheck)
-    , testCase "persistentRecordParentSymlinkCheck" (withProposalTemporaryRoot persistentRecordParentSymlinkCheck)
-    , testCase "persistentRecordParentSwapCheck" (withProposalTemporaryRoot persistentRecordParentSwapCheck)
-    , testCase "persistentRecordCleanupOwnershipCheck" (withProposalTemporaryRoot persistentRecordCleanupOwnershipCheck)
-    , testCase "persistentRecordCleanupFifoCheck" (withProposalTemporaryRoot persistentRecordCleanupFifoCheck)
-    , testCase "persistentGitDirectorySwapCheck" (withProposalTemporaryRoot persistentGitDirectorySwapCheck)
-    , testCase "persistentArchiveRootSwapCheck" (withProposalTemporaryRoot persistentArchiveRootSwapCheck)
-    , testCase "pinnedGitPermissionCheck" (withProposalTemporaryRoot pinnedGitPermissionCheck)
-    , testCase "persistentTransitionChecks" (withProposalTemporaryRoot persistentTransitionChecks)
-    , testCase "indexReservationInterruptionCheck" (withProposalTemporaryRoot indexReservationInterruptionCheck)
-    , testCase "indexReservationIdentityCheck" (withProposalTemporaryRoot indexReservationIdentityCheck)
-    , testCase "uncertainRefOutcomeCheck" (withProposalTemporaryRoot uncertainRefOutcomeCheck)
-    , testCase "postRefSyncFailureCheck" (withProposalTemporaryRoot postRefSyncFailureCheck)
-    , testCase "processLockCheck" (withProposalTemporaryRoot processLockCheck)
-    , testCase "interruptedInitCheck" (withProposalTemporaryRoot interruptedInitCheck)
-    , testCase "commandLineChecks" commandLineChecks
-    , testGroup "properties"
+  -- Rows of recording checks and release modules are computed while the
+  -- tree is built, because tasty fixes its tree before running it and each
+  -- row is its own case; 'rowGroup' turns an exception there into that
+  -- group's failure instead of stopping the suite before any case runs.
+  -- The cases share the process environment (the checks set the Git
+  -- executables through 'withEnv'), so they run one at a time: the suite is
+  -- built without -threaded.
+  tests <- sequence
+    [ caseOf "directoryBarrierChecks" (withTemporaryRoot directoryBarrierChecks)
+    , rowsOf "recordPathChecks" recordPathChecks
+    , treeOf rfc8785NumberChecks
+    , caseOf "uuidV5Checks" uuidV5Checks
+    , treeOf (checkGroup "identityVectorChecks" identityVectorChecks)
+    , rowsOf "versionedContextChecks" versionedContextChecks
+    , rowsOf "audioContractChecks" audioContractChecks
+    , rowsOf "identifierChecks" identifierChecks
+    , treeOf envelopeChecks
+    , caseOf "batchRevisionChecks" batchRevisionChecks
+    , treeOf subprocessCaptureLimitChecks
+    , caseOf "typedPlannerErrorChecks" typedPlannerErrorChecks
+    , caseOf "initChecks" (withTemporaryRoot initChecks)
+    , caseOf "gitSnapshotHistoryChecks" (withGitHistoryRoot gitSnapshotHistoryChecks)
+    , caseOf "gitSnapshotRootSwapChecks" (withGitHistoryRoot gitSnapshotRootSwapChecks)
+    , caseOf "configuredGitExecutableChecks" (withGitHistoryRoot configuredGitExecutableChecks)
+    , caseOf "proposalChecks" (withProposalTemporaryRoot proposalChecks)
+    , caseOf "worldContractAdmissionChecks" (withProposalTemporaryRoot worldContractAdmissionChecks)
+    , caseOf "reviewContractAdmissionChecks" (withProposalTemporaryRoot reviewContractAdmissionChecks)
+    , rowsOf "reviewContractProfileChecks" reviewContractProfileChecks
+    , caseOf "migrationContractAdmissionChecks" (withProposalTemporaryRoot migrationContractAdmissionChecks)
+    , rowsOf "migrationContractProfileChecks" migrationContractProfileChecks
+    , caseOf "derivationContractAdmissionChecks" (withProposalTemporaryRoot derivationContractAdmissionChecks)
+    , rowsOf "derivationContractProfileChecks" derivationContractProfileChecks
+    , caseOf "windowMatchAdmissionChecks" (withProposalTemporaryRoot windowMatchAdmissionChecks)
+    , rowsOf "windowMatchProfileChecks" windowMatchProfileChecks
+    , rowsOf "musicAndCreditProfileChecks" musicAndCreditProfileChecks
+    , releaseOf "specification010Checks" specification010Checks
+    , releaseOf "rules010Checks" rules010Checks
+    , releaseOf "beyondCircle010Checks" beyondCircle010Checks
+    , releaseOf "specification011Checks" specification011Checks
+    , releaseOf "rules011Checks" rules011Checks
+    , caseOf "previousReleaseUpgradeChecks" (withProposalTemporaryRoot previousReleaseUpgradeChecks)
+    , caseOf "specificationUpgradeRefusalChecks" (withProposalTemporaryRoot specificationUpgradeRefusalChecks)
+    , caseOf "earlierSpecificationChecks" (withProposalTemporaryRoot earlierSpecificationChecks)
+    , rowsOf "specificationUpgradeRuleChecks" specificationUpgradeRuleChecks
+    , caseOf "specificationUpgradeChecks" (withProposalTemporaryRoot specificationUpgradeChecks)
+    , caseOf "forgedUpgradeChecks" (withProposalTemporaryRoot forgedUpgradeChecks)
+    , caseOf "forgedUpgradeHistoryChecks" (withProposalTemporaryRoot forgedUpgradeHistoryChecks)
+    , caseOf "specificationUpgradeServiceChecks" (withProposalTemporaryRoot specificationUpgradeServiceChecks)
+    , caseOf "specificationUpgradeRecoveryChecks" (withProposalTemporaryRoot specificationUpgradeRecoveryChecks)
+    , caseOf "transitionDispatchCatalogChecks" transitionDispatchCatalogChecks
+    , rowsOf "contractCatalogChecks" contractCatalogChecks
+    , caseOf "refusalCodeSchemaChecks" refusalCodeSchemaChecks
+    , caseOf "publicationTransitionChecks" (withProposalTemporaryRoot publicationTransitionChecks)
+    , caseOf "controlPlaneInputLimitChecks" (withProposalTemporaryRoot controlPlaneInputLimitChecks)
+    , caseOf "subprocessOutputLimitChecks" (withProposalTemporaryRoot subprocessOutputLimitChecks)
+    , caseOf "subprocessCaptureInterruptionChecks" (withProposalTemporaryRoot subprocessCaptureInterruptionChecks)
+    , caseOf "historicalReplayChecks" (withProposalTemporaryRoot historicalReplayChecks)
+    , caseOf "persistentAdmissionChecks" (withProposalTemporaryRoot persistentAdmissionChecks)
+    , caseOf "admissionRecheckChecks" (withProposalTemporaryRoot admissionRecheckChecks)
+    , caseOf "checkpointChecks" (withProposalTemporaryRoot checkpointChecks)
+    , caseOf "rememberedSnapshotChecks" (withProposalTemporaryRoot rememberedSnapshotChecks)
+    , caseOf "serviceChecks" (withProposalTemporaryRoot serviceChecks)
+    , caseOf "fileModeChecks" (withProposalTemporaryRoot fileModeChecks)
+    , caseOf "initMaintenanceChecks" (withProposalTemporaryRoot initMaintenanceChecks)
+    , caseOf "contentAdmissionChecks" (withProposalTemporaryRoot contentAdmissionChecks)
+    , caseOf "gitObjectStoreTopologyChecks" (withProposalTemporaryRoot gitObjectStoreTopologyChecks)
+    , caseOf "gitObjectStoreBarrierFailureChecks" (withProposalTemporaryRoot gitObjectStoreBarrierFailureChecks)
+    , caseOf "operationJournalSizeCheck" (withProposalTemporaryRoot operationJournalSizeCheck)
+    , caseOf "operationJournalKillRecoveryCheck" (withProposalTemporaryRoot operationJournalKillRecoveryCheck)
+    , caseOf "indexRecoveryRecordBatchChecks" (withProposalTemporaryRoot indexRecoveryRecordBatchChecks)
+    , caseOf "indexRecoveryRefusalChecks" (withProposalTemporaryRoot indexRecoveryRefusalChecks)
+    , caseOf "indexRecoveryTransitionCheck" (withProposalTemporaryRoot indexRecoveryTransitionCheck)
+    , caseOf "persistentRecordParentSymlinkCheck" (withProposalTemporaryRoot persistentRecordParentSymlinkCheck)
+    , caseOf "persistentRecordParentSwapCheck" (withProposalTemporaryRoot persistentRecordParentSwapCheck)
+    , caseOf "persistentRecordCleanupOwnershipCheck" (withProposalTemporaryRoot persistentRecordCleanupOwnershipCheck)
+    , caseOf "persistentRecordCleanupFifoCheck" (withProposalTemporaryRoot persistentRecordCleanupFifoCheck)
+    , caseOf "persistentGitDirectorySwapCheck" (withProposalTemporaryRoot persistentGitDirectorySwapCheck)
+    , caseOf "persistentArchiveRootSwapCheck" (withProposalTemporaryRoot persistentArchiveRootSwapCheck)
+    , caseOf "pinnedGitPermissionCheck" (withProposalTemporaryRoot pinnedGitPermissionCheck)
+    , caseOf "persistentTransitionChecks" (withProposalTemporaryRoot persistentTransitionChecks)
+    , caseOf "indexReservationInterruptionCheck" (withProposalTemporaryRoot indexReservationInterruptionCheck)
+    , caseOf "indexReservationIdentityCheck" (withProposalTemporaryRoot indexReservationIdentityCheck)
+    , caseOf "uncertainRefOutcomeCheck" (withProposalTemporaryRoot uncertainRefOutcomeCheck)
+    , caseOf "postRefSyncFailureCheck" (withProposalTemporaryRoot postRefSyncFailureCheck)
+    , caseOf "processLockCheck" (withProposalTemporaryRoot processLockCheck)
+    , caseOf "interruptedInitCheck" (withProposalTemporaryRoot interruptedInitCheck)
+    , treeOf commandLineChecks
+    , treeOf $ testGroup "properties"
         [ patternProperties
         , pointerProperties
         , canonicalProperties
@@ -387,6 +384,23 @@ main = do
         , hexProperties
         ]
     ]
+  defaultMain (testGroup "door-test" tests)
+
+-- | A case that needs nothing computed before the tree is fixed.
+caseOf :: TestName -> IO () -> IO TestTree
+caseOf name = pure . testCase name
+
+-- | A tree that needs nothing computed before it is fixed.
+treeOf :: TestTree -> IO TestTree
+treeOf = pure
+
+-- | One case per row a recording check records.
+rowsOf :: TestName -> (Recorder -> IO ()) -> IO TestTree
+rowsOf name = rowGroup name . recordedRows
+
+-- | One case per row of a release module.
+releaseOf :: TestName -> IO [(String, Bool, String)] -> IO TestTree
+releaseOf name = rowGroup name . releaseRows
 
 -- | One test case per row, so a failing row leaves the other rows' results.
 checkGroup :: TestName -> [(String, Bool, String)] -> TestTree
@@ -419,6 +433,20 @@ rowGroup name compute = do
   where
     rowLabelLength (label, _, _, _, _) = length label
 
+-- | What a recording check is given in place of 'assert': the same
+-- arguments, recorded as a 'Row' instead of failing at once.
+type Recorder = String -> Bool -> ExitCode -> String -> String -> IO ()
+
+-- | The rows a check records, in order. A check of independent results
+-- records them, so each becomes its own case through 'rowGroup' while the
+-- inputs they share are read once.
+recordedRows :: (Recorder -> IO ()) -> IO [Row]
+recordedRows recording = do
+  recorded <- newIORef []
+  recording (\label passed code output errors ->
+    modifyIORef' recorded ((label, passed, code, output, errors) :))
+  reverse <$> readIORef recorded
+
 -- | UUIDv5 allocation is total: a bad archive UUID is a Left, not a crash.
 uuidV5Checks :: IO ()
 uuidV5Checks = do
@@ -429,39 +457,39 @@ uuidV5Checks = do
     ExitSuccess "" ""
 
 -- | The identifier smart constructors and the stored envelope's revision.
-identifierChecks :: IO ()
-identifierChecks = do
-  assert "object identifier smart constructor accepts a canonical UUID URN"
+identifierChecks :: Recorder -> IO ()
+identifierChecks check = do
+  check "object identifier smart constructor accepts a canonical UUID URN"
     ((objectIdText <$> parseObjectId (Text.pack entity)) == Right (Text.pack entity))
     ExitSuccess "" ""
-  assert "object identifier smart constructor rejects a hostname URL"
+  check "object identifier smart constructor rejects a hostname URL"
     (case parseObjectId "https://host.example/object" of Left _ -> True; Right _ -> False)
     ExitSuccess "" ""
-  assert "object identifier smart constructor rejects a non-UUID token"
+  check "object identifier smart constructor rejects a non-UUID token"
     (parseObjectId "local-object" == Left "object_id must be a lowercase urn:uuid identifier")
     ExitSuccess "" ""
-  assert "agent identifier smart constructor accepts an object UUID"
+  check "agent identifier smart constructor accepts an object UUID"
     ((agentIdText <$> parseAgentId (Text.pack person)) == Right (Text.pack person))
     ExitSuccess "" ""
-  assert "agent identifier smart constructor accepts a canonical Package URL"
+  check "agent identifier smart constructor accepts a canonical Package URL"
     ((agentIdText <$> parseAgentId (Text.pack writer)) == Right (Text.pack writer))
     ExitSuccess "" ""
-  assert "agent identifier smart constructor rejects a hostname"
+  check "agent identifier smart constructor rejects a hostname"
     (case parseAgentId "host.example.com" of Left _ -> True; Right _ -> False)
     ExitSuccess "" ""
-  assert "program identifier smart constructor accepts a canonical Package URL"
+  check "program identifier smart constructor accepts a canonical Package URL"
     ((programIdText <$> parseProgramId (Text.pack writer)) == Right (Text.pack writer))
     ExitSuccess "" ""
-  assert "program identifier smart constructor rejects a hostname URL"
+  check "program identifier smart constructor rejects a hostname URL"
     (case parseProgramId "https://host.example/archive" of Left _ -> True; Right _ -> False)
     ExitSuccess "" ""
-  assert "revision identifier smart constructor accepts a canonical digest"
+  check "revision identifier smart constructor accepts a canonical digest"
     (fmap revisionIdText (parseRevisionId (Text.pack zeroDigest)) == Right (Text.pack zeroDigest))
     ExitSuccess "" ""
-  assert "revision identifier smart constructor rejects malformed digests"
+  check "revision identifier smart constructor rejects malformed digests"
     (all (isLeft . parseRevisionId) ["", "sha256:abcd", "sha256:" <> Text.replicate 64 "A", "not-a-digest"])
     ExitSuccess "" ""
-  assert "stored envelope parsing rejects an invalid revision identifier"
+  check "stored envelope parsing rejects an invalid revision identifier"
     (case decodeUnique (LazyByteString.pack
       (withField (withField (entityDraft entity) "revision_id" "not-a-digest")
         "at" "2026-01-01T00:00:00Z")) of
@@ -472,46 +500,47 @@ identifierChecks = do
 
 -- | Single drafts through the dry-run validator: what an envelope admits
 -- and the exact refusal of each malformed one.
-envelopeChecks :: IO ()
-envelopeChecks = do
-  succeeds "dry-run uses RFC 8785 identity and retains spec" (entityDraft entity)
-  succeeds "dry-run canonicalises the closed artifact payload" (artifactDraft entity)
-  succeeds "specification 0.0.5 admits its installed musical_work kind"
-    (replace "{\"kind\":\"person\"" "{\"kind\":\"musical_work\"" (entityDraft entity))
-  refuses "specification 0.0.2 refuses the later musical_work kind"
-    (replace "archive/0.0.11" "archive/0.0.2"
-      (replace "{\"kind\":\"person\"" "{\"kind\":\"musical_work\"" (entityDraft entity)))
-    "entity kind is not defined by the core context"
-  refuses "a supplied recording time is not a draft" (withField (entityDraft entity) "at" "1900-01-01T00:00:00Z") "draft envelope must omit at"
-  refuses "a supplied revision is not a draft" (withField (entityDraft entity) "revision_id" zeroDigest) "draft envelope must omit revision_id"
-  comparesDifferent "the specification version remains in revision identity" (entityDraft entity) (replace "archive/0.0.11" "archive/0.0.2" (entityDraft entity))
-  refuses "an empty batch is not a successful admission" "[]" "admission batch must contain at least one record"
-  refuses "a malformed specification identifier is refused" (replace "archive/0.0.11" "not-an-archive-spec" (entityDraft entity)) "spec must be archive/ followed by a three-part numeric version"
-  refuses "an object identifier containing a hostname is refused" (replace entity "http://host.example/path" (entityDraft entity)) "object_id must not contain a hostname"
-  refuses "a non-UUID object identifier is refused" (replace entity "local-object" (entityDraft entity)) "object_id must be a lowercase urn:uuid identifier"
-  refuses "draft field errors keep precedence over object UUID validation"
-    (withField (replace entity "local-object" (entityDraft entity)) "revision_id" zeroDigest)
-    "draft envelope must omit revision_id"
-  refuses "a non-UUID reference identifier is refused" (claimDraft claim "local-object") "object_id must be a lowercase urn:uuid identifier"
-  refuses "a malformed referenced revision is refused at the envelope boundary"
-    (claimWithRevision claim entity "not-a-digest")
-    "revision_id must be sha256 followed by 64 lowercase hexadecimal characters"
-  refuses "an agent identifier containing a hostname is refused" (replace person "host.example.com" (entityDraft entity)) "agent must be a canonical Package URL"
-  refuses "an invalid program identifier cannot cross the envelope boundary" (replace writer "https://host.example/archive" (entityDraft entity)) "by must be a canonical Package URL"
-  refuses "a malformed supplied recording time is refused" (withField (entityDraft entity) "at" "[]") "at must be a non-empty string when supplied"
-  refuses "an envelope without an agent is refused" (removeField (entityDraft entity) "agent") "agent is required"
-  refuses "an envelope field outside P-2 is refused" (insertBeforeEnd (entityDraft entity) ",\"location\":{}") "not allowed in an envelope: location"
-  refuses "the obsolete decision shape is refused" (replace "\"shape\":\"entity\"" "\"shape\":\"decision\"" (entityDraft entity)) "shape must be artifact, entity, claim, or assessment"
-  refuses "an envelope without an object identity is refused" (removeField (entityDraft entity) "object_id") "object_id is required"
-  refuses "supersession must pin an exact revision" (replace "\"supersedes\":[]" ("\"supersedes\":[{\"role\":\"supersedes\",\"id\":\"" <> entity <> "\"}]" ) (entityDraft entity)) "supersedes reference must pin revision_id"
-  refuses "a reference with predecessor-only metadata is refused" (replace "}],\"supersedes\"" ",\"resolution\":\"unresolved\"}],\"supersedes\"" (claimDraft claim entity)) "not allowed in a refs reference: resolution"
-  refuses "a claim without a contract citation is refused" (removeField (claimDraft claim entity) "contracts") "claim requires at least one contract citation"
-  refuses "an assessment must pin the exact claim revision it judges" (replace "\"shape\":\"claim\"" "\"shape\":\"assessment\"" (claimDraft claim entity)) "assessment requires a pinned assessment_of reference"
-  refuses "a malformed contract digest is refused" (replace zeroDigest "sha256:bad" (claimDraft claim entity)) "contract digest must be sha256 followed by 64 lowercase hexadecimal characters"
-  refuses "duplicate JSON object keys are refused" (replace "\"object_id\":\"" ("\"object_id\":\"" <> entity <> "\",\"object_id\":\"") (entityDraft entity)) "duplicate JSON object key: object_id"
-  refuses "an envelope without its writer is refused" (removeField (entityDraft entity) "by") "by is required"
-  refuses "a dangling reference is refused" (claimDraft claim missingObject) ("reference " <> missingObject <> " does not name an admitted object")
-  refusesSilently "claim contract validation stays unsupported without an initialized archive" ("[" <> entityDraft entity <> "," <> claimDraft claim entity <> "]") "claim contracts require an initialized archive"
+envelopeChecks :: TestTree
+envelopeChecks = testGroup "envelopeChecks"
+  [ succeedsCase "dry-run uses RFC 8785 identity and retains spec" (entityDraft entity)
+  , succeedsCase "dry-run canonicalises the closed artifact payload" (artifactDraft entity)
+  , succeedsCase "specification 0.0.5 admits its installed musical_work kind"
+      (replace "{\"kind\":\"person\"" "{\"kind\":\"musical_work\"" (entityDraft entity))
+  , refusesCase "specification 0.0.2 refuses the later musical_work kind"
+      (replace "archive/0.0.11" "archive/0.0.2"
+        (replace "{\"kind\":\"person\"" "{\"kind\":\"musical_work\"" (entityDraft entity)))
+      "entity kind is not defined by the core context"
+  , refusesCase "a supplied recording time is not a draft" (withField (entityDraft entity) "at" "1900-01-01T00:00:00Z") "draft envelope must omit at"
+  , refusesCase "a supplied revision is not a draft" (withField (entityDraft entity) "revision_id" zeroDigest) "draft envelope must omit revision_id"
+  , comparesDifferentCase "the specification version remains in revision identity" (entityDraft entity) (replace "archive/0.0.11" "archive/0.0.2" (entityDraft entity))
+  , refusesCase "an empty batch is not a successful admission" "[]" "admission batch must contain at least one record"
+  , refusesCase "a malformed specification identifier is refused" (replace "archive/0.0.11" "not-an-archive-spec" (entityDraft entity)) "spec must be archive/ followed by a three-part numeric version"
+  , refusesCase "an object identifier containing a hostname is refused" (replace entity "http://host.example/path" (entityDraft entity)) "object_id must not contain a hostname"
+  , refusesCase "a non-UUID object identifier is refused" (replace entity "local-object" (entityDraft entity)) "object_id must be a lowercase urn:uuid identifier"
+  , refusesCase "draft field errors keep precedence over object UUID validation"
+      (withField (replace entity "local-object" (entityDraft entity)) "revision_id" zeroDigest)
+      "draft envelope must omit revision_id"
+  , refusesCase "a non-UUID reference identifier is refused" (claimDraft claim "local-object") "object_id must be a lowercase urn:uuid identifier"
+  , refusesCase "a malformed referenced revision is refused at the envelope boundary"
+      (claimWithRevision claim entity "not-a-digest")
+      "revision_id must be sha256 followed by 64 lowercase hexadecimal characters"
+  , refusesCase "an agent identifier containing a hostname is refused" (replace person "host.example.com" (entityDraft entity)) "agent must be a canonical Package URL"
+  , refusesCase "an invalid program identifier cannot cross the envelope boundary" (replace writer "https://host.example/archive" (entityDraft entity)) "by must be a canonical Package URL"
+  , refusesCase "a malformed supplied recording time is refused" (withField (entityDraft entity) "at" "[]") "at must be a non-empty string when supplied"
+  , refusesCase "an envelope without an agent is refused" (removeField (entityDraft entity) "agent") "agent is required"
+  , refusesCase "an envelope field outside P-2 is refused" (insertBeforeEnd (entityDraft entity) ",\"location\":{}") "not allowed in an envelope: location"
+  , refusesCase "the obsolete decision shape is refused" (replace "\"shape\":\"entity\"" "\"shape\":\"decision\"" (entityDraft entity)) "shape must be artifact, entity, claim, or assessment"
+  , refusesCase "an envelope without an object identity is refused" (removeField (entityDraft entity) "object_id") "object_id is required"
+  , refusesCase "supersession must pin an exact revision" (replace "\"supersedes\":[]" ("\"supersedes\":[{\"role\":\"supersedes\",\"id\":\"" <> entity <> "\"}]" ) (entityDraft entity)) "supersedes reference must pin revision_id"
+  , refusesCase "a reference with predecessor-only metadata is refused" (replace "}],\"supersedes\"" ",\"resolution\":\"unresolved\"}],\"supersedes\"" (claimDraft claim entity)) "not allowed in a refs reference: resolution"
+  , refusesCase "a claim without a contract citation is refused" (removeField (claimDraft claim entity) "contracts") "claim requires at least one contract citation"
+  , refusesCase "an assessment must pin the exact claim revision it judges" (replace "\"shape\":\"claim\"" "\"shape\":\"assessment\"" (claimDraft claim entity)) "assessment requires a pinned assessment_of reference"
+  , refusesCase "a malformed contract digest is refused" (replace zeroDigest "sha256:bad" (claimDraft claim entity)) "contract digest must be sha256 followed by 64 lowercase hexadecimal characters"
+  , refusesCase "duplicate JSON object keys are refused" (replace "\"object_id\":\"" ("\"object_id\":\"" <> entity <> "\",\"object_id\":\"") (entityDraft entity)) "duplicate JSON object key: object_id"
+  , refusesCase "an envelope without its writer is refused" (removeField (entityDraft entity) "by") "by is required"
+  , refusesCase "a dangling reference is refused" (claimDraft claim missingObject) ("reference " <> missingObject <> " does not name an admitted object")
+  , refusesSilentlyCase "claim contract validation stays unsupported without an initialized archive" ("[" <> entityDraft entity <> "," <> claimDraft claim entity <> "]") "claim contracts require an initialized archive"
+  ]
 
 -- | Batches that cite the base revision of an entity computed first, so the
 -- revision and the checks that pin it stay one case.
@@ -530,11 +559,12 @@ batchRevisionChecks = do
   refusesSilently "a refused batch emits no successful prefix" ("[" <> entityDraft entity <> "," <> claimDraft claim missingObject <> "]") ("reference " <> missingObject <> " does not name an admitted object")
 
 -- | Door's command line refuses stdin proposals and a bare admit.
-commandLineChecks :: IO ()
-commandLineChecks = do
-  commandRefuses "stdin admission is refused" ["admit", "--dry-run"] "admission requires --proposal DIRECTORY"
-  commandRefuses "transition stdin is refused" ["transition", "--dry-run"] "transition requires --proposal DIRECTORY"
-  commandRefuses "persistent admission requires a proposal" ["admit"] "admit requires --proposal DIRECTORY"
+commandLineChecks :: TestTree
+commandLineChecks = testGroup "commandLineChecks"
+  [ commandRefusesCase "stdin admission is refused" ["admit", "--dry-run"] "admission requires --proposal DIRECTORY"
+  , commandRefusesCase "transition stdin is refused" ["transition", "--dry-run"] "transition requires --proposal DIRECTORY"
+  , commandRefusesCase "persistent admission requires a proposal" ["admit"] "admit requires --proposal DIRECTORY"
+  ]
 
 configureExecutablePaths :: IO ()
 configureExecutablePaths = do
@@ -544,39 +574,39 @@ configureExecutablePaths = do
     (ioError (userError "tests require an installed git-annex executable")) pure
   setEnv "ARCHIVE_GIT_EXECUTABLE" gitPath
   setEnv "ARCHIVE_GIT_ANNEX_EXECUTABLE" annexPath
-versionedContextChecks :: IO ()
-versionedContextChecks = do
+versionedContextChecks :: Recorder -> IO ()
+versionedContextChecks check = do
   oldBytes <- readFile "spec/0.0.2/context.jsonld"
   priorBytes <- readFile "spec/0.0.3/context.jsonld"
   newBytes <- readFile "spec/0.0.4/context.jsonld"
   let oldContext = decodeUnique (LazyByteString.pack oldBytes)
       priorContext = decodeUnique (LazyByteString.pack priorBytes)
       newContext = decodeUnique (LazyByteString.pack newBytes)
-  assert "the immutable 0.0.2 context remains selected by archive/0.0.2"
+  check "the immutable 0.0.2 context remains selected by archive/0.0.2"
     (case oldContext of
       Right value -> validateCoreContextForSpecification "archive/0.0.2" value == Right ()
       Left _ -> False)
     ExitSuccess "" ""
-  assert "0.0.2 refuses the later musical_work context mapping"
+  check "0.0.2 refuses the later musical_work context mapping"
     (case newContext of
       Right value -> case validateCoreContextForSpecification "archive/0.0.2" value of
         Left _ -> True
         Right () -> False
       Left _ -> False)
     ExitSuccess "" ""
-  assert "0.0.4 accepts its versioned musical_work context"
+  check "0.0.4 accepts its versioned musical_work context"
     (case newContext of
       Right value -> validateCoreContextForSpecification "archive/0.0.4" value == Right ()
       Left _ -> False)
     ExitSuccess "" ""
-  assert "0.0.3 retains its own versioned context"
+  check "0.0.3 retains its own versioned context"
     (case priorContext of
       Right value -> validateCoreContextForSpecification "archive/0.0.3" value == Right ()
       Left _ -> False)
     ExitSuccess "" ""
 
-audioContractChecks :: IO ()
-audioContractChecks = do
+audioContractChecks :: Recorder -> IO ()
+audioContractChecks check = do
   selectionSchema <- installedSchema "spec/contracts/sha256-bfde7fb0daaf7ab9af80eabe8d4e684e07f3a9dbf5cbec68266ddf4b9493cc28.json"
   occurrenceSchema <- installedSchema "spec/contracts/sha256-990e8f3a0938bb7ddd25f42a112f135b08460514038096807b573a6101a1a16f.json"
   let pin role objectId revision = Aeson.object
@@ -589,17 +619,17 @@ audioContractChecks = do
       second = pin ("piece" :: Text.Text) (Text.pack claim) (Text.pack otherDigest)
       one = pin ("selection" :: Text.Text) (Text.pack entity) (Text.pack zeroDigest)
       two = pin ("selection" :: Text.Text) (Text.pack claim) (Text.pack otherDigest)
-  assert "selection profile accepts ordered pieces and aligned Artifact pins"
+  check "selection profile accepts ordered pieces and aligned Artifact pins"
     (validateContractInstance selectionSchema (selection [piece 0 50, piece 75 100] [first, second]) == Right ()) ExitSuccess "" ""
-  assert "selection profile rejects misaligned pieces and pins"
+  check "selection profile rejects misaligned pieces and pins"
     (isLeft (validateContractInstance selectionSchema (selection [piece 0 50, piece 75 100] [first]))) ExitSuccess "" ""
-  assert "selection profile rejects inverted sample bounds"
+  check "selection profile rejects inverted sample bounds"
     (isLeft (validateContractInstance selectionSchema (selection [piece 50 50] [first]))) ExitSuccess "" ""
-  assert "occurrence profile accepts canonical membership"
+  check "occurrence profile accepts canonical membership"
     (validateContractInstance occurrenceSchema (occurrence [one, two]) == Right ()) ExitSuccess "" ""
-  assert "occurrence profile rejects duplicate membership"
+  check "occurrence profile rejects duplicate membership"
     (isLeft (validateContractInstance occurrenceSchema (occurrence [one, one]))) ExitSuccess "" ""
-  assert "occurrence profile rejects reordered membership"
+  check "occurrence profile rejects reordered membership"
     (isLeft (validateContractInstance occurrenceSchema (occurrence [two, one]))) ExitSuccess "" ""
 
 installedSchema :: FilePath -> IO Aeson.Value
@@ -611,21 +641,27 @@ installedSchema path = do
       Nothing -> ioError (userError (path <> " has no schema"))
     _ -> ioError (userError (path <> " is not a bundle"))
 
-subprocessCaptureLimitChecks :: IO ()
-subprocessCaptureLimitChecks = do
-  python <- findExecutable "python3" >>= maybe
-    (ioError (userError "subprocess-limit test cannot find python3")) pure
-  let process = proc python ["-c", "import sys; sys.stdout.write('x' * 65536)"]
-  result <- runProcessBounded process (Just 1024) 1024
-  assert "bounded subprocess capture refuses oversized control output"
-    (result == Left (ProcessOutputLimitFailure StandardOutput 1024))
-    ExitSuccess "" (show result)
-  stderrResult <- runProcessBounded
-    (proc python ["-c", "import sys; sys.stderr.write('e' * 65536)"])
-    Nothing 32
-  assert "bounded subprocess capture types oversized diagnostics separately"
-    (stderrResult == Left (ProcessOutputLimitFailure StandardError 32))
-    ExitSuccess "" (show stderrResult)
+subprocessCaptureLimitChecks :: TestTree
+subprocessCaptureLimitChecks = testGroup "subprocessCaptureLimitChecks"
+  [ testCase "bounded subprocess capture refuses oversized control output" $ do
+      python <- python3
+      result <- runProcessBounded
+        (proc python ["-c", "import sys; sys.stdout.write('x' * 65536)"]) (Just 1024) 1024
+      assert "bounded subprocess capture refuses oversized control output"
+        (result == Left (ProcessOutputLimitFailure StandardOutput 1024))
+        ExitSuccess "" (show result)
+  , testCase "bounded subprocess capture types oversized diagnostics separately" $ do
+      python <- python3
+      stderrResult <- runProcessBounded
+        (proc python ["-c", "import sys; sys.stderr.write('e' * 65536)"])
+        Nothing 32
+      assert "bounded subprocess capture types oversized diagnostics separately"
+        (stderrResult == Left (ProcessOutputLimitFailure StandardError 32))
+        ExitSuccess "" (show stderrResult)
+  ]
+  where
+    python3 = findExecutable "python3" >>= maybe
+      (ioError (userError "subprocess-limit test cannot find python3")) pure
 
 typedPlannerErrorChecks :: IO ()
 typedPlannerErrorChecks = do
@@ -713,6 +749,23 @@ refuses label input expectedError = do
 refusesSilently label input expectedError = do
   (code, output, errors) <- dryRun input
   assert label (code /= ExitSuccess && null output && expectedError `contains` errors) code output errors
+
+-- | The dry-run and command checks as test cases named by their labels, so a
+-- group of independent checks is one case each.
+succeedsCase :: String -> String -> TestTree
+succeedsCase label input = testCase label (succeeds label input)
+
+refusesCase, refusesSilentlyCase :: String -> String -> String -> TestTree
+refusesCase label input expectedError = testCase label (refuses label input expectedError)
+refusesSilentlyCase label input expectedError =
+  testCase label (refusesSilently label input expectedError)
+
+comparesDifferentCase :: String -> String -> String -> TestTree
+comparesDifferentCase label first second = testCase label (comparesDifferent label first second)
+
+commandRefusesCase :: String -> [String] -> String -> TestTree
+commandRefusesCase label arguments expectedError =
+  testCase label (commandRefuses label arguments expectedError)
 
 commandRefuses :: String -> [String] -> String -> IO ()
 commandRefuses label arguments expectedError = do
@@ -5757,25 +5810,27 @@ reviewContractAdmissionChecks parent = do
 
 -- | Pure checks of the 0.0.5 context and of code-point string length, which
 -- `door admit` cannot isolate from the operator's locale.
-reviewContractProfileChecks :: IO ()
-reviewContractProfileChecks = do
+reviewContractProfileChecks :: Recorder -> IO ()
+reviewContractProfileChecks check = do
   newBytes <- readFile "spec/0.0.5/context.jsonld"
   priorBytes <- readFile "spec/0.0.4/context.jsonld"
   let newContext = decodeUnique (LazyByteString.pack newBytes)
       priorContext = decodeUnique (LazyByteString.pack priorBytes)
-  assert "0.0.5 accepts its recording_session context"
+  check "0.0.5 accepts its recording_session context"
     (either (const False) ((== Right ()) . validateCoreContextForSpecification "archive/0.0.5") newContext)
     ExitSuccess "" ""
-  assert "0.0.4 refuses the later recording_session context"
+  check "0.0.4 refuses the later recording_session context"
     (either (const False) (isLeft . validateCoreContextForSpecification "archive/0.0.4") newContext)
     ExitSuccess "" ""
-  assert "0.0.5 refuses the earlier context without recording_session"
+  check "0.0.5 refuses the earlier context without recording_session"
     (either (const False) (isLeft . validateCoreContextForSpecification "archive/0.0.5") priorContext)
     ExitSuccess "" ""
-  refuses "specification 0.0.4 refuses the later recording_session kind"
+  (kindCode, kindOutput, kindErrors) <- dryRun
     (replace "archive/0.0.11" "archive/0.0.4"
       (replace "{\"kind\":\"person\"" "{\"kind\":\"recording_session\"" (entityDraft entity)))
-    "entity kind is not defined by the core context"
+  check "specification 0.0.4 refuses the later recording_session kind"
+    (kindCode /= ExitSuccess && "entity kind is not defined by the core context" `contains` kindErrors)
+    kindCode kindOutput kindErrors
   titleBundle <- readFile "spec/contracts/sha256-0bec7932301de6f62b92ffc167f41236cf98c10e6a6175481400c64da502d8d9.json"
   case decodeUnique (LazyByteString.pack titleBundle) of
     Right (Aeson.Object fields) | Just schema <- KeyMap.lookup "schema" fields -> do
@@ -5787,11 +5842,11 @@ reviewContractProfileChecks = do
                 , "revision_id" .= Text.pack zeroDigest ]]
             ]
           accented = Text.replicate 200 (Text.singleton '\233')
-      assert "maxLength counts code points, not UTF-8 bytes"
+      check "maxLength counts code points, not UTF-8 bytes"
         (validateContractInstance schema (instanceWith accented) == Right ()
           && isLeft (validateContractInstance schema (instanceWith (accented <> "x"))))
         ExitSuccess "" ""
-    _ -> assert "the installed title bundle decodes" False ExitSuccess titleBundle ""
+    _ -> check "the installed title bundle decodes" False ExitSuccess titleBundle ""
 
 wordsBy :: Char -> String -> [String]
 wordsBy separator value = case break (== separator) value of
@@ -5921,13 +5976,13 @@ migrationContractAdmissionChecks parent = do
 
 -- | Schema-level checks of the migration bundles that need no run record:
 -- decimal text, and a work match that is valid but cannot be admitted yet.
-migrationContractProfileChecks :: IO ()
-migrationContractProfileChecks = do
+migrationContractProfileChecks :: Recorder -> IO ()
+migrationContractProfileChecks check = do
   let bundleSchema digest = do
         bytes <- readFile ("spec/contracts/sha256-" <> digest <> ".json")
         case decodeUnique (LazyByteString.pack bytes) of
           Right (Aeson.Object fields) | Just schema <- KeyMap.lookup "schema" fields -> pure schema
-          _ -> assert "an installed migration bundle decodes" False ExitSuccess bytes "" >> pure Aeson.Null
+          _ -> check "an installed migration bundle decodes" False ExitSuccess bytes "" >> pure Aeson.Null
       -- Each role names a different object, so the distinct-references rule
       -- holds and a refusal can only come from the field under test.
       ref role = Aeson.object
@@ -5950,17 +6005,17 @@ migrationContractProfileChecks = do
             , "score" .= (score :: Text.Text) ]
         , "refs" .= [ ref "occurrence", ref "work", ref "corpus", ref "run" ]
         ]
-  assert "a work match accepts exact signed decimal text"
+  check "a work match accepts exact signed decimal text"
     (all (\score -> isRightUnit (validateContractInstance matchSchema (match score))) ["0", "-0.25", "12.0625"])
     ExitSuccess "" ""
-  assert "a work match refuses scores that are not exact decimal text"
+  check "a work match refuses scores that are not exact decimal text"
     (all (\score -> isLeft (validateContractInstance matchSchema (match score))) ["01", "1e3", ".5", "1.", "+1", "NaN"])
     ExitSuccess "" ""
   selectionSchema <- bundleSchema "c7b635bb3313a8281e89d5ba736f30e4ebf246850f290b58dccc9cf664a0edc5"
   let seconds start = case decodeUnique (LazyByteString.pack (selectionTranslationPayload start "4.1876")) of
         Right payload -> Aeson.object ["payload" .= payload, "refs" .= [ref "translated", ref "migration_source"]]
         Left _ -> Aeson.Null
-  assert "source seconds accept up to six decimal places"
+  check "source seconds accept up to six decimal places"
     (isRightUnit (validateContractInstance selectionSchema (seconds "0.000208"))
       && isLeft (validateContractInstance selectionSchema (seconds "0.0002081"))
       && isLeft (validateContractInstance selectionSchema (seconds "-1")))
@@ -5997,20 +6052,20 @@ refusalCodeSchemaChecks = do
   assert "door/service.schema.json lists exactly Door's refusal codes and descriptions"
     (not (null published) && published == expected) ExitSuccess (show published) (show expected)
 
-contractCatalogChecks :: IO ()
-contractCatalogChecks = do
+contractCatalogChecks :: Recorder -> IO ()
+contractCatalogChecks check = do
   versions <- filter (all (`elem` ("0123456789." :: String))) <$> listDirectory "spec"
-  assert "every specification version directory is enumerated" (length versions >= 6)
+  check "every specification version directory is enumerated" (length versions >= 6)
     ExitSuccess (show versions) ""
   mapM_ checkVersion versions
   missing <- loadContractCatalog "archive/9.9.9"
-  assert "a specification without a catalog is refused, not empty" (isLeft missing)
+  check "a specification without a catalog is refused, not empty" (isLeft missing)
     ExitSuccess (show missing) ""
   let good = "{\"spec\":\"archive/0.0.1\",\"contracts\":[{\"id\":\"a\",\"version\":\"1\",\"digest\":\"sha256:" <> replicate 64 '0' <> "\"}]}"
       parsed = parseContractCatalog "archive/0.0.1" . LazyByteString.pack
-  assert "a well-formed catalog parses" (either (const False) ((== 1) . length) (parsed good))
+  check "a well-formed catalog parses" (either (const False) ((== 1) . length) (parsed good))
     ExitSuccess (show (parsed good)) ""
-  mapM_ (\(label, text) -> assert label (isLeft (parsed text)) ExitSuccess (show (parsed text)) "")
+  mapM_ (\(label, text) -> check label (isLeft (parsed text)) ExitSuccess (show (parsed text)) "")
     [ ("a catalog naming another specification is refused", replace "archive/0.0.1" "archive/0.0.2" good)
     , ("an empty catalog is refused", "{\"spec\":\"archive/0.0.1\",\"contracts\":[]}")
     , ("a catalog with an extra field is refused", replace "{\"spec\"" "{\"extra\":1,\"spec\"" good)
@@ -6022,7 +6077,7 @@ contractCatalogChecks = do
     checkVersion version = do
       catalog <- loadContractCatalog (Text.pack ("archive/" <> version))
       case catalog of
-        Left problem -> assert ("the catalog of " <> version <> " loads") False ExitSuccess (Text.unpack problem) ""
+        Left problem -> check ("the catalog of " <> version <> " loads") False ExitSuccess (Text.unpack problem) ""
         Right entries -> mapM_ (checkEntry version) (toList entries)
     checkEntry version (identifier, contractVersion, digest) = do
       bytes <- ByteString.readFile ("spec/contracts/sha256-" <> drop 7 (Text.unpack digest) <> ".json")
@@ -6030,7 +6085,7 @@ contractCatalogChecks = do
           fields = case decodeUnique (LazyByteString.fromStrict bytes) of
             Right (Aeson.Object object) -> (KeyMap.lookup "id" object, KeyMap.lookup "version" object)
             _ -> (Nothing, Nothing)
-      assert (version <> " lists " <> Text.unpack identifier <> " " <> Text.unpack contractVersion <> " by its bytes' digest and identity")
+      check (version <> " lists " <> Text.unpack identifier <> " " <> Text.unpack contractVersion <> " by its bytes' digest and identity")
         (actual == Text.unpack digest && fields == (Just (Aeson.String identifier), Just (Aeson.String contractVersion)))
         ExitSuccess actual (show fields)
     hex2 byte = let h = showHex byte "" in if length h == 1 then '0' : h else h
@@ -7154,8 +7209,8 @@ specificationUpgradeRecoveryChecks parent = do
 -- | The additive rule of ADR 0068, the layouts it compares, and the paths an
 -- upgrade may write, without an archive. The real 0.0.6 and 0.0.11 releases
 -- are the anchor; each refusal changes one thing about the target.
-specificationUpgradeRuleChecks :: IO ()
-specificationUpgradeRuleChecks = do
+specificationUpgradeRuleChecks :: Recorder -> IO ()
+specificationUpgradeRuleChecks check = do
   previousCatalog <- either (const Set.empty) id <$> loadContractCatalog "archive/0.0.6"
   targetCatalog <- either (const Set.empty) id <$> loadContractCatalog "archive/0.0.11"
   let contextOf path = do
@@ -7167,12 +7222,12 @@ specificationUpgradeRuleChecks = do
   targetContext <- contextOf "spec/0.0.11/context.jsonld"
   let previous = SpecificationRelease "archive/0.0.6" previousCatalog "archive/2" previousContext
       target = SpecificationRelease "archive/0.0.11" targetCatalog "archive/2" targetContext
-      refusedWith label expected candidate = assert label
+      refusedWith label expected candidate = check label
         (either (contains expected . Text.unpack) (const False) (additiveUpgrade previous candidate))
         ExitSuccess (show (additiveUpgrade previous candidate)) expected
       oneEntry = Set.findMin previousCatalog
       (oneId, oneVersion, _) = oneEntry
-  assert "the real 0.0.6 to 0.0.11 upgrade is additive (anchor)"
+  check "the real 0.0.6 to 0.0.11 upgrade is additive (anchor)"
     (additiveUpgrade previous target == Right () && not (Set.null previousCatalog)
       && previousCatalog `Set.isProperSubsetOf` targetCatalog && not (KeyMap.null previousContext))
     ExitSuccess (show (additiveUpgrade previous target)) ""
@@ -7188,19 +7243,19 @@ specificationUpgradeRuleChecks = do
     target { releaseContext = KeyMap.insert "label" (Aeson.String "dcterms:title") targetContext }
   refusedWith "a target core context that drops a term is not additive" "drops or changes label"
     target { releaseContext = KeyMap.delete "label" targetContext }
-  assert "a target core context may define more terms"
+  check "a target core context may define more terms"
     (additiveUpgrade previous target { releaseContext = KeyMap.insert "extra_term" (Aeson.String "arch:extra") targetContext } == Right ())
     ExitSuccess "" ""
-  assert "each known release has its layout, and a later one is not guessed"
+  check "each known release has its layout, and a later one is not guessed"
     (map specificationLayout ["archive/0.0.5", "archive/0.0.6", "archive/0.0.7", "archive/0.0.8", "archive/0.0.9", "archive/0.0.10", "archive/0.0.11"] == [Right "archive/1", Right "archive/2", Right "archive/2", Right "archive/2", Right "archive/2", Right "archive/2", Right "archive/2"]
       && isLeft (specificationLayout "archive/0.0.12"))
     ExitSuccess "" ""
-  assert "specification versions order numerically, not as text"
+  check "specification versions order numerically, not as text"
     (compareSpecifications "archive/0.0.11" "archive/0.0.9" == Right GT
       && compareSpecifications "archive/0.0.6" "archive/0.0.9" == Right LT
       && isLeft (compareSpecifications "archive/0.0" "archive/0.0.9"))
     ExitSuccess "" ""
-  assert "an upgrade writes only the manifest, a release's three documents, and digest-named bundles"
+  check "an upgrade writes only the manifest, a release's three documents, and digest-named bundles"
     (all (isRight . validateArchiveFilePath)
         [ "archive.json", "spec/0.0.11/VERSION", "spec/0.0.11/archive-spec.md", "spec/0.0.11/context.jsonld"
         , "contracts/sha256-" <> replicate 64 'a' <> ".json" ]
@@ -7325,16 +7380,16 @@ windowMatchAdmissionChecks parent = do
 
 -- | The span window rule is checked when a bundle loads: each malformed rule
 -- is refused, and the released version 3 bundle accepts a valid instance.
-windowMatchProfileChecks :: IO ()
-windowMatchProfileChecks = do
+windowMatchProfileChecks :: Recorder -> IO ()
+windowMatchProfileChecks check = do
   catalog <- either (const []) toList <$> loadContractCatalog "archive/0.0.9"
   schema <- case [digest | ("archive.claim/work_match", "3", digest) <- catalog] of
     [digest] -> do
       bytes <- readFile ("spec/contracts/sha256-" <> drop 7 (Text.unpack digest) <> ".json")
       case decodeUnique (LazyByteString.pack bytes) of
         Right (Aeson.Object fields) | Just value <- KeyMap.lookup "schema" fields -> pure value
-        _ -> assert "the work_match 3 bundle decodes" False ExitSuccess bytes "" >> pure Aeson.Null
-    found -> assert "the 0.0.9 catalog lists work_match version 3 once" False ExitSuccess (show found) "" >> pure Aeson.Null
+        _ -> check "the work_match 3 bundle decodes" False ExitSuccess bytes "" >> pure Aeson.Null
+    found -> check "the 0.0.9 catalog lists work_match version 3 once" False ExitSuccess (show found) "" >> pure Aeson.Null
   let ref role suffix = Aeson.object
         [ "role" .= (role :: Text.Text)
         , "id" .= ("urn:uuid:00000000-0000-4000-8000-0000000000" <> suffix :: Text.Text)
@@ -7349,9 +7404,9 @@ windowMatchProfileChecks = do
       withRule value = case schema of
         Aeson.Object fields -> Aeson.Object (KeyMap.insert "x-archive-span-window" value fields)
         _ -> schema
-      refusedOnLoad label candidate = assert label (isLeft (validateContractInstance candidate valid)) ExitSuccess
+      refusedOnLoad label candidate = check label (isLeft (validateContractInstance candidate valid)) ExitSuccess
         (show (validateContractInstance candidate valid)) ""
-  assert "the released work_match 3 bundle carries a span window rule and accepts a valid instance (anchor)"
+  check "the released work_match 3 bundle carries a span window rule and accepts a valid instance (anchor)"
     (not (KeyMap.null rule) && validateContractInstance schema valid == Right ())
     ExitSuccess (show (validateContractInstance schema valid)) ""
   refusedOnLoad "a span window rule missing its spans field is refused"
@@ -7376,7 +7431,7 @@ windowMatchProfileChecks = do
         (Aeson.Object (KeyMap.insert "properties"
           (Aeson.Object (KeyMap.insert "x-archive-span-window" (Aeson.Object rule) properties))
           (KeyMap.delete "x-archive-span-window" fields)))
-    _ -> assert "the work_match 3 schema has properties" False ExitSuccess "" ""
+    _ -> check "the work_match 3 schema has properties" False ExitSuccess "" ""
 
 -- | Specification 0.0.9's bundles and profile rules (D-17), without an
 -- archive. The released bundles accept the fixture plan's own records (the
@@ -7384,8 +7439,8 @@ windowMatchProfileChecks = do
 -- bundle loads; and each new rule refuses its own violation. Door's agreement
 -- with World on admission, through the real `door admit`, is tested by
 -- world/tests/test_door_agreement.py on records Door admitted.
-musicAndCreditProfileChecks :: IO ()
-musicAndCreditProfileChecks = do
+musicAndCreditProfileChecks :: Recorder -> IO ()
+musicAndCreditProfileChecks check = do
   catalog <- either (const []) toList <$> loadContractCatalog "archive/0.0.9"
   planBytes <- LazyByteString.readFile "fixture/plan.json"
   let decodedPlan = either (const Aeson.Null) id (decodeUnique planBytes)
@@ -7413,8 +7468,8 @@ musicAndCreditProfileChecks = do
             bytes <- LazyByteString.readFile ("spec/contracts/sha256-" <> drop 7 (Text.unpack digest) <> ".json")
             case decodeUnique bytes of
               Right (Aeson.Object fields) | Just schema <- KeyMap.lookup "schema" fields -> pure schema
-              _ -> assert ("the bundle of " <> Text.unpack identifier <> " decodes") False ExitSuccess "" "" >> pure Aeson.Null
-          found -> assert ("the 0.0.9 catalog lists " <> Text.unpack identifier <> " version 1 once") False ExitSuccess (show found) ""
+              _ -> check ("the bundle of " <> Text.unpack identifier <> " decodes") False ExitSuccess "" "" >> pure Aeson.Null
+          found -> check ("the 0.0.9 catalog lists " <> Text.unpack identifier <> " version 1 once") False ExitSuccess (show found) ""
             >> pure Aeson.Null
       withKey name value (Aeson.Object fields) = Aeson.Object (KeyMap.insert name value fields)
       withKey _ _ other = other
@@ -7423,9 +7478,9 @@ musicAndCreditProfileChecks = do
       ruleOf name (Aeson.Object fields) = maybe Aeson.Null id (KeyMap.lookup name fields)
       ruleOf _ _ = Aeson.Null
       decoded text = either (const Aeson.Null) id (decodeUnique (LazyByteString.pack text))
-      instanceAccepted label schema value = assert label (validateContractInstance schema value == Right ()) ExitSuccess
+      instanceAccepted label schema value = check label (validateContractInstance schema value == Right ()) ExitSuccess
         (show (validateContractInstance schema value)) ""
-      instanceRefused label schema value = assert label (isLeft (validateContractInstance schema value)) ExitSuccess
+      instanceRefused label schema value = check label (isLeft (validateContractInstance schema value)) ExitSuccess
         (show (validateContractInstance schema value)) ""
       onPayload f (Aeson.Object fields) = Aeson.Object (maybe fields (\value -> KeyMap.insert "payload" (f value) fields)
         (KeyMap.lookup "payload" fields))
@@ -7531,7 +7586,7 @@ musicAndCreditProfileChecks = do
 
   -- Each malformed rule, keyword, or target rule is refused when its bundle
   -- loads, whatever the instance.
-  let refusedOnLoad label schema value = assert label (isLeft (validateContractInstance schema value)) ExitSuccess
+  let refusedOnLoad label schema value = check label (isLeft (validateContractInstance schema value)) ExitSuccess
         (show (validateContractInstance schema value)) ""
       withRule schema name f = withKey name (f (ruleOf name schema)) schema
       targets = ruleOf "x-archive-reference-targets" contribution
@@ -7587,7 +7642,7 @@ musicAndCreditProfileChecks = do
     (withKey "properties" (withKey "x-archive-pitch-stacks" (ruleOf "x-archive-pitch-stacks" chords) (ruleOf "properties" chords))
       (withoutKey "x-archive-pitch-stacks" chords))
   context <- either (const Aeson.Null) id . decodeUnique <$> LazyByteString.readFile "spec/0.0.9/context.jsonld"
-  assert "the 0.0.9 core context, with release and recording, is 0.0.9's and not 0.0.8's"
+  check "the 0.0.9 core context, with release and recording, is 0.0.9's and not 0.0.8's"
     (validateCoreContextForSpecification "archive/0.0.9" context == Right ()
       && validateCoreContextForSpecification "archive/0.0.11" context == Right ()
       && isLeft (validateCoreContextForSpecification "archive/0.0.8" context))
@@ -7688,8 +7743,8 @@ previousReleaseUpgradeChecks parent = do
 
 -- | Pure checks of the 0.0.9 profile: each malformed rule is refused when its
 -- bundle loads, and the accepted bundles' rules are the anchors.
-derivationContractProfileChecks :: IO ()
-derivationContractProfileChecks = do
+derivationContractProfileChecks :: Recorder -> IO ()
+derivationContractProfileChecks check = do
   catalog <- either (const []) toList <$> loadContractCatalog "archive/0.0.9"
   let digestFor identifier version =
         [digest | (identifier', version', digest) <- catalog, identifier' == identifier, version' == version]
@@ -7698,8 +7753,8 @@ derivationContractProfileChecks = do
           bytes <- readFile ("spec/contracts/sha256-" <> drop 7 (Text.unpack digest) <> ".json")
           case decodeUnique (LazyByteString.pack bytes) of
             Right (Aeson.Object fields) | Just schema <- KeyMap.lookup "schema" fields -> pure schema
-            _ -> assert ("the bundle of " <> Text.unpack identifier <> " decodes") False ExitSuccess bytes "" >> pure Aeson.Null
-        found -> assert ("the 0.0.9 catalog lists " <> Text.unpack identifier <> " " <> Text.unpack version)
+            _ -> check ("the bundle of " <> Text.unpack identifier <> " decodes") False ExitSuccess bytes "" >> pure Aeson.Null
+        found -> check ("the 0.0.9 catalog lists " <> Text.unpack identifier <> " " <> Text.unpack version)
           False ExitSuccess (show found) "" >> pure Aeson.Null
       ref role suffix = Aeson.object
         [ "role" .= (role :: Text.Text)
@@ -7718,12 +7773,12 @@ derivationContractProfileChecks = do
   let run = instanceOf (decoded runPayload) []
       suggestions = instanceOf (decoded (spansPayload 48000 [(0, 10, "music")]))
         [ref "source" "21", ref "stream" "22", ref "run" "23"]
-  assert "the accepted 0.0.9 instances satisfy their bundles"
+  check "the accepted 0.0.9 instances satisfy their bundles"
     (validateContractInstance runSchema run == Right ()
       && validateContractInstance suggestionsSchema suggestions == Right ())
     ExitSuccess "" ""
   let refusedOnLoad label schema instanceValue =
-        assert label (isLeft (validateContractInstance schema instanceValue)) ExitSuccess
+        check label (isLeft (validateContractInstance schema instanceValue)) ExitSuccess
           (show (validateContractInstance schema instanceValue)) ""
       targets = case runSchema of
         Aeson.Object fields -> KeyMap.lookup "x-archive-reference-targets" fields
@@ -7760,7 +7815,7 @@ derivationContractProfileChecks = do
     (withRoot runSchema "x-archive-ordered-times" (Aeson.object [])) run
   refusedOnLoad "a non-numeric maximum is refused"
     (withRoot runSchema "maximum" (Aeson.String "64")) run
-  assert "the sequential spans rule refuses a backwards span the schema accepts"
+  check "the sequential spans rule refuses a backwards span the schema accepts"
     (isLeft (validateContractInstance suggestionsSchema
       (instanceOf (decoded (spansPayload 48000 [(10, 10, "music")])) [ref "source" "21", ref "stream" "22", ref "run" "23"])))
     ExitSuccess "" ""
