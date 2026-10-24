@@ -2,13 +2,14 @@
 
 -- | Door's operation journal: the one durable note of an unfinished write.
 --
--- A batch publishes the journal before it creates any staging file and
--- replaces it, by a synchronized rename, at each phase change, so a killed
--- process leaves enough to prove what it owned. The encoding is canonical:
--- a journal that does not re-encode to its exact bytes is refused for
--- operator inspection instead of guessed at. That encoding lives in
--- "Archive.Door.RecordCommit.JournalFormat"; this module does the descriptor
--- work around it.
+-- A batch publishes the journal, by linking synchronized bytes to its name,
+-- before it creates any staging file and replaces it, by a synchronized
+-- rename, at each phase change, so a killed process leaves enough to prove
+-- what it owned and the journal's name never holds a partial journal. The
+-- encoding is canonical: a journal that does not re-encode to its exact
+-- bytes is refused for operator inspection instead of guessed at. That
+-- encoding lives in "Archive.Door.RecordCommit.JournalFormat"; this module
+-- does the descriptor work around it.
 module Archive.Door.RecordCommit.Journal
   ( JournalEntry
   , JournalEntryOf (..)
@@ -27,7 +28,8 @@ module Archive.Door.RecordCommit.Journal
   ) where
 
 import Archive.Door.RecordCommit.Descriptors
-  ( ownerFileModes
+  ( linkAt
+  , ownerFileModes
   , renameAt
   , syncDirectoryFdOrFail
   , syncFd
@@ -75,16 +77,43 @@ data JournalIdentity = JournalIdentity DeviceID FileID deriving (Eq, Show)
 operationJournalName :: FilePath
 operationJournalName = "archive-door-operation"
 
--- | Returns the typed journal encoding validated, which the writer carries
+-- | Publish a new journal under its name only once its bytes are durable.
+--
+-- The bytes are written and synchronized under a fresh temporary name, then
+-- hard-linked to the journal's name, the temporary name removed and the
+-- directory synchronized. The format has no trailer, so a journal cut short
+-- at a line boundary would still parse as a shorter journal; writing the
+-- journal's own name before its bytes were synchronized, as creation once
+-- did, let a kill or power loss leave exactly that. Now the name only ever
+-- names complete, synchronized bytes: a crash before the link leaves no
+-- journal and no staging file (staging starts after this returns), so the
+-- next Door has nothing to recover, and a crash after it leaves the whole
+-- journal. A link, unlike the rename 'replaceOperationJournal' uses, fails
+-- when the name already exists, so creation still never replaces a journal,
+-- as its exclusive open did. A crash can leave the temporary name behind,
+-- as it can for a replacement; nothing reads those names.
+--
+-- Returns the typed journal encoding validated, which the writer carries
 -- from here on.
 createOperationJournal :: Fd -> PendingJournal -> IO (Either Text OperationJournal)
 createOperationJournal gitFd pending = runExceptT $ do
   (journal, bytes) <- except (encodeCheckedJournal pending)
+  temporary <- lift freshJournalTemporaryName
   fd <- orFail ("could not reserve Door operation journal: " <>) $ tryIO $
-    openFdAt (Just gitFd) operationJournalName WriteOnly
+    openFdAt (Just gitFd) temporary WriteOnly
       defaultFileFlags { creat = Just ownerFileModes, exclusive = True, nofollow = True, cloexec = True }
-  ExceptT $ Exception.bracket (pure fd) closeFd $ \journalFd ->
-    tryIO (writeAll journalFd bytes >> syncStrongFdOrFail journalFd >> syncDirectoryFdOrFail gitFd)
+  linked <- lift $ runExceptT $ do
+    ExceptT $ Exception.bracket (pure fd) closeFd $ \temporaryFd ->
+      tryIO (writeAll temporaryFd bytes >> syncStrongFdOrFail temporaryFd)
+    orFail ("could not reserve Door operation journal: " <>)
+      (tryIO (linkAt gitFd temporary gitFd operationJournalName))
+  case linked of
+    Left problem -> do
+      -- No journal was published, so the temporary is this call's alone.
+      _ <- lift (tryIO (unlinkAt gitFd temporary))
+      throwE problem
+    Right () -> pure ()
+  ExceptT (tryIO (unlinkAt gitFd temporary >> syncDirectoryFdOrFail gitFd))
   pure journal
 
 -- | Replace the journal only while it still holds what this operation last

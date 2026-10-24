@@ -57,6 +57,7 @@ import Specification011 (specification011Checks)
 import qualified Data.Map.Strict as CheckpointMap
 import Archive.Door.Layout (contentRelativePath, parseSha256Digest, recordRelativePath, specificationLayout)
 import Archive.Door.AdmissionCommit (commitAdmission)
+import Archive.Door.RecordCommit.JournalFormat (parseOperationJournal)
 import Archive.Door.RecordCommit (commitRecordBatch, prunePackedGitObjects, validateArchiveFilePath, validateRecordPath, withArchiveWriteLock)
 import Archive.Door.SpecificationUpgrade (SpecificationRelease (..), additiveUpgrade, compareSpecifications)
 import qualified Data.Set as Set
@@ -4008,6 +4009,15 @@ operationJournalKillRecoveryCheck parent = do
     (killedAfterLink && partialRecord && journalPresent
       && headAfterKill == headBefore && commitsAfterKill == commitsBefore)
     ExitSuccess (show (killedAfterLink, partialRecord, journalPresent, headAfterKill, commitsAfterKill)) ""
+  -- Creation publishes the journal by linking synchronized bytes to its
+  -- name and removing the temporary name, so the killed Door's journal is
+  -- whole and no temporary of its creation remains.
+  killedJournal <- ByteString.readFile journal
+  journalTemporariesAfterKill <- journalTemporaries root
+  assert "the killed Door's journal parses and its creation left no temporary"
+    (either (const False) (const True) (parseOperationJournal killedJournal)
+      && null journalTemporariesAfterKill)
+    ExitSuccess (show journalTemporariesAfterKill) ""
   let preserved = record <> ".owned-inode"
   renameFile record preserved
   writeFile record "foreign operator data"
@@ -4040,6 +4050,15 @@ operationJournalKillRecoveryCheck parent = do
       && headAfterRetry /= headBefore && commitsAfterRetry == commitsBefore + 1
       && recordsAfterRetry == recordsBefore + 1 && not journalAfterRetry)
     retryCode retryOutput retryErrors
+  journalTemporariesAfterRetry <- journalTemporaries root
+  assert "the retried batch's journal creation and replacements left no temporary"
+    (null journalTemporariesAfterRetry) ExitSuccess (show journalTemporariesAfterRetry) ""
+
+-- | Names under @.git@ that Door's journal creation and replacement write
+-- before they link or rename the journal into place.
+journalTemporaries :: FilePath -> IO [FilePath]
+journalTemporaries root =
+  filter (".archive-door-journal-" `isPrefixOf`) <$> listDirectory (root </> ".git")
 
 -- | A Git step Door takes outside its temporary index: advancing the branch,
 -- refreshing the ordinary index, or comparing the ordinary index with a
