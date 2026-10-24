@@ -15,7 +15,7 @@ Door's own code rather than a library's:
 
 | Piece | Where | Size |
 |---|---|---|
-| a JSON Schema 2020-12 evaluator | `door/src/Archive/Door/Contracts.hs`: `schemaKeywords`, `evaluateSchema` and the `evaluate*` functions, `explainMismatch` | about 360 lines |
+| a JSON Schema 2020-12 evaluator | `door/src/Archive/Door/Contracts.hs`: `schemaKeywords`, `evaluateSchema` and the `evaluate*` functions, `explainMismatch`; `door/src/Archive/Door/SchemaObjectKeywords.hs`: `evaluateObjectKeywords`, `objectKeywordNames` (the D-18 object keywords) | about 420 lines |
 | a regular expression engine for `pattern` | the same module: `compilePattern`, `parsePattern`, `matchesPattern` | about 140 lines |
 | RFC 8785 number normalisation | `door/src/Archive/Door/Canonical.hs`: `normalizeIJson`, `binary64Scientific`, `shortestDecimal` | about 90 lines |
 | SHA-1 for UUIDv5 | `door/src/Archive/Door/Identity.hs`: `sha1` | about 50 lines |
@@ -83,7 +83,10 @@ The base set (`$schema`, `$defs`, local `$ref`, `type`, `const`, `enum`,
 `minLength`, `format` with only `date-time`, `minimum`, `maximum`, and the
 annotations `$comment`, `title`, `description`, `default`, `deprecated`,
 `examples`, `readOnly`, `writeOnly`) is not listed in the specification:
-`schemaKeywords` is its only statement. That gap is an open question, not
+`schemaKeywords` is its only statement. `schemaKeywords` also appends
+`objectKeywordNames` (the D-18 keywords, from
+`Archive.Door.SchemaObjectKeywords`) and `profileRuleNames` (the
+`x-archive-*` profile rules). That gap is an open question, not
 something this record settles.
 
 ### 2. The pattern engine: the subset D-14 pins
@@ -93,8 +96,11 @@ evaluates is: anchored patterns of literals, escaped metacharacters, ASCII
 character classes without negation, groups with alternation, and the
 quantifiers `?`, `*`, `+`, `{n}`, and `{n,m}`; any other syntax MUST be
 refused when the bundle is loaded." JSON Schema 2020-12 says a `pattern` is
-an ECMA-262 regular expression; D-14 narrows that to a subset whose meaning
-is the same in ECMA-262 and in Door, and `compilePattern` runs at bundle load
+an ECMA-262 regular expression; D-14 narrows that to constructs meant to read
+the same in ECMA-262 and in Door. They do not always: the known differences
+(among them that Door reads `^a|b$` as `^(a|b)$`, where ECMA-262 reads
+`(^a)|(b$)`) are listed in [open questions](../open-questions.md#door).
+`compilePattern` runs at bundle load
 so a pattern outside it is refused before any record is checked. The engine
 is a backtracking matcher over every way a prefix can be consumed, and each
 further repetition must consume input, so an unbounded repeat of a pattern
@@ -131,10 +137,12 @@ acquire a second package dependency merely for a digest that is not an
 integrity claim" (the module comment of `Archive.Door.Identity`). The
 library now depends on `cryptohash-sha1` anyway, for verifying SHA-1 Git
 objects in `Archive.Door.RecordCommit`, so that reason no longer holds.
-This record does not keep the hand-written SHA-1: replacing it with the
-package's, behind the same `sha1` name and with identical identifiers, is a
-refactor any change may make. Object identifiers do not change, since both
-compute the same function.
+If the operator accepts decision S below, this record does not keep the
+hand-written SHA-1: replacing it with the package's, behind the same `sha1`
+name, is then a refactor any change may make, on one condition. The change
+must keep every existing UUIDv5 identifier byte for byte, and show it with a
+test: known RFC 9562 UUIDv5 vectors, or identifiers Door allocates today.
+Until decision S is accepted the hand-written SHA-1 stays.
 
 ### 5. What changes the evaluators' behaviour
 
@@ -157,8 +165,9 @@ same records. So:
   reach them. `compilePattern`, `matchesPattern` and `evaluateSchema` are not
   exported, and no test in `door/test` names them; they are exercised only
   through bundle loading and record admission. Tests should cover, per
-  construct: each pattern form D-14 lists accepted and matched as ECMA-262
-  would match it, each form it does not list refused at load, each keyword
+  construct: each pattern form D-14 lists accepted and matched the way Door
+  matches it today (whether that agrees with ECMA-262 is a separate, open
+  question), each form it does not list refused at load, each keyword
   accepted and its refusal text, and an unknown keyword refused. Properties
   (test-only QuickCheck) suit the pattern engine and the number
   normalisation: a generated pattern inside the subset against generated
@@ -166,7 +175,7 @@ same records. So:
 - Where the code and the specification's words differ, the code is what
   archives were written under, and the difference is recorded as an open
   question rather than fixed silently.
-- Door keeps its small dependency set; the cost is about 600 lines Door owns
+- Door keeps its small dependency set; the cost is about 700 lines Door owns
   and must test.
 
 ## Alternatives considered
@@ -196,7 +205,8 @@ None.
   normalisation in Door, with section 5's rule that their behaviour changes
   only through the specification.
 - **S.** Let the hand-written SHA-1 be replaced by `cryptohash-sha1`'s, since
-  its stated reason has lapsed.
+  its stated reason has lapsed, with a test that existing UUIDv5 identifiers
+  stay byte-identical.
 - **T.** Confirm or correct the reconstructed reasons in sections 1 and 2.
 - **B.** Whether a later release lists the base keyword set in the
   specification, and settles the pattern differences listed in open

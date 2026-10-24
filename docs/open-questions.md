@@ -212,7 +212,10 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
     refuses `{0}` and `{0,0}`, accepts `\-` outside a class (an ECMA-262
     syntax error under the `u` flag), and repeats a quantified literal
     outside the Basic Multilingual Plane as one code point, where ECMA-262
-    without `u` repeats only its last UTF-16 unit. Archives were written
+    without `u` repeats only its last UTF-16 unit. It also strips the outer
+    `^` and `$` and parses the body as one alternation, so it reads `^a|b$`
+    as `^(a|b)$`, where ECMA-262 reads `(^a)|(b$)` and matches `ax`; no
+    installed contract uses top-level alternation yet. Archives were written
     under the code. Does a release adopt the code's reading, narrow it, or
     leave these unsupported?
 - How is operator succession verified? (Author and authorizer are agents in
