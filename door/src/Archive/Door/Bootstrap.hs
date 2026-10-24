@@ -272,6 +272,10 @@ build environment operator rootPath rootFd root tracker commitAttempted = do
   manifest <- ioEither (makeArchiveManifest archiveId archiveVersion)
   operatorId <- ioEither (allocateObjectId archiveId operatorNamespace (identityNameText operatorIdentity))
   claimId <- ioEither (allocateObjectId archiveId initializationNamespace "initial")
+  -- allocateObjectId spells a lowercase UUIDv5 urn:uuid, which parseObjectId
+  -- always accepts, so neither parse below can refuse. Types offers no
+  -- unchecked constructor on purpose (every ObjectId passed its parser),
+  -- so the identifiers are typed by parsing rather than by trust.
   operatorObject <- ioEither (parseObjectId operatorId)
   claimObject <- ioEither (parseObjectId claimId)
   personDraft <- personDraftFor operatorObject

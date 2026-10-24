@@ -94,6 +94,10 @@ verifyExistingContents allowJournal requested rootPath root = do
     operatorNamespace (identityNameText operatorIdentity))
   claimId <- ioEither (allocateObjectId (manifestArchiveId manifest)
     initializationNamespace "initial")
+  -- allocateObjectId spells a lowercase UUIDv5 urn:uuid, which parseObjectId
+  -- always accepts, so neither parse below can refuse. Types offers no
+  -- unchecked constructor on purpose (every ObjectId passed its parser),
+  -- so the identifiers are typed by parsing rather than by trust.
   operatorObjectId <- ioEither (parseObjectId operatorId)
   claimObjectId <- ioEither (parseObjectId claimId)
   records <- readBootstrapRecords root
