@@ -55,6 +55,19 @@ class Names(unittest.TestCase):
     def test_lr_is_the_first_source(self) -> None:
         self.assertEqual(self.zoom.sources, ("TrLR", "TrMic"))
 
+    def test_the_mic_track_is_the_mix_tracks_twin_by_default(self) -> None:
+        # The operator's recorder writes each take twice (ADR 0070, twin amendment).
+        self.assertTrue(self.zoom.twins)
+        self.assertTrue(ZoomH4E(twins=True).twins)
+
+    def test_a_grammar_without_twins_keeps_every_source(self) -> None:
+        self.assertFalse(ZoomH4E(twins=False).twins)
+        self.assertEqual(ZoomH4E(twins=False).sources, ("TrLR", "TrMic"))
+
+    def test_the_importers_grammar_has_twins(self) -> None:
+        [zoom] = grammar.GRAMMARS
+        self.assertTrue(zoom.twins)
+
     def test_names_outside_the_grammar_are_not_recognised(self) -> None:
         for name in ("010203_040506_TrLR-0001.WAV",  # a rollover-numbered suffix
                      "010203_040506_TrLR.wav",  # a lowercase extension

@@ -97,7 +97,7 @@ class CaptureImport(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         with patch.dict(os.environ, self.env), redirect_stdout(out), redirect_stderr(err):
             os.environ.pop("ARCHIVE_FEATURE_BANK", None)  # a bank only where a test names one
-            code = capture.main(argv, grammars or (ZoomH4E(),))
+            code = capture.main(argv, grammars or (ZoomH4E(twins=False),))
         return code, json.loads(out.getvalue() or err.getvalue())
 
     def records(self) -> list[dict]:
@@ -270,7 +270,7 @@ class CaptureImport(unittest.TestCase):
                 "--ffmpeg", support.FFMPEG, "--ffprobe", support.FFPROBE]
         out = io.StringIO()
         with patch.dict(os.environ, self.env), redirect_stdout(out):
-            self.assertEqual(capture.main(argv, (ZoomH4E(),)), 0, out.getvalue())
+            self.assertEqual(capture.main(argv, (ZoomH4E(twins=False),)), 0, out.getvalue())
         calls = Path(archive + ".log").read_text().splitlines()
         # One full export to classify the card, one for the whole chain; three
         # runs (two probes, one detect) each brought it up to date instead.
@@ -359,7 +359,7 @@ class CaptureImport(unittest.TestCase):
         # Anchor: the first take's files are at the cap, the others are not.
         self.assertEqual(first_mic.stat().st_size, cap)
         self.assertTrue(all(p.stat().st_size != cap for p in (second_lr, second_mic, later_lr, later_mic)))
-        small_cap = (ZoomH4E(split_size=cap),)
+        small_cap = (ZoomH4E(split_size=cap, twins=False),)
 
         # Anchor: at the recorder's real cap nothing rolls over, so three sessions.
         code, predicted = self.run_import(None, "--dry-run")
@@ -451,7 +451,9 @@ class CaptureImport(unittest.TestCase):
 
     # -- what is already in the archive ----------------------------------
 
-    def test_content_already_an_artifact_is_skipped_and_a_partly_known_session_refused(self) -> None:
+    def test_known_content_without_a_session_is_adopted_once(self) -> None:
+        """ADR 0070, amendment on migrated parts: a file whose content is
+        already an Artifact of no session is cited, not admitted again."""
         lr = card_file(self.tmp, "010101_120000_TrLR.WAV", music(24))
         mic_file = card_file(self.tmp, "010101_120000_TrMic.WAV", mic(24))
         # The archive already holds the LR content, admitted by the fixture builder.
@@ -459,17 +461,103 @@ class CaptureImport(unittest.TestCase):
         known = self.tmp / "known"
         known.mkdir()
         shutil.copyfile(lr, known / lr.name)
+        artifacts = [r for r in self.records() if r["shape"] == "artifact"]
+        code, answer = self.run_import(known)
+        self.assertEqual((code, answer["status"]), (0, "committed"), answer)
+        [session] = answer["sessions"]
+        lr_artifact = self.artifact_of(lr)
+        self.assertEqual(session["adopted"], [{"file": lr.name, "object_id": lr_artifact["object_id"],
+                                               "revision_id": lr_artifact["revision_id"],
+                                               "digest": lr_artifact["payload"]["content"]["digest"]}])
+        self.assertEqual(session["artifacts"], [])
+        self.assertEqual(self.parts_of(self.session_id(lr), session), {"TrLR": [lr_artifact["object_id"]]})
+        self.assertEqual([r for r in self.records() if r["shape"] == "artifact"], artifacts)
+        self.assertEqual(answer["chain"], [])  # nothing new to enrich
+
         head = support.head(self.root)
         code, answer = self.run_import(known)
         self.assertEqual((code, answer["status"]), (0, "unchanged"), answer)
         self.assertEqual([s["status"] for s in answer["sessions"]], ["already_imported"])
         self.assertEqual(support.head(self.root), head)
 
+        # A known file that is already a session's part still refuses a session it is only part of.
         shutil.copyfile(mic_file, known / mic_file.name)
         code, answer = self.run_import(known)
         self.assertEqual(code, 1, answer)
         self.assertIn("partly imported", answer["detail"])
         self.assertEqual(support.head(self.root), head)
+
+    # -- twins (ADR 0070, amendment on twins) -------------------------------
+
+    def test_a_twin_take_keeps_the_mix_and_passes_its_twin_over(self) -> None:
+        lr = card_file(self.card, "010101_120000_TrLR.WAV", music(24))
+        mic_file = card_file(self.card, "010101_120000_TrMic.WAV", mic(24))
+        before = snapshot(self.card)
+        code, answer = self.run_import(grammars=(ZoomH4E(),))
+        self.assertEqual((code, answer["status"]), (0, "committed"), answer)
+        [session] = answer["sessions"]
+        self.assertEqual(session["sources"], [{"source": "TrLR", "files": [lr.name]}])
+        self.assertEqual(session["passed_over"], [{"file": mic_file.name, "reason": f"twin of {lr.name}"}])
+        digests = {r["payload"]["content"]["digest"] for r in self.records() if r["shape"] == "artifact"}
+        self.assertIn(adapter.digest_of(lr.read_bytes()), digests)
+        self.assertNotIn(adapter.digest_of(mic_file.read_bytes()), digests)
+        self.assertEqual(self.parts_of(self.session_id(lr), session), {"TrLR": [self.artifact_of(lr)["object_id"]]})
+        self.assertEqual([entry["file"] for entry in answer["chain"]], [lr.name])
+        self.assertEqual(snapshot(self.card), before)
+
+        code, answer = self.run_import(grammars=(ZoomH4E(),))
+        self.assertEqual((code, answer["status"]), (0, "unchanged"), answer)
+
+    def test_a_take_known_by_its_twin_alone_is_that_twin(self) -> None:
+        """A take migrated as its mic track stays the mic track: the mix is
+        never imported beside it."""
+        lr = card_file(self.card, "010101_120000_TrLR.WAV", music(24))
+        mic_file = card_file(self.card, "010101_120000_TrMic.WAV", mic(24))
+        self.root, _ = support.build_archive(self, {"mic": mic_file})
+        mic_artifact = self.artifact_of(mic_file)
+        code, answer = self.run_import(grammars=(ZoomH4E(),))
+        self.assertEqual((code, answer["status"]), (0, "committed"), answer)
+        [session] = answer["sessions"]
+        self.assertEqual(session["sources"], [{"source": "TrLR", "files": [mic_file.name]}])
+        self.assertEqual(session["passed_over"],
+                         [{"file": lr.name, "reason": f"twin of {mic_file.name}, already in the archive"}])
+        self.assertEqual(self.parts_of(self.session_id(mic_file), session), {"TrLR": [mic_artifact["object_id"]]})
+        digests = {r["payload"]["content"]["digest"] for r in self.records() if r["shape"] == "artifact"}
+        self.assertNotIn(adapter.digest_of(lr.read_bytes()), digests)
+        self.assertEqual(answer["chain"], [])
+
+    def test_a_take_known_under_both_twins_keeps_the_mix_and_names_the_twin_a_second_source(self) -> None:
+        lr = card_file(self.card, "010101_120000_TrLR.WAV", music(24))
+        mic_file = card_file(self.card, "010101_120000_TrMic.WAV", mic(24))
+        self.root, _ = support.build_archive(self, {"lr": lr, "mic": mic_file})
+        code, answer = self.run_import(grammars=(ZoomH4E(),))
+        self.assertEqual((code, answer["status"]), (0, "committed"), answer)
+        [session] = answer["sessions"]
+        self.assertEqual(session["sources"], [{"source": "TrLR", "files": [lr.name]},
+                                              {"source": "TrMic", "files": [mic_file.name]}])
+        self.assertEqual(session["passed_over"], [])
+        self.assertEqual(self.parts_of(self.session_id(lr), session),
+                         {"TrLR": [self.artifact_of(lr)["object_id"]], "TrMic": [self.artifact_of(mic_file)["object_id"]]})
+
+    def test_a_night_whose_first_part_is_known_gets_a_session_citing_it(self) -> None:
+        """The back half of a split night whose first half was migrated."""
+        first_lr = card_file(self.card, "010101_120000_TrLR.WAV", music(24))
+        card_file(self.card, "010101_120000_TrMic.WAV", mic(24))
+        second_lr = card_file(self.card, "010101_120024_TrLR.WAV", music(22))
+        card_file(self.card, "010101_120024_TrMic.WAV", mic(22, seed=6))
+        cap = first_lr.stat().st_size
+        self.root, _ = support.build_archive(self, {"first": first_lr})
+        first_artifact = self.artifact_of(first_lr)
+        code, answer = self.run_import(grammars=(ZoomH4E(split_size=cap),))
+        self.assertEqual((code, answer["status"]), (0, "committed"), answer)
+        [session] = answer["sessions"]
+        self.assertEqual(session["sources"], [{"source": "TrLR", "files": [first_lr.name, second_lr.name]}])
+        self.assertEqual([a["file"] for a in session["adopted"]], [first_lr.name])
+        self.assertEqual([a["file"] for a in session["artifacts"]], [second_lr.name])
+        self.assertEqual(self.parts_of(self.session_id(first_lr), session),
+                         {"TrLR": [first_artifact["object_id"], self.artifact_of(second_lr)["object_id"]]})
+        self.assertEqual([(e["file"], e["probe"], e.get("detect")) for e in answer["chain"]],
+                         [(second_lr.name, "committed", "committed")])
 
     # -- refusals --------------------------------------------------------
 
@@ -493,7 +581,7 @@ class CaptureImport(unittest.TestCase):
         card_file(self.card, "010101_120000_TrMic.WAV", mic(20))  # stopped early: not at the cap
         card_file(self.card, "010101_120024_TrLR.WAV", music(21))
         card_file(self.card, "010101_120024_TrMic.WAV", mic(21, seed=6))
-        code, answer = self.run_import(grammars=(ZoomH4E(split_size=first_lr.stat().st_size),))
+        code, answer = self.run_import(grammars=(ZoomH4E(split_size=first_lr.stat().st_size, twins=False),))
         self.assertEqual(code, 1, answer)
         self.assertIn("disagree about a rollover", answer["detail"])
 
@@ -501,7 +589,7 @@ class CaptureImport(unittest.TestCase):
         first_lr = card_file(self.card, "010101_120000_TrLR.WAV", music(24))
         card_file(self.card, "010101_120000_TrMic.WAV", mic(24))
         card_file(self.card, "010101_120024_TrLR.WAV", music(21))
-        code, answer = self.run_import(grammars=(ZoomH4E(split_size=first_lr.stat().st_size),))
+        code, answer = self.run_import(grammars=(ZoomH4E(split_size=first_lr.stat().st_size, twins=False),))
         self.assertEqual(code, 1, answer)
         self.assertIn("disagree about a rollover", answer["detail"])
 
@@ -613,7 +701,7 @@ class CaptureImport(unittest.TestCase):
         broken = self.card / "010101_120000_TrLR.WAV"
         broken.write_bytes(b"not a wave file" * 4)
         card_file(self.card, "010101_120001_TrLR.WAV", music(21))
-        code, answer = self.run_import(grammars=(ZoomH4E(split_size=broken.stat().st_size),))
+        code, answer = self.run_import(grammars=(ZoomH4E(split_size=broken.stat().st_size, twins=False),))
         self.assertEqual(code, 1, answer)
         self.assertIn("cannot decide whether 010101_120001_TrLR.WAV continues", answer["detail"])
 

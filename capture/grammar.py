@@ -85,6 +85,12 @@ class ZoomH4E:
       states it: the gap alone joins two short takes seconds apart, and the
       size alone joins a take that stopped at the cap with nothing after it.
 
+    - **Twins.** The operator's recorder writes every take twice: `TrMic`
+      carries what the operator treats as the same sound as `TrLR`. With
+      `twins` (the default) the importer keeps one file of each take, the
+      same one every time (ADR 0070, amendment on twins); without it, every
+      source is kept.
+
     The measured values are the V2 system's, observed on every split file it
     held. `split_size` exists so a test can exercise the rule without
     writing two gigabytes; the importer always uses the default."""
@@ -96,8 +102,9 @@ class ZoomH4E:
     MAX_GAP = Fraction(2)
     _NAME = re.compile(r"^(\d{2})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})_(TrLR|TrMic)\.WAV$")
 
-    def __init__(self, split_size: int = SPLIT_SIZE):
+    def __init__(self, split_size: int = SPLIT_SIZE, twins: bool = True):
         self.split_size = split_size
+        self.twins = twins
 
     def recognise(self, file_name: str) -> Recognised | None:
         match = self._NAME.match(file_name)
