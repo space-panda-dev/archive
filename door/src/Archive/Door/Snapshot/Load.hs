@@ -1,0 +1,406 @@
+{-# LANGUAGE OverloadedStrings #-}
+
+-- | Read-only loading of one immutable Git snapshot.
+--
+-- This module never reads the worktree, writes an archive, invokes
+-- git-annex, or resolves a second commit. The snapshot is the authority for
+-- every manifest, contract, record, and introducer planning uses.
+module Archive.Door.Snapshot.Load
+  ( loadSnapshot
+  ) where
+
+import Archive.Door.Canonical (canonicalizeDraftStrict)
+import Archive.Door.ContractCitations (validateCitations)
+import Archive.Door.Contracts (validateContractBundle)
+import Archive.Door.Hex (hexText)
+import Archive.Door.Json.Access (requiredNonEmptyText)
+import Archive.Door.Layout
+  ( manifestArchiveId
+  , manifestSpec
+  , parseArchiveManifest
+  )
+import Archive.Door.References (emptyIndex, insertKnown)
+import Archive.Door.Snapshot.Data
+  ( AdmissionSnapshotLoadError (..)
+  , Installed (..)
+  , RecordEntry (..)
+  , SnapshotData (..)
+  , installedMap
+  , transitionKeys
+  )
+import Archive.Door.Snapshot.History
+  ( validateCitationOrder
+  , validateImmutablePaths
+  , validateInstalledCatalog
+  , validateResources
+  , validateUpgradeHistory
+  )
+import Archive.Door.Snapshot.Memo (remember, snapshotMemo)
+import Archive.Door.Snapshot.Read
+  ( decodeBytes
+  , expectedRecordRevision
+  , loadIntroducers
+  , mapIntegrity
+  , objectText
+  , readBytes
+  , readCanonicalJson
+  , readJson
+  , revisionText
+  )
+import Archive.Door.Snapshot.Supersession (deriveHeads, indexRecords)
+import Archive.Door.Types
+  ( Shape (..)
+  , StoredEnvelope (..)
+  , envelopeContracts
+  , envelopeObject
+  , parseObjectId
+  , parseRevisionId
+  , parseStoredEnvelope
+  )
+import Archive.Door.VerifiedCheckpoint
+  ( RecordSummary (..)
+  , VerifiedCheckpoint (..)
+  , readCheckpoint
+  , summarizeEnvelope
+  )
+import Archive.GitSnapshot (GitSnapshot)
+import qualified Archive.GitSnapshot as Git
+import Archive.Read.Core (CommittedRecord (..))
+import qualified Crypto.Hash.SHA256 as SHA256
+import Data.Aeson (Value (Object))
+import qualified Data.Aeson.KeyMap as KeyMap
+import Data.Aeson.RFC8785 (encodeCanonical)
+import Data.IORef (readIORef)
+import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
+import Data.Text (Text)
+import qualified Data.Text as Text
+import System.FilePath (splitDirectories)
+import System.IO.Unsafe (unsafeInterleaveIO)
+
+-- | Load the snapshot Door plans against. When this Door build has a
+-- checkpoint for exactly this commit (ADR 0052), the records are read but not
+-- checked again; any inconsistency between the checkpoint and the commit, or
+-- any doubt, falls back to full verification.
+loadSnapshot :: GitSnapshot -> IO (Either AdmissionSnapshotLoadError SnapshotData)
+loadSnapshot snapshot = do
+  memo <- readIORef snapshotMemo
+  case memo of
+    Just (root, commit, data')
+      | root == Git.snapshotRoot snapshot && commit == Git.snapshotCommit snapshot -> pure (Right data')
+    _ -> do
+      loaded <- loadFromStore
+      either (const (pure ())) (remember (Git.snapshotRoot snapshot)) loaded
+      pure loaded
+  where
+    loadFromStore = do
+      checkpoint <- readCheckpoint (Git.snapshotRoot snapshot)
+      case checkpoint of
+        Just verified | checkpointCommit verified == Git.snapshotCommit snapshot -> do
+          trusted <- loadCheckpointedSnapshot snapshot verified
+          case trusted of
+            Right data' -> pure (Right data')
+            Left _ -> loadVerifiedSnapshot snapshot
+        _ -> loadVerifiedSnapshot snapshot
+
+-- | Rebuild the planning index of a commit this Door build already verified.
+-- Record and contract bytes still come from the pinned commit; the
+-- canonical-form, revision, citation, reference, and history checks are not
+-- repeated, because they held for this commit when the checkpoint was written.
+loadCheckpointedSnapshot
+  :: GitSnapshot -> VerifiedCheckpoint -> IO (Either AdmissionSnapshotLoadError SnapshotData)
+loadCheckpointedSnapshot snapshot verified = do
+  -- Record bytes are read only if planning parses a record (see
+  -- 'loadTrustedRecord'); everything else is read now.
+  prefetched <- Git.prefetchPaths snapshot ["archive.json", "spec", "contracts"]
+  case prefetched of
+    Left problem -> pure (Left (AdmissionSnapshotGitError problem))
+    Right () -> do
+      manifestResult <- readJson snapshot "archive.json"
+      contracts <- loadContracts snapshot
+      pathsResult <- Git.listPaths snapshot "records"
+      specResult <- Git.listPaths snapshot "spec"
+      case (manifestResult >>= mapIntegrity . parseArchiveManifest, contracts, (,) <$> pathsResult <*> specResult) of
+        (Left problem, _, _) -> pure (Left problem)
+        (_, Left problem, _) -> pure (Left problem)
+        (_, _, Left problem) -> pure (Left (AdmissionSnapshotGitError problem))
+        (Right manifest, Right installed, Right (paths, specPaths)) -> do
+          loaded <- mapM (loadTrustedRecord snapshot (checkpointRecords verified)) paths
+          pure $ do
+            entries <- sequence loaded
+            let additions = checkpointAdditions verified
+                summaries = checkpointRecords verified
+            if Map.keysSet additions /= Set.fromList
+                ("archive.json" : specPaths <> map installedPath installed <> paths)
+                || Map.keysSet summaries /= Set.fromList paths
+              then Left (AdmissionSnapshotIntegrityError
+                "checkpoint paths do not match the committed tree")
+              else Right ()
+            shaped <- mapM (\(entry, summary) -> (,) entry <$> summaryShapeOf summary)
+              [(entry, summary) | entry <- entries, Just summary <- [Map.lookup (entryPath entry) summaries]]
+            objects <- mapM (\(entry, _) -> mapIntegrity (parseObjectId (entryObject entry))) shaped
+            revisions <- mapM (\(entry, _) -> mapIntegrity (parseRevisionId (entryRevision entry))) shaped
+            let store = foldl' (\index ((_, shape), objectId, revision) -> insertKnown objectId revision shape index)
+                  emptyIndex (zip3 shaped objects revisions)
+                superseded = Set.fromList
+                  [ (summaryObject summary, revision)
+                  | summary <- Map.elems summaries
+                  , revision <- summarySupersedes summary
+                  ]
+                byObject = Map.fromListWith (<>) [(entryObject entry, [entry]) | entry <- entries]
+            heads <- mapIntegrity (deriveHeads byObject superseded)
+            batches <- mapIntegrity (loadIntroducers additions entries)
+            pure SnapshotData
+              { snapshotCommitId = Git.snapshotCommit snapshot
+              , snapshotManifestId = manifestArchiveId manifest
+              , snapshotRecords = entries
+              , snapshotInstalled = installedMap installed
+              , snapshotStore = store
+              , snapshotHeadsByObject = heads
+              , snapshotRevisionIntroducers = batches
+              , snapshotCommitOrder = checkpointHistory verified
+              , snapshotImmutableAdditions = additions
+              , snapshotTransitionKeys = transitionKeys installed
+              , snapshotRecordSummaries = summaries
+              , snapshotCheckpointChain = checkpointChain verified
+              , snapshotFromCheckpoint = True
+              }
+  where
+    summaryShapeOf summary = case summaryShape summary of
+      "artifact" -> Right Artifact
+      "entity" -> Right Entity
+      "claim" -> Right Claim
+      "assessment" -> Right Assessment
+      _ -> Left (AdmissionSnapshotIntegrityError "checkpoint names an unknown record shape")
+
+-- | A checkpointed record: its identity comes from the path and the
+-- checkpoint; its envelope is parsed only if planning looks at it. The
+-- checkpointed commit's records parsed when it was verified, so a failure
+-- here means the object store no longer returns those bytes, and Door stops.
+loadTrustedRecord
+  :: GitSnapshot -> Map.Map FilePath RecordSummary -> FilePath
+  -> IO (Either AdmissionSnapshotLoadError RecordEntry)
+loadTrustedRecord snapshot summaries path = do
+  -- Planning parses only the records a proposal references, so each record's
+  -- bytes are read when first needed. A caller that needs every record
+  -- prefetches them in bulk first.
+  bytes <- unsafeInterleaveIO $ do
+    result <- Git.readPath snapshot path
+    either (\problem -> error ("door: checkpointed record " <> path <> " is unreadable: "
+      <> show problem)) pure result
+  pure $ do
+    revision <- mapIntegrity (expectedRecordRevision path)
+    summary <- maybe (Left (AdmissionSnapshotIntegrityError
+      (Text.pack path <> " is missing from the checkpoint"))) Right (Map.lookup path summaries)
+    let parsed = do
+          value <- decodeBytes path bytes
+          stored <- parseStoredEnvelope value
+          pure (value, stored)
+        trusted :: forall a. ((Value, StoredEnvelope) -> a) -> a
+        trusted use = either (\problem -> error ("door: checkpointed record " <> path
+          <> " no longer parses: " <> Text.unpack problem)) use parsed
+        envelope = trusted snd
+    Right RecordEntry
+      { entryPath = path
+      , entryRevision = revision
+      , entryObject = summaryObject summary
+      , entryEnvelope = envelope
+      , entryCommitted = CommittedRecord
+          { committedPath = path
+          , committedBytes = bytes
+          , committedValue = trusted fst
+          , committedEnvelope = envelope
+          , committedContractsValid = True
+          }
+      }
+
+loadVerifiedSnapshot :: GitSnapshot -> IO (Either AdmissionSnapshotLoadError SnapshotData)
+loadVerifiedSnapshot snapshot = do
+  -- Every committed file is checked below; read them all in bulk first, so
+  -- the Git processes do not grow with the number of records.
+  prefetched <- Git.prefetchPaths snapshot archivePaths
+  -- Only the manifest may change after it is added, and only by a
+  -- specification upgrade; 'validateUpgradeHistory' proves every change is
+  -- one (ADR 0068).
+  historyResult <- case prefetched of
+    Left problem -> pure (Left problem)
+    Right () -> Git.archivePathHistory snapshot archivePaths ["archive.json"]
+  case historyResult of
+    Left problem -> pure (Left (AdmissionSnapshotGitError problem))
+    Right (additions, modifications) -> do
+      let upgradeCommits = map snd modifications
+      manifestResult <- readCanonicalJson snapshot "archive.json"
+      case manifestResult >>= mapIntegrity . parseArchiveManifest of
+        Left problem -> pure (Left problem)
+        Right manifest -> do
+          resources <- validateResources snapshot additions upgradeCommits (manifestSpec manifest)
+          case resources of
+            Left problem -> pure (Left problem)
+            Right () -> do
+              contracts <- loadContracts snapshot
+              case contracts of
+                Left problem -> pure (Left problem)
+                Right installed -> do
+                  catalogResult <- mapIntegrity <$> validateInstalledCatalog additions
+                    upgradeCommits (manifestSpec manifest) installed
+                  case catalogResult of
+                    Left problem -> pure (Left problem)
+                    Right () -> do
+                      records <- loadRecords snapshot installed
+                      case records of
+                        Left problem -> pure (Left problem)
+                        Right entries -> do
+                          immutable <- validateImmutablePaths snapshot additions
+                            installed entries
+                          upgrades <- validateUpgradeHistory snapshot additions upgradeCommits
+                            manifest installed entries
+                          case immutable >> upgrades of
+                            Left problem -> pure (Left problem)
+                            Right () -> do
+                              let indexed = indexRecords entries
+                              case mapIntegrity indexed of
+                                Left problem -> pure (Left problem)
+                                Right (store, heads) -> do
+                                  history <- Git.linearHistory snapshot
+                                  pure $ do
+                                    commits <- either (Left . AdmissionSnapshotGitError) Right history
+                                    batches <- mapIntegrity (loadIntroducers additions entries)
+                                    mapIntegrity (validateCitationOrder commits additions installed entries)
+                                    pure SnapshotData
+                                      { snapshotCommitId = Git.snapshotCommit snapshot
+                                      , snapshotManifestId = manifestArchiveId manifest
+                                      , snapshotRecords = entries
+                                      , snapshotInstalled = installedMap installed
+                                      , snapshotStore = store
+                                      , snapshotHeadsByObject = heads
+                                      , snapshotRevisionIntroducers = batches
+                                      , snapshotCommitOrder = commits
+                                      , snapshotImmutableAdditions = additions
+                                      , snapshotTransitionKeys = transitionKeys installed
+                                      , snapshotRecordSummaries = Map.fromList
+                                          [ (entryPath entry, summarizeEnvelope (entryEnvelope entry))
+                                          | entry <- entries ]
+                                      , snapshotCheckpointChain = Nothing
+                                      , snapshotFromCheckpoint = False
+                                      }
+
+archivePaths :: [FilePath]
+archivePaths = ["archive.json", "spec", "contracts", "records"]
+
+loadContracts :: GitSnapshot -> IO (Either AdmissionSnapshotLoadError [Installed])
+loadContracts snapshot = do
+  pathsResult <- Git.listPaths snapshot "contracts"
+  case pathsResult of
+    Left problem -> pure (Left (AdmissionSnapshotGitError problem))
+    Right paths -> do
+      loaded <- mapM (loadContractPath snapshot) paths
+      pure (sequence loaded)
+
+loadContractPath
+  :: GitSnapshot
+  -> FilePath
+  -> IO (Either AdmissionSnapshotLoadError Installed)
+loadContractPath snapshot path = do
+  bytesResult <- readBytes snapshot path
+  pure $ do
+    bytes <- bytesResult
+    digest <- mapIntegrity (contractDigestFromPath path)
+    value <- mapIntegrity (decodeBytes path bytes)
+    if encodeCanonical value /= bytes
+      then Left (AdmissionSnapshotIntegrityError
+        (Text.pack path <> " is not RFC 8785 canonical"))
+      else do
+        let actualDigest = "sha256:" <> hexText (SHA256.hashlazy bytes)
+        if actualDigest /= digest
+          then Left (AdmissionSnapshotIntegrityError
+            (Text.pack path <> " does not match its digest path"))
+          else do
+            fields <- mapIntegrity (objectFields value)
+            identifier <- mapIntegrity (requiredNonEmptyText "id" fields)
+            version <- mapIntegrity (requiredNonEmptyText "version" fields)
+            bundle <- mapIntegrity (validateContractBundle identifier version digest value)
+            pure Installed
+              { installedPath = path
+              , installedKey = (identifier, version, digest)
+              , installedBundle = bundle
+              }
+
+objectFields :: Value -> Either Text (KeyMap.KeyMap Value)
+objectFields (Object fields) = Right fields
+objectFields _ = Left "contract bundle must be an object"
+
+loadRecords
+  :: GitSnapshot
+  -> [Installed]
+  -> IO (Either AdmissionSnapshotLoadError [RecordEntry])
+loadRecords snapshot installed = do
+  pathsResult <- Git.listPaths snapshot "records"
+  case pathsResult of
+    Left problem -> pure (Left (AdmissionSnapshotGitError problem))
+    Right paths -> do
+      records <- mapM (loadRecord snapshot installed) paths
+      pure (sequence records)
+
+loadRecord
+  :: GitSnapshot
+  -> [Installed]
+  -> FilePath
+  -> IO (Either AdmissionSnapshotLoadError RecordEntry)
+loadRecord snapshot installed path = do
+  bytesResult <- readBytes snapshot path
+  pure $ do
+    bytes <- bytesResult
+    expected <- mapIntegrity (expectedRecordRevision path)
+    value <- mapIntegrity (decodeBytes path bytes)
+    if encodeCanonical value /= bytes
+      then Left (AdmissionSnapshotIntegrityError
+        (Text.pack path <> " is not RFC 8785 canonical"))
+      else do
+        envelope <- mapIntegrity (parseStoredEnvelope value)
+        let embedded = revisionText (storedRevision envelope)
+        if embedded /= expected
+          then Left (AdmissionSnapshotIntegrityError
+            (Text.pack path <> " disagrees with embedded revision_id"))
+          else do
+            recomputed <- mapIntegrity (recomputeRevision value)
+            if recomputed /= embedded
+              then Left (AdmissionSnapshotIntegrityError
+                (Text.pack path <> " does not match its P-3 revision"))
+              else do
+                mapIntegrity (validateCitations installed value
+                  (envelopeContracts (storedDraft envelope)))
+                pure RecordEntry
+                  { entryPath = path
+                  , entryRevision = embedded
+                  , entryObject = objectText (envelopeObject (storedDraft envelope))
+                  , entryEnvelope = envelope
+                  , entryCommitted = CommittedRecord
+                      { committedPath = path
+                      , committedBytes = bytes
+                      , committedValue = value
+                      , committedEnvelope = envelope
+                      , committedContractsValid = True
+                      }
+                  }
+
+recomputeRevision :: Value -> Either Text Text
+recomputeRevision (Object fields) = do
+  (revision, _) <- canonicalizeDraftStrict
+    (Object (KeyMap.delete "at" (KeyMap.delete "revision_id" fields)))
+  pure revision
+recomputeRevision _ = Left "stored record must be an object"
+
+contractDigestFromPath :: FilePath -> Either Text Text
+contractDigestFromPath path = case splitDirectories path of
+  ["contracts", name] -> do
+    hex <- case Text.stripPrefix "sha256-" (Text.pack name)
+      >>= Text.stripSuffix ".json" of
+      Nothing -> Left "contract path must be contracts/sha256-<digest>.json"
+      Just value -> Right value
+    if Text.length hex == 64 && Text.all isLowerHex hex
+      then Right ("sha256:" <> hex)
+      else Left "contract path has an invalid digest"
+  _ -> Left "contract path must be contracts/sha256-<digest>.json"
+  where
+    isLowerHex character = ('0' <= character && character <= '9')
+      || ('a' <= character && character <= 'f')

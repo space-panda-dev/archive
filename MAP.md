@@ -73,13 +73,16 @@ Build: [archive.cabal](archive.cabal): library `door/src`, executables
 |---|---|
 | `door/app/Main.hs` | `main` dispatch: `admit`, `transition` (`--dry-run`), `serve --socket`, `verify`; `proposalDryRun`, `admissionCommit`, `transitionCommit`, `serve` |
 | `archive/app/Main.hs` | `main`: `init`, `maintenance repack/prune-packed`, `status`, `doctor`, `ls`, `show`, `export [--since]`; `current` is unsupported |
-| `door/src/Archive/Door/AdmissionDryRun.hs` | `dryRunAdmission`, `loadSnapshot`, `validateProposalContract` |
+| `door/src/Archive/Door/AdmissionDryRun.hs` | `dryRunAdmission`; re-exports the snapshot and proposal-contract APIs below |
+| `door/src/Archive/Door/Snapshot/` | `Load.loadSnapshot` (checkpointed or full read), `History` (immutable paths, upgrades, citation order), `Supersession` (heads, cycles), `Memo` (remembered snapshot, ADR 0054), `Data`, `Read` |
+| `door/src/Archive/Door/ProposalContracts.hs` | `validateProposalContracts` over `ContractCitations.hs`, `ReferenceTargets.hs` (what a reference must pin) and `TargetMeasures.hs` (payload bounded by the pinned Claim) |
 | `door/src/Archive/Door/AdmissionCommit.hs` | `commitAdmission`, `refreshVerificationCheckpoint` |
-| `door/src/Archive/Door/TransitionDryRun.hs` | `dryRunTransition`, `transitionDispatchTable` (contract id/version to kind) |
+| `door/src/Archive/Door/TransitionDryRun.hs` | `dryRunTransition`, `planTransition` |
+| `door/src/Archive/Door/Transition/` | `Dispatch.transitionDispatchTable` (contract id/version to kind), `Rules` (per kind), `Replay` (facts from history), `Upgrade` (prospective snapshot), `Plan` |
 | `door/src/Archive/Door/TransitionCommit.hs` | `commitTransition` |
 | `door/src/Archive/Door/Contracts.hs` | bundle loading; `validateSchema` parses the `x-archive-*` rule keywords; `validate*Rule` functions implement them |
 | `door/src/Archive/Door/RecordCommit.hs` | `commitRecordBatch*`, write lock, git-annex content |
-| `door/src/Archive/Door/Bootstrap.hs` | `initArchive` |
+| `door/src/Archive/Door/Bootstrap.hs` | `initArchive`, rollback; steps in `Bootstrap/`: `Pinned` (writes under the root descriptor), `Journal` (ownership journal), `Git`, `Contents` (release files, bootstrap records), `Verify` (existing archive), `Tracked`, `Abort` |
 | `door/src/Archive/Door/VerifiedCheckpoint.hs` | incremental verification checkpoint (ADR 0052) |
 | `door/src/Archive/Door/Refusal.hs` | `RefusalCode` (ADR 0058) |
 | `door/src/Archive/Read/Core.hs`, `Archive/Doctor/Checks.hs` | reading commands, `doctor` |
@@ -106,11 +109,11 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 <!-- wf:gen lines door/src/Archive/Door/AdmissionDryRun.hs door/src/Archive/Door/TransitionDryRun.hs door/src/Archive/Door/Contracts.hs door/src/Archive/Door/RecordCommit.hs door/src/Archive/Door/Bootstrap.hs door/src/Archive/Read/Core.hs door/src/Archive/GitSnapshot.hs door/src/Archive/ProcessPinned.c door/test/Main.hs archive/test/Main.hs -->
 | file | lines |
 |---|---|
-| `door/src/Archive/Door/AdmissionDryRun.hs` | 1572 |
-| `door/src/Archive/Door/TransitionDryRun.hs` | 1119 |
+| `door/src/Archive/Door/AdmissionDryRun.hs` | 160 |
+| `door/src/Archive/Door/TransitionDryRun.hs` | 315 |
 | `door/src/Archive/Door/Contracts.hs` | 2443 |
 | `door/src/Archive/Door/RecordCommit.hs` | 3010 |
-| `door/src/Archive/Door/Bootstrap.hs` | 1622 |
+| `door/src/Archive/Door/Bootstrap.hs` | 465 |
 | `door/src/Archive/Read/Core.hs` | 611 |
 | `door/src/Archive/GitSnapshot.hs` | 661 |
 | `door/src/Archive/ProcessPinned.c` | 799 |
@@ -118,9 +121,9 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 | `archive/test/Main.hs` | 1001 |
 <!-- /wf:gen -->
 
-<!-- wf:gen anchors door/src/Archive/Door/Contracts.hs#validateSchema door/src/Archive/Door/TransitionDryRun.hs#transitionDispatchTable -->
+<!-- wf:gen anchors door/src/Archive/Door/Contracts.hs#validateSchema door/src/Archive/Door/Transition/Dispatch.hs#transitionDispatchTable -->
 - `door/src/Archive/Door/Contracts.hs#validateSchema`: line 286
-- `door/src/Archive/Door/TransitionDryRun.hs#transitionDispatchTable`: line 145
+- `door/src/Archive/Door/Transition/Dispatch.hs#transitionDispatchTable`: line 41
 <!-- /wf:gen -->
 
 ## Spec: what every archive must satisfy, copied into each
@@ -422,7 +425,7 @@ cache.
    `docs/proposals/<adr>-contracts/`), then `spec/contracts/sha256-*.json`,
    a new `spec/<v>/` (`VERSION`, `archive-spec.md`, `context.jsonld`,
    `contracts.json`), `spec/VERSION`, `spec/archive-spec.md`, `archive.cabal`
-   data-files; Door rules in `Contracts.hs`/`AdmissionDryRun.hs` with
+   data-files; Door rules in `Contracts.hs`/`TargetMeasures.hs` with
    `door/test/Main.hs`; a step in `fixture/plan.json`; World projection. Model:
    the commit that added `spec/0.0.9/VERSION` (spec 0.0.9). Governs: ADR 0057, 0068, 0027.
 4. **Add a World view of a claim.** `_project_*_claim` in `world/world.py`
@@ -436,8 +439,10 @@ cache.
    ADR 0060.
 6. **Change a Door rule.** A payload rule: the `x-archive-*` keyword in
    `Contracts.hs`, cited by a bundle (a changed bundle is a new contract
-   version, never an edit). Admission flow: `AdmissionDryRun.hs`. A new
+   version, never an edit). A rule reading a pinned record: `ReferenceTargets.hs`,
+   `TargetMeasures.hs`. Admission flow: `AdmissionDryRun.hs`. A new
    refusal: `Refusal.hs` and `door/service.schema.json`. Tests in
    `door/test/Main.hs`. Governs: docs/invariants.md, ADR 0023, 0058.
-7. **Add a transition kind.** `transitionDispatchTable` and the handler in
-   `TransitionDryRun.hs`/`TransitionCommit.hs`. Governs: ADR 0028, 0030.
+7. **Add a transition kind.** `transitionDispatchTable` in
+   `Transition/Dispatch.hs`, its rules in `Transition/Rules.hs`, and
+   `TransitionCommit.hs`. Governs: ADR 0028, 0030.
