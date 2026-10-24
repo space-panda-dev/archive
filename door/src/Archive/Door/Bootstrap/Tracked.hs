@@ -5,6 +5,12 @@
 -- is refused, never removed.
 module Archive.Door.Bootstrap.Tracked
   ( TrackedPath (..)
+  , PathTracker
+  , newPathTracker
+  , track
+  , untrack
+  , trackedPaths
+  , withPathTracker
   , findTracked
   , trackedPathFor
   , sameTrackedIdentity
@@ -12,7 +18,10 @@ module Archive.Door.Bootstrap.Tracked
   , removeTrackedEntryAt
   ) where
 
+import Archive.Door.Bootstrap.Abort (tryIO)
+import Archive.Door.MutationError (MutationError)
 import qualified Control.Exception as Exception
+import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
 import Data.List (sortOn)
 import Foreign.C.Error (throwErrnoIfMinus1_)
 import Foreign.C.String (CString, withCString)
@@ -40,6 +49,46 @@ data TrackedPath = TrackedPath
   , trackedPathDevice :: DeviceID
   , trackedPathFile :: FileID
   }
+
+-- | The paths one initialization attempt has created so far, newest first.
+--
+-- Every step that creates a path records it here before the next step can
+-- fail, so a rollback always sees everything that exists; a path the attempt
+-- removes itself is forgotten so the rollback does not refuse it as changed.
+newtype PathTracker = PathTracker (IORef [TrackedPath])
+
+newPathTracker :: [TrackedPath] -> IO PathTracker
+newPathTracker initial = PathTracker <$> newIORef initial
+
+track :: PathTracker -> TrackedPath -> IO ()
+track (PathTracker ref) tracked = modifyIORef' ref (tracked :)
+
+-- | Forget every tracked entry for a path the attempt removed itself.
+untrack :: PathTracker -> FilePath -> IO ()
+untrack (PathTracker ref) path = modifyIORef' ref (filter ((/= path) . trackedPathName))
+
+trackedPaths :: PathTracker -> IO [TrackedPath]
+trackedPaths (PathTracker ref) = readIORef ref
+
+-- | Run one tracked attempt, starting from the paths already created.
+--
+-- A failure 'tryIO' recognises comes back with the paths created so far, so
+-- the caller decides how to roll back (and whether it still may). Any other
+-- exception escapes, but only after @onEscape@ has had the tracker: an
+-- asynchronous exception must not leave partial state behind either.
+withPathTracker
+  :: [TrackedPath]
+  -> (PathTracker -> IO ())
+  -> (PathTracker -> IO a)
+  -> IO (Either (MutationError, [TrackedPath]) a)
+withPathTracker initial onEscape action = do
+  tracker <- newPathTracker initial
+  result <- tryIO (action tracker) `Exception.onException` onEscape tracker
+  case result of
+    Right value -> pure (Right value)
+    Left problem -> do
+      paths <- trackedPaths tracker
+      pure (Left (problem, paths))
 
 findTracked :: FilePath -> [TrackedPath] -> Maybe TrackedPath
 findTracked path = findFirst . filter ((== path) . trackedPathName)

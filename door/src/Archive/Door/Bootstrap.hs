@@ -73,11 +73,15 @@ import Archive.Door.Bootstrap.Pinned
   , writeFilesPinned
   )
 import Archive.Door.Bootstrap.Tracked
-  ( TrackedPath (..)
+  ( PathTracker
+  , TrackedPath (..)
   , findTracked
   , removeTrackedEntryAt
   , rollback
+  , track
   , trackedPathFor
+  , trackedPaths
+  , withPathTracker
   )
 import Archive.Door.Bootstrap.Verify (verifyExistingContents)
 import Archive.Door.Canonical (finalizeStored)
@@ -110,7 +114,7 @@ import Archive.Door.RecordCommit
 import Archive.Executables (resolveAnnexExecutable, resolveGitExecutable)
 import qualified Control.Exception as Exception
 import Data.Aeson.RFC8785 (encodeCanonical)
-import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.List (sortOn)
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -201,17 +205,15 @@ inspectRoot path = case archiveRoot path of
 -- is used for rollback if initialization fails before the first commit.
 makeParents :: FilePath -> IO [TrackedPath]
 makeParents path = do
-  tracker <- newIORef []
-  result <- tryIO (makeParentsTracked tracker path)
-    `Exception.onException` (readIORef tracker >>= rollback)
+  result <- withPathTracker [] (\tracker -> trackedPaths tracker >>= rollback)
+    (\tracker -> makeParentsTracked tracker path)
   case result of
     Right created -> pure created
-    Left problem -> do
-      paths <- readIORef tracker
+    Left (problem, paths) -> do
       cleanup <- tryIO (rollback paths)
       failMutation (withCleanupFailure problem cleanup)
 
-makeParentsTracked :: IORef [TrackedPath] -> FilePath -> IO [TrackedPath]
+makeParentsTracked :: PathTracker -> FilePath -> IO [TrackedPath]
 makeParentsTracked tracker path = do
   let parent = takeDirectory path
   if parent == path || parent == "." || parent == ""
@@ -228,7 +230,7 @@ makeParentsTracked tracker path = do
     createOne value = do
       createDirectory value
       tracked <- trackedPathFor value
-      modifyIORef' tracker (tracked :)
+      track tracker tracked
       pure [tracked]
 
 tryBuild :: BootstrapEnvironment -> Text -> FilePath -> DeviceID -> FileID -> ArchiveRoot -> [TrackedPath] -> IO (Either MutationError InitResult)
@@ -242,31 +244,29 @@ tryBuild environment operator rootPath expectedDevice expectedFile root createdP
       if deviceID pinnedStatus /= expectedDevice || fileID pinnedStatus /= expectedFile
         then pure (Left (MutationRejected "archive root changed before initialization was pinned"))
         else do
-          tracker <- newIORef createdParents
           commitAttempted <- newIORef False
-          result <- tryIO (build environment operator rootPath pinnedRoot root tracker commitAttempted)
-            `Exception.onException`
-              (cleanupBeforeCommit rootPath pinnedRoot tracker commitAttempted)
+          result <- withPathTracker createdParents
+            (cleanupBeforeCommit rootPath pinnedRoot commitAttempted)
+            (\tracker -> build environment operator rootPath pinnedRoot root tracker commitAttempted)
           case result of
             Right value -> pure (Right value)
-            Left problem -> do
+            Left (problem, paths) -> do
               attempted <- readIORef commitAttempted
               if attempted
                 then pure (Left (MutationUncertain
                   ("Git commit outcome is uncertain; initialized files were retained: "
                     <> mutationErrorMessage problem)))
                 else do
-                  paths <- readIORef tracker
                   cleanup <- tryIO (rollbackAtPinnedRoot rootPath pinnedRoot paths)
                   pure (Left (withCleanupFailure problem cleanup))
 
-cleanupBeforeCommit :: FilePath -> Fd -> IORef [TrackedPath] -> IORef Bool -> IO ()
-cleanupBeforeCommit rootPath pinnedRoot tracker commitAttempted = do
+cleanupBeforeCommit :: FilePath -> Fd -> IORef Bool -> PathTracker -> IO ()
+cleanupBeforeCommit rootPath pinnedRoot commitAttempted tracker = do
   attempted <- readIORef commitAttempted
   if attempted then pure () else
-    readIORef tracker >>= rollbackAtPinnedRoot rootPath pinnedRoot
+    trackedPaths tracker >>= rollbackAtPinnedRoot rootPath pinnedRoot
 
-build :: BootstrapEnvironment -> Text -> FilePath -> Fd -> ArchiveRoot -> IORef [TrackedPath] -> IORef Bool -> IO InitResult
+build :: BootstrapEnvironment -> Text -> FilePath -> Fd -> ArchiveRoot -> PathTracker -> IORef Bool -> IO InitResult
 build environment operator rootPath rootFd root tracker commitAttempted = do
   resources <- loadResources
   operatorIdentity <- ioEither (parseIdentityName operator)
@@ -331,7 +331,7 @@ build environment operator rootPath rootFd root tracker commitAttempted = do
         Left problem -> pure (Left (MutationIoFailure problem))
         Right () -> do
           removeBootstrapJournal tracker rootFd rootPath
-          paths <- readIORef tracker
+          paths <- trackedPaths tracker
           syncCreatedParentEntries rootPath paths
           syncExistingRootParent rootPath rootFd
           pure (Right InitResult { initArchiveId = archiveId, initOperatorId = operatorId })

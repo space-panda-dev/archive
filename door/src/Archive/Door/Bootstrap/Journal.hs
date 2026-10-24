@@ -26,7 +26,13 @@ import Archive.Door.Bootstrap.Pinned
   , syncDirectory
   , verifyRootStillPinned
   )
-import Archive.Door.Bootstrap.Tracked (TrackedPath (..))
+import Archive.Door.Bootstrap.Tracked
+  ( PathTracker
+  , TrackedPath (..)
+  , newPathTracker
+  , track
+  , untrack
+  )
 import Archive.Door.Hex (hexText)
 import Archive.Door.Identity (parseArchiveId)
 import Archive.Door.Json (decodeUnique)
@@ -41,7 +47,6 @@ import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.RFC8785 (encodeCanonical)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
-import Data.IORef (IORef, modifyIORef', newIORef)
 import Data.List (sort)
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -84,7 +89,7 @@ bootstrapJournalName :: FilePath
 bootstrapJournalName = ".archive-init-journal"
 
 writeBootstrapJournal
-  :: IORef [TrackedPath] -> Fd -> FilePath -> Text -> Text
+  :: PathTracker -> Fd -> FilePath -> Text -> Text
   -> [(FilePath, LazyByteString.ByteString)] -> IO BootstrapJournal
 writeBootstrapJournal tracker rootFd rootPath archiveId operatorId files = do
   verifyRootStillPinned rootPath rootFd
@@ -111,9 +116,9 @@ writeBootstrapJournal tracker rootFd rootPath archiveId operatorId files = do
       , cloexec = True
       }
   journalStatus <- getFdStatus opened
-  modifyIORef' tracker
+  track tracker
     (TrackedPath (rootPath </> bootstrapJournalName)
-      (deviceID journalStatus) (fileID journalStatus) :)
+      (deviceID journalStatus) (fileID journalStatus))
   handle <- fdToHandle opened
   let writeAndSync = do
         ByteString.hPut handle bytes
@@ -149,10 +154,10 @@ bootstrapJournalValue journal = object
   where
     fileValue (path, digest) = object ["path" .= path, "sha256" .= digest]
 
-removeBootstrapJournal :: IORef [TrackedPath] -> Fd -> FilePath -> IO ()
+removeBootstrapJournal :: PathTracker -> Fd -> FilePath -> IO ()
 removeBootstrapJournal tracker rootFd rootPath = do
   removeCreatedPinned tracker rootFd rootPath bootstrapJournalName
-  modifyIORef' tracker (filter ((/= rootPath </> bootstrapJournalName) . trackedPathName))
+  untrack tracker (rootPath </> bootstrapJournalName)
   syncDirectory rootFd "full fsync(bootstrap journal removal)"
 
 readBootstrapJournal :: FilePath -> Fd -> IO (Maybe (BootstrapJournal, TrackedPath))
@@ -268,6 +273,6 @@ verifyBootstrapJournal journal rootFd rootPath requestedOperator result expected
 
 removeBootstrapJournalAt :: FilePath -> Fd -> TrackedPath -> IO ()
 removeBootstrapJournalAt rootPath rootFd tracked = do
-  tracker <- newIORef [tracked]
+  tracker <- newPathTracker [tracked]
   removeCreatedPinned tracker rootFd rootPath bootstrapJournalName
   syncDirectory rootFd "full fsync(bootstrap journal removal)"

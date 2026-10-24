@@ -31,16 +31,18 @@ import Archive.Door.Bootstrap.Abort
   , withCleanupFailure
   )
 import Archive.Door.Bootstrap.Tracked
-  ( TrackedPath (..)
+  ( PathTracker
+  , TrackedPath (..)
   , findTracked
   , removeTrackedEntryAt
   , sameTrackedIdentity
+  , track
+  , trackedPaths
   )
 import Archive.Door.MutationError (MutationError (..))
 import Control.Monad (unless)
 import qualified Control.Exception as Exception
 import qualified Data.ByteString.Lazy as LazyByteString
-import Data.IORef (IORef, modifyIORef', readIORef)
 import Data.List (sort)
 import qualified Data.Set as Set
 import qualified Data.Text as Text
@@ -80,7 +82,7 @@ syncDirectory :: Fd -> String -> IO ()
 syncDirectory (Fd descriptor) label =
   throwErrnoIfMinus1_ label (c_fullsyncDirectory (fromIntegral descriptor))
 
-createDirectoriesPinned :: IORef [TrackedPath] -> Fd -> FilePath -> [FilePath] -> IO ()
+createDirectoriesPinned :: PathTracker -> Fd -> FilePath -> [FilePath] -> IO ()
 createDirectoriesPinned tracker rootFd rootPath paths = Exception.mask_ $
   mapM_ createOne (sort (Set.toList (Set.fromList paths)))
   where
@@ -96,18 +98,18 @@ createDirectoriesPinned tracker rootFd rootPath paths = Exception.mask_ $
       Exception.bracket (pure childFd) closeFd $ \opened ->
         ensureDirectories opened childPrefix rest
 
-createDirectoryPinned :: IORef [TrackedPath] -> Fd -> FilePath -> FilePath -> IO ()
+createDirectoryPinned :: PathTracker -> Fd -> FilePath -> FilePath -> IO ()
 createDirectoryPinned tracker rootFd rootPath relative = Exception.mask_ $ do
   createDirectoriesPinned tracker rootFd rootPath [rootPath </> relative]
 
-openOrCreateDirectory :: IORef [TrackedPath] -> FilePath -> Fd -> FilePath -> IO Fd
+openOrCreateDirectory :: PathTracker -> FilePath -> Fd -> FilePath -> IO Fd
 openOrCreateDirectory tracker absolute parent component = do
   opened <- Exception.try (openDirectoryAt parent component)
     :: IO (Either Exception.IOException Fd)
   case opened of
     Right child -> do
       status <- getFdStatus child
-      paths <- readIORef tracker
+      paths <- trackedPaths tracker
       case findTracked absolute paths of
         Just tracked | sameTrackedIdentity tracked status -> pure child
         _ -> closeFd child >> failIO ("refusing unexpected or replaced bootstrap directory: " <> Text.pack absolute)
@@ -116,7 +118,7 @@ openOrCreateDirectory tracker absolute parent component = do
           mkdirAt parent component
           child <- openDirectoryAt parent component
           status <- getFdStatus child
-          modifyIORef' tracker (TrackedPath absolute (deviceID status) (fileID status) :)
+          track tracker (TrackedPath absolute (deviceID status) (fileID status))
           pure child
       | otherwise -> ioError problem
 
@@ -129,7 +131,7 @@ mkdirAt (Fd descriptor) name = withCString name $ \nameCString ->
   throwErrnoIfMinus1_ "mkdirat" (c_mkdirat (fromIntegral descriptor) nameCString
     (fromIntegral ownerModes))
 
-writeFilesPinned :: IORef [TrackedPath] -> Fd -> FilePath
+writeFilesPinned :: PathTracker -> Fd -> FilePath
                 -> [(FilePath, LazyByteString.ByteString)] -> IO ()
 writeFilesPinned tracker rootFd rootPath = mapM_ (Exception.mask_ . writeOne)
   where
@@ -142,7 +144,7 @@ writeFilesPinned tracker rootFd rootPath = mapM_ (Exception.mask_ . writeOne)
           withKnownDirectory tracker rootFd rootPath parents $ \parent -> do
             writeAtomicAt tracker path parent leaf bytes
 
-writeAtomicAt :: IORef [TrackedPath] -> FilePath -> Fd -> FilePath
+writeAtomicAt :: PathTracker -> FilePath -> Fd -> FilePath
               -> LazyByteString.ByteString -> IO ()
 writeAtomicAt tracker destinationPath parent destination bytes = Exception.mask_ $ do
   unique <- newUnique
@@ -158,7 +160,7 @@ writeAtomicAt tracker destinationPath parent destination bytes = Exception.mask_
     `Exception.onException` unlinkAt parent temporary
   result <- tryIO (LazyByteString.hPut handle bytes >> hFlush handle
     >> (getFdStatus descriptor >>= \status ->
-      modifyIORef' tracker (TrackedPath destinationPath (deviceID status) (fileID status) :))
+      track tracker (TrackedPath destinationPath (deviceID status) (fileID status)))
     >> hClose handle
     >> linkAt parent temporary destination
     >> unlinkAt parent temporary)
@@ -173,7 +175,7 @@ writeAtomicAt tracker destinationPath parent destination bytes = Exception.mask_
       cleanup <- tryIO (unlinkAt parent temporary)
       failMutation (withCleanupFailure problem cleanup)
 
-withKnownDirectory :: IORef [TrackedPath] -> Fd -> FilePath -> [FilePath]
+withKnownDirectory :: PathTracker -> Fd -> FilePath -> [FilePath]
                    -> (Fd -> IO a) -> IO a
 withKnownDirectory tracker rootFd rootPath = go rootFd []
   where
@@ -186,11 +188,11 @@ withKnownDirectory tracker rootFd rootPath = go rootFd []
         closeFd
         (\childFd -> go childFd nextPrefix rest action)
 
-openOrCreateVerifiedDirectory :: IORef [TrackedPath] -> FilePath -> Fd -> FilePath -> IO Fd
+openOrCreateVerifiedDirectory :: PathTracker -> FilePath -> Fd -> FilePath -> IO Fd
 openOrCreateVerifiedDirectory tracker absolute parent component = do
   child <- openDirectoryAt parent component
   status <- getFdStatus child
-  paths <- readIORef tracker
+  paths <- trackedPaths tracker
   case findTracked absolute paths of
     Just tracked | sameTrackedIdentity tracked status -> pure child
     _ -> closeFd child >> failIO ("refusing replaced bootstrap directory: " <> Text.pack absolute)
@@ -218,10 +220,10 @@ withDirectoryComponents rootFd = go rootFd
       Exception.bracket (openDirectoryAt directoryFd component) closeFd
         (\childFd -> go childFd rest action)
 
-removeCreatedPinned :: IORef [TrackedPath] -> Fd -> FilePath -> FilePath -> IO ()
+removeCreatedPinned :: PathTracker -> Fd -> FilePath -> FilePath -> IO ()
 removeCreatedPinned tracker rootFd rootPath relative = do
   let absolute = rootPath </> relative
-  paths <- readIORef tracker
+  paths <- trackedPaths tracker
   case findTracked absolute paths of
     Nothing -> failIO ("refusing to remove untracked bootstrap path: " <> Text.pack absolute)
     Just tracked -> do
