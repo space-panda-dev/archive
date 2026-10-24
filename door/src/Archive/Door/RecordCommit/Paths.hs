@@ -23,6 +23,7 @@ import Archive.Door.Layout
   , specVersion
   , parseContentRelativePath
   , parseRecordRelativePath
+  , parseSha256Digest
   , recordDirectoryChain
   , recordRelativePath
   )
@@ -62,8 +63,7 @@ validateArchiveFilePath path = case splitDirectories path of
   ["contracts", name]
     | path == "contracts/" <> name
     , Just hex <- Text.stripSuffix ".json" =<< Text.stripPrefix "sha256-" (Text.pack name)
-    , Text.length hex == 64
-    , Text.all (\character -> ('0' <= character && character <= '9') || ('a' <= character && character <= 'f')) hex -> Right ()
+    , Right _ <- parseSha256Digest ("sha256:" <> hex) -> Right ()
   _ -> Left ("not a specification file path: " <> Text.pack path)
 
 -- | Content paths are the D-1 layout's `content/sha256/<h0h1>/<h2h3>/<digest>`
