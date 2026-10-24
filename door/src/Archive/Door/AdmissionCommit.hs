@@ -219,8 +219,8 @@ contentLocation archiveLock annex key = do
       let location = Text.unpack (Text.strip output)
       in case splitDirectories location of
         ".git" : "annex" : "objects" : rest
-          | not (null rest)
-          , last rest == Text.unpack key
+          | final : _ <- reverse rest
+          , final == Text.unpack key
           , ".." `notElem` rest
           , "." `notElem` rest -> Right (Just location)
         _ -> Left (MutationIntegrityFailure

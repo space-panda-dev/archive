@@ -556,8 +556,9 @@ parseLinearHistory pinned output = do
 
     validCommitText value = validCommit (Text.unpack value)
 
-    lastMay [] = Nothing
-    lastMay values = Just (last values)
+    lastMay values = case reverse values of
+      final : _ -> Just final
+      [] -> Nothing
 
 validatePath :: FilePath -> Either GitSnapshotError ()
 validatePath path
