@@ -42,6 +42,12 @@ import Archive.Door.References
   , insertRecord
   , validateReferences
   )
+import Archive.Door.PlanProblem
+  ( PlanProblem (..)
+  , Planner (..)
+  , distinctOr
+  , refuseProblem
+  )
 import Archive.Door.Refusal (PlanRefusal (..), refuse)
 import Archive.Door.Snapshot.Data
   ( RecordEntry (..)
@@ -149,24 +155,24 @@ dryRunTransitionVerified root proposal = do
 
 planTransition :: Day -> SnapshotData -> Proposal -> Either PlanRefusal TransitionPlan
 planTransition today snapshot proposal = do
-  refuse $ if proposalKind proposal /= TransitionProposal
-    then Left "transition planning requires a transition proposal"
+  refuseProblem $ if proposalKind proposal /= TransitionProposal
+    then Left (WrongProposalKind TransitionPlanner)
     else pure ()
   refuse (validateProposal proposal)
   prepared <- refuse (mapM prepare (proposalRecords proposal))
-  refuse (requireDistinct "computed transition revision" (map preparedRevision prepared))
+  refuseProblem (distinctOr (DuplicateComputedRevision TransitionPlanner) (map preparedRevision prepared))
   keys <- refuse (mapM (dispatch (snapshotTransitionKeys snapshot) . preparedDraft) prepared)
   refuse (validateBatchContracts keys prepared)
   facts <- refuse (snapshotFacts snapshot)
   let revisions = map preparedRevision prepared
       present = map (`Map.member` snapshotRevisionIntroducers snapshot) revisions
       retry = completeRetry snapshot revisions
-  refuse $ if any id present && not retry
-    then Left "existing transition revisions are not one committed batch"
+  refuseProblem $ if any id present && not retry
+    then Left (ExistingRevisionsNotOneBatch TransitionPlanner)
     else pure ()
-  refuse (validateAllocations snapshot proposal prepared retry)
+  refuseProblem (validateAllocations snapshot proposal prepared retry)
   validateExpectedHeads facts proposal prepared retry
-  refuse (if retry then pure () else validateLineage (factHeads facts) prepared)
+  refuseProblem (if retry then pure () else validateLineage (factHeads facts) prepared)
   refuse (validateReferencesInOrder (factStore facts) prepared)
   finalState <- refuse $ if retry
     then pure (TransitionState (factRetired facts) (factDestroyed facts))
@@ -218,7 +224,7 @@ completeRetry snapshot revisions = case mapM lookupIntroducer revisions of
   where
     lookupIntroducer revision = Map.lookup revision (snapshotRevisionIntroducers snapshot)
 
-validateAllocations :: SnapshotData -> Proposal -> [Prepared] -> Bool -> Either Text ()
+validateAllocations :: SnapshotData -> Proposal -> [Prepared] -> Bool -> Either PlanProblem ()
 validateAllocations snapshot proposal prepared retry = do
   let allocations = manifestIdentities (proposalManifest proposal)
       heads = snapshotHeadsByObject snapshot
@@ -229,20 +235,21 @@ validateAllocations snapshot proposal prepared retry = do
   if retry
     then if allocated `Set.isSubsetOf` drafted
       then Right ()
-      else Left "identities must refer to drafted transition objects"
+      else Left (AllocationOutsideDrafts TransitionPlanner)
     else if allocated == newObjects
       then Right ()
-      else Left "identities must contain exactly one allocation for each new transition object"
+      else Left (AllocationsNotOnePerNewObject TransitionPlanner)
 
-validateAllocation :: Text -> IdentityAllocation -> Either Text ()
+validateAllocation :: Text -> IdentityAllocation -> Either PlanProblem ()
 validateAllocation archive allocation = do
-  derived <- allocateObjectId archive (identityNamespace allocation) (identityName allocation)
+  derived <- either (Left . AllocationUnderivable) Right
+    (allocateObjectId archive (identityNamespace allocation) (identityName allocation))
   if derived == identityObjectId allocation
     then Right ()
-    else Left "identity allocation object_id does not match UUIDv5 allocation"
+    else Left AllocationIdMismatch
 
 validateExpectedHeads :: SnapshotFacts -> Proposal -> [Prepared] -> Bool -> Either PlanRefusal ()
-validateExpectedHeads facts proposal prepared retry = do
+validateExpectedHeads facts proposal prepared retry = refuseProblem $ do
   let drafts = Set.fromList
         [ objectText (envelopeObject (preparedDraft item)) | item <- prepared ]
       references = Set.fromList
@@ -257,25 +264,25 @@ validateExpectedHeads facts proposal prepared retry = do
         | expected <- manifestExpectedHeads (proposalManifest proposal)
         ]
   if Map.keysSet supplied /= required
-    then Left (PlanRefused "expected_heads must cover exactly drafted and referenced objects")
+    then Left ExpectedHeadsWrongCover
     else if retry
       then Right ()
       else mapM_ (check drafts supplied) (Set.toList required)
   where
     check drafts supplied objectId = do
       expected <- case Map.lookup objectId supplied of
-        Nothing -> Left (PlanRefused "expected_heads omitted a required object")
+        Nothing -> Left ExpectedHeadOmitted
         Just value -> Right value
       actual <- case Map.lookup objectId (factHeads facts) of
         Just value -> Right (Just value)
         Nothing
           | Set.member objectId drafts -> Right Nothing
-          | otherwise -> Left (PlanRefused "expected head names a missing object")
+          | otherwise -> Left ExpectedHeadMissingObject
       if expected == actual
         then Right ()
-        else Left (PlanStale "expected head is stale or has the wrong null expectation")
+        else Left (ExpectedHeadNotCurrent TransitionPlanner)
 
-validateLineage :: Map Text Text -> [Prepared] -> Either Text ()
+validateLineage :: Map Text Text -> [Prepared] -> Either PlanProblem ()
 validateLineage initial = go initial
   where
     go _ [] = Right ()
@@ -290,7 +297,7 @@ validateLineage initial = go initial
         (Nothing, []) -> pure ()
         (Just current, [previous])
           | current == previous -> pure ()
-        _ -> Left "proposed transitions must extend one linear supersession head"
+        _ -> Left (NonLinearSupersession TransitionPlanner)
       go (Map.insert objectId (preparedRevision item) heads) rest
 
 validateReferencesInOrder :: StoreIndex -> [Prepared] -> Either Text ()
@@ -308,8 +315,3 @@ validateTransitions facts keys prepared = do
   let initial = TransitionState (factRetired facts) (factDestroyed facts)
   foldM (validateOne facts) initial
     (zip keys prepared)
-
-requireDistinct :: Text -> [Text] -> Either Text ()
-requireDistinct label values
-  | Set.size (Set.fromList values) == length values = Right ()
-  | otherwise = Left (label <> " must be unique")

@@ -74,6 +74,7 @@ library
     , Archive.Door.WrittenBars
     , Archive.Door.Proposal
     , Archive.Door.ProposalContracts
+    , Archive.Door.ProposalProblem
     , Archive.Door.RecordCommit
     , Archive.Door.SchemaObjectKeywords
     , Archive.Door.SpecificationUpgrade
@@ -85,6 +86,7 @@ library
     , Archive.Door.Snapshot.Supersession
     , Archive.Door.References
     , Archive.Door.ReferenceTargets
+    , Archive.Door.PlanProblem
     , Archive.Door.Refusal
     , Archive.Door.TransitionDryRun
     , Archive.Door.TransitionCommit
