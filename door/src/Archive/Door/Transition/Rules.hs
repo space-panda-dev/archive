@@ -24,6 +24,7 @@ import Archive.Door.Transition.Dispatch
   ( TransitionKey (..)
   , TransitionKind (..)
   )
+import Archive.Door.Transition.Problem (TransitionProblem (..), outsideCheck)
 import Archive.Door.Types
   ( ContractCitation (..)
   , DraftEnvelope (..)
@@ -44,7 +45,6 @@ import Data.Scientific (floatingOrInteger)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
-import qualified Data.Text as Text
 
 data Prepared = Prepared
   { preparedRevision :: Text
@@ -66,16 +66,16 @@ data SnapshotFacts = SnapshotFacts
   , factStore :: StoreIndex
   }
 
-validateBatchContracts :: [TransitionKey] -> [Prepared] -> Either Text ()
+validateBatchContracts :: [TransitionKey] -> [Prepared] -> Either TransitionProblem ()
 validateBatchContracts keys prepared = case prepared of
   [item] -> requireNoPredecessor item
   _
     | all ((== "2") . transitionVersion) keys -> validatePredecessorChain prepared
     | otherwise ->
-        Left "multi-record transition batches require version 2 retire/destroy contracts"
+        Left MultiRecordNeedsVersion2
 
-validatePredecessorChain :: [Prepared] -> Either Text ()
-validatePredecessorChain [] = Left "transition proposal must contain at least one record"
+validatePredecessorChain :: [Prepared] -> Either TransitionProblem ()
+validatePredecessorChain [] = Left EmptyTransitionProposal
 validatePredecessorChain (first : rest) = do
   requireNoPredecessor first
   go first rest
@@ -85,25 +85,25 @@ validatePredecessorChain (first : rest) = do
       predecessor <- oneReference "transition_predecessor"
         (envelopeReferences (preparedDraft item))
       revision <- maybe
-        (Left "transition_predecessor must pin an exact revision")
+        (Left PredecessorUnpinned)
         (Right . revisionText)
         (referenceRevision predecessor)
       let expectedObject = objectText (envelopeObject (preparedDraft previous))
       if objectText (referenceObject predecessor) == expectedObject
           && revision == preparedRevision previous
         then go item remaining
-        else Left "transition_predecessor must pin the immediately preceding draft"
+        else Left PredecessorNotPreceding
 
-requireNoPredecessor :: Prepared -> Either Text ()
+requireNoPredecessor :: Prepared -> Either TransitionProblem ()
 requireNoPredecessor item = case
     filter ((== "transition_predecessor") . referenceRole)
       (envelopeReferences (preparedDraft item)) of
   [] -> Right ()
-  _ -> Left "the first transition record must not have a transition_predecessor"
+  _ -> Left FirstHasPredecessor
 
 validateOne :: SnapshotFacts -> TransitionState
             -> (TransitionKey, Prepared)
-            -> Either Text TransitionState
+            -> Either TransitionProblem TransitionState
 validateOne facts state (key, item) = do
   case transitionKind key of
     PublicationApproval -> validateAuthorizer facts draft
@@ -111,12 +111,12 @@ validateOne facts state (key, item) = do
     SpecificationUpgrade -> validateAuthorizer facts draft
     _ -> validateActors facts draft
   case transitionKind key of
-    OperatorInitialization -> Left "unsupported: operator initialization is initialization-only"
+    OperatorInitialization -> Left InitializationOnly
     -- An approval, or a hold-back, covers only what the reviewer saw last:
     -- every covered object's current head (ADRs 0019, 0051).
     PublicationApproval -> do
       covers <- referencesWithRole "covers" (envelopeReferences draft)
-      if null covers then Left "publication approval requires at least one covers reference" else pure ()
+      if null covers then Left ApprovalWithoutCovers else pure ()
       mapM_ (\reference -> resolveReference facts reference >> requireCurrent facts reference) covers
       pure state
     -- Which versions an upgrade may name, and what it installs, depend on
@@ -125,19 +125,19 @@ validateOne facts state (key, item) = do
     -- every committed upgrade. Here, as in replay, only its actors.
     SpecificationUpgrade -> do
       payload <- transitionPayload draft
-      _ <- requiredNonEmptyText "from" payload
-      _ <- requiredNonEmptyText "to" payload
+      _ <- outsideCheck (requiredNonEmptyText "from" payload)
+      _ <- outsideCheck (requiredNonEmptyText "to" payload)
       pure state
     PublicationWithdrawal -> do
       reference <- oneReference "withdraws" (envelopeReferences draft)
       approval <- resolveReference facts reference
       if any (\version -> citesContract "archive.transition/publication_approval" version (storedDraft (entryEnvelope approval))) ["1", "2"]
         then pure ()
-        else Left "withdraws reference must target a publication approval"
-      revision <- maybe (Left "withdraws must pin an exact revision") (Right . revisionText)
+        else Left WithdrawsNotApproval
+      revision <- maybe (Left WithdrawsUnpinned) (Right . revisionText)
         (referenceRevision reference)
       if revision `elem` withdrawnApprovals facts
-        then Left "publication approval is already withdrawn"
+        then Left AlreadyWithdrawn
         else pure state
     Retire -> do
       reference <- oneReference "retires" (envelopeReferences draft)
@@ -145,18 +145,18 @@ validateOne facts state (key, item) = do
       requireCurrent facts reference
       let objectId = objectText (referenceObject reference)
       if Set.member objectId (retiredObjects state)
-        then Left "retire target is already retired"
+        then Left AlreadyRetired
         else pure state { retiredObjects = Set.insert objectId (retiredObjects state) }
     Destroy -> do
       payload <- transitionPayload draft
-      content <- requiredObject "content" payload
-      digest <- requiredNonEmptyText "digest" content
+      content <- outsideCheck (requiredObject "content" payload)
+      digest <- outsideCheck (requiredNonEmptyText "digest" content)
       size <- requiredSize content
       references <- referencesWithRole "destroys" (envelopeReferences draft)
-      if null references then Left "destroy requires at least one destroys reference" else pure ()
+      if null references then Left DestroyWithoutReferences else pure ()
       mapM_ (validateDestroyTarget facts (retiredObjects state) digest size) references
       if Set.member digest (destroyedDigests state)
-        then Left "content has already been destroyed"
+        then Left AlreadyDestroyed
         else pure ()
       validateUnretiredReferences facts (retiredObjects state) digest
       validateDependents (envelopeReferences draft)
@@ -167,13 +167,13 @@ validateOne facts state (key, item) = do
 
 -- | Publication records name no author: the envelope agent may be whoever
 -- drafted them, while the authorizer must be the active operator (ADR 0051).
-validateAuthorizer :: SnapshotFacts -> DraftEnvelope -> Either Text ()
+validateAuthorizer :: SnapshotFacts -> DraftEnvelope -> Either TransitionProblem ()
 validateAuthorizer facts draft = do
   authorizer <- oneReference "authorizer" (envelopeReferences draft)
   authorizerEntry <- resolveReference facts authorizer
   _ <- requirePerson authorizerEntry
   if objectText (referenceObject authorizer) /= factActiveOperator facts
-    then Left "transition authorizer is not the active operator"
+    then Left AuthorizerNotActive
     else pure ()
   requireCurrent facts authorizer
 
@@ -196,65 +196,65 @@ withdrawnApprovals facts =
   , Just revision <- [referenceRevision reference]
   ]
 
-validateActors :: SnapshotFacts -> DraftEnvelope -> Either Text ()
+validateActors :: SnapshotFacts -> DraftEnvelope -> Either TransitionProblem ()
 validateActors facts draft = do
   author <- oneReference "author" (envelopeReferences draft)
   authorizer <- oneReference "authorizer" (envelopeReferences draft)
   authorEntry <- resolveReference facts author
   _ <- requirePerson authorEntry
   if agentIdText (envelopeAgent draft) /= objectText (referenceObject author)
-    then Left "transition agent must identify its author"
+    then Left AgentNotAuthor
     else pure ()
   authorizerEntry <- resolveReference facts authorizer
   _ <- requirePerson authorizerEntry
   let authorizerObject = objectText (referenceObject authorizer)
   if authorizerObject /= factActiveOperator facts
-    then Left "transition authorizer is not the active operator"
+    then Left AuthorizerNotActive
     else pure ()
   requireCurrent facts authorizer
 
-resolveReference :: SnapshotFacts -> Reference -> Either Text RecordEntry
+resolveReference :: SnapshotFacts -> Reference -> Either TransitionProblem RecordEntry
 resolveReference facts reference = do
-  revision <- maybe (Left "transition references must pin an exact revision") Right
+  revision <- maybe (Left ReferenceUnpinned) Right
     (referenceRevision reference)
   entry <- case Map.lookup (revisionText revision) (factByRevision facts) of
-    Nothing -> Left "transition reference does not name a committed revision"
+    Nothing -> Left ReferenceUncommitted
     Just value -> Right value
   if objectText (envelopeObject (storedDraft (entryEnvelope entry)))
       == objectText (referenceObject reference)
     then Right entry
-    else Left "transition reference revision belongs to another object"
+    else Left ReferenceOtherObject
 
-requireCurrent :: SnapshotFacts -> Reference -> Either Text ()
+requireCurrent :: SnapshotFacts -> Reference -> Either TransitionProblem ()
 requireCurrent facts reference = do
-  revision <- maybe (Left "transition references must pin an exact revision") Right
+  revision <- maybe (Left ReferenceUnpinned) Right
     (referenceRevision reference)
   case Map.lookup (objectText (referenceObject reference)) (factHeads facts) of
     Just current | current == revisionText revision -> Right ()
-    _ -> Left "transition reference must pin the current object head"
+    _ -> Left ReferenceNotCurrent
 
-requirePerson :: RecordEntry -> Either Text ()
+requirePerson :: RecordEntry -> Either TransitionProblem ()
 requirePerson entry = case envelopeBody (storedDraft (entryEnvelope entry)) of
   EntityRecord (Object fields) -> case KeyMap.lookup "kind" fields of
     Just (String "person") -> Right ()
-    _ -> Left "transition author and authorizer must be person entities"
-  _ -> Left "transition author and authorizer must be person entities"
+    _ -> Left NotPersonEntity
+  _ -> Left NotPersonEntity
 
-validateDestroyTarget :: SnapshotFacts -> Set Text -> Text -> Integer -> Reference -> Either Text ()
+validateDestroyTarget :: SnapshotFacts -> Set Text -> Text -> Integer -> Reference -> Either TransitionProblem ()
 validateDestroyTarget facts legalRetired digest size reference = do
   entry <- resolveReference facts reference
   requireCurrent facts reference
   let objectId = objectText (referenceObject reference)
-  if Set.member objectId legalRetired then pure () else Left "destroy target is not retired"
+  if Set.member objectId legalRetired then pure () else Left DestroyTargetNotRetired
   case envelopeBody (storedDraft (entryEnvelope entry)) of
     ArtifactRecord payload -> do
       (actualDigest, actualSize) <- artifactContent payload
       if actualDigest == digest && actualSize == size
         then Right ()
-        else Left "destroy content does not match every destroys reference"
-    _ -> Left "destroy references must name artifact revisions"
+        else Left DestroyContentMismatch
+    _ -> Left DestroyNotArtifact
 
-validateUnretiredReferences :: SnapshotFacts -> Set Text -> Text -> Either Text ()
+validateUnretiredReferences :: SnapshotFacts -> Set Text -> Text -> Either TransitionProblem ()
 validateUnretiredReferences facts legalRetired digest =
   case [objectText (envelopeObject draft)
        | revision <- Map.elems (factHeads facts)
@@ -265,49 +265,48 @@ validateUnretiredReferences facts legalRetired digest =
        , actualDigest == digest
        , not (Set.member (objectText (envelopeObject draft)) legalRetired)] of
     [] -> Right ()
-    objects -> Left ("destroy refused while an unretired object refers to content: "
-      <> Text.intercalate "," objects)
-validateDependents :: [Reference] -> Either Text ()
+    objects -> Left (UnretiredReferrers objects)
+validateDependents :: [Reference] -> Either TransitionProblem ()
 validateDependents references = do
   let dependents = filter ((`elem` ["dependent_destroy", "dependent_source_gone"])
                           . referenceRole) references
   if null dependents
     then Right ()
-    else Left "unsupported: no installed artifact contract defines dependent reachability"
+    else Left DependentReachabilityUnsupported
 
-validateExternalSurvivors :: [Reference] -> Either Text ()
+validateExternalSurvivors :: [Reference] -> Either TransitionProblem ()
 validateExternalSurvivors references =
   if any ((== "external_survivor") . referenceRole) references
-    then Left "unsupported: external survivor evidence contracts are not installed"
+    then Left ExternalSurvivorUnsupported
     else Right ()
 
-transitionPayload :: DraftEnvelope -> Either Text (KeyMap.KeyMap Value)
+transitionPayload :: DraftEnvelope -> Either TransitionProblem (KeyMap.KeyMap Value)
 transitionPayload draft = case envelopeBody draft of
   ClaimRecord (Object fields) -> Right fields
-  _ -> Left "transition record must be a claim"
+  _ -> Left NotAClaim
 
-artifactContent :: Value -> Either Text (Text, Integer)
+artifactContent :: Value -> Either TransitionProblem (Text, Integer)
 artifactContent (Object fields) = do
-  content <- requiredObject "content" fields
-  digest <- requiredNonEmptyText "digest" content
+  content <- outsideCheck (requiredObject "content" fields)
+  digest <- outsideCheck (requiredNonEmptyText "digest" content)
   size <- requiredSize content
   pure (digest, size)
-artifactContent _ = Left "artifact payload must be an object"
+artifactContent _ = Left ArtifactPayloadNotObject
 
-requiredSize :: KeyMap.KeyMap Value -> Either Text Integer
+requiredSize :: KeyMap.KeyMap Value -> Either TransitionProblem Integer
 requiredSize fields = case KeyMap.lookup "size" fields of
   Just (Number value) -> case (floatingOrInteger value :: Either Double Integer) of
     Right integer | integer >= 0 -> Right integer
-    _ -> Left "content size must be a non-negative integer"
-  Just _ -> Left "content size must be a non-negative integer"
-  Nothing -> Left "size is required"
+    _ -> Left ContentSizeInvalid
+  Just _ -> Left ContentSizeInvalid
+  Nothing -> Left SizeRequired
 
-oneReference :: Text -> [Reference] -> Either Text Reference
+oneReference :: Text -> [Reference] -> Either TransitionProblem Reference
 oneReference role references = case filter ((== role) . referenceRole) references of
   [reference] -> Right reference
-  _ -> Left (role <> " transition must contain exactly one reference")
+  _ -> Left (NotExactlyOneReference role)
 
-referencesWithRole :: Text -> [Reference] -> Either Text [Reference]
+referencesWithRole :: Text -> [Reference] -> Either TransitionProblem [Reference]
 referencesWithRole role = Right . filter ((== role) . referenceRole)
 
 objectText :: ObjectId -> Text

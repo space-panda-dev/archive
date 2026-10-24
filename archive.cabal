@@ -93,6 +93,7 @@ library
     , Archive.Door.TargetMeasures
     , Archive.Door.Transition.Dispatch
     , Archive.Door.Transition.Plan
+    , Archive.Door.Transition.Problem
     , Archive.Door.Transition.Replay
     , Archive.Door.Transition.Rules
     , Archive.Door.Transition.Upgrade

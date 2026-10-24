@@ -49,6 +49,7 @@ import Archive.Door.PlanProblem
   , refuseProblem
   )
 import Archive.Door.Refusal (PlanRefusal (..), refuse)
+import Archive.Door.Transition.Problem (TransitionProblem, transitionProblemMessage)
 import Archive.Door.Snapshot.Data
   ( RecordEntry (..)
   , SnapshotData (..)
@@ -162,8 +163,8 @@ planTransition today snapshot proposal = do
   prepared <- refuse (mapM prepare (proposalRecords proposal))
   refuseProblem (distinctOr (DuplicateComputedRevision TransitionPlanner) (map preparedRevision prepared))
   keys <- refuse (mapM (dispatch (snapshotTransitionKeys snapshot) . preparedDraft) prepared)
-  refuse (validateBatchContracts keys prepared)
-  facts <- refuse (snapshotFacts snapshot)
+  refuseTransition (validateBatchContracts keys prepared)
+  facts <- refuseTransition (snapshotFacts snapshot)
   let revisions = map preparedRevision prepared
       present = map (`Map.member` snapshotRevisionIntroducers snapshot) revisions
       retry = completeRetry snapshot revisions
@@ -174,7 +175,7 @@ planTransition today snapshot proposal = do
   validateExpectedHeads facts proposal prepared retry
   refuseProblem (if retry then pure () else validateLineage (factHeads facts) prepared)
   refuse (validateReferencesInOrder (factStore facts) prepared)
-  finalState <- refuse $ if retry
+  finalState <- refuseTransition $ if retry
     then pure (TransitionState (factRetired facts) (factDestroyed facts))
     else validateTransitions facts keys prepared
   refuse (if retry then pure () else mapM_ (validatePublicationReach today snapshot facts) prepared)
@@ -310,8 +311,12 @@ validateReferencesInOrder = go
       go (insertRecord revision (preparedDraft item) index) rest
 
 validateTransitions :: SnapshotFacts -> [TransitionKey] -> [Prepared]
-                    -> Either Text TransitionState
+                    -> Either TransitionProblem TransitionState
 validateTransitions facts keys prepared = do
   let initial = TransitionState (factRetired facts) (factDestroyed facts)
   foldM (validateOne facts) initial
     (zip keys prepared)
+
+-- | Refuse with a broken transition rule's message.
+refuseTransition :: Either TransitionProblem a -> Either PlanRefusal a
+refuseTransition = either (Left . PlanRefused . transitionProblemMessage) Right

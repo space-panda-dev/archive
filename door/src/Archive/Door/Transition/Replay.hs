@@ -25,6 +25,7 @@ import Archive.Door.Transition.Dispatch
   , dispatch
   , transitionCitationKind
   )
+import Archive.Door.Transition.Problem (TransitionProblem (..), outsideCheck)
 import Archive.Door.Transition.Rules
   ( Prepared (..)
   , SnapshotFacts (..)
@@ -62,11 +63,11 @@ data ReplayState = ReplayState
   , replayStore :: StoreIndex
   }
 
-snapshotFacts :: SnapshotData -> Either Text SnapshotFacts
+snapshotFacts :: SnapshotData -> Either TransitionProblem SnapshotFacts
 snapshotFacts snapshot = do
   initialCommit <- case snapshotCommitOrder snapshot of
     commit : _ -> Right commit
-    [] -> Left "archive history is empty"
+    [] -> Left HistoryEmpty
   let additions = snapshotRevisionIntroducers snapshot
       byCommit = Map.fromListWith (<>)
         [ (commit, [entry])
@@ -75,16 +76,16 @@ snapshotFacts snapshot = do
         ]
   if Map.size additions == length (snapshotRecords snapshot)
     then pure ()
-    else Left "record history does not account for every committed record"
+    else Left HistoryIncomplete
   replayed <- foldM (replayCommit snapshot initialCommit byCommit) emptyReplay
     (snapshotCommitOrder snapshot)
   active <- maybe
-    (Left "no active operator is established by a transition claim")
+    (Left NoActiveOperator)
     Right
     (replayActiveOperator replayed)
   if replayHeads replayed == snapshotHeadsByObject snapshot
     then pure ()
-    else Left "replayed object heads disagree with the committed snapshot"
+    else Left HeadsDisagree
   pure SnapshotFacts
     { factByRevision = replaySeen replayed
     , factHeads = replayHeads replayed
@@ -110,7 +111,7 @@ replayCommit
   -> Map Text [RecordEntry]
   -> ReplayState
   -> Text
-  -> Either Text ReplayState
+  -> Either TransitionProblem ReplayState
 replayCommit snapshot initialCommit byCommit state commit = do
   let entries = Map.findWithDefault [] commit byCommit
       classify = entryKind (snapshotTransitionKeys snapshot)
@@ -122,10 +123,10 @@ replayCommit snapshot initialCommit byCommit state commit = do
     ([initialization], []) -> do
       if commit == initialCommit && replayActiveOperator state == Nothing
         then pure ()
-        else Left "operator initialization must occur exactly once in the archive root commit"
+        else Left InitializationNotAtRoot
       if length ordinary == 1
         then pure ()
-        else Left "archive root commit must contain exactly the appointed person and initialization claim"
+        else Left RootCommitShape
       state' <- applyUnorderedEntries state ordinary
       operator <- validateInitialization state' initialization
       state'' <- applyEntry state' initialization
@@ -133,14 +134,14 @@ replayCommit snapshot initialCommit byCommit state commit = do
     ([], _) -> do
       if null ordinary
         then replayTransitionBatch snapshot state transitions
-        else Left "a transition commit must contain only one transition batch"
-    _ -> Left "operator initialization cannot share a commit with another transition"
+        else Left MixedTransitionCommit
+    _ -> Left InitializationSharesCommit
 
-validateInitialization :: ReplayState -> RecordEntry -> Either Text Text
+validateInitialization :: ReplayState -> RecordEntry -> Either TransitionProblem Text
 validateInitialization state entry = do
   if replayActiveOperator state == Nothing
     then pure ()
-    else Left "active operator is not uniquely established"
+    else Left OperatorNotUnique
   let draft = storedDraft (entryEnvelope entry)
       references = envelopeReferences draft
   author <- oneReference "author" references
@@ -154,27 +155,27 @@ validateInitialization state entry = do
   let operator = objectText (referenceObject author)
   if agentIdText (envelopeAgent draft) == operator
     then Right operator
-    else Left "operator initialization agent must identify its appointed person"
+    else Left InitializationAgentMismatch
 
-requireSameReference :: Reference -> Reference -> Either Text ()
+requireSameReference :: Reference -> Reference -> Either TransitionProblem ()
 requireSameReference left right =
   if referenceObject left == referenceObject right
       && referenceRevision left == referenceRevision right
     then Right ()
-    else Left "operator initialization references must pin the same person revision"
+    else Left InitializationReferencesDiffer
 
 replayTransitionBatch :: SnapshotData -> ReplayState -> [RecordEntry]
-                      -> Either Text ReplayState
+                      -> Either TransitionProblem ReplayState
 replayTransitionBatch snapshot state entries = do
   active <- maybe
-    (Left "transition history precedes operator initialization")
+    (Left TransitionBeforeInitialization)
     Right
     (replayActiveOperator state)
   ordered <- orderHistoricalTransitions (snapshotTransitionKeys snapshot) entries
   foldM (replayOneTransition active) state ordered
 
 replayOneTransition :: Text -> ReplayState -> (TransitionKey, Prepared, RecordEntry)
-                    -> Either Text ReplayState
+                    -> Either TransitionProblem ReplayState
 replayOneTransition active state (key, prepared, entry) = do
   let facts = replayFacts active state
       transitionState = TransitionState
@@ -198,7 +199,7 @@ replayFacts active state = SnapshotFacts
   }
 
 orderHistoricalTransitions :: Set (Text, Text, Text) -> [RecordEntry]
-                           -> Either Text [(TransitionKey, Prepared, RecordEntry)]
+                           -> Either TransitionProblem [(TransitionKey, Prepared, RecordEntry)]
 orderHistoricalTransitions installed entries = do
   triples <- mapM prepareEntry entries
   ordered <- orderByPredecessor triples
@@ -208,7 +209,7 @@ orderHistoricalTransitions installed entries = do
   pure ordered
   where
     prepareEntry entry = do
-      key <- dispatch installed (storedDraft (entryEnvelope entry))
+      key <- outsideCheck (dispatch installed (storedDraft (entryEnvelope entry)))
       let prepared = Prepared
             (entryRevision entry)
             Null
@@ -216,13 +217,13 @@ orderHistoricalTransitions installed entries = do
       pure (key, prepared, entry)
 
 orderByPredecessor :: [(TransitionKey, Prepared, RecordEntry)]
-                   -> Either Text [(TransitionKey, Prepared, RecordEntry)]
-orderByPredecessor [] = Left "transition commit contains no transition records"
+                   -> Either TransitionProblem [(TransitionKey, Prepared, RecordEntry)]
+orderByPredecessor [] = Left EmptyTransitionCommit
 orderByPredecessor triples = do
   roots <- filterMNoPredecessor triples
   root <- case roots of
     [value] -> Right value
-    _ -> Left "committed transition batch must have exactly one predecessor-chain root"
+    _ -> Left NotOnePredecessorRoot
   walk [root] (removeTriple root triples)
   where
     walk ordered [] = Right ordered
@@ -231,8 +232,8 @@ orderByPredecessor triples = do
           successors = filter (follows previous) remaining
       next <- case successors of
         [value] -> Right value
-        [] -> Left "committed transition predecessor chain is missing or crosses a batch"
-        _ -> Left "committed transition predecessor chain forks"
+        [] -> Left PredecessorChainBroken
+        _ -> Left PredecessorChainForks
       walk (ordered <> [next]) (removeTriple next remaining)
 
     follows previous (_, item, _) = case predecessorReference item of
@@ -244,7 +245,7 @@ orderByPredecessor triples = do
       _ -> False
 
 filterMNoPredecessor :: [(TransitionKey, Prepared, RecordEntry)]
-                     -> Either Text [(TransitionKey, Prepared, RecordEntry)]
+                     -> Either TransitionProblem [(TransitionKey, Prepared, RecordEntry)]
 filterMNoPredecessor = foldM step []
   where
     step roots triple@(_, item, _) = do
@@ -253,13 +254,13 @@ filterMNoPredecessor = foldM step []
         Nothing -> roots <> [triple]
         Just _ -> roots
 
-predecessorReference :: Prepared -> Either Text (Maybe Reference)
+predecessorReference :: Prepared -> Either TransitionProblem (Maybe Reference)
 predecessorReference item = case
     filter ((== "transition_predecessor") . referenceRole)
       (envelopeReferences (preparedDraft item)) of
   [] -> Right Nothing
   [reference] -> Right (Just reference)
-  _ -> Left "transition record has multiple transition_predecessor references"
+  _ -> Left MultiplePredecessors
 
 removeTriple :: (TransitionKey, Prepared, RecordEntry)
              -> [(TransitionKey, Prepared, RecordEntry)]
@@ -269,10 +270,10 @@ removeTriple (_, prepared, _) =
   where
     middle (_, value, _) = value
 
-applyUnorderedEntries :: ReplayState -> [RecordEntry] -> Either Text ReplayState
+applyUnorderedEntries :: ReplayState -> [RecordEntry] -> Either TransitionProblem ReplayState
 applyUnorderedEntries state [] = Right state
 applyUnorderedEntries state pending = case firstApplicable state pending of
-  Nothing -> Left "committed records cannot be replayed from their historical predecessors"
+  Nothing -> Left UnreplayableRecords
   Just entry -> do
     state' <- applyEntry state entry
     applyUnorderedEntries state' (filter ((/= entryRevision entry) . entryRevision) pending)
@@ -291,7 +292,7 @@ isApplicable state entry = case applyEntry state entry of
   Right _ -> True
   Left _ -> False
 
-applyEntry :: ReplayState -> RecordEntry -> Either Text ReplayState
+applyEntry :: ReplayState -> RecordEntry -> Either TransitionProblem ReplayState
 applyEntry state entry = do
   let draft = storedDraft (entryEnvelope entry)
       objectId = entryObject entry
@@ -304,44 +305,44 @@ applyEntry state entry = do
     ArtifactRecord payload -> do
       (digest, _) <- artifactContent payload
       if Set.member digest (replayDestroyed state)
-        then Left "destroyed content may not be admitted again"
+        then Left DestroyedContentReadmitted
         else Right ()
     _ -> Right ()
   case (Map.lookup objectId (replayHeads state), supersedes) of
     (Nothing, []) -> Right ()
     (Just current, [previous]) | current == previous -> Right ()
-    _ -> Left "historical record does not extend the then-current object head"
-  revision <- parseRevisionId (entryRevision entry)
-  validateReferences (replayStore state) revision draft
+    _ -> Left HistoricalHeadNotExtended
+  revision <- outsideCheck (parseRevisionId (entryRevision entry))
+  outsideCheck (validateReferences (replayStore state) revision draft)
   pure state
     { replayHeads = Map.insert objectId (entryRevision entry) (replayHeads state)
     , replaySeen = Map.insert (entryRevision entry) entry (replaySeen state)
     , replayStore = insertRecord revision draft (replayStore state)
     }
 
-resolveReplayReference :: ReplayState -> Reference -> Either Text RecordEntry
+resolveReplayReference :: ReplayState -> Reference -> Either TransitionProblem RecordEntry
 resolveReplayReference state reference = do
   revision <- maybe
-    (Left "transition references must pin an exact revision")
+    (Left ReferenceUnpinned)
     (Right . revisionText)
     (referenceRevision reference)
   entry <- maybe
-    (Left "transition reference does not name an earlier committed revision")
+    (Left ReplayReferenceNotEarlier)
     Right
     (Map.lookup revision (replaySeen state))
   if entryObject entry == objectText (referenceObject reference)
     then Right entry
-    else Left "transition reference revision belongs to another object"
+    else Left ReferenceOtherObject
 
-requireReplayCurrent :: ReplayState -> Reference -> Either Text ()
+requireReplayCurrent :: ReplayState -> Reference -> Either TransitionProblem ()
 requireReplayCurrent state reference = do
   revision <- maybe
-    (Left "transition references must pin an exact revision")
+    (Left ReferenceUnpinned)
     (Right . revisionText)
     (referenceRevision reference)
   case Map.lookup (objectText (referenceObject reference)) (replayHeads state) of
     Just current | current == revision -> Right ()
-    _ -> Left "transition reference must pin the then-current object head"
+    _ -> Left ReplayReferenceNotCurrent
 
 entryKind :: Set (Text, Text, Text) -> RecordEntry -> Maybe TransitionKind
 entryKind installed entry =
