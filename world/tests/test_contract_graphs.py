@@ -31,7 +31,7 @@ def catalog(version):
             json.loads((ROOT / "spec" / version / "contracts.json").read_text())["contracts"]}
 
 
-NEW = catalog("0.0.10") - catalog("0.0.9")
+NEW = catalog("0.0.11") - catalog("0.0.9")
 
 
 def cites(record):

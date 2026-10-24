@@ -1323,7 +1323,8 @@
               "pdf",
               "musicxml",
               "lilypond",
-              "jams"
+              "jams",
+              "ireal"
             ]
           },
           "exporter": {
@@ -1413,7 +1414,8 @@
               "pdf",
               "musicxml",
               "lilypond",
-              "jams"
+              "jams",
+              "ireal"
             ]
           },
           "media_type": {

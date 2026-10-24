@@ -17,7 +17,9 @@ import unittest
 from pathlib import Path
 
 from world.exports import (
+    CLAIM_FORMATS,
     EXPORT,
+    EXPORT_V2,
     FORMATS,
     KINDS,
     ExportError,
@@ -171,6 +173,20 @@ class ExportClaimTest(unittest.TestCase):
     def test_accepts_a_sent_lead_sheet_pdf(self):
         claim = claim_for(request(), software=[{"name": "lilypond", "version": "2.24.4"}])
         self.assertEqual(check_export(claim, TARGETS)["format"], "pdf")
+
+    def test_version_2_adds_ireal_and_version_1_refuses_it(self):
+        self.assertEqual((EXPORT, EXPORT_V2), (("archive.claim/export", "1"), ("archive.claim/export", "2")))
+        self.assertEqual(FORMATS["ireal"], ("text/plain", ".irealb"))
+        self.assertEqual(set(CLAIM_FORMATS["2"]) - set(CLAIM_FORMATS["1"]), {"ireal"})
+        req = {"format": "ireal", "exporter": {"id": "lead-sheet-ireal", "version": "1"}, "rendered": [CHORDS]}
+        claim = claim_for(req)
+        self.assertEqual(check_export(claim, TARGETS, "2")["format"], "ireal")
+        with self.assertRaisesRegex(ExportError, "format"):
+            check_export(claim, TARGETS)
+        with self.assertRaises(ExportError):
+            check_export(claim_for(request()), TARGETS, "3")
+        # Every version 1 claim is a version 2 claim.
+        self.assertEqual(check_export(claim_for(request()), TARGETS, "2")["format"], "pdf")
 
     def test_accepts_musicxml_with_losses_and_no_options(self):
         req = {"format": "musicxml", "exporter": {"id": "lead-sheet-musicxml", "version": "1"},

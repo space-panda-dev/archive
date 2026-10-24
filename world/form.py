@@ -17,6 +17,27 @@ specification release:
   `corrects`, `derived_from`, and (timed only) bank `stem` citation, checked
   here too, so the version has one check.
 
+ADR 0113 adds three versions beside them, version-dispatched so the earlier
+ones keep their rules exactly:
+
+- `archive.claim/form` version 2: a repeat may leave out `times` (an open
+  repeat, played as many times as a performance plays it) and carry an
+  `instruction` in the source's words; an open repeat's endings have one
+  last-time ending (`"last"`) and one default ending (no `passes`);
+- `archive.claim/form_spans` version 2: a span from a section inside repeats
+  names its `passes` and may be played on a `return`, and the alignment may
+  state its `precision`; a span with no section in a claim that pins a form
+  is a departure;
+- `archive.claim/meter_layers` version 3: version 2, with an untimed claim's
+  form pinning form version 1 or 2, and (ADR 0116, decision D) an untimed
+  bar's optional `directions`: 1 to 8 written directions, each its `text`
+  and an optional target `tempo` in ADR 0106's shape. A direction is a
+  stated intention, never a reading of audio: tempo stays derived for every
+  timed claim (ADR 0077), and a timed bar never carries one.
+
+The `folded_chart` view (ADR 0113, version 1) folds a recording's chart into
+the written form's repeat signs where its form spans say so.
+
 Version 1 of `meter_layers` is unchanged and still checked by
 `harmony.check_meter_layers`. The repeat shape `{first, last, times}` and its
 rules (ordered, outer before inner, nest or apart) are chord sequence version
@@ -29,9 +50,10 @@ Played orders are computed views, never stored (INV-7).
 
 from __future__ import annotations
 
+import re
 from fractions import Fraction
 from itertools import combinations
-from typing import Any
+from typing import Any, Callable
 
 from world.harmony import (
     DENOMINATORS,
@@ -66,11 +88,29 @@ from world.notes import NotesError, note_length
 FORM = ("archive.claim/form", "1")
 FORM_SPANS = ("archive.claim/form_spans", "1")
 METER_LAYERS_V2 = ("archive.claim/meter_layers", "2")
+FORM_V2 = ("archive.claim/form", "2")
+FORM_SPANS_V2 = ("archive.claim/form_spans", "2")
+METER_LAYERS_V3 = ("archive.claim/meter_layers", "3")
+FOLDED_CHART = ("archive.view/folded_chart", "1")
 
 MAX_SECTIONS = 1000
 MAX_JUMPS = 8
 MAX_ENDINGS = 16
 MAX_CHORDS_PER_BAR = 64
+MAX_INSTRUCTION = 200
+MAX_PASS = 999
+MAX_DIRECTIONS = 8
+MAX_DIRECTION = 200
+# A target tempo's `bpm` (ADR 0106): exact decimal text from 1 to 999 with at
+# most three places, one spelling for canonical JSON (no trailing zero).
+BPM = re.compile(r"[1-9][0-9]{0,2}(\.[0-9]{0,2}[1-9])?\Z")
+
+# A form spans version 2 alignment's precision, with a passage alignment's
+# meanings (ADR 0113). Unstated, a person's placement reads `approximate` and
+# a machine's `rough`; only the last two fold.
+PRECISIONS = ("rough", "approximate", "exact")
+FOLDING_PRECISIONS = ("approximate", "exact")
+LAST = "last"
 
 # The optional common vocabulary of a section's `kind`. A section's `label`
 # is always the source's own text; `kind` is what a reader may filter on.
@@ -84,8 +124,8 @@ JUMP_ENDS = ("end", "fine", "coda")
 
 
 class FormError(HarmonyError):
-    """A form, form spans, or meter layers version 2 claim that breaks a rule
-    of ADR 0083."""
+    """A form, form spans, or meter layers claim that breaks a rule of ADR
+    0083 or of its amendment by ADR 0113."""
 
 
 FORM_ROLES = {
@@ -101,14 +141,18 @@ FORM_SPANS_ROLES = {
     "corrects": (0, 8),   # form_spans v1 claims this one corrects
 }
 
+# Version 2's roles are version 1's; what they may pin widens: `form` a form
+# v1 or v2, `corrects` form_spans v1 or v2 (Door's target-measure rule).
+FORM_SPANS_V2_ROLES = FORM_SPANS_ROLES
+
 # Meter layers version 2 is one contract version decided by two records:
 # ADR 0079 adds `corrects`, `derived_from`, and a bank `stem` citation (timed
 # only); ADR 0083 adds the untimed form, `meter`, and `placed` bars. This
 # module checks every addition of both, in one place.
 TIMED_METER_ROLES = {
     **SOURCE_ROLES,
-    "meter": (0, 1),         # the untimed meter_layers v2 claim an alignment placed on this recording
-    "corrects": (0, 8),      # timed meter_layers v1 or v2 claims this one corrects (ADR 0079)
+    "meter": (0, 1),         # the untimed meter_layers v2 (v2 or v3 in v3) claim an alignment placed here
+    "corrects": (0, 8),      # timed meter_layers v1 or v2 (v2 or v3 in v3) claims this one corrects
     "derived_from": (0, 8),  # claims this one was read from, with or without a run (ADR 0079)
 }
 
@@ -116,9 +160,9 @@ UNTIMED_METER_ROLES = {
     "work": (0, 1),
     "document": (0, 1),
     "run": (0, 1),
-    "form": (0, 1),       # form v1: the sections the bars' `section` index
+    "form": (0, 1),       # form v1 (v1 or v2 in v3): the sections the bars' `section` index
     "sequence": (0, 1),   # chord_sequence v1 or v2: the entries the bars' `chords` index
-    "corrects": (0, 8),   # untimed meter_layers v2 claims this one corrects (ADR 0079)
+    "corrects": (0, 8),   # untimed meter_layers v2 (v2 or v3 in v3) claims this one corrects (ADR 0079)
     "derived_from": (0, 8),  # claims this one was read from (ADR 0079)
 }
 
@@ -150,16 +194,20 @@ def _check_url(payload: dict[str, Any], by_role: dict[str, list[dict[str, Any]]]
     return has_document
 
 
-def _check_alignment(payload: dict[str, Any], aligned: bool, where: str) -> None:
+def _check_alignment(payload: dict[str, Any], aligned: bool, where: str, precision: bool = False) -> None:
     """A timed claim states an `alignment` exactly when it places a document
-    or an untimed claim on the recording (ADR 0077's rule)."""
+    or an untimed claim on the recording (ADR 0077's rule). Form spans
+    version 2's may state its `precision` (ADR 0113)."""
     if aligned != ("alignment" in payload):
         raise FormError(f"{where} states an alignment exactly when it places a document or an untimed claim")
     if aligned:
-        alignment = _closed(payload["alignment"], {"method"}, {"max_error_samples"}, f"{where} alignment")
+        optional = {"max_error_samples"} | ({"precision"} if precision else set())
+        alignment = _closed(payload["alignment"], {"method"}, optional, f"{where} alignment")
         _text(alignment["method"], f"{where} alignment method", MAX_TEXT)
         if "max_error_samples" in alignment:
             _int(alignment["max_error_samples"], f"{where} alignment max_error_samples", 0)
+        if "precision" in alignment and alignment["precision"] not in PRECISIONS:
+            raise FormError(f"{where} alignment precision must be one of {PRECISIONS}")
 
 
 def _check_label(value: dict[str, Any], where: str) -> None:
@@ -190,7 +238,20 @@ def check_form(claim: dict[str, Any]) -> list[dict[str, Any]]:
     """Check an `archive.claim/form` version 1 claim: a Work's or a
     document's sections in written order, with repeats, endings, and jumps,
     and no times. Returns the sections; raises FormError (a HarmonyError)."""
-    where = "form"
+    return _check_form(claim, False)
+
+
+def check_form_v2(claim: dict[str, Any]) -> list[dict[str, Any]]:
+    """Check an `archive.claim/form` version 2 claim: version 1, where a
+    repeat may leave out `times` (an open repeat) and any repeat may carry an
+    `instruction`. A version 1 payload is a version 2 payload, so this also
+    checks a form a later claim pins as "version 1 or 2". Returns the
+    sections; raises FormError."""
+    return _check_form(claim, True)
+
+
+def _check_form(claim: dict[str, Any], v2: bool) -> list[dict[str, Any]]:
+    where = "form v2" if v2 else "form"
     record = _closed(claim, {"payload", "refs"}, {"revision_id", "agent"}, where)
     by_role = _refs_by_role(record["refs"], FORM_ROLES, where)
     payload = _closed(record["payload"], {"sections"}, {"repeats", "jumps", "document_url"}, f"{where} payload")
@@ -210,23 +271,33 @@ def check_form(claim: dict[str, Any]) -> list[dict[str, Any]]:
             if previous is not None and (located[0] != previous[0] or located[1] < previous[1]):
                 raise FormError(f"{at} is located by another kind of locator, or before the section before it")
             previous = located
-    repeats = _check_repeats(payload.get("repeats", []), len(sections), where)
+    repeats = _check_repeats(payload.get("repeats", []), len(sections), where, v2)
     _check_jumps(payload.get("jumps", []), len(sections), repeats, where)
     return sections
 
 
-def _check_repeats(value: Any, count: int, where: str) -> list[dict[str, Any]]:
-    """Chord sequence version 1's repeat rules over sections, plus endings."""
+def _check_repeats(value: Any, count: int, where: str, v2: bool = False) -> list[dict[str, Any]]:
+    """Chord sequence version 1's repeat rules over sections, plus endings;
+    in version 2, open repeats and instructions."""
     repeats = _list(value, f"{where} repeats", 0, MAX_REPEATS)
     ranges = []
     for index, repeat in enumerate(repeats):
         at = f"{where} repeat {index}"
-        _closed(repeat, {"first", "last", "times"}, {"endings"}, at)
+        if v2:
+            _closed(repeat, {"first", "last"}, {"times", "endings", "instruction"}, at)
+        else:
+            _closed(repeat, {"first", "last", "times"}, {"endings"}, at)
         first = _int(repeat["first"], f"{at} first", 0, count - 1)
         last = _int(repeat["last"], f"{at} last", first, count - 1)
-        times = _int(repeat["times"], f"{at} times", 2, 999)
-        if "endings" in repeat:
-            _check_endings(repeat["endings"], first, last, times, at)
+        if "instruction" in repeat:
+            # The source's own words, verbatim; nothing parses them.
+            _text(repeat["instruction"], f"{at} instruction", MAX_INSTRUCTION)
+        if "times" in repeat:
+            times = _int(repeat["times"], f"{at} times", 2, MAX_PASS)
+            if "endings" in repeat:
+                _check_endings(repeat["endings"], first, last, times, at)
+        elif "endings" in repeat:
+            _check_open_endings(repeat["endings"], first, last, at)
         ranges.append((first, -last))
     if ranges != sorted(set(ranges)):
         raise FormError(f"{where} repeats must be distinct and in order of first section, outer before inner")
@@ -252,30 +323,88 @@ def _parts(repeat: dict[str, Any]) -> list[tuple[int, int]]:
     return [(repeat["first"], endings[0]["first"] - 1)] + [(e["first"], e["last"]) for e in endings]
 
 
-def _check_endings(value: Any, first: int, last: int, times: int, where: str) -> None:
+def _tile_endings(endings: list[Any], first: int, last: int, where: str, optional: set[str]) -> None:
     """Endings follow a non-empty body, one after another, the last ending at
-    the repeat's last section; each pass of the repeat takes exactly one."""
-    endings = _list(value, f"{where} endings", 2, MAX_ENDINGS)
-    passes: list[int] = []
+    the repeat's last section."""
     start = None
     for index, ending in enumerate(endings):
         at = f"{where} ending {index}"
-        _closed(ending, {"first", "last", "passes"}, set(), at)
+        _closed(ending, {"first", "last"}, optional, at)
         low = _int(ending["first"], f"{at} first", first + 1, last)
         high = _int(ending["last"], f"{at} last", low, last)
         if start is not None and low != start:
             raise FormError(f"{at} must start right after the ending before it")
         start = high + 1
-        numbers = _list(ending["passes"], f"{at} passes", 1, times)
-        for number, item in enumerate(numbers):
-            _int(item, f"{at} passes[{number}]", 1, times)
-        if any(a >= b for a, b in zip(numbers, numbers[1:])):
-            raise FormError(f"{at} passes must be distinct and ascending")
-        passes += numbers
     if start != last + 1:
         raise FormError(f"{where} last ending must end at the repeat's last section")
+
+
+def _pass_numbers(value: Any, high: int, where: str) -> list[int]:
+    numbers = _list(value, f"{where} passes", 1, high)
+    for number, item in enumerate(numbers):
+        _int(item, f"{where} passes[{number}]", 1, high)
+    if any(a >= b for a, b in zip(numbers, numbers[1:])):
+        raise FormError(f"{where} passes must be distinct and ascending")
+    return numbers
+
+
+def _check_endings(value: Any, first: int, last: int, times: int, where: str) -> None:
+    """A fixed repeat's endings tile its end; each pass of the repeat takes
+    exactly one, so each names its passes."""
+    endings = _list(value, f"{where} endings", 2, MAX_ENDINGS)
+    _tile_endings(endings, first, last, where, {"passes"})
+    passes: list[int] = []
+    for index, ending in enumerate(endings):
+        if "passes" not in ending:
+            raise FormError(f"{where} ending {index} must name its passes: a fixed repeat's passes are known")
+        passes += _pass_numbers(ending["passes"], times, f"{where} ending {index}")
     if sorted(passes) != list(range(1, times + 1)):
         raise FormError(f"{where} endings must give every pass from 1 to {times} exactly one ending")
+
+
+def _check_open_endings(value: Any, first: int, last: int, where: str) -> None:
+    """An open repeat's endings tile its end as a fixed repeat's do, with
+    other pass rules, since the number of passes is unknown: exactly one
+    last-time ending (`passes` `["last"]`), exactly one default (no
+    `passes`), and any others numbered from 1, no pass named twice."""
+    endings = _list(value, f"{where} endings", 2, MAX_ENDINGS)
+    _tile_endings(endings, first, last, where, {"passes"})
+    lasts = defaults = 0
+    named: list[int] = []
+    for index, ending in enumerate(endings):
+        at = f"{where} ending {index}"
+        if "passes" not in ending:
+            defaults += 1
+        elif ending["passes"] == [LAST]:
+            lasts += 1
+        else:
+            named += _pass_numbers(ending["passes"], MAX_PASS, at)
+    if lasts != 1 or defaults != 1:
+        raise FormError(f"{where} an open repeat needs exactly one last-time ending and one default ending")
+    if len(set(named)) != len(named):
+        raise FormError(f"{where} endings name a pass twice")
+
+
+def _is_open(repeat: dict[str, Any]) -> bool:
+    return "times" not in repeat
+
+
+def _ending_at(repeat: dict[str, Any], section: int) -> dict[str, Any] | None:
+    """The ending of `repeat` that holds `section`, or None in its body."""
+    return next((e for e in repeat.get("endings", []) if e["first"] <= section <= e["last"]), None)
+
+
+def _takes(repeat: dict[str, Any], ending: dict[str, Any], number: int) -> bool:
+    """Whether pass `number` of `repeat` may take `ending`. A fixed repeat's
+    pass takes the ending naming it. An open repeat's last-time ending is
+    taken on its final pass, whatever number that is; its default on any pass
+    no numbered ending names."""
+    passes = ending.get("passes")
+    if passes == [LAST]:
+        return True
+    if passes is None:
+        return not any(number in e.get("passes", []) for e in repeat["endings"])
+    return number in passes
 
 
 def _check_jumps(value: Any, count: int, repeats: list[dict[str, Any]], where: str) -> None:
@@ -311,53 +440,86 @@ def _check_jumps(value: Any, count: int, repeats: list[dict[str, Any]], where: s
         raise FormError(f"{where} jumps must be at distinct sections, in written order")
 
 
-def _play(first: int, last: int, repeats: list[dict[str, Any]], take: bool, final: bool) -> list[tuple[int, bool]]:
+def _passes(repeat: dict[str, Any], take: bool, final: bool) -> list[tuple[dict[str, Any] | None, bool, bool]]:
+    """A repeat's passes as played: each the ending it takes (None without
+    endings), whether it is the last pass of every repeat around it, and
+    whether it is marked `open`. With `take` false the repeat is played once
+    with the ending of its last pass, as on a return from a jump.
+
+    An open repeat's count is the performance's, so its order is a shape
+    (ADR 0113): each pass a numbered ending names, from 1 to the highest; one
+    pass marked open with the default ending, standing for every further pass
+    before the last; and the last pass with the last-time ending. With no
+    endings it is one pass marked open, which is also its last. On a return
+    it is played once, with its last-time ending, and is not open."""
+    endings = repeat.get("endings")
+    if not _is_open(repeat):
+        numbers = range(1, repeat["times"] + 1) if take else [repeat["times"]]
+        return [(next(e for e in endings if n in e["passes"]) if endings else None,
+                 final and n == repeat["times"], False) for n in numbers]
+    if not endings:
+        return [(None, final, take)]
+    last_time = next(e for e in endings if e.get("passes") == [LAST])
+    if not take:
+        return [(last_time, final, False)]
+    default = next(e for e in endings if "passes" not in e)
+    highest = max((n for e in endings if e.get("passes") not in (None, [LAST]) for n in e["passes"]), default=0)
+    numbered = [(next((e for e in endings if e.get("passes") not in (None, [LAST]) and n in e["passes"]), default),
+                 False, False) for n in range(1, highest + 1)]
+    return numbered + [(default, False, True), (last_time, final, False)]
+
+
+def _play(first: int, last: int, repeats: list[dict[str, Any]], take: bool, final: bool,
+          opened: bool = False) -> list[tuple[int, bool, bool]]:
     """Sections first to last as played, each with whether this is its last
-    pass through every repeat around it. With `take` false a repeat is played
+    pass through every repeat around it, and whether it lies in a pass marked
+    open (of any repeat around it). With `take` false a repeat is played
     once, with the ending of its last pass, as on a return from a jump."""
     inside = sorted((r for r in repeats if first <= r["first"] and r["last"] <= last),
                     key=lambda r: (r["first"], -r["last"]))
-    order: list[tuple[int, bool]] = []
+    order: list[tuple[int, bool, bool]] = []
     at = first
     while at <= last:
         outer = next((r for r in inside if r["first"] == at), None)
         if outer is None:
-            order.append((at, final))
+            order.append((at, final, opened))
             at += 1
             continue
         nested = [r for r in inside if r is not outer and outer["first"] <= r["first"] and r["last"] <= outer["last"]]
-        for number in range(1, outer["times"] + 1) if take else [outer["times"]]:
-            last_pass = final and number == outer["times"]
-            if "endings" in outer:
+        for ending, last_pass, open_pass in _passes(outer, take, final):
+            marked = opened or open_pass
+            if ending is not None:
                 body_last = outer["endings"][0]["first"] - 1
-                ending = next(e for e in outer["endings"] if number in e["passes"])
-                order += _play(outer["first"], body_last, nested, take, last_pass)
-                order += _play(ending["first"], ending["last"], nested, take, last_pass)
+                order += _play(outer["first"], body_last, nested, take, last_pass, marked)
+                order += _play(ending["first"], ending["last"], nested, take, last_pass, marked)
             else:
-                order += _play(outer["first"], outer["last"], nested, take, last_pass)
+                order += _play(outer["first"], outer["last"], nested, take, last_pass, marked)
         at = outer["last"] + 1
     return order
 
 
-def form_order(payload: dict[str, Any]) -> list[int]:
+def form_order(payload: dict[str, Any], *, marked: bool = False) -> list[Any]:
     """The sections' indices in the order played: every repeat unrolled, each
     pass taking its ending, and each jump taken once, the first time its
     section ends on the last pass of every repeat around it. On the return a
     repeat is played once with its last ending unless the jump says
-    `repeats_on_return`. A view of a checked payload, never stored."""
+    `repeats_on_return`. An open repeat (form version 2) is listed as its
+    shape (see `_passes`). With `marked`, each entry is a pair (section,
+    open): whether it is played in a pass marked open. A view of a checked
+    payload of form version 1 or 2, never stored."""
     sections = payload["sections"]
     repeats = payload.get("repeats", [])
     jumps = {jump["after"]: jump for jump in payload.get("jumps", [])}
     last = len(sections) - 1
 
-    def play_from(start: int, take: bool) -> list[tuple[int, bool]]:
+    def play_from(start: int, take: bool) -> list[tuple[int, bool, bool]]:
         return _play(start, last, [r for r in repeats if r["first"] >= start], take, True)
 
-    order: list[int] = []
+    order: list[tuple[int, bool]] = []
     events, index, active, taken = play_from(0, True), 0, None, set()
     while index < len(events):
-        section, final = events[index]
-        order.append(section)
+        section, final, opened = events[index]
+        order.append((section, opened))
         index += 1
         if not final:
             continue
@@ -370,7 +532,7 @@ def form_order(payload: dict[str, Any]) -> list[int]:
             active = jumps[section]
             taken.add(section)
             events, index = play_from(active.get("to", 0), active.get("repeats_on_return", False)), 0
-    return order
+    return order if marked else [section for section, _ in order]
 
 
 # ---------------------------------------------------------------------------
@@ -383,37 +545,116 @@ def check_form_spans(claim: dict[str, Any], stream_claim: dict[str, Any],
     sample spans of one stream, with the `audio_stream` claim it pins and,
     when it pins a `form`, optionally that form claim, to check each span's
     `section` against it. Returns the spans; raises FormError."""
-    where = "form spans"
+    return _check_form_spans(claim, stream_claim, form_claim, False)
+
+
+def check_form_spans_v2(claim: dict[str, Any], stream_claim: dict[str, Any],
+                        form_claim: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Check an `archive.claim/form_spans` version 2 claim: version 1, where
+    the pinned form may be version 1 or 2, a span placed from a section
+    inside repeats names its `passes` (one per repeat around the section,
+    outer first) and may say it was played on a `return`, and the alignment
+    may state its `precision`. Given the form claim, each span's passes are
+    checked against its repeats: within a fixed repeat's `times`, any
+    positive integer for an open one, and in an ending, a pass that takes
+    that ending. A span with no section in a claim that pins a form is a
+    departure (`departures`). Returns the spans; raises FormError."""
+    return _check_form_spans(claim, stream_claim, form_claim, True)
+
+
+def _check_form_spans(claim: dict[str, Any], stream_claim: dict[str, Any],
+                      form_claim: dict[str, Any] | None, v2: bool) -> list[dict[str, Any]]:
+    where = "form spans v2" if v2 else "form spans"
     record = _closed(claim, {"payload", "refs"}, {"revision_id", "agent"}, where)
-    by_role = _refs_by_role(record["refs"], FORM_SPANS_ROLES, where)
+    by_role = _refs_by_role(record["refs"], FORM_SPANS_V2_ROLES if v2 else FORM_SPANS_ROLES, where)
     rate, count = _check_stream(by_role, stream_claim, where)
     payload = _closed(record["payload"], {"sample_rate", "spans"}, {"document_url", "alignment"}, f"{where} payload")
     if _int(payload["sample_rate"], f"{where} sample_rate", 1) != rate:
         raise FormError(f"{where} sample_rate differs from the stream's")
     has_document = _check_url(payload, by_role, where)
     placed = bool(by_role["form"])
-    _check_alignment(payload, has_document or placed, where)
-    sections = None
+    _check_alignment(payload, has_document or placed, where, precision=v2)
+    sections = repeats = None
     if placed and form_claim is not None:
         _pinned(form_claim, by_role["form"][0], where, "form")
-        sections = check_form(form_claim)
+        sections = check_form_v2(form_claim) if v2 else check_form(form_claim)
+        repeats = form_claim["payload"].get("repeats", [])
     previous_end = 0
+    extra = {"passes", "return"} if v2 else set()
     for index, span in enumerate(_list(payload["spans"], f"{where} spans", 1, MAX_SPANS)):
         at = f"{where} span {index}"
-        _closed(span, {"start_sample", "end_sample"}, {"label", "kind", "section", "locator"}, at)
+        _closed(span, {"start_sample", "end_sample"}, {"label", "kind", "section", "locator"} | extra, at)
         _, previous_end = _check_span_bounds(span["start_sample"], span["end_sample"], previous_end, count, at)
         _check_label(span, at)
         if "section" in span:
             if not placed:
                 raise FormError(f"{at} names a form section but the claim pins no form")
-            _int(span["section"], f"{at} section", 0, None if sections is None else len(sections) - 1)
+            number = _int(span["section"], f"{at} section", 0, None if sections is None else len(sections) - 1)
+            if v2:
+                _check_passes(span, number, repeats, at)
         elif "label" not in span:
             raise FormError(f"{at} needs a label or a form section")
+        elif extra & set(span):
+            raise FormError(f"{at} names passes or a return without a form section")
         if "locator" in span:
             if not has_document:
                 raise FormError(f"{at} has a locator but the claim pins no document")
             _one_locator(span["locator"], {"line", "bar"}, at)
     return payload["spans"]
+
+
+def enclosing(repeats: list[dict[str, Any]], section: int) -> list[int]:
+    """The indices of the repeats around `section`, outer first: the order of
+    a form spans version 2 span's `passes`. Repeats are checked to be in
+    order of first section, outer before inner, and nested or apart."""
+    return [index for index, r in enumerate(repeats) if r["first"] <= section <= r["last"]]
+
+
+def _check_passes(span: dict[str, Any], section: int, repeats: list[dict[str, Any]] | None, where: str) -> None:
+    """A span's passes: one positive integer per repeat around its section,
+    each within a fixed repeat's `times`; in an ending, a pass that takes it."""
+    # Only stated when true, as Door's bundle says (`return` is const true).
+    if "return" in span and span["return"] is not True:
+        raise FormError(f"{where} return, when given, must be true")
+    if repeats is None:
+        if "passes" in span:
+            for number, item in enumerate(_list(span["passes"], f"{where} passes", 1, MAX_REPEATS)):
+                _int(item, f"{where} passes[{number}]", 1)
+        return
+    around = enclosing(repeats, section)
+    if bool(around) != ("passes" in span):
+        raise FormError(f"{where} names its passes exactly when its section lies inside repeats")
+    if not around:
+        return
+    passes = _list(span["passes"], f"{where} passes", len(around), len(around))
+    for (number, item), index in zip(enumerate(passes), around):
+        repeat = repeats[index]
+        value = _int(item, f"{where} passes[{number}]", 1, None if _is_open(repeat) else repeat["times"])
+        ending = _ending_at(repeat, section)
+        if ending is not None and not _takes(repeat, ending, value):
+            raise FormError(f"{where} is in an ending that pass {value} of repeat {index} does not take")
+
+
+def precision(payload: dict[str, Any]) -> str | None:
+    """A form spans payload's alignment precision as read (ADR 0113): stated,
+    or else `approximate` for a person's placement (`method` `manual`) and
+    `rough` for a machine's. None when the claim states no alignment."""
+    alignment = payload.get("alignment")
+    if alignment is None:
+        return None
+    if "precision" in alignment:
+        return alignment["precision"]
+    return "approximate" if alignment["method"] == "manual" else "rough"
+
+
+def departures(claim: dict[str, Any]) -> list[int]:
+    """The indices of a form spans claim's departures: spans naming no
+    section in a claim that pins a form (an extra chorus, a jam, a false
+    start), kept as played. A claim that pins no form has none: its spans
+    are labels."""
+    if not any(ref.get("role") == "form" for ref in claim["refs"]):
+        return []
+    return [index for index, span in enumerate(claim["payload"]["spans"]) if "section" not in span]
 
 
 # ---------------------------------------------------------------------------
@@ -436,11 +677,32 @@ def check_meter_layers_v2(claim: dict[str, Any], stream_claim: dict[str, Any] | 
     placed bar naming the bar it came from. An untimed claim is about a Work
     or a document: bars without samples, optionally in form sections and
     holding chord sequence entries. Returns the layers; raises FormError."""
+    return _check_meter(claim, stream_claim, untimed_claim, form_claim, sequence_claim, False)
+
+
+def check_meter_layers_v3(claim: dict[str, Any], stream_claim: dict[str, Any] | None = None, *,
+                          untimed_claim: dict[str, Any] | None = None,
+                          form_claim: dict[str, Any] | None = None,
+                          sequence_claim: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Check an `archive.claim/meter_layers` version 3 claim (ADR 0113):
+    version 2, where an untimed claim's `form` may pin form version 1 or 2,
+    so a Work's bars can lie in the sections of a form with open repeats;
+    `corrects` and `derived_from` may pin version 2 or 3, and a timed claim's
+    `meter` an untimed version 2 or 3 (Door's target-measure rule; an untimed
+    version 2 payload is a version 3 payload, so either is checked here with
+    version 3's rules); an untimed bar may carry `directions` (ADR 0116).
+    Returns the layers; raises FormError."""
+    return _check_meter(claim, stream_claim, untimed_claim, form_claim, sequence_claim, True)
+
+
+def _check_meter(claim: dict[str, Any], stream_claim: dict[str, Any] | None,
+                 untimed_claim: dict[str, Any] | None, form_claim: dict[str, Any] | None,
+                 sequence_claim: dict[str, Any] | None, v3: bool) -> list[dict[str, Any]]:
     if is_untimed_meter(claim):
-        return _check_untimed_meter(claim, form_claim, sequence_claim)
+        return _check_untimed_meter(claim, form_claim, sequence_claim, v3)
     if stream_claim is None:
-        raise FormError("meter layers v2 pins a source, so its stream claim is needed")
-    return _check_timed_meter(claim, stream_claim, untimed_claim)
+        raise FormError(f"meter layers {'v3' if v3 else 'v2'} pins a source, so its stream claim is needed")
+    return _check_timed_meter(claim, stream_claim, untimed_claim, v3)
 
 
 def _check_layer_header(layer: Any, where: str) -> None:
@@ -459,8 +721,8 @@ def _check_roles(layers: list[dict[str, Any]], where: str) -> None:
 
 
 def _check_timed_meter(claim: dict[str, Any], stream_claim: dict[str, Any],
-                       untimed_claim: dict[str, Any] | None) -> list[dict[str, Any]]:
-    where = "meter layers v2"
+                       untimed_claim: dict[str, Any] | None, v3: bool = False) -> list[dict[str, Any]]:
+    where = "meter layers v3" if v3 else "meter layers v2"
     record = _closed(claim, {"payload", "refs"}, {"revision_id", "agent"}, where)
     by_role = _refs_by_role(record["refs"], TIMED_METER_ROLES, where)
     rate, count = _check_stream(by_role, stream_claim, where)
@@ -477,7 +739,7 @@ def _check_timed_meter(claim: dict[str, Any], stream_claim: dict[str, Any],
         _pinned(untimed_claim, by_role["meter"][0], where, "meter")
         if not is_untimed_meter(untimed_claim):
             raise FormError(f"{where} places a meter claim that is not untimed")
-        written = _check_untimed_meter(untimed_claim, None, None)
+        written = _check_untimed_meter(untimed_claim, None, None, v3)
     layers = _list(payload["layers"], f"{where} layers", 1, MAX_LAYERS)
     for number, layer in enumerate(layers):
         at = f"{where} layer {number}"
@@ -523,8 +785,8 @@ def _check_placed(bar: dict[str, Any], written: list[dict[str, Any]] | None, whe
 
 
 def _check_untimed_meter(claim: dict[str, Any], form_claim: dict[str, Any] | None,
-                         sequence_claim: dict[str, Any] | None) -> list[dict[str, Any]]:
-    where = "untimed meter layers"
+                         sequence_claim: dict[str, Any] | None, v3: bool = False) -> list[dict[str, Any]]:
+    where = "untimed meter layers v3" if v3 else "untimed meter layers"
     record = _closed(claim, {"payload", "refs"}, {"revision_id", "agent"}, where)
     by_role = _refs_by_role(record["refs"], UNTIMED_METER_ROLES, where)
     payload = _closed(record["payload"], {"layers"}, {"modulations", "document_url"}, f"{where} payload")
@@ -533,7 +795,7 @@ def _check_untimed_meter(claim: dict[str, Any], form_claim: dict[str, Any] | Non
     sections = entries = None
     if by_role["form"] and form_claim is not None:
         _pinned(form_claim, by_role["form"][0], where, "form")
-        sections = check_form(form_claim)
+        sections = check_form_v2(form_claim) if v3 else check_form(form_claim)
     if by_role["sequence"] and sequence_claim is not None:
         _pinned(sequence_claim, by_role["sequence"][0], where, "sequence")
         entries = check_chord_sequence_v2(sequence_claim)
@@ -545,7 +807,8 @@ def _check_untimed_meter(claim: dict[str, Any], form_claim: dict[str, Any] | Non
         last_section, last_entry, last_locator = 0, 0, 0
         for index, bar in enumerate(_list(layer["bars"], f"{at} bars", 1, MAX_BARS)):
             bat = f"{at} bar {index}"
-            _closed(bar, {"numerator", "denominator"}, {"grouping", "locator", "section", "chords"}, bat)
+            _closed(bar, {"numerator", "denominator"},
+                    {"grouping", "locator", "section", "chords"} | ({"directions"} if v3 else set()), bat)
             length = _check_signature(bar, bat)
             if "locator" in bar:
                 if not has_document:
@@ -561,6 +824,8 @@ def _check_untimed_meter(claim: dict[str, Any], form_claim: dict[str, Any] | Non
                 if not by_role["sequence"]:
                     raise FormError(f"{bat} holds chord entries but the claim pins no sequence")
                 last_entry = _check_chords(bar["chords"], length, entries, last_entry, bat)
+            if "directions" in bar:
+                check_directions(bar["directions"], f"{bat} directions")
     _check_roles(layers, where)
     seen = []
     for index, link in enumerate(_list(payload.get("modulations", []), f"{where} modulations", 0, MAX_BARS)):
@@ -574,6 +839,34 @@ def _check_untimed_meter(claim: dict[str, Any], form_claim: dict[str, Any] | Non
     if seen != sorted(set(seen)):
         raise FormError(f"{where} modulations must be distinct and in order of layer and bar")
     return layers
+
+
+def check_target_tempo(value: Any, where: str) -> dict[str, Any]:
+    """A target tempo in ADR 0106's shape: `bpm`, exact decimal text from 1
+    to 999 with at most three places, and an optional `beat`, the note value
+    counted. An intention, never a measurement. Returns it."""
+    tempo = _closed(value, {"bpm"}, {"beat"}, where)
+    if not isinstance(tempo["bpm"], str) or not BPM.match(tempo["bpm"]):
+        raise FormError(f"{where} bpm must be decimal text from 1 to 999 with at most three places, "
+                        "and no trailing zero")
+    if "beat" in tempo:
+        note_value(tempo["beat"], f"{where} beat")
+    return tempo
+
+
+def check_directions(value: Any, where: str) -> list[dict[str, Any]]:
+    """An untimed bar's written directions (ADR 0116, decision D): 1 to 8,
+    each `text` (1 to 200 characters, verbatim) and an optional target
+    `tempo`. A direction is never a lyric line; that is the asserter's to
+    keep, since the bar names no lyric. Returns them."""
+    directions = _list(value, where, 1, MAX_DIRECTIONS)
+    for index, item in enumerate(directions):
+        at = f"{where}[{index}]"
+        direction = _closed(item, {"text"}, {"tempo"}, at)
+        _text(direction["text"], f"{at} text", MAX_DIRECTION)
+        if "tempo" in direction:
+            check_target_tempo(direction["tempo"], f"{at} tempo")
+    return directions
 
 
 def _rising(value: int, previous: int, where: str, what: str) -> int:
@@ -626,17 +919,252 @@ def _check_chords(value: Any, length: Fraction, entries: list[dict[str, Any]] | 
     return previous
 
 
-def bar_order(layer: dict[str, Any], form_payload: dict[str, Any] | None = None) -> list[int]:
+def bar_order(layer: dict[str, Any], form_payload: dict[str, Any] | None = None, *,
+              marked: bool = False) -> list[Any]:
     """An untimed bars layer's bar indices in the order played: the form's
     played sections, each with its bars in written order. Without a form the
     bars are played as written. Every bar must name a section when a form is
-    given, so that no bar is dropped silently. A view, never stored."""
+    given, so that no bar is dropped silently. With `marked`, each entry is a
+    pair (bar, open), as `form_order` marks sections. A view, never stored."""
     bars = layer["bars"]
     if form_payload is None:
-        return list(range(len(bars)))
+        plain = list(range(len(bars)))
+        return [(index, False) for index in plain] if marked else plain
     if any("section" not in bar for bar in bars):
         raise FormError("every bar needs a section for the form to order it")
     by_section: dict[int, list[int]] = {}
     for index, bar in enumerate(bars):
         by_section.setdefault(bar["section"], []).append(index)
-    return [index for section in form_order(form_payload) for index in by_section.get(section, [])]
+    order = [(index, opened) for section, opened in form_order(form_payload, marked=True)
+             for index in by_section.get(section, [])]
+    return order if marked else [index for index, _ in order]
+
+
+# ---------------------------------------------------------------------------
+# The folded chart (ADR 0113)
+
+
+def folded_chart(form_payload: dict[str, Any] | None, spans_claim: dict[str, Any],
+                 chords: Callable[[int, int], list[Any]], sample_count: int | None = None) -> dict[str, Any]:
+    """`archive.view/folded_chart` version 1: a recording's chart in played
+    order, folded into the written form's repeat signs only where its form
+    spans say so. A view of a checked form spans claim (version 1 or 2) and,
+    when it pins a form, that form's checked payload; never stored.
+
+    `chords(start_sample, end_sample)` gives the chord shown at each bar of
+    that stretch of the recording, in order (by the lead sheet's precedence,
+    or ADR 0082's current rule: the caller's choice); chords are compared
+    only for equality. Given the stream's `sample_count`, the stretch after
+    the last span is written out too.
+
+    The rules, whose change changes the version:
+
+    1. Only mapped spans fold: consecutive, abutting spans fold into one
+       repeat when they name its sections with consecutive passes of it, in
+       a claim whose precision (`precision`) is approximate or exact. A pass
+       is folded only when it plays the repeat's whole body and one whole
+       ending (if it has endings), with the same body sections, inner passes
+       and bar counts as the first pass. The outermost repeat that folds two
+       passes or more is folded.
+    2. The count is the recording's: a folded repeat lists the passes played
+       and their count; a fixed repeat played another number of times also
+       reports the `difference` from its `times`.
+    3. Passes that differ show their difference: each body bar is written
+       once with the chord most passes play (ties to the earliest pass), and
+       every other chord as a variant with its passes; each distinct ending
+       played (its sections and chords) is written once with its passes.
+    4. Everything else is written out as played, with why: a departure, an
+       unmapped span (no section, or no passes inside a repeat), a span of a
+       rough claim, a mapped span that folds with nothing (`played`), and a
+       stretch no span covers (`uncovered`)."""
+    payload = spans_claim["payload"]
+    spans = payload["spans"]
+    pins_form = any(ref.get("role") == "form" for ref in spans_claim["refs"])
+    read = precision(payload)
+    repeats = form_payload.get("repeats", []) if form_payload is not None else []
+    folds = pins_form and form_payload is not None and read in FOLDING_PRECISIONS
+    bars = [list(chords(span["start_sample"], span["end_sample"])) for span in spans]
+    chart: list[dict[str, Any]] = []
+    position, index = 0, 0
+    while index < len(spans):
+        span = spans[index]
+        if span["start_sample"] > position:
+            chart.append(_uncovered(position, span["start_sample"], chords))
+        fold = _fold_at(index, spans, bars, repeats) if folds else None
+        if fold is not None:
+            item, index = fold
+            chart.append(item)
+            position = item["end_sample"]
+            continue
+        chart.append(_written_out(index, span, bars[index], _why(span, pins_form, read, repeats)))
+        position = span["end_sample"]
+        index += 1
+    if sample_count is not None and position < sample_count:
+        chart.append(_uncovered(position, sample_count, chords))
+    return {"view": list(FOLDED_CHART), "precision": read, "chart": chart}
+
+
+def _uncovered(start: int, end: int, chords: Callable[[int, int], list[Any]]) -> dict[str, Any]:
+    return {"kind": "uncovered", "start_sample": start, "end_sample": end, "bars": list(chords(start, end))}
+
+
+def _why(span: dict[str, Any], pins_form: bool, read: str | None, repeats: list[dict[str, Any]]) -> str:
+    if "section" not in span:
+        return "departure" if pins_form else "unmapped"
+    if "passes" not in span and enclosing(repeats, span["section"]):
+        return "unmapped"
+    return "played" if read in FOLDING_PRECISIONS else "rough"
+
+
+def _written_out(index: int, span: dict[str, Any], bars: list[Any], why: str) -> dict[str, Any]:
+    kept = {key: span[key] for key in ("section", "passes", "return", "label", "kind") if key in span}
+    return {"kind": "played", "span": index, "start_sample": span["start_sample"],
+            "end_sample": span["end_sample"], **kept, "written_out": why, "bars": bars}
+
+
+def _fold_at(start: int, spans: list[dict[str, Any]], bars: list[list[Any]],
+             repeats: list[dict[str, Any]]) -> tuple[dict[str, Any], int] | None:
+    """The fold beginning at span `start`, outermost repeat first, and the
+    index of the first span after it; None when nothing folds there."""
+    span = spans[start]
+    if "section" not in span or "passes" not in span:
+        return None
+    around = enclosing(repeats, span["section"])
+    for depth, number in enumerate(around):
+        groups = _pass_groups(start, depth, around, spans, repeats)
+        folded = _matching(groups, depth, spans, bars, repeats[number])
+        if len(folded) >= 2:
+            return _fold(folded, depth, number, spans, bars, repeats[number]), folded[-1][1][-1] + 1
+    return None
+
+
+def _pass_groups(start: int, depth: int, around: list[int], spans: list[dict[str, Any]],
+                 repeats: list[dict[str, Any]]) -> list[tuple[int, list[int]]]:
+    """Abutting mapped spans from `start` inside the repeat at `depth`, with
+    the same passes of the repeats outside it and the same return, grouped
+    by their pass of it, each pass one more than the one before."""
+    first = spans[start]
+    key = (first["passes"][:depth], first.get("return", False))
+    groups: list[tuple[int, list[int]]] = []
+    end = first["start_sample"]
+    for index in range(start, len(spans)):
+        span = spans[index]
+        if "section" not in span or "passes" not in span or span["start_sample"] != end:
+            break
+        if enclosing(repeats, span["section"])[:depth + 1] != around[:depth + 1]:
+            break
+        if (span["passes"][:depth], span.get("return", False)) != key:
+            break
+        number = span["passes"][depth]
+        if groups and number == groups[-1][0]:
+            groups[-1][1].append(index)
+        elif not groups or number == groups[-1][0] + 1:
+            groups.append((number, [index]))
+        else:
+            break
+        end = span["end_sample"]
+    return groups
+
+
+def _shape(indices: list[int], depth: int, spans: list[dict[str, Any]], bars: list[list[Any]],
+           repeat: dict[str, Any]) -> tuple[list[tuple[int, tuple[int, ...], int]], list[int]] | None:
+    """A pass's body as (section, inner passes, bar count) per span, and the
+    spans of its ending; None unless it plays the whole body, then one whole
+    ending when the repeat has endings."""
+    body, ending = [], []
+    for index in indices:
+        section = spans[index]["section"]
+        if _ending_at(repeat, section) is None:
+            if ending:
+                return None
+            body.append((section, tuple(spans[index]["passes"][depth + 1:]), len(bars[index])))
+        else:
+            ending.append(index)
+    body_last = repeat["endings"][0]["first"] - 1 if "endings" in repeat else repeat["last"]
+    if {section for section, _, _ in body} != set(range(repeat["first"], body_last + 1)):
+        return None
+    if "endings" in repeat:
+        played = {spans[index]["section"] for index in ending}
+        if not any(played == set(range(e["first"], e["last"] + 1)) for e in repeat["endings"]):
+            return None
+    elif ending:
+        return None
+    return body, ending
+
+
+def _matching(groups: list[tuple[int, list[int]]], depth: int, spans: list[dict[str, Any]],
+              bars: list[list[Any]], repeat: dict[str, Any]) -> list[tuple[int, list[int]]]:
+    """The leading passes that fold together: each whole, with the first
+    pass's body shape."""
+    folded: list[tuple[int, list[int]]] = []
+    first = None
+    for number, indices in groups:
+        shape = _shape(indices, depth, spans, bars, repeat)
+        if shape is None or (first is not None and shape[0] != first):
+            break
+        first = shape[0]
+        folded.append((number, indices))
+    return folded
+
+
+def _compare(played: list[tuple[int, Any]]) -> dict[str, Any]:
+    """One bar across passes: the chord most passes play (ties to the
+    earliest pass), and every other chord as a variant with its passes."""
+    chords: list[tuple[Any, list[int]]] = []
+    for number, chord in played:
+        found = next((entry for entry in chords if entry[0] == chord), None)
+        if found is None:
+            chords.append((chord, [number]))
+        else:
+            found[1].append(number)
+    main = max(chords, key=lambda entry: len(entry[1]))  # max keeps the first of equals
+    shown: dict[str, Any] = {"chord": main[0]}
+    if len(chords) > 1:
+        shown["variants"] = [{"passes": numbers, "chord": chord} for chord, numbers in chords if numbers is not main[1]]
+    return shown
+
+
+def _fold(folded: list[tuple[int, list[int]]], depth: int, number: int, spans: list[dict[str, Any]],
+          bars: list[list[Any]], repeat: dict[str, Any]) -> dict[str, Any]:
+    first_span, last_span = folded[0][1][0], folded[-1][1][-1]
+    body_spans = [[i for i in indices if _ending_at(repeat, spans[i]["section"]) is None] for _, indices in folded]
+    body = []
+    for position, index in enumerate(body_spans[0]):
+        entry: dict[str, Any] = {"section": spans[index]["section"]}
+        if spans[index]["passes"][depth + 1:]:
+            entry["passes"] = spans[index]["passes"][depth + 1:]
+        entry["bars"] = [_compare([(n, bars[group[position]][bar]) for (n, _), group in zip(folded, body_spans)])
+                         for bar in range(len(bars[index]))]
+        body.append(entry)
+    endings: list[dict[str, Any]] = []
+    for n, indices in folded:
+        played = [{"section": spans[i]["section"], **({"passes": spans[i]["passes"][depth + 1:]}
+                                                       if spans[i]["passes"][depth + 1:] else {}),
+                   "bars": bars[i]} for i in indices if _ending_at(repeat, spans[i]["section"]) is not None]
+        if not played:
+            continue
+        same = next((ending for ending in endings if ending["sections"] == played), None)
+        if same is None:
+            endings.append({"passes": [n], "sections": played})
+        else:
+            same["passes"].append(n)
+    numbers = [n for n, _ in folded]
+    item: dict[str, Any] = {"kind": "repeat", "repeat": number, "spans": [first_span, last_span],
+                            "start_sample": spans[first_span]["start_sample"],
+                            "end_sample": spans[last_span]["end_sample"]}
+    if depth:
+        item["outer_passes"] = spans[first_span]["passes"][:depth]
+    if spans[first_span].get("return", False):
+        item["return"] = True
+    item["passes"] = numbers
+    item["count"] = len(numbers)
+    if _is_open(repeat):
+        item["open"] = True
+    else:
+        item["times"] = repeat["times"]
+        if len(numbers) != repeat["times"]:
+            item["difference"] = len(numbers) - repeat["times"]
+    item["body"] = body
+    if endings:
+        item["endings"] = endings
+    return item

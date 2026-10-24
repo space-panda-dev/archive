@@ -1,7 +1,7 @@
 """World re-checks D-18's agent and target-form rules as Door does.
 
 The tables in `world/envelope_rules.py` are compared with every bundle the
-0.0.10 catalog installs, so a bundle that declares one of these rules cannot
+0.0.11 catalog installs, so a bundle that declares one of these rules cannot
 go unchecked by World. The refusals mutate the drafted 0.0.10 records into
 the cases Door's agreement test checks alone (`test_door_agreement_010.py`'s
 DOOR_ONLY), and require World's projection to refuse them too.
@@ -18,9 +18,9 @@ from world.world import ProjectionError, build_projection
 
 
 def declared(rule):
-    """Each 0.0.10 contract whose bundle declares `rule` at its schema's
+    """Each 0.0.11 contract whose bundle declares `rule` at its schema's
     root, with the declaration."""
-    catalog = json.loads((ROOT / "spec" / "0.0.10" / "contracts.json").read_text())["contracts"]
+    catalog = json.loads((ROOT / "spec" / "0.0.11" / "contracts.json").read_text())["contracts"]
     found = {}
     for entry in catalog:
         bundle = json.loads((ROOT / "spec" / "contracts" / (entry["digest"].replace(":", "-") + ".json")).read_text())

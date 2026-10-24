@@ -3,7 +3,10 @@ chord, meter, form, lyric, and melody claim revisions it chose for a Work,
 optionally for one recording.
 
 `archive.claim/lead_sheet` version 1 is decided by ADR 0084 for
-specification 0.0.10. This module holds its rules as World will re-check them
+specification 0.0.10, and version 2 by ADR 0113 for 0.0.11: its inputs may be
+a melody version 2 (never a sketch), form and form spans version 2, and
+meter layers version 3, and it may pin underlays, the words under its
+melody. This module holds its rules as World will re-check them
 when it projects such a claim, so a client can check a proposal before Door
 does; Door remains the authority (INV-2). It also holds three computed views:
 what changed among a lead sheet's inputs since it pinned them, which pinned
@@ -30,6 +33,7 @@ from dataclasses import dataclass
 from typing import Any
 
 LEAD_SHEET = ("archive.claim/lead_sheet", "1")
+LEAD_SHEET_V2 = ("archive.claim/lead_sheet", "2")
 
 # Contracts installed by specification 0.0.9 (D-17).
 CHORD_STACKS = ("archive.claim/chord_stacks", "1")
@@ -45,8 +49,10 @@ JUDGMENT = ("archive.assessment/judgment", "1")
 from world.exports import ExportError, export_key                 # noqa: E402  ADR 0089
 from world.documents import TIMED_LYRICS                     # noqa: E402  ADR 0085
 from world.form import FORM, FORM_SPANS, METER_LAYERS_V2     # noqa: E402  ADR 0083 (meter v2 shared with 0079)
+from world.form import FORM_SPANS_V2, FORM_V2, METER_LAYERS_V3  # noqa: E402  ADR 0113
 from world.harmony import CHORD_SEQUENCE_V2, CHORD_STACKS_V2  # noqa: E402  ADR 0079
 from world.notes import MELODY, MELODY_SPANS, NotesError, check_strings_and_capo  # noqa: E402  ADR 0086
+from world.notes import MELODY_V2, UNDERLAY, is_sketch      # noqa: E402  ADR 0113
 from world.tonality import KEY_REGIONS, KEY_SEQUENCE         # noqa: E402  ADR 0080
 
 OBJECT_ID = re.compile(r"urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
@@ -79,6 +85,9 @@ ROLES: dict[str, tuple[int, int]] = {
     "band": (0, 1),          # organisation Entity: the band that adopted this lead sheet
     "adopted_by": (0, 16),   # band_membership v1: the members who adopted it
 }
+# Version 2 (ADR 0113) adds one role: underlays of the pinned lyric document
+# under a pinned melody, in the asserter's precedence like every role.
+ROLES_V2: dict[str, tuple[int, int]] = {**ROLES, "underlay": (0, 8)}
 INPUT_CONTRACTS: dict[str, set[tuple[str, str]]] = {
     "chords": {CHORD_STACKS, CHORD_SEQUENCE, CHORD_STACKS_V2, CHORD_SEQUENCE_V2},
     "meter": {METER_LAYERS, METER_LAYERS_V2},
@@ -87,9 +96,19 @@ INPUT_CONTRACTS: dict[str, set[tuple[str, str]]] = {
     "lyric_timing": {TIMED_LYRICS},
     "melody": {MELODY, MELODY_SPANS},
 }
+# Version 2's inputs: version 1's, and the versions ADR 0113 adds. A melody
+# version 2 that is a sketch is refused by rule, not by contract (E.3).
+INPUT_CONTRACTS_V2: dict[str, set[tuple[str, str]]] = {
+    **INPUT_CONTRACTS,
+    "meter": INPUT_CONTRACTS["meter"] | {METER_LAYERS_V3},
+    "form": INPUT_CONTRACTS["form"] | {FORM_V2, FORM_SPANS_V2},
+    "melody": INPUT_CONTRACTS["melody"] | {MELODY_V2},
+    "underlay": {UNDERLAY},
+}
+VERSIONS = ("1", "2")
 # Every role a render reads, so every revision a render discloses.
 RENDERED_ROLES = ("work", "source", "recording", "chords", "meter", "form", "key",
-                  "lyrics", "lyric_timing", "melody", "credits")
+                  "lyrics", "lyric_timing", "melody", "underlay", "credits")
 
 
 class LeadSheetError(ValueError):
@@ -130,19 +149,19 @@ def _list(value: Any, where: str, low: int, high: int) -> list[Any]:
     return value
 
 
-def _refs_by_role(refs: Any, where: str) -> dict[str, list[dict[str, Any]]]:
+def _refs_by_role(refs: Any, where: str, roles: dict[str, tuple[int, int]] = ROLES) -> dict[str, list[dict[str, Any]]]:
     if not isinstance(refs, list):
         raise LeadSheetError(f"{where} refs must be a list")
-    by_role: dict[str, list[dict[str, Any]]] = {role: [] for role in ROLES}
+    by_role: dict[str, list[dict[str, Any]]] = {role: [] for role in roles}
     for index, ref in enumerate(refs):
         _closed(ref, {"role", "id", "revision_id"}, set(), f"{where} ref {index}")
-        if ref["role"] not in ROLES:
+        if ref["role"] not in roles:
             raise LeadSheetError(f"{where} ref {index} has role {ref['role']!r}, which a lead sheet cannot have")
         if not isinstance(ref["id"], str) or not OBJECT_ID.fullmatch(ref["id"]) \
                 or not isinstance(ref["revision_id"], str) or not REVISION_ID.fullmatch(ref["revision_id"]):
             raise LeadSheetError(f"{where} ref {index} must pin an object and an exact revision")
         by_role[ref["role"]].append(ref)
-    for role, (low, high) in ROLES.items():
+    for role, (low, high) in roles.items():
         if not low <= len(by_role[role]) <= high:
             raise LeadSheetError(f"{where} needs {low} to {high} '{role}' references")
     pinned = [ref["revision_id"] for ref in refs]
@@ -191,15 +210,20 @@ def _target_refs(target: dict[str, Any], role: str) -> list[dict[str, Any]]:
 
 
 def check_lead_sheet(claim: dict[str, Any], targets: dict[str, dict[str, Any]],
-                     agents: dict[str, str]) -> dict[str, Any]:
-    """Check an `archive.claim/lead_sheet` version 1 claim against every rule
-    of ADR 0084. `targets` maps each pinned revision ID to what it is (see
-    `_target`); `agents` maps an agent's object URN to its Entity kind.
-    Returns the payload; raises LeadSheetError."""
+                     agents: dict[str, str], *, version: str = "1") -> dict[str, Any]:
+    """Check an `archive.claim/lead_sheet` claim against every rule of ADR
+    0084, and for `version` "2" those ADR 0113 adds. `targets` maps each
+    pinned revision ID to what it is (see `_target`); `agents` maps an
+    agent's object URN to its Entity kind. Returns the payload; raises
+    LeadSheetError."""
+    if version not in VERSIONS:
+        raise LeadSheetError(f"lead sheet version must be one of {VERSIONS}")
+    v2 = version == "2"
+    inputs = INPUT_CONTRACTS_V2 if v2 else INPUT_CONTRACTS
     where = "lead sheet"
     record = _closed(claim, {"payload", "refs", "agent"}, {"revision_id"}, where)
     payload = _closed(record["payload"], set(), {"label", "parts"}, f"{where} payload")
-    by_role = _refs_by_role(record["refs"], where)
+    by_role = _refs_by_role(record["refs"], where, ROLES_V2 if v2 else ROLES)
 
     # Who: a person, or a band that adopted it (D6.1, D4.1). Never a machine.
     agent = record["agent"]
@@ -222,10 +246,14 @@ def check_lead_sheet(claim: dict[str, Any], targets: dict[str, dict[str, Any]],
     # What it chose.
     if not by_role["chords"] and not by_role["melody"]:
         raise LeadSheetError(f"{where} pins at least one chord or melody claim")
-    for role, contracts in INPUT_CONTRACTS.items():
+    for role, contracts in inputs.items():
         for index, ref in enumerate(by_role[role]):
             target = _claim(targets, ref, contracts, f"{where} {role} {index}")
             _check_input_subject(target, work, source, f"{where} {role} {index}")
+            if role == "melody" and tuple(target.get("contract", ())) == MELODY_V2 and is_sketch(target.get("payload")):
+                # A lead sheet is a finished chart (E.3); a sketch is shown beside it.
+                raise LeadSheetError(f"{where} melody {index} is a sketch (an item has no duration), "
+                                     f"which a lead sheet never pins")
     if by_role["lyrics"]:
         _artifact(targets, by_role["lyrics"][0], f"{where} lyrics")
     for index, ref in enumerate(by_role["lyric_timing"]):
@@ -236,6 +264,8 @@ def check_lead_sheet(claim: dict[str, Any], targets: dict[str, dict[str, Any]],
         placed = [(r.get("id"), r.get("revision_id")) for r in _target_refs(target, "document")]
         if placed != [(lyric["id"], lyric["revision_id"])]:
             raise LeadSheetError(f"{where} lyric_timing {index} must place exactly the lyric document pinned")
+    if v2:
+        _check_words_on_shown_notes(by_role, targets, where)
     for index, ref in enumerate(by_role["credits"]):
         target = _claim(targets, ref, {CONTRIBUTION}, f"{where} credits {index}")
         payload_scope = target.get("payload", {}).get("scope") if isinstance(target.get("payload"), dict) else None
@@ -243,7 +273,8 @@ def check_lead_sheet(claim: dict[str, Any], targets: dict[str, dict[str, Any]],
         if payload_scope != "work" or len(works) != 1 or works[0].get("id") != work["id"]:
             raise LeadSheetError(f"{where} credits {index} must be a work-scope contribution about the same Work")
     for index, ref in enumerate(by_role["derived_from"]):
-        target = _claim(targets, ref, {LEAD_SHEET}, f"{where} derived_from {index}")
+        target = _claim(targets, ref, {LEAD_SHEET, LEAD_SHEET_V2} if v2 else {LEAD_SHEET},
+                        f"{where} derived_from {index}")
         works = _target_refs(target, "work")
         if len(works) != 1 or works[0].get("id") != work["id"]:
             raise LeadSheetError(f"{where} derived_from {index} is a lead sheet of another Work")
@@ -256,6 +287,41 @@ def check_lead_sheet(claim: dict[str, Any], targets: dict[str, dict[str, Any]],
     if "parts" in payload:
         _check_parts(payload["parts"], len(by_role["document"]), where)
     return payload
+
+
+def _check_words_on_shown_notes(by_role, targets, where: str) -> None:
+    """ADR 0113 (E.14): a lead sheet shows only words on the notes it shows.
+    Each underlay places exactly the pinned lyric document under a melody
+    revision the lead sheet pins in `melody`; each syllable of a pinned timed
+    lyrics claim that names its notes in `carried_by` names a notes revision
+    a pinned melody spans claim selects."""
+    lyric = by_role["lyrics"][0] if by_role["lyrics"] else None
+    shown = {(r["id"], r["revision_id"]) for r in by_role["melody"]}
+    for index, ref in enumerate(by_role["underlay"]):
+        if lyric is None:
+            raise LeadSheetError(f"{where} pins an underlay without the lyric document it places")
+        target = targets[ref["revision_id"]]
+        placed = [(r.get("id"), r.get("revision_id")) for r in _target_refs(target, "document")]
+        if placed != [(lyric["id"], lyric["revision_id"])]:
+            raise LeadSheetError(f"{where} underlay {index} must place exactly the lyric document pinned")
+        melodies = [(r.get("id"), r.get("revision_id")) for r in _target_refs(target, "melody")]
+        if len(melodies) != 1 or melodies[0] not in shown:
+            raise LeadSheetError(f"{where} underlay {index} places its words under a melody the lead sheet "
+                                 f"does not pin")
+    selected = set()
+    for ref in by_role["melody"]:
+        target = targets[ref["revision_id"]]
+        if tuple(target.get("contract", ())) == MELODY_SPANS and isinstance(target.get("payload"), dict):
+            selected |= {span.get("notes") for span in target["payload"].get("spans", []) if isinstance(span, dict)}
+    for index, ref in enumerate(by_role["lyric_timing"]):
+        payload = targets[ref["revision_id"]].get("payload")
+        for line in payload.get("lines", []) if isinstance(payload, dict) else []:
+            for word in line.get("words", []) if isinstance(line, dict) else []:
+                for syllable in word.get("syllables", []) if isinstance(word, dict) else []:
+                    carried = syllable.get("carried_by") if isinstance(syllable, dict) else None
+                    if isinstance(carried, dict) and carried.get("notes") not in selected:
+                        raise LeadSheetError(f"{where} lyric_timing {index} carries words on notes "
+                                             f"{carried.get('notes')}, which no pinned melody spans claim selects")
 
 
 def _check_adoption(by_role, targets, agent: str, kind: str, where: str) -> None:

@@ -149,6 +149,10 @@ memberContracts =
   , ("archive.claim/selection_kind", "1"), ("archive.claim/selection_title", "1")
   , ("archive.claim/performance_work", "3")
   , ("archive.claim/sharing_consent", "1")
+    -- ADR 0113 (specification 0.0.11), as its "Who may save" and ADR 0094's
+    -- amendment list them; meter layers version 3 is not among them
+  , ("archive.claim/melody", "2"), ("archive.claim/underlay", "1"), ("archive.claim/form", "2")
+  , ("archive.claim/form_spans", "2"), ("archive.claim/lead_sheet", "2")
   ]
 
 -- | A record of specification 0.0.10 or later that cites a member contract

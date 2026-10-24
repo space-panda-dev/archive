@@ -4,15 +4,15 @@ $ python3 scripts/prove.py fixture
 $ fixture/build.py <tmp>/fixture/archive
 [exit 0]
 --- stdout (keys)
-archive_id, archive_root, cited_contracts, objects, operator_id, protocol, spec, steps; 45 steps
+archive_id, archive_root, cited_contracts, objects, operator_id, protocol, spec, steps; 52 steps
 $ archive status
 [exit 0]
 --- stdout
 {
  "archive_id": "urn:uuid:<uuid-1>",
  "context_present": true,
- "record_count": 114,
- "spec": "archive/0.0.10",
+ "record_count": 126,
+ "spec": "archive/0.0.11",
  "status": "ok"
 }
 $ archive doctor
@@ -25,16 +25,16 @@ $ archive doctor
   "status": "passed"
  },
  "coverage": {
-  "artifacts": 12,
+  "artifacts": 13,
   "assessment_targets": 3,
   "assessments": 3,
-  "claims": 90,
-  "contract_citations": 93,
+  "claims": 101,
+  "contract_citations": 104,
   "entities": 9,
-  "objects": 113,
-  "pinned_references": 247,
-  "records": 114,
-  "references": 247,
+  "objects": 125,
+  "pinned_references": 275,
+  "records": 126,
+  "references": 275,
   "supersessions": 1,
   "unpinned_references": 0
  },
@@ -44,19 +44,19 @@ $ archive doctor
  },
  "doctor_issue_count": 0,
  "issues": [],
- "record_count": 114,
- "spec": "archive/0.0.10",
+ "record_count": 126,
+ "spec": "archive/0.0.11",
  "status": "ok"
 }
 $ archive ls (shapes counted)
 [exit 0]
 --- stdout
 {
- "record_count": 114,
+ "record_count": 126,
  "shapes": {
-  "artifact": 12,
+  "artifact": 13,
   "assessment": 3,
-  "claim": 90,
+  "claim": 101,
   "entity": 9
  }
 }
@@ -81,7 +81,7 @@ $ door admit --proposal <tmp>/proposal --dry-run
    "refs": [],
    "revision_id": "sha256:<sha256-1>",
    "shape": "entity",
-   "spec": "archive/0.0.10",
+   "spec": "archive/0.0.11",
    "supersedes": []
   }
  ],
@@ -107,8 +107,8 @@ $ archive status
 {
  "archive_id": "urn:uuid:<uuid-1>",
  "context_present": true,
- "record_count": 115,
- "spec": "archive/0.0.10",
+ "record_count": 127,
+ "spec": "archive/0.0.11",
  "status": "ok"
 }
 --- stderr

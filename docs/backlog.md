@@ -367,17 +367,14 @@ scheduler has added it.
 
 ## Lead-sheet editor (ADR 0113)
 
-- **First build** (operator, 2026-10-20), in the next specification
-  release: melody version 2 (sketches), underlay version 1, form and form
-  spans version 2 (open repeats, passes, departures), meter layers version
-  3, lead sheet version 2, the `folded_chart` and `stale_lyric_links` views, the exporters' open
-  repeats and stacked verses, and the relay's end-to-end save test (one
-  admission; a stale save writes nothing; an identical retry writes
-  nothing).
-- **Then:** passage alignment, the `aligned_by` versions of chord stacks,
+- **Next:** passage alignment, the `aligned_by` versions of chord stacks,
   notes, timed lyrics (with `derived_from`), form spans and timed meter
   layers, and lead sheet version 3 (refusing rough copies); applying a correction to
   every mapped pass; members' lyric documents once ADR 0094 is built.
+
+## iReal Pro charts (ADR 0116)
+
+- **Next:** settle decision Q (`2` as add2 or sus2) and read it as a chord.
 
 ## People, samples, and rehearsals (ADRs 0092-0111) <!-- lens: allow stale -->
 

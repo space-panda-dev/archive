@@ -45,6 +45,18 @@ timeout_seconds = 1800
 tier = 300
 paths = ["door/**", "archive/**", "archive.cabal", "cabal.project"]
 
+# The importers of outside documents (documents/, ADR 0116): the
+# iReal Pro codec, chart reader, chord grammar and exporter, standard library
+# and World only, with no Door and no prelude. Measured: 0.1 s here.
+[suites.documents]
+run = 'python3 -m unittest discover -s documents/ireal -p "test_*.py" "$@"'
+where = "local"
+timeout_seconds = 60
+parser = "unittest"
+tier = 5
+paths = ["documents/**", "world/harmony.py", "world/tonality.py", "world/form.py", "world/exports.py",
+         "world/notes.py", "world/contributions.py", "world/lead_sheets.py", "world/documents.py"]
+
 # ---- before a merge, on the laptop (tiers 30 to night) --------------------------
 # HS: what the prelude builds, so every suite below depends on it.
 
@@ -93,6 +105,16 @@ parser = "unittest"
 prelude = true
 tier = 300
 paths = ["shadow/**", "migration/**", "world/**", "door/**", "archive/**", "spec/**", "archive.cabal", "cabal.project"]
+
+# The documents importers against the real Door: an invented playlist
+# imported, rerun, linked and listed as candidates in a scratch archive.
+[suites.documents-door]
+run = '$PYTHON -m unittest discover -s documents/tests "$@"'
+timeout_seconds = 1800
+parser = "unittest"
+prelude = true
+tier = 30
+paths = ["documents/**", "world/**", "enrich/adapter.py", "door/**", "archive/**", "spec/**", "archive.cabal", "cabal.project"]
 
 # Measured: 6 s.
 [suites.migration]

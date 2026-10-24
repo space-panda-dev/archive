@@ -1,6 +1,6 @@
 # Archive Specification
 
-Version: 0.0.10
+Version: 0.0.11
 Status: draft
 
 This is the contract an archive is governed by. It is copied into every archive
@@ -615,7 +615,7 @@ match. Missing, changed, unknown, or remotely dependent contracts MUST be
 refused on admission and reported as incomplete on read.
 
 Adding contracts outside a specification release, domain assessment
-contracts, enrichment contracts other than those of D-15 to D-18, and current rules
+contracts, enrichment contracts other than those of D-15 to D-19, and current rules
 remain unsupported until separately defined.
 
 ### D-9. Transition proposals and dispatch (ADR 0028)
@@ -2599,6 +2599,144 @@ arch:rights-NKC a skos:Concept ; skos:inScheme arch:rights ; skos:notation "NKC"
 arch:rights-personal-use-licence a skos:Concept ; skos:inScheme arch:rights ;
   skos:notation "personal-use-licence" .
 ```
+
+### D-19. Sketches, underlays, open repeats, passes, and lead sheet version 2 (ADR 0113)
+
+Specification 0.0.11 installs version 2 of `archive.claim/melody`,
+`archive.claim/form`, `archive.claim/form_spans`,
+`archive.claim/lead_sheet`, and `archive.claim/export`, version 3 of
+`archive.claim/meter_layers`, and version 1 of `archive.claim/underlay`.
+Meter layers version 3's written directions and export version 2 are ADR
+0116's (decisions D and E), folded into this release before it was cut. Every 0.0.10 contract bundle remains
+installed with its exact bytes, and every earlier claim keeps its meaning
+under its own contract; a new version does not supersede the one before it,
+and an asserter that needs none of its additions MAY write either. The
+layout is `archive/2`, and the core context and the Entity kinds are those
+of 0.0.10, so the release is additive and a 0.0.10 archive adopts it by the
+specification upgrade of D-15. None of these contracts is current by kind or
+asserter, and none stores which claim is current (S-18). Unless stated
+below, each new version keeps the rules D-18 states for the version before
+it.
+
+**Melody version 2** is melody version 1 in which a `pitch` item MAY leave
+out `duration`. Such an item is **unmeasured**: its pitch and its place in
+the line are asserted, its length is not known. A rest always has a
+`duration`. A melody with an unmeasured item is a **sketch**: it pins no
+`meter` and has no `start`. Its `meter` MAY pin an untimed meter layers
+version 2 or 3 Claim revision, and `corrects` MAY pin melody version 1 or 2.
+A melody whose every duration is known says the same in either version.
+
+**Form version 2** is form version 1 with two changes to a repeat. `times`
+MAY be absent: the repeat is **open**, played as many times as a performance
+plays it. Any repeat MAY state `instruction` (1 to 200 characters), the
+source's own words for how it is played, which nothing parses. An open
+repeat's endings tile its sections as a fixed repeat's do, and exactly one
+of them has `passes` `["last"]` (the **last-time ending**, taken on the
+final pass), exactly one leaves out `passes` (the **default**, taken on
+every pass no ending names), and any other names distinct ascending pass
+numbers from 1 that no other ending names. A fixed repeat keeps version 1's
+rules and never uses `"last"` or a default. `corrects` MAY pin form version
+1 or 2.
+
+**Form spans version 2** is form spans version 1 whose `form` MAY pin form
+version 1 or 2 and whose `corrects` MAY pin form spans version 1 or 2. A
+span MAY state `passes`, one positive integer per repeat of the pinned form
+enclosing its section, outer first, and `return`, which is only ever `true`,
+when it is played on a D.C. or D.S. return; either needs a `section`. The
+alignment MAY state `precision`, `rough`, `approximate`, or `exact`; a
+person's placement (`method` `manual`) without one is read as
+`approximate`, and a machine's as `rough`. A span that names no section in a
+claim that pins a form is a **departure**, kept as played.
+
+**Meter layers version 3** is meter layers version 2 in which an untimed
+claim's `form` MAY pin form version 1 or 2; `corrects` and `derived_from`
+MAY pin meter layers version 2 or 3, and a timed claim's `meter` MAY pin an
+untimed version 2 or 3 claim. A bar of an untimed claim MAY carry
+`directions`, the **written directions** over it (a style, "Solos", "Repeat
+and Fade"): 1 to 8 objects, each with `text` (1 to 200 characters, the
+direction verbatim, never a lyric line) and optional `tempo` in ADR 0106's
+target-tempo shape: `bpm`, exact decimal text from 1 to 999 with at most
+three places and no trailing zero, and optional `beat`, a note value. A bar
+of a timed claim never carries `directions`. A direction's tempo, like a
+target tempo, is an intention, never a reading of audio; tempo stays derived
+for every timed claim.
+
+**Underlay** places a lyric document's syllables under the items of one
+Work-level melody, untimed. It pins exactly one `melody` (melody version 1
+or 2; a sketch is allowed) and exactly one `document` Artifact (plain text,
+under D-18's locator scheme); at most one `form` (form version 1 or 2),
+exactly when its payload states `passes`; at most one `run`; zero to eight
+`corrects` (underlay version 1); and zero to eight `derived_from` (underlay
+or timed lyrics version 1); no revision twice among `corrects` and
+`derived_from`. It pins no `work`: its subject is its melody's. Its payload
+has optional `label` (1 to 200 characters), optional `passes`, and `lines`,
+1 to 10,000 objects in strictly increasing `line` (from 1), each with
+`words`, 1 to 200 objects in strictly increasing `word` (from 1). A word has
+exactly one of `items` (the whole word) or `syllables`, 1 to 32 of
+`syllable`, `start_char`, and `end_char` under D-18's syllable rules,
+strictly increasing and never overlapping, each with `items`. `items` are 1
+to 64 strictly increasing indices into the melody's `notes`; across the
+claim, in document order, each placed word or syllable starts after the
+last item of the one before. `passes` is `{repeat, passes}`: `repeat`, the
+position of a repeat of the pinned form, and `passes`, 1 to 999 distinct
+ascending pass numbers, which MAY end with `"last"`, or `["last"]` alone.
+
+**Lead sheet version 2** is lead sheet version 1 with these changes:
+`melody` MAY pin melody version 1 or 2 or melody spans version 1; `form`
+MAY pin form version 1 or 2 or form spans version 1 or 2; `meter` MAY pin
+meter layers version 1, 2, or 3; `derived_from` MAY pin lead sheet version 1
+or 2; and it MAY pin 0 to 8 `underlay` Claim revisions (underlay version 1),
+each of which places exactly the pinned `lyrics` document and pins a melody
+revision the lead sheet pins in `melody`. The order of `underlay` references
+is the asserter's precedence. A version 1 lead sheet's next revision MAY be
+version 2, keeping its agent, Work object, and `source` revision.
+
+**Export version 2** is export version 1 with one more format, `ireal`
+(media type `text/plain`, suffix `.irealb`: one `irealb://` link of one
+iReal Pro chart, ADR 0116), in ADR 0089's format table. Every version 1
+claim says the same in version 2.
+
+**Member contracts.** Melody version 2, underlay version 1, form version 2,
+form spans version 2, and lead sheet version 2 are member contracts (ADR
+0088, as ADR 0094's amendment of 2026-10-20 lists them): a record that cites
+one and supersedes a revision MUST keep that revision's agent, and Door
+checks this beside the bundles as D-18 states. Meter layers version 3 is
+not one.
+
+**Profile rules.** The release adds two rules, which are closed and
+root-only, name distinct fields, and are refused when unknown or malformed,
+as D-18's are; a Door that installs a bundle declaring one it does not
+enforce MUST refuse every record citing that bundle. It also widens one.
+
+- `x-archive-placed-items` names `lines`, `words`, `syllables`, and
+  `items`: across the payload, in document order, the integers in each
+  placed unit's `items` (a word's own, or each of its syllables') strictly
+  increase, so words never share or cross notes.
+- `x-archive-pass-lists` names `paths`, a nonempty list of distinct payload
+  paths: every array a path reaches is distinct ascending integers,
+  optionally followed by the text `last`, or `last` alone.
+- `x-archive-form-structure` also checks an open repeat's endings as stated
+  above: one last-time ending, one default, and the others of distinct
+  ascending pass numbers. Version 1's schema requires `times` and numbered
+  passes, so a version 1 form means what it meant.
+
+**World's checks.** Each of the following reads a pinned claim's payload in
+a way no rule here states, so it is World's check, as D-18's cross-claim
+checks are, and Door does not refuse it: a lead sheet version 2 pinning in
+`melody` a melody with an unmeasured item; a lead sheet version 2 pinning a
+timed lyrics claim whose `carried_by` names a notes revision that no pinned
+melody spans claim selects; an underlay item that is not a pitch item of the
+pinned melody; an underlay of a sketch that states `passes`; an underlay
+`repeat` that is not a repeat of the pinned form, a pass beyond a fixed
+repeat's `times`, `"last"` on a fixed repeat, an item outside the repeat's
+bars, a repeat that is not the innermost one enclosing every named item, and
+a melody that pins no untimed meter on that form; a form spans version 2
+span whose `passes` do not number the repeats around its section, exceed a
+fixed repeat's `times`, or, for a section in an ending, name a pass that does
+not take it; and an underlay's lines, words, and characters within the
+document, which the asserter checks where the bytes are. That a written
+direction is never a lyric line is the asserter's to keep: the bar names no
+lyric, so nothing checks it.
 
 ## 7. Not yet defined
 

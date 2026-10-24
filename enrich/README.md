@@ -20,12 +20,13 @@ here writes a record: Door decides every revision.
 | [`calibrate_windows.py`](calibrate_windows.py) | Checks the window matcher's thresholds against an archive's accepted occurrences; proposes nothing |
 | [`enrich.py`](enrich.py) | The `enrich` command that runs a tool against an archive's records |
 | [`propose.py`](propose.py), [`proposers.py`](proposers.py), [`chord_labels.py`](chord_labels.py) | `enrich propose`: the proposers, which read the feature bank's entries of one recording as claims, and the chord labels they read ([ADR 0079](../docs/decisions/0079-machine-harmony-claims.md)) |
+| [`align.py`](align.py), [`align_command.py`](align_command.py) | `enrich align`: a chart's untimed claims placed on a recording's machine beats and chords ([ADR 0116](../docs/decisions/0116-ireal-charts.md) section 6, proposed) |
 | [`bank.py`](bank.py), [`extract.py`](extract.py), [`remote.py`](remote.py), [`extractors/`](extractors/frames/extractor.json) | The feature bank's format and reader, the runner that fills it, the same run through Spool on another machine ([ADR 0090](../docs/decisions/0090-extractor-runs-travel-through-spool.md)), and the extractors (one table under [`extract.py`: the feature bank](#extractpy-the-feature-bank) says what each writes): `frames`, `loudness-r128`, `rhythm`, `tonal`, `melody`, `structure`, `quality`, `colour`, `stems`, `stems-6s`, `beats-beatthis`, `chords-jiang`, `chords-chordino`, `notes-basic-pitch`, `f0-pesto`, and `f0-torchcrepe` ([ADR 0073](../docs/decisions/0073-feature-bank.md), [ADR 0074](../docs/decisions/0074-extractor-contract.md), [ADR 0075](../docs/decisions/0075-stems-as-content.md)) |
 | [`hue_range.py`](hue_range.py) | The `colour` extractor's centroid hue limits taken from a set of recordings' `frames` entries, printed as a `--config` ([its README](extractors/colour/README.md#the-hue-range)) |
 | [`media.py`](media.py), [`waveform.py`](waveform.py), [`derived.py`](derived.py) | Derived media, a standalone tool that never touches an archive; the waveform peaks' format and decode; and the layout ([ADR 0069](../docs/decisions/0069-derived-media.md)) |
 | [`requirements.txt`](requirements.txt) | The libraries: numpy (detector, matchers, derived media) and scipy (numpy matcher) |
 | [`requirements-match.txt`](requirements-match.txt) | The window matcher's interpreter: Essentia, numpy, and scipy for CPython 3.14, pinned by hash |
-| [`bench/`](bench/README.md) | The bench: regression sets for note transcription, scored outside the repository on private data; proposes nothing |
+| [`bench/`](bench/README.md) | The bench: regression sets for note transcription and for chords against placed charts, scored outside the repository on private data; proposes nothing |
 | `support.py`, `test_*.py`, `tests/` | Synthetic audio, scratch archives built through Door, and the tests |
 
 The adapter and the probe use only Python's standard library; the detector
@@ -656,6 +657,58 @@ on any failure, and 2 when the arguments are not understood. A failed
 proposer fails the command once the proposers before it have finished: what
 they made is kept, and stderr's `{"status": "failed", "detail", ...}` lists
 them.
+
+## `enrich align`
+
+```sh
+enrich/enrich.py align --archive <dir> --artifact <object id> --meter <untimed meter claim>
+                 [--stream <claim id>] [--beats <claim id>] [--chords <claim id>] [--staging <annex>] [--dry-run]
+```
+
+Places a chart on a recording ([ADR 0116](../docs/decisions/0116-ireal-charts.md)
+section 6, proposed; the alignment [ADR 0077](../docs/decisions/0077-chord-stacks-and-meter.md)
+designed). `--meter` names the chart's untimed `meter_layers` version 2
+claim; its pinned `form` and `chord_sequence` are read with it. The
+recording's machine claims are the timed `meter_layers` claim with a
+beat-only layer and the `chord_stacks` claim about the mix and its stream
+(those that place nothing themselves); with several, name one with
+`--beats` or `--chords`. The command does not check that the chart and the
+recording are of the same Work: the operator names both.
+
+The method (`align.py`, `chart-placement` version 1, its choices in
+`align.PARAMETERS`, which the run's parameters Artifact holds): World's
+played order of the chart's bars, every repeat unrolled and restarting after
+the last bar (one pass per chorus); each bar a whole number of beats (a
+grouping's length, the numerator over 4, twice it over 2, a third of it over
+8 when divisible by 3; any other bar is refused); beat-synchronous dynamic
+programming over (played bar, beat), a bar one beat shorter or longer at a
+cost; free start and end, unplaced beats at a fixed cost; a beat's cost the
+pitch-class distance of the chart chord and the machine chord at its middle,
+a bar's a penalty when it does not start on a machine downbeat; all twelve
+transpositions. The best is kept when its mean cost per placed beat is at
+most 0.35, it places at least half a pass, and the second transposition
+costs at least 0.05 a placed beat more; otherwise the command proposes
+nothing and exits 3 with `status` `nothing_proposed`, `code`
+`low_confidence`, the reason and the numbers.
+
+One derivation run (`used`: the mix, its stream, the untimed meter, form
+and sequence, the machine's meter and chords) proposes:
+
+- a timed `meter_layers` version 2 pinning the untimed claim in `meter` and
+  the machine's two claims in `derived_from`: a `written` layer, a bar per
+  placed bar `placed` from its untimed bar, with the machine's beats when
+  the bar kept its count;
+- a `chord_stacks` version 2 pinning the `sequence` (and `derived_from` as
+  above): a span per chart chord played, `entry` its sequence entry, every
+  end `held` ("until the next chart chord"); under a transposition the
+  readings are moved and lose their `text` and voicing, and a text-only
+  reading is dropped;
+- with a form, a `form_spans` version 1 pinning it: a span per played
+  section.
+
+Each states `alignment.method`; World's checks run before Door sees them.
+The answer adds `transposition`, `placed_bars`, `placed_beats`, `passes`,
+`mean_cost` and `margin`. A rerun on the same inputs is `unchanged`.
 
 ## `enrich backfill`
 

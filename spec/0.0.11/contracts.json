@@ -1,0 +1,350 @@
+{
+  "spec": "archive/0.0.11",
+  "contracts": [
+    {
+      "id": "archive.assessment/judgment",
+      "version": "1",
+      "digest": "sha256:bf88a5d79e25e4eb8987170fdc6225b58a191df964edf714426587c246243bc2"
+    },
+    {
+      "id": "archive.assessment/judgment",
+      "version": "2",
+      "digest": "sha256:85a7fcb8a147e52c2eb3b9084baf61a1c9f16f7cc175313abac5a14efdb5440c"
+    },
+    {
+      "id": "archive.claim/artist_credit",
+      "version": "1",
+      "digest": "sha256:fe3280d028546850091a8dd9f69272705b22aa478a7e413d4152b8258c9cbfd5"
+    },
+    {
+      "id": "archive.claim/audio_selection",
+      "version": "1",
+      "digest": "sha256:bfde7fb0daaf7ab9af80eabe8d4e684e07f3a9dbf5cbec68266ddf4b9493cc28"
+    },
+    {
+      "id": "archive.claim/audio_selection",
+      "version": "2",
+      "digest": "sha256:1ea431d7e72ae6653bbf18478cc29d0424aef508fdbd8a9e48054cd286450b35"
+    },
+    {
+      "id": "archive.claim/audio_stream",
+      "version": "1",
+      "digest": "sha256:5d3e2536cfb2f0f080c5e334a70ea56348441a350c35faced370771b3533364d"
+    },
+    {
+      "id": "archive.claim/band_membership",
+      "version": "1",
+      "digest": "sha256:5c04201eee1eb65734e2624a2112bc56ec9cc07a5af7a13718db35448b1da16d"
+    },
+    {
+      "id": "archive.claim/capture_alignment",
+      "version": "1",
+      "digest": "sha256:a7844b9e10bc1ec8bacf4f4ddc4f2240436541aaa694d333b46e34fc34e8a4dd"
+    },
+    {
+      "id": "archive.claim/capture_alignment",
+      "version": "2",
+      "digest": "sha256:4333be1d116437ec5622db7931ce7f6309b44a16472d9d22fd03242cff522cfd"
+    },
+    {
+      "id": "archive.claim/catalogue_correspondence",
+      "version": "1",
+      "digest": "sha256:b3dc3d6de7f3ff144342a4e5f49c416a639d97ad829092750fafcfd9d3e19129"
+    },
+    {
+      "id": "archive.claim/chord_sequence",
+      "version": "1",
+      "digest": "sha256:e5dd7153e8fbf7c8e2881f7e66274afdc291ccc5f180ff1db3349784b2a435dc"
+    },
+    {
+      "id": "archive.claim/chord_sequence",
+      "version": "2",
+      "digest": "sha256:fa29dc7937c5a45f76efe399b1083037e6e5c2833f9d31264289d667cc731ad9"
+    },
+    {
+      "id": "archive.claim/chord_stacks",
+      "version": "1",
+      "digest": "sha256:0d813ecd22e38252e154c8ba7cc484f20078a58f9e238b674b3cf376a01d8a2e"
+    },
+    {
+      "id": "archive.claim/chord_stacks",
+      "version": "2",
+      "digest": "sha256:f7853ed5b158c05c9810f42a785d41352b75c67b1df24f9978aa53443711889a"
+    },
+    {
+      "id": "archive.claim/contribution",
+      "version": "1",
+      "digest": "sha256:1bfef3b065a6726511a91e88c39f04f1f60f16d23a90d097f9bda0355dbf869a"
+    },
+    {
+      "id": "archive.claim/derivation_run",
+      "version": "1",
+      "digest": "sha256:3059f5b5865eceddb40d160a3e85d3655f2e6e77ba2be1b2c5d290fdd36fdfb8"
+    },
+    {
+      "id": "archive.claim/document_source",
+      "version": "1",
+      "digest": "sha256:3ccbd40c3b54bf3e96ac4a12d19b3828f4071f3b7fb31cb65496a2c052da6365"
+    },
+    {
+      "id": "archive.claim/export",
+      "version": "1",
+      "digest": "sha256:7bb488e0e5e439781e6c62b14788d74c0eef6e00c2dc189927762561e79cb2d7"
+    },
+    {
+      "id": "archive.claim/export",
+      "version": "2",
+      "digest": "sha256:7a953e81cf031db95c6efafb38baaa4467e49395f1425d23a73d4bfe25ca9732"
+    },
+    {
+      "id": "archive.claim/form",
+      "version": "1",
+      "digest": "sha256:f74bd259d62c85b1fd997610bf7c1d5cfb3311a3283c6d0322c9bcc82c93013b"
+    },
+    {
+      "id": "archive.claim/form",
+      "version": "2",
+      "digest": "sha256:05f370b4765103aa84b376461584cf14b6f5efa20003dbe0ac2f14066ed4d9bb"
+    },
+    {
+      "id": "archive.claim/form_spans",
+      "version": "1",
+      "digest": "sha256:15570546a80d1028f22aa681dc52596ff4092988ab721a31a468ea654a0a47a4"
+    },
+    {
+      "id": "archive.claim/form_spans",
+      "version": "2",
+      "digest": "sha256:2d2c99f8fef2f8e1307498d75dd42ff7559f5be379ff2a023a4e8c4bbce12a32"
+    },
+    {
+      "id": "archive.claim/key_regions",
+      "version": "1",
+      "digest": "sha256:23479544c3a347c8cc2486f106463df7f3702ec336db610b39cd71d47d2b3926"
+    },
+    {
+      "id": "archive.claim/key_sequence",
+      "version": "1",
+      "digest": "sha256:2857b82a1dfe48685375035137d6f0d8cb225e821719828acedf41022bd8b352"
+    },
+    {
+      "id": "archive.claim/lead_sheet",
+      "version": "1",
+      "digest": "sha256:06d5c37ec10c665e3f202f7bbe63a8a885993c2dc6934af3ed3bfabd8e29947b"
+    },
+    {
+      "id": "archive.claim/lead_sheet",
+      "version": "2",
+      "digest": "sha256:508cea90057b9f65b2e95f0b991317a1e41c0f4bffe1e309b2f1d4c153888d49"
+    },
+    {
+      "id": "archive.claim/melody",
+      "version": "1",
+      "digest": "sha256:ca6856bacff964e7e543eb85d0e5ceac352016150c86e5acf29e8f364cb33aad"
+    },
+    {
+      "id": "archive.claim/melody",
+      "version": "2",
+      "digest": "sha256:c944d8b13b739caacf2beab16f79e5c702db3dabc6f1ae18dad95c932a3f394f"
+    },
+    {
+      "id": "archive.claim/melody_spans",
+      "version": "1",
+      "digest": "sha256:a3da061e0e84766613a1589115cc44dbed2a2ccffd550d5361737693591c1c0f"
+    },
+    {
+      "id": "archive.claim/meter_layers",
+      "version": "1",
+      "digest": "sha256:ae913f81b45ba52f88af08e63db5631d68717ba620528c10d60a0af3c07b127e"
+    },
+    {
+      "id": "archive.claim/meter_layers",
+      "version": "2",
+      "digest": "sha256:0d6345006c5b8faba432f1e14a64e6d54863e1a3ecbabad4618417942bf5c651"
+    },
+    {
+      "id": "archive.claim/meter_layers",
+      "version": "3",
+      "digest": "sha256:8cfb91bb89115ea64f527237f5a3ad3faf3407707303b96334badab11c7a4444"
+    },
+    {
+      "id": "archive.claim/notes",
+      "version": "1",
+      "digest": "sha256:de1cb0696ac75b368600b14cc385e3785d8f751b525043747b1bf5060995c6c6"
+    },
+    {
+      "id": "archive.claim/performance_work",
+      "version": "1",
+      "digest": "sha256:0611de3ef1aaf6dadb9589bcb0fedda1c312943f8b0de19ae3be1d80d5bd64a5"
+    },
+    {
+      "id": "archive.claim/performance_work",
+      "version": "2",
+      "digest": "sha256:320b1bb020c95a0192e759f6c512de91b5ab0cd364fd2022bc8efb553fdafb61"
+    },
+    {
+      "id": "archive.claim/performance_work",
+      "version": "3",
+      "digest": "sha256:3799ee536f631ed4df674edd26f1865dd5677a00fac37a9d2ecbe269c922bd67"
+    },
+    {
+      "id": "archive.claim/recording_audio",
+      "version": "1",
+      "digest": "sha256:30b354fcb2a79f1573b43887754eb6765dbf0e185ba89811e7eff79598e784ac"
+    },
+    {
+      "id": "archive.claim/rights",
+      "version": "1",
+      "digest": "sha256:7a692d7fcb68d086f8277f836756090e17b15f95714a065e26a652f3e2804770"
+    },
+    {
+      "id": "archive.claim/selection_kind",
+      "version": "1",
+      "digest": "sha256:40664592f698ff89b839ad333c6c4d07fbc7fff42b1ad36f99db6350a2e2a36d"
+    },
+    {
+      "id": "archive.claim/selection_title",
+      "version": "1",
+      "digest": "sha256:0bec7932301de6f62b92ffc167f41236cf98c10e6a6175481400c64da502d8d9"
+    },
+    {
+      "id": "archive.claim/sensitivity",
+      "version": "1",
+      "digest": "sha256:b2a30529535754f515f266adb1253e22aef37edccefc4062ca7c86bdbe50b816"
+    },
+    {
+      "id": "archive.claim/session_parts",
+      "version": "1",
+      "digest": "sha256:7983405e0e8ed403ec1299b8e3ca10c80397da9962303cc4816f0df41745842a"
+    },
+    {
+      "id": "archive.claim/sharing_consent",
+      "version": "1",
+      "digest": "sha256:aff36881ca70b9a355d9651c3553f5ce42c94a4eead40d32bfabddd9a3551473"
+    },
+    {
+      "id": "archive.claim/song_occurrence",
+      "version": "1",
+      "digest": "sha256:990e8f3a0938bb7ddd25f42a112f135b08460514038096807b573a6101a1a16f"
+    },
+    {
+      "id": "archive.claim/song_occurrence",
+      "version": "2",
+      "digest": "sha256:d0f45881888dc6024725760d3ae915b2a6463088596a38535c5213cb5a95431a"
+    },
+    {
+      "id": "archive.claim/span_annotation",
+      "version": "1",
+      "digest": "sha256:e88d04db3c3a71af9b56df64c2ec9232097e916435bd23bc2fe89568b984e7d2"
+    },
+    {
+      "id": "archive.claim/span_suggestions",
+      "version": "1",
+      "digest": "sha256:33b06082dfaef8a7bb958a57283f60dfd040fec0897d1d4d4d8275b21f47a49e"
+    },
+    {
+      "id": "archive.claim/timed_lyrics",
+      "version": "1",
+      "digest": "sha256:b32d0ee70b6bce86d246baf0167cf4b8d24f265c8b46cc3da54b79448be05bb8"
+    },
+    {
+      "id": "archive.claim/tracklist",
+      "version": "1",
+      "digest": "sha256:a69876fec6de129009eaefdef89f7ec09a6ae7355dc6ceb91cab5a7a0b17029a"
+    },
+    {
+      "id": "archive.claim/tuning",
+      "version": "1",
+      "digest": "sha256:ea59f099a4eff796a15aa7847794d75c6233e3f952c5e5628cb8fe1943cfcb8a"
+    },
+    {
+      "id": "archive.claim/underlay",
+      "version": "1",
+      "digest": "sha256:17de194ca1070a1d98b7e6c31143e0c65619093482046970048ab3a8c95593b7"
+    },
+    {
+      "id": "archive.claim/work_match",
+      "version": "1",
+      "digest": "sha256:f01dfa681f7261be99e25518842f09c23fdca714f434f316cb86ae1cbf367512"
+    },
+    {
+      "id": "archive.claim/work_match",
+      "version": "2",
+      "digest": "sha256:a7b8dd25b3d90590b715109371e8974c797866b01feaf52176bbc8162964f7cf"
+    },
+    {
+      "id": "archive.claim/work_match",
+      "version": "3",
+      "digest": "sha256:0d7defe7bda309d415a20163cd03edd93d5b669f3b7a2200231c1a2737c0b837"
+    },
+    {
+      "id": "archive.claim/work_musicbrainz_correspondence",
+      "version": "1",
+      "digest": "sha256:12de96a609531ca20a54c175b146667036f0b1aefcc569cad76d34be056f7e48"
+    },
+    {
+      "id": "archive.claim/work_origin",
+      "version": "1",
+      "digest": "sha256:7a583b90ffbe1bc2247eeff925ad78a419e686efc8e0cfd63f939c6c9d950481"
+    },
+    {
+      "id": "archive.migration/selection_translation",
+      "version": "1",
+      "digest": "sha256:c7b635bb3313a8281e89d5ba736f30e4ebf246850f290b58dccc9cf664a0edc5"
+    },
+    {
+      "id": "archive.migration/translation",
+      "version": "1",
+      "digest": "sha256:c4857f722d08d96db2429a93a34fbc92ac882a65c72cb05b18de9bee2086932f"
+    },
+    {
+      "id": "archive.transition/destroy",
+      "version": "1",
+      "digest": "sha256:06fa0b87ea9b112bef8f3111dd26561dad209f1ae251b638d9936882eff1128a"
+    },
+    {
+      "id": "archive.transition/destroy",
+      "version": "2",
+      "digest": "sha256:39f9b4820ebf15722202c6a5bdf10ec811d536a37db7c833d9f6231f88950ee9"
+    },
+    {
+      "id": "archive.transition/operator_initialization",
+      "version": "1",
+      "digest": "sha256:7ccd017a4ee2eeaf7c05005d018b2ca18f677d87f810f743d7c3561154794bff"
+    },
+    {
+      "id": "archive.transition/publication_approval",
+      "version": "1",
+      "digest": "sha256:94cf300d5bc808cd2a7512f76f1b391b7bf3420a243887113a24e7d1573f4759"
+    },
+    {
+      "id": "archive.transition/publication_approval",
+      "version": "2",
+      "digest": "sha256:1b4df7d0f573782d67bbc5080447f94714fcd8d97b351c63806cc5e8a6581c60"
+    },
+    {
+      "id": "archive.transition/publication_withdrawal",
+      "version": "1",
+      "digest": "sha256:6e3a099927054b6091fa615d914916ba219b245f03f14d3946e7128f1ecbb378"
+    },
+    {
+      "id": "archive.transition/publication_withdrawal",
+      "version": "2",
+      "digest": "sha256:683f490c74473a7e3a6c468f974ebf19bfd3168284feb73d6139a29af7640e0c"
+    },
+    {
+      "id": "archive.transition/retire",
+      "version": "1",
+      "digest": "sha256:d8250cc5f5afa9725accb8d1d51ac83b9eef2c51ae4e1bc3e57ea0938e815654"
+    },
+    {
+      "id": "archive.transition/retire",
+      "version": "2",
+      "digest": "sha256:be06f7c3499f15295b62adeff7589800cd78cf90ade9965d401dd30cb385343b"
+    },
+    {
+      "id": "archive.transition/specification_upgrade",
+      "version": "1",
+      "digest": "sha256:b6f065996fec93a56c3c15e2b57bb81795649c8aac4278f0b8b89a36122a4a66"
+    }
+  ]
+}
