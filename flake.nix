@@ -17,10 +17,20 @@
         export GIT_COMMITTER_EMAIL="archive-tests@example.invalid"
       '';
 
+      # What the Haskell package reads: its Cabal files, its sources and
+      # tests, the specification (its data files, which the tests also
+      # read), and the fixture's plan, which a Door test checks. A change
+      # anywhere else leaves the build, and CI's cached copy of it,
+      # unchanged (ADR 0117).
+      haskellSource = nixpkgs.lib.fileset.toSource {
+        root = ./.;
+        fileset = nixpkgs.lib.fileset.unions [ ./archive.cabal ./cabal.project ./door ./archive ./spec ./fixture/plan.json ];
+      };
+
       # Door and the archive command. Building runs `cabal test all`.
       archiveFor = pkgs: pkgs.haskell.lib.overrideCabal
         (pkgs.haskell.lib.addBuildTools
-          (pkgs.haskellPackages.callCabal2nix "archive" self { })
+          (pkgs.haskellPackages.callCabal2nix "archive" haskellSource { })
           [ pkgs.git pkgs.git-annex pkgs.python3 pkgs.perl pkgs.which ])
         (old: {
           preCheck = ''
@@ -235,13 +245,10 @@
           archive = archiveFor pkgs;
           python = pythonFor pkgs;
           enrichPython = enrichPythonFor pkgs;
-        in
-        {
-          inherit archive;
-
-          # Every Python suite, against the Door and Archive built above;
-          # a missing binary fails rather than skips.
-          python = pkgs.runCommand "archive-python-tests"
+          # Each Python suite against the Door and Archive built above; a
+          # missing binary fails rather than skips. Three checks, so CI runs
+          # them side by side (ADR 0117).
+          suite = name: script: pkgs.runCommand "archive-${name}-tests"
             { nativeBuildInputs = [ python archive pkgs.git pkgs.git-annex pkgs.ffmpeg-headless ]; } ''
             cp -r ${self} source
             chmod -R u+w source
@@ -252,18 +259,33 @@
             export ARCHIVE_REQUIRE_INTEGRATION=1
             export ARCHIVE_GIT_EXECUTABLE=${pkgs.git}/bin/git
             export ARCHIVE_GIT_ANNEX_EXECUTABLE=${pkgs.git-annex}/bin/git-annex
+            ${script}
+            touch $out
+          '';
+          # enrich and capture run on their own interpreter, which must hold
+          # the pinned Essentia build wherever one exists.
+          requireEssentia = pkgs.lib.optionalString (hasMatcher system) "export ARCHIVE_REQUIRE_ESSENTIA=1";
+        in
+        {
+          inherit archive;
+
+          python = suite "python" ''
             python -m unittest discover -s world/tests
             python -m unittest discover -s relay/tests
             python -m unittest discover -s enrich/tests
             python -m unittest discover -s shadow -p 'test_*.py'
             python -m unittest discover -s migration -p 'test_*.py'
             python -m unittest discover -s fixture -p 'test_*.py'
-            # enrich and capture run on their own interpreter, which must
-            # hold the pinned Essentia build wherever one exists.
-            ${pkgs.lib.optionalString (hasMatcher system) "export ARCHIVE_REQUIRE_ESSENTIA=1"}
+            python -m unittest discover -s documents/ireal -p 'test_*.py'
+            python -m unittest discover -s documents/tests
+          '';
+          enrich = suite "enrich" ''
+            ${requireEssentia}
             ${enrichPython}/bin/python3 -m unittest discover -s enrich -p 'test_*.py'
+          '';
+          capture = suite "capture" ''
+            ${requireEssentia}
             ${enrichPython}/bin/python3 -m unittest discover -s capture -p 'test_*.py'
-            touch $out
           '';
         });
 
