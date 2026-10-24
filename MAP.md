@@ -45,7 +45,7 @@ module is `wf check enrich -- -p test_bank.py` and one test name is
 | docs | 1 | 60s | `wf vet --docs "$@"` |
 | build | 300 | 1800s | `cabal build -v0 lib:archive exe:door exe:archive "$@"` |
 | documents | 5 | 60s | `python3 -m unittest discover -s documents/ireal -p "test_*.py" "$@"` |
-| haskell | night | 3600s | `cabal test all "$@"` |
+| haskell | night | 3600s | `n=$#; for a do set -- "$@" "--test-option=$a"; done; shift $n; cabal test all --test-show-details=direct "$@"` |
 | world | night | 3600s | `$PYTHON -m unittest discover -s world/tests "$@"` |
 | relay | 300 | 1800s | `$PYTHON -m unittest discover -s relay/tests "$@"` |
 | enrich-tests | 30 | 1800s | `$PYTHON -m unittest discover -s enrich/tests "$@"` |
@@ -59,9 +59,10 @@ module is `wf check enrich -- -p test_bank.py` and one test name is
 | bench-horn | night | 3600s | `P="$HOME/archive-bench/envs/harness/bin/python"; test -x "$P" \|\| { echo "bench-horn: no $P; the bench runs on the x86-64 laptop (wf check --on laptop)"; exit 1; }; ARCHIVE_BENCH_ROOT="$HOME/archive-bench" "$P" -m enrich.bench check horn-v1 "$@"` |
 <!-- /wf:gen -->
 
-`haskell` is `door-test` and `archive-test`; `enrich` and `capture` run
-the Essentia interpreter; `bench` and `bench-horn` need the bench's private
-data on the x86-64 laptop. Python suites build `door`/`archive` first and set
+`haskell` is `door-test` and `archive-test`, tasty trees whose cases are the
+named checks (`wf check haskell -- -p proposalChecks` runs one); `enrich` and
+`capture` run the Essentia interpreter; `bench` and `bench-horn` need the
+bench's private data on the x86-64 laptop. Python suites build `door`/`archive` first and set
 `ARCHIVE_REQUIRE_INTEGRATION=1` (skips become failures).
 
 ## Door and archive (Haskell): the one writer, and the reader commands
