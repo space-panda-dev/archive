@@ -12,11 +12,9 @@ module Archive.Door.PlanProblem
   , PlanProblem (..)
   , planProblemRefusal
   , refuseProblem
-  , distinctOr
   ) where
 
 import Archive.Door.Refusal (PlanRefusal (..))
-import qualified Data.Set as Set
 import Data.Text (Text)
 
 data Planner = AdmissionPlanner | TransitionPlanner
@@ -74,9 +72,3 @@ planProblemRefusal problem = case problem of
 
 refuseProblem :: Either PlanProblem a -> Either PlanRefusal a
 refuseProblem = either (Left . planProblemRefusal) Right
-
--- | Refuse with @problem@ unless every value is distinct.
-distinctOr :: PlanProblem -> [Text] -> Either PlanProblem ()
-distinctOr problem values
-  | Set.size (Set.fromList values) == length values = Right ()
-  | otherwise = Left problem

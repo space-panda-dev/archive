@@ -62,6 +62,8 @@ import Data.Aeson (Value (Object, String))
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.RFC8785 (encodeCanonical)
 import qualified Data.ByteString.Lazy as LazyByteString
+import Data.List.NonEmpty (NonEmpty ((:|)))
+import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -88,7 +90,7 @@ validateResources snapshot additions upgradeCommits specification = do
   contextResult <- readJson snapshot contextPath
   pure $ do
     initialCommit <- mapIntegrity (introducedAt additions "archive.json")
-    let adoptingCommit = last (initialCommit : upgradeCommits)
+    let adoptingCommit = NonEmpty.last (initialCommit :| upgradeCommits)
     mapM_ (mapIntegrity . requireIntroducedAt additions adoptingCommit)
       [versionPath, documentPath, contextPath]
     versionBytes <- versionResult

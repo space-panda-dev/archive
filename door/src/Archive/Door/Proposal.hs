@@ -23,7 +23,9 @@ module Archive.Door.Proposal
   , validateProposal
   ) where
 
+import Archive.Door.Distinct (distinctOr)
 import Archive.Door.Json (decodeUnique)
+import Archive.Door.Json.Access (arrayField, hasExactKeys, numberField, textField)
 import Archive.Door.ProposalProblem (ProposalProblem (..), proposalProblemMessage)
 import Archive.Door.Types
   ( DraftEnvelope (..)
@@ -35,14 +37,11 @@ import Archive.Door.Types
 import Control.Exception (IOException, try)
 import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT)
 import Data.Aeson (Value (..))
-import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Bifunctor (first)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Char (isControl)
-import Data.Foldable (toList)
-import Data.List (sort)
 import Data.Scientific (Scientific, floatingOrInteger)
 import Data.Set qualified as Set
 import Data.Text (Text)
@@ -455,31 +454,18 @@ parseExpectedHead (Object fields) = do
 parseExpectedHead _ = Left ExpectedHeadNotObject
 
 requireExactKeys :: Text -> [Text] -> KeyMap.KeyMap Value -> Either ProposalProblem ()
-requireExactKeys label expected fields =
-  let actual = sort (map Key.toText (KeyMap.keys fields))
-      wanted = sort expected
-  in if actual == wanted
-       then Right ()
-       else Left (UnknownOrMissingFields label)
+requireExactKeys label expected fields
+  | hasExactKeys expected fields = Right ()
+  | otherwise = Left (UnknownOrMissingFields label)
 
 requiredText :: Text -> KeyMap.KeyMap Value -> Either ProposalProblem Text
-requiredText name fields = case KeyMap.lookup (Key.fromText name) fields of
-  Just (String value) | not (Text.null value) -> Right value
-  Just (String _) -> Left (FieldEmpty name)
-  Just _ -> Left (FieldNotString name)
-  Nothing -> Left (FieldRequired name)
+requiredText name = first ProposalField . textField name
 
 requiredArray :: Text -> KeyMap.KeyMap Value -> Either ProposalProblem [Value]
-requiredArray name fields = case KeyMap.lookup (Key.fromText name) fields of
-  Just (Array values) -> Right (toList values)
-  Just _ -> Left (FieldNotArray name)
-  Nothing -> Left (FieldRequired name)
+requiredArray name = first ProposalField . arrayField name
 
 requiredNumber :: Text -> KeyMap.KeyMap Value -> Either ProposalProblem Value
-requiredNumber name fields = case KeyMap.lookup (Key.fromText name) fields of
-  Just value@(Number _) -> Right value
-  Just _ -> Left (FieldNotNumber name)
-  Nothing -> Left (FieldRequired name)
+requiredNumber name = first ProposalField . numberField name
 
 integerNumberOr :: ProposalProblem -> Value -> Either ProposalProblem Word64
 integerNumberOr message value = maybe (Left message) Right (integerNumberValue value)
@@ -550,9 +536,7 @@ processArgument field value
   | otherwise = Right value
 
 requireDistinct :: Text -> [Text] -> Either ProposalProblem ()
-requireDistinct label values
-  | Set.size (Set.fromList values) == length values = Right ()
-  | otherwise = Left (NotUnique label)
+requireDistinct label = distinctOr (NotUnique label)
 
 objectText :: ObjectId -> Text
 objectText = objectIdText

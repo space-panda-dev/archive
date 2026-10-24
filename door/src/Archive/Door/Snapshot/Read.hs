@@ -20,6 +20,7 @@ module Archive.Door.Snapshot.Read
   , revisionText
   ) where
 
+import Archive.Door.Distinct (distinctOr)
 import Archive.Door.Json (decodeUnique)
 import Archive.Door.Layout (digestText, parseRecordRelativePath)
 import Archive.Door.Snapshot.Data
@@ -33,7 +34,6 @@ import Data.Aeson (Value)
 import Data.Aeson.RFC8785 (encodeCanonical)
 import qualified Data.ByteString.Lazy as LazyByteString
 import qualified Data.Map.Strict as Map
-import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
 
@@ -99,9 +99,7 @@ decodeBytes path bytes = case decodeUnique bytes of
   Right value -> Right value
 
 requireDistinct :: Text -> [Text] -> Either Text ()
-requireDistinct label values
-  | Set.size (Set.fromList values) == length values = Right ()
-  | otherwise = Left (label <> " must be unique")
+requireDistinct label = distinctOr (label <> " must be unique")
 
 objectText :: ObjectId -> Text
 objectText = objectIdText

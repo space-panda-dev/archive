@@ -100,9 +100,6 @@ validateTargetMeasure records draft bundle = do
   where
     spanEnd name (Object piece) = integerField name piece
     spanEnd _ _ = Left "span must be an object"
-    integerField name fields = case KeyMap.lookup (Key.fromText name) fields of
-      Just (Number value) | Right integer <- (floatingOrInteger value :: Either Double Integer) -> Right integer
-      _ -> Left (name <> " must be an integer")
 
 -- | The pinned Claim is about the very revision this record names: its one
 -- subject reference and this record's one compared reference pin the same
@@ -153,10 +150,6 @@ validateTargetBound records draft bundle = do
             then Right ()
             else Left (targetBoundField bound <> " must not exceed the " <> role <> " claim's "
               <> targetBoundBound bound)
-  where
-    integerField name fields = case KeyMap.lookup (Key.fromText name) fields of
-      Just (Number value) | Right integer <- (floatingOrInteger value :: Either Double Integer) -> Right integer
-      _ -> Left (name <> " must be an integer")
 
 -- | Samples within what the pinned Claim counts: a beat-only layer's beats
 -- before the pinned stream's sample count.
@@ -176,9 +169,7 @@ validateTargetSamples records draft bundle = do
           let role = targetSamplesRole samples
           reference <- singleReference draft role
           target <- targetClaimPayload records role reference
-          count <- case KeyMap.lookup (Key.fromText (targetSamplesCount samples)) target of
-            Just (Number value) | Right integer <- (floatingOrInteger value :: Either Double Integer) -> Right integer
-            _ -> Left (targetSamplesCount samples <> " must be an integer")
+          count <- integerField (targetSamplesCount samples) target
           if all (< count) values
             then Right ()
             else Left ("samples must be before the " <> role <> " claim's " <> targetSamplesCount samples)
@@ -251,10 +242,6 @@ validateSpanWindow records draft bundle = do
         spanBounds (Object piece) = (,) <$> integerField (spanWindowStart window) piece
           <*> integerField (spanWindowEnd window) piece
         spanBounds _ = Left "span must be an object"
-  where
-    integerField name fields = case KeyMap.lookup (Key.fromText name) fields of
-      Just (Number value) | Right integer <- (floatingOrInteger value :: Either Double Integer) -> Right integer
-      _ -> Left (name <> " must be an integer")
 
 -- | Bit-identical recordings are one source.  The digest is the pinned
 -- Artifact revision's committed content digest, never a proposer's claim.
@@ -292,3 +279,10 @@ validateDistinctTrackContent records draft instanceValue bundle = do
         _ -> Left (role <> " reference must target an Artifact revision")
     splitCounts [] _ = []
     splitCounts (count : rest) values = take count values : splitCounts rest (drop count values)
+
+-- | An integer field of a payload; the rules here all refuse a missing or
+-- fractional one with the same words.
+integerField :: Text -> KeyMap.KeyMap Value -> Either Text Integer
+integerField name fields = case KeyMap.lookup (Key.fromText name) fields of
+  Just (Number value) | Right integer <- (floatingOrInteger value :: Either Double Integer) -> Right integer
+  _ -> Left (name <> " must be an integer")

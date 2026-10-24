@@ -85,6 +85,7 @@ library
     , Archive.Door.Contracts.Profile.Syntax
     , Archive.Door.Contracts.Schema
     , Archive.Door.Contracts.SchemaError
+    , Archive.Door.Distinct
     , Archive.Door.Hex
     , Archive.Door.Identity
     , Archive.Door.Json

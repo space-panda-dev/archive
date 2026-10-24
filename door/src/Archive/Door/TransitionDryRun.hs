@@ -42,10 +42,10 @@ import Archive.Door.References
   , insertRecord
   , validateReferences
   )
+import Archive.Door.Distinct (distinctOr)
 import Archive.Door.PlanProblem
   ( PlanProblem (..)
   , Planner (..)
-  , distinctOr
   , refuseProblem
   )
 import Archive.Door.Refusal (PlanRefusal (..), refuse)
