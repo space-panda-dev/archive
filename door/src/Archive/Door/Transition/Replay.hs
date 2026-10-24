@@ -209,7 +209,7 @@ orderHistoricalTransitions installed entries = do
   pure ordered
   where
     prepareEntry entry = do
-      key <- outsideCheck (dispatch installed (storedDraft (entryEnvelope entry)))
+      key <- dispatch installed (storedDraft (entryEnvelope entry))
       let prepared = Prepared
             (entryRevision entry)
             Null

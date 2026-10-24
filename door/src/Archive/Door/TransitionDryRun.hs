@@ -152,7 +152,7 @@ planTransition today snapshot proposal = do
   refuse (validateProposal proposal)
   prepared <- refuse (mapM prepare (proposalRecords proposal))
   refuseProblem (distinctOr (DuplicateComputedRevision TransitionPlanner) (map preparedRevision prepared))
-  keys <- refuse (mapM (dispatch (snapshotTransitionKeys snapshot) . preparedDraft) prepared)
+  keys <- refuseTransition (mapM (dispatch (snapshotTransitionKeys snapshot) . preparedDraft) prepared)
   refuseTransition (validateBatchContracts keys prepared)
   facts <- refuseTransition (snapshotFacts snapshot)
   let revisions = map preparedRevision prepared

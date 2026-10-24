@@ -15,6 +15,7 @@ module Archive.Door.Transition.Dispatch
   ) where
 
 import Archive.Door.SpecificationUpgrade (upgradeContractId, upgradeContractVersion)
+import Archive.Door.Transition.Problem (TransitionProblem (..))
 import Archive.Door.Types
   ( ContractCitation (..)
   , DraftEnvelope (..)
@@ -79,7 +80,7 @@ data TransitionKey = TransitionKey
   }
   deriving (Eq, Show)
 
-dispatch :: Set (Text, Text, Text) -> DraftEnvelope -> Either Text TransitionKey
+dispatch :: Set (Text, Text, Text) -> DraftEnvelope -> Either TransitionProblem TransitionKey
 dispatch installed draft = case transitionCitationKind installed draft of
   Just (kind, version) -> Right (TransitionKey kind version)
   Nothing -> case [ (identifier, version)
@@ -87,6 +88,5 @@ dispatch installed draft = case transitionCitationKind installed draft of
                   , let identifier = contractId citation
                         version = contractVersion citation
                   , (identifier, version) `elem` transitionContractsWithoutHandler ] of
-    (identifier, version) : _ -> Left ("unsupported transition contract: " <> identifier
-      <> " version " <> version <> " is installed but this Door has no handler for it")
-    [] -> Left "unsupported transition contract"
+    (identifier, version) : _ -> Left (UnhandledTransitionContract identifier version)
+    [] -> Left UnsupportedTransitionContract

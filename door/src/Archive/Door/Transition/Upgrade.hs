@@ -28,6 +28,11 @@ import Archive.Door.SpecificationUpgrade
   , upgradeContractId
   )
 import Archive.Door.Transition.Plan (TransitionPlanningError (..))
+import Archive.Door.Transition.Problem
+  ( TransitionProblem (..)
+  , outsideCheck
+  , transitionProblemMessage
+  )
 import Archive.Door.Types
   ( ContractCitation (..)
   , DraftEnvelope (..)
@@ -39,6 +44,7 @@ import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy as LazyByteString
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, withExceptT)
+import Data.Bifunctor (first)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -61,14 +67,19 @@ prepareUpgrade gitSnapshot snapshot proposal =
     [] -> pure (Right (snapshot, []))
     upgrades
       | length upgrades /= 1 || length (proposalRecords proposal) /= 1 ->
-          pure (rejected "a specification upgrade proposal must contain exactly one record")
+          pure (rejected UpgradeNotSingleRecord)
     record : _ -> case canonicalizeDraftStrict (proposalRecordValue record) of
-      Left problem -> pure (rejected problem)
+      Left problem -> pure (rejected (OutsideCheck problem))
       Right (revision, _)
         | Map.member revision (snapshotRevisionIntroducers snapshot) -> pure (Right (snapshot, []))
         | otherwise -> prepareNew record
   where
-    rejected = Left . TransitionProposalRejected
+    -- Every refusal here is a transition problem, rendered where it
+    -- becomes a planning error.
+    rejected :: TransitionProblem -> Either TransitionPlanningError a
+    rejected = Left . TransitionProposalRejected . transitionProblemMessage
+    rejectedBy :: Either Text a -> Either TransitionPlanningError a
+    rejectedBy = either (rejected . OutsideCheck) Right
     citesUpgrade record = any ((== upgradeContractId) . contractId)
       (envelopeContracts (proposalRecordDraft record))
 
@@ -92,10 +103,9 @@ prepareUpgrade gitSnapshot snapshot proposal =
             }
       targetResult <- lift (loadUpgradeTarget release to)
       except $ do
-        target <- either rejected Right targetResult
+        target <- rejectedBy targetResult
         requireTargetSpec to draft
-        upgraded <- either rejected Right
-          (makeArchiveManifest (manifestArchiveId manifest) to)
+        upgraded <- rejectedBy (makeArchiveManifest (manifestArchiveId manifest) to)
         let added = targetAddedBundles target
             installed = Map.union (snapshotInstalled snapshot)
               (Map.fromList [(key, bundle) | (key, bundle) <- added])
@@ -111,26 +121,24 @@ prepareUpgrade gitSnapshot snapshot proposal =
     upgradeRequest current draft = do
       fields <- case envelopeBody draft of
         ClaimRecord (Object payload) -> Right payload
-        _ -> Left "a specification upgrade must be a claim with an object payload"
-      from <- requiredNonEmptyText "from" fields
-      to <- requiredNonEmptyText "to" fields
-      _ <- either (Left . ("specification upgrade from: " <>)) Right (specVersion from)
-      _ <- either (Left . ("specification upgrade to: " <>)) Right (specVersion to)
-      order <- compareSpecifications to from
+        _ -> Left UpgradeNotClaimObject
+      from <- outsideCheck (requiredNonEmptyText "from" fields)
+      to <- outsideCheck (requiredNonEmptyText "to" fields)
+      _ <- first (UpgradeVersionInvalid "from") (specVersion from)
+      _ <- first (UpgradeVersionInvalid "to") (specVersion to)
+      order <- outsideCheck (compareSpecifications to from)
       case order of
-        LT -> Left ("unsupported: no downgrade exists: " <> to <> " is earlier than " <> from)
-        EQ -> Left ("unsupported: a specification upgrade must name a version later than " <> from)
+        LT -> Left (UpgradeIsDowngrade to from)
+        EQ -> Left (UpgradeNotLater from)
         GT -> Right ()
       if from /= current
-        then Left ("specification upgrade from " <> from
-          <> " does not start at the archive's specification " <> current)
+        then Left (UpgradeFromNotCurrent from current)
         else Right ()
       pure to
 
     requireTargetSpec to draft =
       if envelopeSpec draft /= to
-        then rejected ("a specification upgrade record must be written under its target specification "
-          <> to <> ", not " <> envelopeSpec draft)
+        then rejected (UpgradeWrittenUnder to (envelopeSpec draft))
         else Right ()
 
     currentContext current = case specVersion current of
@@ -147,8 +155,7 @@ prepareUpgrade gitSnapshot snapshot proposal =
     requireCitable to installed citation =
       if Map.member (contractId citation, contractVersion citation, contractDigest citation) installed
         then Right ()
-        else rejected ("proposed contract is not installed at this snapshot or in the catalog of "
-          <> to <> ": " <> contractId citation)
+        else rejected (UpgradeContractNotCitable to (contractId citation))
 
     prospective :: [((Text, Text, Text), ContractBundle)] -> UpgradeTarget
                 -> Map (Text, Text, Text) ContractBundle -> SnapshotData

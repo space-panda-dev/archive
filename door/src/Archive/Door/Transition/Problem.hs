@@ -53,6 +53,25 @@ data TransitionProblem
   | ReferenceOtherObject
   | ReferenceNotCurrent
   | NotPersonEntity
+  -- Dispatch by contract citation.
+  | UnhandledTransitionContract Text Text
+    -- ^ an installed contract's identifier and version
+  | UnsupportedTransitionContract
+  -- A specification upgrade's request (ADR 0068).
+  | UpgradeNotSingleRecord
+  | UpgradeNotClaimObject
+  | UpgradeVersionInvalid Text Text
+    -- ^ which end (@from@ or @to@) and the version parser's message
+  | UpgradeIsDowngrade Text Text
+    -- ^ the requested and the current specification
+  | UpgradeNotLater Text
+    -- ^ the current specification
+  | UpgradeFromNotCurrent Text Text
+    -- ^ the payload's @from@ and the archive's specification
+  | UpgradeWrittenUnder Text Text
+    -- ^ the target specification and the record's own
+  | UpgradeContractNotCitable Text Text
+    -- ^ the target specification and the contract identifier
   -- Replaying committed history.
   | HistoryEmpty
   | HistoryIncomplete
@@ -120,6 +139,20 @@ transitionProblemMessage problem = case problem of
   ReferenceOtherObject -> "transition reference revision belongs to another object"
   ReferenceNotCurrent -> "transition reference must pin the current object head"
   NotPersonEntity -> "transition author and authorizer must be person entities"
+  UnhandledTransitionContract identifier version -> "unsupported transition contract: " <> identifier
+    <> " version " <> version <> " is installed but this Door has no handler for it"
+  UnsupportedTransitionContract -> "unsupported transition contract"
+  UpgradeNotSingleRecord -> "a specification upgrade proposal must contain exactly one record"
+  UpgradeNotClaimObject -> "a specification upgrade must be a claim with an object payload"
+  UpgradeVersionInvalid end message -> "specification upgrade " <> end <> ": " <> message
+  UpgradeIsDowngrade to from -> "unsupported: no downgrade exists: " <> to <> " is earlier than " <> from
+  UpgradeNotLater from -> "unsupported: a specification upgrade must name a version later than " <> from
+  UpgradeFromNotCurrent from current -> "specification upgrade from " <> from
+    <> " does not start at the archive's specification " <> current
+  UpgradeWrittenUnder to spec -> "a specification upgrade record must be written under its target specification "
+    <> to <> ", not " <> spec
+  UpgradeContractNotCitable to identifier ->
+    "proposed contract is not installed at this snapshot or in the catalog of " <> to <> ": " <> identifier
   HistoryEmpty -> "archive history is empty"
   HistoryIncomplete -> "record history does not account for every committed record"
   NoActiveOperator -> "no active operator is established by a transition claim"
