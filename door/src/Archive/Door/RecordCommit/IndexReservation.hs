@@ -19,7 +19,8 @@ import Archive.Door.RecordCommit.Failure (failText, require, tryIO)
 import Archive.Door.RecordCommit.Git (runGit)
 import Archive.Door.RecordCommit.Journal
   ( JournalIndex (..)
-  , OperationJournal (..)
+  , OperationJournalOf (..)
+  , PendingJournal
   , replaceOperationJournal
   )
 import Archive.Executables (Executable)
@@ -60,7 +61,7 @@ data IndexReservation = IndexReservation
   , reservationOwned :: IORef OwnedIndex
   -- | The batch's current journal once it is published, so a replacement
   -- of the index inode is journaled before the next Git child runs.
-  , reservationJournal :: IORef (Maybe (IORef OperationJournal))
+  , reservationJournal :: IORef (Maybe (IORef PendingJournal))
   }
 
 -- | A descriptor that keeps the owned index inode from being reused while
@@ -77,7 +78,7 @@ reservedIndex reservation = do
   pure (reservationName reservation, ownedIndexIdentity owned)
 
 -- | Journal every later change of the owned index inode in this journal.
-attachJournal :: IndexReservation -> IORef OperationJournal -> IO ()
+attachJournal :: IndexReservation -> IORef PendingJournal -> IO ()
 attachJournal reservation journal = writeIORef (reservationJournal reservation) (Just journal)
 
 -- | Stop journaling index changes: the journal was never published.

@@ -39,7 +39,7 @@ import Archive.Door.RecordCommit.Descriptors
   )
 import Archive.Door.RecordCommit.Failure (failText, orFail, require, tryIO, tryPresent)
 import Archive.Door.RecordCommit.Git (gitBlobForFd, gitBlobsForFds, runGit)
-import Archive.Door.RecordCommit.Journal (JournalEntry (..))
+import Archive.Door.RecordCommit.Journal (JournalEntryOf (..), PendingEntry)
 import Archive.Door.RecordCommit.Paths (RecordLocation (..), uniqueSorted, validateRecordPath)
 import Archive.Executables (Executable)
 import qualified Control.Exception as Exception
@@ -85,7 +85,7 @@ data PreparedRecord = PreparedRecord
   , preparedRecordFile :: FileID
   }
 
-syncRecordDirectoryAndBarrier :: Fd -> [JournalEntry] -> IO (Either Text ())
+syncRecordDirectoryAndBarrier :: Fd -> [JournalEntryOf name] -> IO (Either Text ())
 syncRecordDirectoryAndBarrier recordsFd entries = do
   result <- tryIO $ do
     mapM_ syncEntry entries
@@ -296,7 +296,7 @@ freshTemporaryName = do
   unique <- newUnique
   pure (".archive-door-record-" <> show processId <> "-" <> show (hashUnique unique))
 
-preparedToJournal :: PreparedRecord -> JournalEntry
+preparedToJournal :: PreparedRecord -> PendingEntry
 preparedToJournal prepared = JournalEntry
   { journalPath = preparedRecordPath prepared
   , journalTemporary = preparedRecordTemporary prepared

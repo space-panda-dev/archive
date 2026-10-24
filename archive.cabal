@@ -46,6 +46,7 @@ library
     , Archive.Door.RecordCommit.Journal
     , Archive.Door.RecordCommit.Lock
     , Archive.Door.RecordCommit.Maintenance
+    , Archive.Door.RecordCommit.ObjectName
     , Archive.Door.RecordCommit.Paths
     , Archive.Door.RecordCommit.Records
     , Archive.Door.RecordCommit.Recovery

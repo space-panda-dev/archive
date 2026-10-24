@@ -79,7 +79,7 @@ Build: [archive.cabal](archive.cabal): library `door/src`, executables
 | `door/src/Archive/Door/TransitionCommit.hs` | `commitTransition` |
 | `door/src/Archive/Door/Contracts.hs` | bundle loading; `validateSchema` parses the `x-archive-*` rule keywords; `validate*Rule` functions implement them |
 | `door/src/Archive/Door/RecordCommit.hs` | `commitRecordBatch*`, write lock, git-annex content |
-| `door/src/Archive/Door/RecordCommit/*.hs` | the writer's private parts: `Lock`, `Journal` and `Recovery` (operation journal), `Records`, `IndexReservation`, `Durability` (object store and ref sync), `Git`, `Descriptors` (fd primitives), `Paths`, `Worktree`, `Maintenance` |
+| `door/src/Archive/Door/RecordCommit/*.hs` | the writer's private parts: `Lock`, `Journal` and `Recovery` (operation journal), `ObjectName` (journaled Git names), `Records`, `IndexReservation`, `Durability` (object store and ref sync), `Git`, `Descriptors` (fd primitives), `Paths`, `Worktree`, `Maintenance` |
 | `door/src/Archive/Door/Bootstrap.hs` | `initArchive` |
 | `door/src/Archive/Door/VerifiedCheckpoint.hs` | incremental verification checkpoint (ADR 0052) |
 | `door/src/Archive/Door/Refusal.hs` | `RefusalCode` (ADR 0058) |

@@ -72,9 +72,9 @@ import Archive.Door.RecordCommit.Internal
   , archiveWriteLockGitExecutableIdentity
   )
 import Archive.Door.RecordCommit.Journal
-  ( JournalEntry (..)
+  ( JournalEntryOf (..)
   , JournalIndex (..)
-  , OperationJournal (..)
+  , OperationJournalOf (..)
   , createOperationJournal
   , replaceOperationJournal
   )

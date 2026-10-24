@@ -8,10 +8,14 @@
 -- a journal that does not re-encode to its exact bytes is refused for
 -- operator inspection instead of guessed at.
 module Archive.Door.RecordCommit.Journal
-  ( JournalEntry (..)
+  ( JournalEntry
+  , JournalEntryOf (..)
   , JournalIdentity (..)
   , JournalIndex (..)
-  , OperationJournal (..)
+  , OperationJournal
+  , OperationJournalOf (..)
+  , PendingEntry
+  , PendingJournal
   , clearJournalIfSame
   , createOperationJournal
   , operationJournalName
@@ -31,6 +35,7 @@ import Archive.Door.RecordCommit.Descriptors
   , writeAll
   )
 import Archive.Door.RecordCommit.Failure (failText, orFail, require, tryIO, tryPresent, unlessEither)
+import Archive.Door.RecordCommit.ObjectName (GitObjectName, gitObjectNameText, parseGitObjectName)
 import Archive.Door.RecordCommit.Paths
   ( uniqueSorted
   , validateArchiveFilePath
@@ -59,23 +64,31 @@ import System.Posix.Process (getProcessID)
 import System.Posix.Types (DeviceID, Fd, FileID)
 import Text.Read (readMaybe)
 
-data OperationJournal = OperationJournal
-  { journalOldHead :: Text
+-- | The journal over the type of its Git object names. The writer composes
+-- a 'PendingJournal' from Git's output, whose names are still text that
+-- encoding validates; reading parses a journal into an 'OperationJournal',
+-- whose names recovery can hand to Git without checking them again.
+data OperationJournalOf name = OperationJournal
+  { journalOldHead :: name
   , journalBranch :: Text
   , journalPhase :: Text
-  , journalTargetCommit :: Maybe Text
+  , journalTargetCommit :: Maybe name
   , journalIndex :: JournalIndex
-  , journalEntries :: [JournalEntry]
+  , journalEntries :: [JournalEntryOf name]
   -- | Content locations this batch adds as git-annex symlink entries, with
   -- their exact link blobs. They have no worktree file before the commit, so
   -- recovery only verifies them in a committed tree.
-  , journalContent :: [(FilePath, Text)]
+  , journalContent :: [(FilePath, name)]
   -- | Specification files a specification upgrade adds or replaces, with
   -- their exact blobs. Like content links they exist only in the temporary
   -- index before the commit, so recovery only verifies them in a committed
   -- tree.
-  , journalFiles :: [(FilePath, Text)]
-  } deriving (Eq, Show)
+  , journalFiles :: [(FilePath, name)]
+  } deriving (Eq, Show, Functor)
+
+type OperationJournal = OperationJournalOf GitObjectName
+
+type PendingJournal = OperationJournalOf Text
 
 data JournalIndex = JournalIndex
   { journalIndexName :: FilePath
@@ -83,13 +96,17 @@ data JournalIndex = JournalIndex
   , journalIndexFile :: FileID
   } deriving (Eq, Show)
 
-data JournalEntry = JournalEntry
+data JournalEntryOf name = JournalEntry
   { journalPath :: FilePath
   , journalTemporary :: FilePath
-  , journalBlob :: Maybe Text
+  , journalBlob :: Maybe name
   , journalDevice :: Maybe DeviceID
   , journalFile :: Maybe FileID
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Functor)
+
+type JournalEntry = JournalEntryOf GitObjectName
+
+type PendingEntry = JournalEntryOf Text
 
 data JournalIdentity = JournalIdentity DeviceID FileID deriving (Eq, Show)
 
@@ -99,7 +116,7 @@ operationJournalName = "archive-door-operation"
 operationJournalByteLimit :: Int
 operationJournalByteLimit = 16 * 1024 * 1024
 
-createOperationJournal :: Fd -> OperationJournal -> IO (Either Text ())
+createOperationJournal :: Fd -> PendingJournal -> IO (Either Text ())
 createOperationJournal gitFd journal = runExceptT $ do
   bytes <- except (encodeOperationJournal journal)
   fd <- orFail ("could not reserve Door operation journal: " <>) $ tryIO $
@@ -111,12 +128,13 @@ createOperationJournal gitFd journal = runExceptT $ do
 -- | Replace the journal only while it still holds what this operation last
 -- wrote: the replacement is written and synchronized under a fresh name,
 -- renamed over the journal, and the rename synchronized.
-replaceOperationJournal :: Fd -> OperationJournal -> OperationJournal -> IO (Either Text ())
+replaceOperationJournal :: Fd -> PendingJournal -> PendingJournal -> IO (Either Text ())
 replaceOperationJournal gitFd expected replacement = runExceptT $ do
   current <- ExceptT (readOperationJournal gitFd)
   case current of
     Nothing -> throwE "Door operation journal disappeared during mutation"
-    Just (journal, _) -> require (journal == expected) "Door operation journal changed during mutation"
+    Just (journal, _) -> require (fmap gitObjectNameText journal == expected)
+      "Door operation journal changed during mutation"
   bytes <- except (encodeOperationJournal replacement)
   temporary <- lift freshJournalTemporaryName
   fd <- orFail ("could not create replacement operation journal: " <>) $ tryIO $
@@ -180,9 +198,9 @@ readBoundedJournal handle = collect [] 0
             then pure (Left "Door operation journal exceeds the size limit")
             else collect (chunk : chunks) nextTotal
 
-encodeOperationJournal :: OperationJournal -> Either Text ByteString.ByteString
+encodeOperationJournal :: PendingJournal -> Either Text ByteString.ByteString
 encodeOperationJournal journal = do
-  validateJournal journal
+  _ <- validateJournal journal
   let header =
         [ "archive-door-operation\t1"
         , "old\t" <> journalOldHead journal
@@ -215,7 +233,7 @@ parseOperationJournal bytes = do
     Left _ -> Left "journal is not UTF-8"
     Right value -> Right value
   unlessEither (Text.isSuffixOf "\n" decoded) "journal is missing its final newline"
-  journal <- case Text.lines decoded of
+  pending <- case Text.lines decoded of
     "archive-door-operation\t1" : oldLine : branchLine : phaseLine : targetLine : indexLine : entryLines -> do
       oldHead <- field "old" oldLine
       branch <- field "branch" branchLine
@@ -236,8 +254,8 @@ parseOperationJournal bytes = do
       files <- traverse parseFile fileLines
       Right (OperationJournal oldHead branch phase target index entries content files)
     _ -> Left "journal header or field order is invalid"
-  validateJournal journal
-  case encodeOperationJournal journal of
+  journal <- validateJournal pending
+  case encodeOperationJournal pending of
     Left problem -> Left problem
     Right canonical | canonical /= bytes -> Left "journal encoding is not canonical"
     Right _ -> Right journal
@@ -260,18 +278,21 @@ parseOperationJournal bytes = do
       ["file", path, blob] -> Right (Text.unpack path, blob)
       _ -> Left "journal specification file entry is malformed"
 
-validateJournal :: OperationJournal -> Either Text ()
+-- | Every check a journal must pass, in the order its refusals are reported;
+-- each Git object name is parsed at the point its check used to run, so the
+-- first failing field still names the refusal.
+validateJournal :: PendingJournal -> Either Text OperationJournal
 validateJournal journal = do
-  unlessEither (validObjectId (journalOldHead journal)) "journal old HEAD is invalid"
+  oldHead <- objectName "journal old HEAD is invalid" (journalOldHead journal)
   unlessEither ("refs/heads/" `Text.isPrefixOf` journalBranch journal
     && not (Text.any (`elem` ['\n', '\r', '\t', '\0']) (journalBranch journal)))
     "journal branch is invalid"
   unlessEither (journalPhase journal `elem` ["preparing", "installing"])
     "journal phase is unsupported"
-  case journalTargetCommit journal of
-    Nothing -> Right ()
-    Just target -> unlessEither (validObjectId target && journalPhase journal == "installing")
-      "journal target commit is invalid"
+  target <- traverse (\name -> if journalPhase journal == "installing"
+      then objectName "journal target commit is invalid" name
+      else Left "journal target commit is invalid")
+    (journalTargetCommit journal)
   unlessEither (isIndexReservationName (journalIndexName (journalIndex journal)))
     "journal index name is invalid"
   let entries = journalEntries journal
@@ -280,32 +301,36 @@ validateJournal journal = do
   unlessEither (not (null entries)) "journal has no record entries"
   unlessEither (length paths == length (uniqueSorted paths)) "journal has duplicate record paths"
   unlessEither (length temporaries == length (uniqueSorted temporaries)) "journal has duplicate temporary names"
-  mapM_ validateEntry entries
+  validEntries <- mapM validateEntry entries
   let contentPaths = map fst (journalContent journal)
   unlessEither (length contentPaths == length (uniqueSorted contentPaths)) "journal has duplicate content paths"
-  mapM_ validateContent (journalContent journal)
+  content <- mapM validateContent (journalContent journal)
   let filePaths = map fst (journalFiles journal)
   unlessEither (length filePaths == length (uniqueSorted filePaths)) "journal has duplicate specification file paths"
-  mapM_ validateFile (journalFiles journal)
+  files <- mapM validateFile (journalFiles journal)
+  Right journal
+    { journalOldHead = oldHead
+    , journalTargetCommit = target
+    , journalEntries = validEntries
+    , journalContent = content
+    , journalFiles = files
+    }
   where
+    objectName problem = maybe (Left problem) Right . parseGitObjectName
     validateFile (path, blob) = do
       validateArchiveFilePath path
-      unlessEither (validObjectId blob) "journal specification file blob identifier is invalid"
+      (,) path <$> objectName "journal specification file blob identifier is invalid" blob
     validateContent (path, blob) = do
       _ <- validateContentPath path
-      unlessEither (validObjectId blob) "journal content blob identifier is invalid"
+      (,) path <$> objectName "journal content blob identifier is invalid" blob
     validateEntry entry = do
       _ <- validateRecordPath (journalPath entry)
       unlessEither (isRecordTemporaryName (journalTemporary entry)) "journal temporary name is invalid"
-      case (journalPhase journal, journalBlob entry, journalDevice entry, journalFile entry) of
-        ("preparing", Nothing, Nothing, Nothing) -> Right ()
-        ("installing", Just blob, Just _, Just _) -> unlessEither (validObjectId blob) "journal blob identifier is invalid"
+      blob <- case (journalPhase journal, journalBlob entry, journalDevice entry, journalFile entry) of
+        ("preparing", Nothing, Nothing, Nothing) -> Right Nothing
+        ("installing", Just blob, Just _, Just _) -> Just <$> objectName "journal blob identifier is invalid" blob
         _ -> Left "journal phase and record ownership fields disagree"
-
-validObjectId :: Text -> Bool
-validObjectId value = Text.length value `elem` [40, 64]
-  && Text.all (\character -> ('0' <= character && character <= '9')
-        || ('a' <= character && character <= 'f')) value
+      Right entry { journalBlob = blob }
 
 isRecordTemporaryName :: FilePath -> Bool
 isRecordTemporaryName value = ".archive-door-record-" `prefixOf` value

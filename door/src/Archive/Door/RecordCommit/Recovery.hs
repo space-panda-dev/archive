@@ -31,15 +31,18 @@ import Archive.Door.RecordCommit.Git
   , runGitStatus
   )
 import Archive.Door.RecordCommit.Journal
-  ( JournalEntry (..)
+  ( JournalEntry
+  , JournalEntryOf (..)
   , JournalIdentity (..)
   , JournalIndex (..)
-  , OperationJournal (..)
+  , OperationJournal
+  , OperationJournalOf (..)
   , clearJournalIfSame
   , operationJournalName
   , parseOperationJournal
   , readBoundedJournal
   )
+import Archive.Door.RecordCommit.ObjectName (gitObjectNameText)
 import Archive.Door.RecordCommit.Paths (ArchiveFile (..), manifestFilePath, validateRecordPath)
 import Archive.Door.RecordCommit.Records
   ( InstalledRecord (..)
@@ -118,8 +121,11 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
     "installing" -> reconcileInstalling headValue
     _ -> pure (Left "unsupported Door operation journal phase")
   where
+    -- Recovery compares the journaled names with Git's output as text.
+    oldHead = gitObjectNameText (journalOldHead journal)
+
     reconcilePreparing headValue
-      | headValue /= journalOldHead journal = pure (Left "archive HEAD changed during record preparation; operation journal retained")
+      | headValue /= oldHead = pure (Left "archive HEAD changed during record preparation; operation journal retained")
       | otherwise = runExceptT $ do
           ExceptT oldHistoryClear
           -- Every path and staging name is checked before any verdict.
@@ -131,13 +137,13 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
           ExceptT (cleanupJournalIndex gitFd (journalIndex journal))
 
     reconcileInstalling headValue =
-      case journalTargetCommit journal of
+      case gitObjectNameText <$> journalTargetCommit journal of
         Nothing
-          | headValue /= journalOldHead journal -> pure (Left
+          | headValue /= oldHead -> pure (Left
               "archive HEAD differs from the journaled old commit without a proposed commit; operation journal retained")
           | otherwise -> cleanupUncommitted
         Just target
-          | headValue == journalOldHead journal -> cleanupUncommitted
+          | headValue == oldHead -> cleanupUncommitted
           | otherwise -> runExceptT $ do
               ExceptT (verifyCommittedBatch headValue target)
               orFail ("committed batch durability barrier failed; operation journal retained: " <>) $
@@ -155,11 +161,11 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
     -- commit. The commit is the authority: a failure is reported, not undone.
     installCommittedFiles = mapM_ installCommittedFile (journalFiles journal)
     installCommittedFile (path, blob) = do
-      contents <- runGitBytesTyped executable rootPath rootFd gitFd Nothing ["cat-file", "blob", Text.unpack blob]
+      contents <- runGitBytesTyped executable rootPath rootFd gitFd Nothing ["cat-file", "blob", Text.unpack (gitObjectNameText blob)]
       installed <- case contents of
         Left problem -> pure (Left (gitFailureMessage problem))
         Right bytes
-          | not (blobMatches blob bytes) -> pure (Left "committed blob does not hash to its name")
+          | not (blobMatches (gitObjectNameText blob) bytes) -> pure (Left "committed blob does not hash to its name")
           | otherwise -> tryIO (installWorktreeFile rootFd (ArchiveFile path (LazyByteString.fromStrict bytes)))
       case installed of
         Left problem -> hPutStrLn stderr ("door: warning: archive commit succeeded but "
@@ -179,7 +185,7 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
       | headValue /= target = pure (Right ())
       | otherwise = do
           compared <- runGitStatus executable rootPath rootFd gitFd Nothing
-            ["diff", "--cached", "--quiet", Text.unpack (journalOldHead journal), "--"]
+            ["diff", "--cached", "--quiet", Text.unpack (oldHead), "--"]
           case compared of
             Left problem -> pure (Left (indexComparisonFailure problem))
             Right (ExitFailure 1) -> pure (Right ())
@@ -206,7 +212,7 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
     -- upgrade replaces it. Every other journaled path must be new.
     oldHistoryClear = do
       contents <- runGit executable rootPath rootFd gitFd Nothing
-        (["ls-tree", "-r", "--name-only", Text.unpack (journalOldHead journal), "--"]
+        (["ls-tree", "-r", "--name-only", Text.unpack (oldHead), "--"]
           <> map journalPath (journalEntries journal)
           <> map fst (journalContent journal)
           <> filter (/= manifestFilePath) (map fst (journalFiles journal)))
@@ -224,7 +230,7 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
     verifyCommittedBatch currentHead target = do
       parent <- runGit executable rootPath rootFd gitFd Nothing ["rev-parse", "--verify", Text.unpack target <> "^"]
       diff <- runGit executable rootPath rootFd gitFd Nothing
-        ["diff-tree", "--no-commit-id", "--no-renames", "--name-status", "-r", Text.unpack (journalOldHead journal), Text.unpack target]
+        ["diff-tree", "--no-commit-id", "--no-renames", "--name-status", "-r", Text.unpack (oldHead), Text.unpack target]
       ancestor <- runGitStatus executable rootPath rootFd gitFd Nothing
         ["merge-base", "--is-ancestor", Text.unpack target, Text.unpack currentHead]
       listing <- treeEntries target
@@ -235,7 +241,7 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
           fileBlobsResult = map (\file -> listing >>= fileBlob file) (journalFiles journal)
       pure $ do
         parentValue <- Text.strip <$> parent
-        unlessEither (parentValue == journalOldHead journal)
+        unlessEither (parentValue == oldHead)
           "journaled commit is not a direct child of the pinned old commit"
         status <- ancestor
         unlessEither (status == ExitSuccess) "journaled commit is not in the current branch history"
@@ -243,16 +249,17 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
         changes <- traverse parseDiffLine (filter (not . Text.null) (Text.lines diffValue))
         treeBlobs <- sequence treeBlobsResult
         contentBlobs <- sequence contentBlobsResult
-        unlessEither (contentBlobs == [blob | (_, blob) <- journalContent journal])
+        unlessEither (contentBlobs == [gitObjectNameText blob | (_, blob) <- journalContent journal])
           "journaled commit tree contains a content location with a different link"
         fileBlobs <- sequence fileBlobsResult
-        unlessEither (fileBlobs == [blob | (_, blob) <- journalFiles journal])
+        unlessEither (fileBlobs == [gitObjectNameText blob | (_, blob) <- journalFiles journal])
           "journaled commit tree contains a specification file with a different blob"
         let expectedPaths = sort (map (Text.pack . journalPath) (journalEntries journal)
               <> map (Text.pack . fst) (journalContent journal)
               <> map (Text.pack . fst) (journalFiles journal))
             actualPaths = sort changes
-            expectedBlobs = sort [(Text.pack (journalPath entry), journalBlob entry) | entry <- journalEntries journal]
+            expectedBlobs = sort [(Text.pack (journalPath entry), gitObjectNameText <$> journalBlob entry)
+              | entry <- journalEntries journal]
             actualBlobs = sort treeBlobs
         unlessEither (actualPaths == expectedPaths)
           "journaled commit tree does not contain exactly the expected record additions"
@@ -289,7 +296,7 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
 
     syncCommittedState syncGitFd recordsFd commit branch entries = runExceptT $ do
       ExceptT $ syncBaselineFrom executable rootPath rootFd syncGitFd
-        (if provenBase == Just (journalOldHead journal) then provenBase else Nothing) commit
+        (if provenBase == Just (oldHead) then provenBase else Nothing) commit
       ExceptT (syncRecordDirectoryAndBarrier recordsFd entries)
       ExceptT (syncReferenceDirectories syncGitFd branch)
 
@@ -312,7 +319,7 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
         unless (isRegularFile status) (failText "committed record path is not a regular file")
         pure fd
 
-    compareBlob (entry, actual) = unless (Just actual == journalBlob entry) $
+    compareBlob (entry, actual) = unless (Just actual == (gitObjectNameText <$> journalBlob entry)) $
       failText ("committed record file differs from its journaled Git blob: " <> Text.pack (journalPath entry))
 
     parseDiffLine line = case Text.splitOn "\t" line of
@@ -336,7 +343,7 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
 journalToInstalled :: JournalEntry -> InstalledRecord
 journalToInstalled entry = InstalledRecord
   { installedRecordPath = journalPath entry
-  , installedRecordBlob = maybe "" id (journalBlob entry)
+  , installedRecordBlob = maybe "" gitObjectNameText (journalBlob entry)
   , installedRecordDevice = maybe 0 id (journalDevice entry)
   , installedRecordFile = maybe 0 id (journalFile entry)
   }
@@ -396,7 +403,7 @@ cleanupJournalTemporary executable rootPath rootFd gitFd entry = runExceptT $ do
                 && deviceID fileStatus == expectedDevice
                 && fileID fileStatus == expectedFile -> do
                   actual <- ExceptT (gitBlobForFd executable rootPath rootFd gitFd temporaryFd)
-                  require (Text.strip actual == expectedBlob) "record temporary blob changed before cleanup"
+                  require (Text.strip actual == gitObjectNameText expectedBlob) "record temporary blob changed before cleanup"
                   currentFd <- orFail ("record temporary path changed before cleanup: " <>) $ tryIO $
                     openFdAt (Just gitFd) (journalTemporary entry) ReadOnly
                       defaultFileFlags { nofollow = True, nonBlock = True, cloexec = True }
