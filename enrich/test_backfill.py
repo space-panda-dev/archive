@@ -850,8 +850,12 @@ class Spool(unittest.TestCase):
             with runner.changed:
                 self.assertFalse(runner.background_open())  # rhythm is still to run, and the proposal held
                 runner.put_window()
+                window = [j for j in planned.jobs if j.status == "putting"]
             self.assertTrue(put_done.wait(10))
-        self.assertTrue(any(j.unit == STEMS and j.status in ("putting", "put") for j in planned.jobs))
+            # Every put of the window ends inside the patch: a put left running would reach the next test's.
+            with runner.changed:
+                self.assertTrue(runner.changed.wait_for(lambda: all(j.status != "putting" for j in window), 10))
+        self.assertTrue(any(j.unit == STEMS and j.status == "put" for j in planned.jobs))
         self.assertTrue(all(j.status == "pending" for j in planned.jobs if j.unit == RHYTHM))
 
     def test_what_runs_here_does_not_wait_for_the_puts(self) -> None:
