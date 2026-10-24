@@ -111,6 +111,9 @@ library
     , Archive.Door.ProposalContracts
     , Archive.Door.ProposalProblem
     , Archive.Door.RecordCommit
+    -- The journal's pure encoding is exposed for door-test's properties; it
+    -- builds and parses bytes only and carries no write capability.
+    , Archive.Door.RecordCommit.JournalFormat
     , Archive.Door.SchemaObjectKeywords
     , Archive.Door.SpecificationUpgrade
     , Archive.Door.Snapshot.Data
