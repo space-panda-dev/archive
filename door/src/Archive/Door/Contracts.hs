@@ -83,15 +83,15 @@ import Archive.Door.Contracts.Schema (walkSchema)
 import Archive.Door.Contracts.SchemaError (SchemaError (..), renderSchemaError)
 import Archive.Door.Hex (hexText)
 import Archive.Door.Json (decodeUnique)
-import Archive.Door.RecordRules (validateRecordRules)
-import Archive.Door.RuleSyntax (validateReleaseRules)
-import Archive.Door.WhenPinned (effectiveSchema)
 import Archive.Door.Layout
   ( archiveRoot
   , contractPath
   , parseSha256Digest
   , specContextPath
   )
+import Archive.Door.RecordRules (validateRecordRules)
+import Archive.Door.RuleSyntax (validateReleaseRules)
+import Archive.Door.WhenPinned (effectiveSchema)
 import Control.Exception (IOException, try)
 import Crypto.Hash.SHA256 qualified as SHA256
 import Data.Aeson (Value (..))

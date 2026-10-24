@@ -35,9 +35,9 @@ import Data.Char (isAlphaNum, isDigit)
 import Data.Foldable (toList)
 import Data.List (sort, unsnoc)
 import Data.Maybe (isNothing)
+import Data.Scientific (floatingOrInteger)
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Data.Scientific (floatingOrInteger)
 
 newtype ObjectId = ObjectId Text
   deriving (Eq, Ord, Show)

@@ -26,18 +26,18 @@ module Archive.GitSnapshot
   , readPathAt
   ) where
 
-import Archive.Process
-  ( ProcessError (..)
-  , ProcessStream (..)
-  , processErrorMessage
-  , runProcessBoundedAt
-  )
 import Archive.Executables
   ( Executable
   , executableIdentityText
   , executablePath
   , executableStillMatches
   , resolveGitExecutable
+  )
+import Archive.Process
+  ( ProcessError (..)
+  , ProcessStream (..)
+  , processErrorMessage
+  , runProcessBoundedAt
   )
 import Control.Concurrent.MVar (MVar, modifyMVar, newMVar, readMVar)
 import Control.Exception (IOException, bracket, mask, onException, try)
@@ -49,10 +49,10 @@ import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
-import qualified Data.Text.Read as Text
 import qualified Data.Text.Encoding.Error as TextError
-import System.Environment (getEnvironment)
+import qualified Data.Text.Read as Text
 import System.Directory (canonicalizePath)
+import System.Environment (getEnvironment)
 import System.Exit (ExitCode (..))
 import System.IO.Error (tryIOError)
 import System.Posix.Files (deviceID, fileID, getFdStatus, isDirectory)
