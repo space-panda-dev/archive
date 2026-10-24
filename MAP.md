@@ -77,7 +77,8 @@ Build: [archive.cabal](archive.cabal): library `door/src`, executables
 | `door/src/Archive/Door/AdmissionCommit.hs` | `commitAdmission`, `refreshVerificationCheckpoint` |
 | `door/src/Archive/Door/TransitionDryRun.hs` | `dryRunTransition`, `transitionDispatchTable` (contract id/version to kind) |
 | `door/src/Archive/Door/TransitionCommit.hs` | `commitTransition` |
-| `door/src/Archive/Door/Contracts.hs` | bundle loading; `validateSchema` parses the `x-archive-*` rule keywords; `validate*Rule` functions implement them |
+| `door/src/Archive/Door/Contracts.hs` | bundle loading; `validateSchema` checks a bundle's schema and its `x-archive-*` rule keywords; re-exports the parts below and renders their typed errors (`BundleError`) to the refusal text |
+| `door/src/Archive/Door/Contracts/` | `Schema.hs` keyword checks, `Evaluate.hs` evaluator and mismatch explanation, `SchemaError.hs` and `Profile/Error.hs` the typed refusals, `Pattern.hs` regex subset, `Pointer.hs`, `Context.hs` JSON-LD contexts, `Profile.hs` the `ProfileRule` type, parsed once per bundle, and `checkInstance`; `Profile/` each rule family's syntax and evaluator |
 | `door/src/Archive/Door/RecordCommit.hs` | `commitRecordBatch*`, write lock, git-annex content |
 | `door/src/Archive/Door/Bootstrap.hs` | `initArchive` |
 | `door/src/Archive/Door/VerifiedCheckpoint.hs` | incremental verification checkpoint (ADR 0052) |
@@ -95,7 +96,7 @@ transitions ADR 0028, 0030; power-loss durability is accepted but not yet met
 `PATH` (ADR 0033); refusal codes in `Refusal.hs` must equal
 `service.schema.json` (a `door-test` check).
 Find: per-contract payload rules are `x-archive-*` keys in the bundle JSON,
-implemented in `Contracts.hs` (`rg -n 'x-archive-' door/src`); transition
+implemented under `Contracts/Profile/` (`rg -n 'x-archive-' door/src`); transition
 kinds in `transitionDispatchTable`. The span rules' list and path forms are
 `SpanRules.hs`; the check beyond the circle (S-30) is `BeyondCircle.hs` over
 `Reach.hs` (sensitivity, rights) and `SharingGate.hs` (co-writers' consent),
@@ -108,7 +109,7 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 |---|---|
 | `door/src/Archive/Door/AdmissionDryRun.hs` | 1572 |
 | `door/src/Archive/Door/TransitionDryRun.hs` | 1119 |
-| `door/src/Archive/Door/Contracts.hs` | 2443 |
+| `door/src/Archive/Door/Contracts.hs` | 332 |
 | `door/src/Archive/Door/RecordCommit.hs` | 3010 |
 | `door/src/Archive/Door/Bootstrap.hs` | 1622 |
 | `door/src/Archive/Read/Core.hs` | 611 |
@@ -119,7 +120,7 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 <!-- /wf:gen -->
 
 <!-- wf:gen anchors door/src/Archive/Door/Contracts.hs#validateSchema door/src/Archive/Door/TransitionDryRun.hs#transitionDispatchTable -->
-- `door/src/Archive/Door/Contracts.hs#validateSchema`: line 286
+- `door/src/Archive/Door/Contracts.hs#validateSchema`: line 227
 - `door/src/Archive/Door/TransitionDryRun.hs#transitionDispatchTable`: line 145
 <!-- /wf:gen -->
 

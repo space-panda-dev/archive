@@ -48,8 +48,9 @@ objectKeywordSchemas fields = case KeyMap.lookup "propertyNames" fields of
 
 -- | Evaluate the keywords against an instance; @nested@ evaluates a schema
 -- this node holds (the evaluator's own, so @propertyNames@ may use every
--- keyword it supports).
-evaluateObjectKeywords :: (Value -> Value -> Either Text Bool) -> KeyMap.KeyMap Value -> Value -> Either Text Bool
+-- keyword it supports). The keywords refuse nothing themselves, so the
+-- error is whatever @nested@ refuses with.
+evaluateObjectKeywords :: (Value -> Value -> Either e Bool) -> KeyMap.KeyMap Value -> Value -> Either e Bool
 evaluateObjectKeywords nested fields (Object object) = do
   let size = toInteger (KeyMap.size object)
       bound name compare' = case KeyMap.lookup (Key.fromText name) fields >>= natural of
