@@ -21,6 +21,7 @@ module Archive.Door.Identity
   , uuidV5
   ) where
 
+import Archive.Door.Hex (byteHex)
 import qualified Data.ByteString as ByteString
 import Data.Bits
   ( Bits (complement, shiftL, shiftR, xor, (.&.), (.|.))
@@ -141,8 +142,7 @@ formatUuid bytes
   where
     byteHexWithIndex (index, byte) =
       (if index `elem` [4, 6, 8, 10] then "-" else "")
-        <> [hexDigit (byte `shiftR` 4), hexDigit (byte .&. 0x0f)]
-    hexDigit value = "0123456789abcdef" !! fromIntegral value
+        <> byteHex byte
 
 setVersionAndVariant :: ByteString.ByteString -> ByteString.ByteString
 setVersionAndVariant bytes = setByte 8 ((ByteString.index bytes 8 .&. 0x3f) .|. 0x80)

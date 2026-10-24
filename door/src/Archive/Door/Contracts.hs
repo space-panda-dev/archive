@@ -31,6 +31,7 @@ module Archive.Door.Contracts
   , pathIntegers
   ) where
 
+import Archive.Door.Hex (hexText)
 import Archive.Door.Json (decodeUnique)
 import Archive.Door.RecordRules (validateRecordRules)
 import Archive.Door.RuleSyntax (release011RuleNames, releaseRuleNames, validateReleaseRules)
@@ -54,7 +55,6 @@ import Data.Aeson (Value (..))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Aeson.RFC8785 (encodeCanonical)
-import Data.ByteString qualified as ByteString
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Foldable (toList)
 import Data.List (sort)
@@ -2435,15 +2435,9 @@ validateContractBytes expectedId expectedVersion digestText bytes = do
   _ <- parseSha256Digest digestText
   value <- decode bytes
   let canonical = encodeCanonical value
-      actualDigest = "sha256:" <> hex (SHA256.hashlazy bytes)
+      actualDigest = "sha256:" <> hexText (SHA256.hashlazy bytes)
   if actualDigest /= digestText
     then Left "contract bytes do not match cited digest"
     else if canonical /= bytes
       then Left "contract bytes are not RFC 8785 canonical"
       else validateBundleValue expectedId expectedVersion digestText value
-
-hex :: ByteString.ByteString -> Text
-hex = Text.pack . concatMap byteHex . ByteString.unpack
-  where
-    byteHex byte = [digits !! fromIntegral (byte `div` 16), digits !! fromIntegral (byte `mod` 16)]
-    digits = "0123456789abcdef"

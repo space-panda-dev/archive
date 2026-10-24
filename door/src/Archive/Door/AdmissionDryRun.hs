@@ -59,6 +59,7 @@ import Archive.Door.Contracts
   , validateContractInstance
   , validateCoreContextForSpecification
   )
+import Archive.Door.Hex (hexText)
 import Archive.Door.Json (decodeUnique)
 import Archive.Door.ReleaseAdmission (effectiveBundles, validateReleaseAdmission)
 import Archive.Door.Layout
@@ -134,7 +135,6 @@ import Data.Foldable (toList)
 import Data.Scientific (floatingOrInteger)
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
-import qualified Data.ByteString as StrictByteString
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Aeson.RFC8785 (encodeCanonical)
 import qualified Data.Map.Strict as Map
@@ -653,7 +653,7 @@ loadContractPath snapshot path = do
       then Left (AdmissionSnapshotIntegrityError
         (Text.pack path <> " is not RFC 8785 canonical"))
       else do
-        let actualDigest = "sha256:" <> hashHex (SHA256.hashlazy bytes)
+        let actualDigest = "sha256:" <> hexText (SHA256.hashlazy bytes)
         if actualDigest /= digest
           then Left (AdmissionSnapshotIntegrityError
             (Text.pack path <> " does not match its digest path"))
@@ -1567,13 +1567,6 @@ objectText = objectIdText
 
 revisionText :: RevisionId -> Text
 revisionText = revisionIdText
-
-hashHex :: StrictByteString.ByteString -> Text
-hashHex bytes = Text.pack (concatMap byteHex (StrictByteString.unpack bytes))
-  where
-    byteHex byte =
-      ["0123456789abcdef" !! fromIntegral (div byte 16)
-      ,"0123456789abcdef" !! fromIntegral (mod byte 16)]
 
 snapshotError :: GitSnapshotError -> Text
 snapshotError = gitSnapshotErrorMessage

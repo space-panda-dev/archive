@@ -42,6 +42,7 @@ library
     , Archive.Door.Catalog
     , Archive.Door.Bootstrap
     , Archive.Door.Contracts
+    , Archive.Door.Hex
     , Archive.Door.Identity
     , Archive.Door.Json
     , Archive.Door.Layout
