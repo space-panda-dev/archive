@@ -176,7 +176,7 @@ full rebuild (ADR 0055).
 | `world/world.py` | 2138 |
 | `world/harmony.py` | 1061 |
 | `world/contributions.py` | 810 |
-| `world/documents.py` | 1285 |
+| `world/documents.py` | 1287 |
 | `world/notes.py` | 1657 |
 | `world/circle.py` | 770 |
 | `world/tests/test_world.py` | 1010 |
