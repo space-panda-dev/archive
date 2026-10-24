@@ -80,6 +80,7 @@ Build: [archive.cabal](archive.cabal): library `door/src`, executables
 | `door/src/Archive/Door/Contracts.hs` | bundle loading; `validateSchema` checks a bundle's schema and its `x-archive-*` rule keywords; re-exports the parts below and renders their typed errors (`BundleError`) to the refusal text |
 | `door/src/Archive/Door/Contracts/` | `Schema.hs` keyword checks, `Evaluate.hs` evaluator and mismatch explanation, `SchemaError.hs` and `Profile/Error.hs` the typed refusals, `Pattern.hs` regex subset, `Pointer.hs`, `Context.hs` JSON-LD contexts, `Profile.hs` the `ProfileRule` type, parsed once per bundle, and `checkInstance`; `Profile/` each rule family's syntax and evaluator |
 | `door/src/Archive/Door/RecordCommit.hs` | `commitRecordBatch*`, write lock, git-annex content |
+| `door/src/Archive/Door/RecordCommit/*.hs` | the writer's private parts: `Lock`, `Journal` and `Recovery` (operation journal), `ObjectName` (journaled Git names), `Records`, `IndexReservation`, `Durability` (object store and ref sync), `Git`, `Descriptors` (fd primitives), `Paths`, `Worktree`, `Maintenance` |
 | `door/src/Archive/Door/Bootstrap.hs` | `initArchive` |
 | `door/src/Archive/Door/VerifiedCheckpoint.hs` | incremental verification checkpoint (ADR 0052) |
 | `door/src/Archive/Door/Refusal.hs` | `RefusalCode` (ADR 0058) |
@@ -110,7 +111,7 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 | `door/src/Archive/Door/AdmissionDryRun.hs` | 1572 |
 | `door/src/Archive/Door/TransitionDryRun.hs` | 1119 |
 | `door/src/Archive/Door/Contracts.hs` | 332 |
-| `door/src/Archive/Door/RecordCommit.hs` | 3010 |
+| `door/src/Archive/Door/RecordCommit.hs` | 572 |
 | `door/src/Archive/Door/Bootstrap.hs` | 1622 |
 | `door/src/Archive/Read/Core.hs` | 611 |
 | `door/src/Archive/GitSnapshot.hs` | 661 |
