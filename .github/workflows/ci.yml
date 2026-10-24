@@ -3,34 +3,92 @@
 # The structure checks are structure.yml, which runs on every change. A change
 # to nothing but the files below cannot change a test's outcome (no test or
 # build reads them), so it skips this workflow (ADR 0115).
+#
+# The Haskell package is built and tested once, in `archive`, and its Nix
+# store is cached under a key of what that build reads; the Python suites
+# and the image start from that cache side by side (ADR 0117). A change that
+# leaves the Haskell sources alone restores the package instead of building
+# and testing it again.
 name: CI
 
+# A branch runs once: as a pull request, or as main after the merge.
 on:
   push:
+    branches: [main]
     paths-ignore: ["*.md", "docs/decisions/**", ".workshop.toml"]
   pull_request:
     paths-ignore: ["*.md", "docs/decisions/**", ".workshop.toml"]
 
-# A newer push to the same branch or pull request cancels the older run;
-# main keeps every run.
+# A newer push to the same pull request cancels the older run; main keeps
+# every run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
 
 jobs:
-  build-and-test:
+  # The Haskell package; its build runs `cabal test all`.
+  archive:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      actions: write # to purge this branch's superseded caches
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
+      # The key names what the Haskell build reads (flake.nix's haskellSource)
+      # and the flake; the other jobs restore by the same key.
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-archive-${{ hashFiles('flake.nix', 'flake.lock', 'archive.cabal', 'cabal.project', 'door/**', 'archive/**', 'spec/**', 'fixture/plan.json') }}
+          restore-prefixes-first-match: nix-archive-
+          # Keep the package's closure (rooted by result-archive); drop the
+          # compiler and other build-only paths, which cache.nixos.org serves.
+          gc-max-store-size-linux: 1G
+          purge: true
+          purge-prefixes: nix-archive-
+          purge-created: 0
+          purge-primary-key: never
+      - run: nix build -L .#checks.x86_64-linux.archive -o result-archive
+
+  # The Python suites against that build: World (with conformance), relay,
+  # shadow, migration, fixture and documents; enrich; capture.
+  tests:
+    needs: archive
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [python, enrich, capture]
+    name: tests (${{ matrix.check }})
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-archive-${{ hashFiles('flake.nix', 'flake.lock', 'archive.cabal', 'cabal.project', 'door/**', 'archive/**', 'spec/**', 'fixture/plan.json') }}
+          restore-prefixes-first-match: nix-archive-
+          save: false
+      - run: nix build -L .#checks.x86_64-linux.${{ matrix.check }}
+
+  # The release image and bundle, and a start of the image as a client's CI
+  # would start it.
+  image:
+    needs: archive
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
-      # checks.archive runs `cabal test all`; checks.python runs the World
-      # (with conformance), relay, shadow, migration, and fixture suites
-      # against that build, failing rather than skipping.
-      - run: nix flake check -L
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-archive-${{ hashFiles('flake.nix', 'flake.lock', 'archive.cabal', 'cabal.project', 'door/**', 'archive/**', 'spec/**', 'fixture/plan.json') }}
+          restore-prefixes-first-match: nix-archive-
+          save: false
       - run: nix build -L .#image -o image
       - run: nix build -L .#bundle -o bundle
       - name: Start the image as a client's CI would

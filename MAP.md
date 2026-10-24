@@ -204,28 +204,29 @@ full rebuild (ADR 0055).
 
 `relay/relay.py` (`GET /media/{digest}/bank/{extractor}/{output}/{key}` serves a region entry's file by key): `DOOR_ROUTES`, `MEDIA_ROUTES`, `ROUTES`, `Relay`, `make_handler`, `main`.
 `relay/openapi.json` describes every route, answer, and refusal.
+`relay/metrics.py` (`GET /metrics`): `archive_counts` (from World's records), `BankCounter`, `media_counts`, `derived_bytes`, `Collector` (background counts, request durations), `exposition`.
 Tests: suite `relay`; `relay/tests/test_relay.py` (`CoherentSaveChecks`
-is ADR 0113's end-to-end save on the built fixture), `test_media.py`. A local
-probe's `GET /health` needs no login (ADR 0114). Every answer is validated against `openapi.json`, and Door refusals
+is ADR 0113's end-to-end save on the built fixture), `test_media.py`, `test_metrics.py`. A local
+probe's `GET /health` and `GET /metrics` need no login (ADR 0114, 0118). Every answer is validated against `openapi.json`, and Door refusals
 against `door/service.schema.json`.
 Rules: ADR 0054 (Door service), 0056, 0060 (interface and role), 0063 (read
-speed), 0069 (media by digest), 0114 (local health).
+speed), 0069 (media by digest), 0114 (local health), 0118 (metrics).
 
 <!-- wf:gen lines relay/relay.py relay/openapi.json relay/tests/test_relay.py -->
 | file | lines |
 |---|---|
-| `relay/relay.py` | 1216 |
-| `relay/openapi.json` | 4726 |
+| `relay/relay.py` | 1292 |
+| `relay/openapi.json` | 4779 |
 | `relay/tests/test_relay.py` | 1194 |
 <!-- /wf:gen -->
 
 <!-- wf:gen anchors relay/relay.py#DOOR_ROUTES relay/relay.py#MEDIA_ROUTES relay/relay.py#ROUTES relay/relay.py#Relay relay/relay.py#make_handler relay/relay.py#main -->
-- `relay/relay.py#DOOR_ROUTES`: line 60
-- `relay/relay.py#MEDIA_ROUTES`: line 67
-- `relay/relay.py#ROUTES`: line 79
-- `relay/relay.py#Relay`: line 739
-- `relay/relay.py#make_handler`: line 927
-- `relay/relay.py#main`: line 1202
+- `relay/relay.py#DOOR_ROUTES`: line 61
+- `relay/relay.py#MEDIA_ROUTES`: line 68
+- `relay/relay.py#ROUTES`: line 80
+- `relay/relay.py#Relay`: line 766
+- `relay/relay.py#make_handler`: line 970
+- `relay/relay.py#main`: line 1278
 <!-- /wf:gen -->
 
 ## enrich (Python)
@@ -290,7 +291,7 @@ shipped extractors").
 <!-- wf:gen lines enrich/README.md enrich/enrich.py enrich/adapter.py enrich/proposers.py enrich/detector.py enrich/cover.py enrich/extract.py enrich/bank.py enrich/remote.py enrich/backfill.py enrich/backfill_queue.py enrich/extractors/stems/stems.py enrich/extractors/quality/quality.py enrich/extractors/tonal/tonal.py enrich/extractors/structure/structure.py enrich/extractors/rhythm/meter.py enrich/test_bank.py docs/feature-bank.md -->
 | file | lines |
 |---|---|
-| `enrich/README.md` | 1225 |
+| `enrich/README.md` | 1228 |
 | `enrich/enrich.py` | 738 |
 | `enrich/adapter.py` | 609 |
 | `enrich/proposers.py` | 1059 |
@@ -299,7 +300,7 @@ shipped extractors").
 | `enrich/extract.py` | 1060 |
 | `enrich/bank.py` | 1498 |
 | `enrich/remote.py` | 720 |
-| `enrich/backfill.py` | 1193 |
+| `enrich/backfill.py` | 1223 |
 | `enrich/backfill_queue.py` | 613 |
 | `enrich/extractors/stems/stems.py` | 755 |
 | `enrich/extractors/quality/quality.py` | 1317 |
@@ -330,8 +331,8 @@ Rules: ADR 0070; capture proposes, Door commits (INV-2).
 <!-- wf:gen lines capture/capture.py capture/test_capture.py -->
 | file | lines |
 |---|---|
-| `capture/capture.py` | 704 |
-| `capture/test_capture.py` | 855 |
+| `capture/capture.py` | 767 |
+| `capture/test_capture.py` | 943 |
 <!-- /wf:gen -->
 
 ## documents (Python)
