@@ -121,7 +121,7 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 | `door/src/Archive/Door/RecordCommit.hs` | 572 |
 | `door/src/Archive/Door/Bootstrap.hs` | 467 |
 | `door/src/Archive/Read/Core.hs` | 611 |
-| `door/src/Archive/GitSnapshot.hs` | 661 |
+| `door/src/Archive/GitSnapshot.hs` | 657 |
 | `door/src/Archive/ProcessPinned.c` | 799 |
 | `door/test/Main.hs` | 7869 |
 | `archive/test/Main.hs` | 1015 |
