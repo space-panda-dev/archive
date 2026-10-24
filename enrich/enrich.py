@@ -10,6 +10,8 @@
                  [--staging <annex>] [--dry-run | --regenerate]
     enrich propose --archive <dir> (--artifact <object id> [--stream <claim id>] | --all)
                    [--proposers <name,...>] [--bank <root>] [--config <file>] [--staging <annex>] [--dry-run]
+    enrich align --archive <dir> --artifact <object id> --meter <untimed meter claim> [--stream <claim id>]
+                 [--beats <claim id>] [--chords <claim id>] [--staging <annex>] [--dry-run]
     enrich backfill --archive <dir> --bank <root> [--config <file>] [--mode songs|eager|on-demand] [--cores <n>]
                     [--spool <command>] [--commit] [--retry-failed] [--world-store <dir>] [--log <file>]
 
@@ -632,6 +634,12 @@ def run_propose(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     return propose.run(args, env, reader_of(args, env), staging_of(args, env), stream_claims, choose_stream)
 
 
+def run_align(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
+    import align_command  # a chart placed on a recording (ADR 0116 section 6); see align.py
+    env = environment()
+    return align_command.run(args, env, reader_of(args, env), staging_of(args, env), choose_stream, pinned)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="enrich", description="Propose enrichment results to Door")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -680,6 +688,11 @@ def main(argv: list[str] | None = None) -> int:
     import propose
     propose.add_arguments(proposing)
     common(proposing)
+    aligning = commands.add_parser("align", help="place a chart's untimed claims on a recording's machine beats "
+                                                 "and chords and propose the timed claims (ADR 0116)")
+    import align_command
+    align_command.add_arguments(aligning)
+    common(aligning)
     backfilling = commands.add_parser("backfill", help="fill the feature bank for every recording and propose "
                                                        "what it holds (ADR 0112); a dry run unless --commit")
     import backfill
@@ -708,6 +721,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "propose":
             errors += (propose.ProposeError,)
             code, answer = run_propose(args)
+        elif args.command == "align":
+            errors += (align_command.AlignCommandError, ValueError)
+            code, answer = run_align(args)
         else:
             code, answer = run_match_windows(args)
     except errors as exc:

@@ -1,7 +1,8 @@
 # 0089. Practice audio from the stems, transposition, and exports that are views until shared
 
 Status: accepted (operator, 2026-10-18); note added 2026-10-19 (sends beyond
-the circle, and what the 0.0.10 amendments add to exports)
+the circle, and what the 0.0.10 amendments add to exports); amended
+2026-10-20 (ADR 0113) and 2026-10-22 (ADR 0116: the `ireal` format)
 
 A person learning a song from a lead sheet wants to hear it without their
 own part: the recording minus the bass, for the bassist; the vocal alone, to
@@ -501,3 +502,26 @@ disagrees with this section, this section holds.
 - An exporter refuses a sketch (a melody with an unmeasured item).
 - The losses gain an open repeat's played count and a folded chart's
   variant passes.
+
+## Amendment, 2026-10-22: the `ireal` format and written directions
+
+Made on the acceptance of [ADR 0116](0116-ireal-charts.md) (decisions D and
+E), which gives the reasons, and installed by specification 0.0.11 (D-19).
+The text above is left as it was accepted; where it disagrees with this
+section, this section holds.
+
+- The format table gains a row:
+
+  | Format | Media type | Suffix | What it renders |
+  |---|---|---|---|
+  | `ireal` | `text/plain` | `.irealb` | an `irealb://` link of one chart |
+
+  A sent file in that format is admitted under `archive.claim/export`
+  version 2 (version 1 plus `ireal`); version 1 still names the four formats
+  above. Exporter `lead-sheet-ireal` version 1 (`documents/ireal/export.py`)
+  writes it.
+- The MusicXML and LilyPond exporters write an untimed bar's written
+  directions (meter layers version 3): MusicXML as a `<direction>` with
+  `<words>` and, for a tempo, a `<metronome>` and no `<sound tempo>`;
+  LilyPond as `\tempo` for the first and `\mark` for the rest, a fractional
+  tempo rounded and listed as a loss.

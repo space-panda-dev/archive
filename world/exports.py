@@ -4,11 +4,17 @@ gains, transposition, speed) and the key that names its regenerable file,
 transposition as a view, the export request and the key that names its
 regenerable file, the `archive.claim/export` version 1 claim that admits a
 sent file, and the MusicXML `<harmony>` mapping ADR 0077 left unbuilt.
+ADR 0113's amendment adds a form's repeat signs in MusicXML and LilyPond
+(open repeats, their instructions, and last-time endings among them), the
+numbering of stacked verses, and the refusal of a sketch. ADR 0116 adds the
+`ireal` format (an export request may name it; only `archive.claim/export`
+version 2 admits a sent one) and a written bar's directions as MusicXML
+`<direction>` with `<words>` and `<metronome>`, and as LilyPond `\tempo`.
 
-ADR 0089 is accepted. No specification release installs
-`archive.claim/export` yet, so Door cannot admit one; this module holds its
-rules as World would re-check them, so an importer can check a proposal
-before Door does (INV-2). It uses only the standard library.
+ADR 0089 is accepted, and specification 0.0.10 installs
+`archive.claim/export` version 1 (0.0.11 version 2); this module holds their
+rules as World re-checks them, so an importer can check a proposal before
+Door does (INV-2). It uses only the standard library.
 
 An export is a computed view: regenerable from the exact revisions it
 renders, never stored as a claim, and never a judgment between claims
@@ -32,14 +38,25 @@ from xml.sax.saxutils import escape
 from world.harmony import BANK_EXTRACTOR, BANK_OUTPUT, PITCH_NAMES, check_reading, stack_names
 
 EXPORT = ("archive.claim/export", "1")
+EXPORT_V2 = ("archive.claim/export", "2")
 
-# format -> (media type, file suffix). MusicXML is the uncompressed 4.0
-# score-partwise file; JAMS is JSON with its own suffix.
+# format -> (media type, file suffix): ADR 0089's table, with ADR 0116's row.
+# MusicXML is the uncompressed 4.0 score-partwise file; JAMS is JSON with its
+# own suffix; an iReal export is one `irealb://` link as plain text. This is
+# what an export request may name; what a claim may name is its version's
+# (CLAIM_FORMATS), so a request and a claim are checked against separate lists.
 FORMATS: dict[str, tuple[str, str]] = {
     "pdf": ("application/pdf", ".pdf"),
     "musicxml": ("application/vnd.recordare.musicxml+xml", ".musicxml"),
     "lilypond": ("text/x-lilypond", ".ly"),
     "jams": ("application/json", ".jams"),
+    "ireal": ("text/plain", ".irealb"),
+}
+# The formats each version of `archive.claim/export` admits: version 1
+# ADR 0089's four, version 2 (ADR 0116) those and `ireal`.
+CLAIM_FORMATS: dict[str, tuple[str, ...]] = {
+    "1": ("pdf", "musicxml", "lilypond", "jams"),
+    "2": ("pdf", "musicxml", "lilypond", "jams", "ireal"),
 }
 
 OBJECT_ID = re.compile(r"urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
@@ -187,7 +204,7 @@ def export_path(root: Path, key: str, export_format: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# archive.claim/export version 1
+# archive.claim/export versions 1 and 2
 
 
 EXPORT_ROLES = {"artifact": (1, 1), "rendered": (1, MAX_RENDERED), "joined": (0, MAX_JOINED)}
@@ -219,17 +236,21 @@ def _target_shape(targets: dict[str, dict[str, Any]], ref: dict[str, Any], shape
         raise ExportError(f"{where} must pin {'an Artifact' if shape == 'artifact' else 'a Claim'}")
 
 
-def check_export(claim: dict[str, Any], targets: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """Check an `archive.claim/export` version 1 claim against every rule of
-    ADR 0089. `targets` maps each pinned revision ID to what Door would find
+def check_export(claim: dict[str, Any], targets: dict[str, dict[str, Any]], version: str = "1") -> dict[str, Any]:
+    """Check an `archive.claim/export` claim against every rule of ADR 0089:
+    version 1, or version 2, which is version 1 with ADR 0116's `ireal`
+    format. `targets` maps each pinned revision ID to what Door would find
     there (`shape`, and `id`). Returns the payload; raises ExportError."""
-    where = "export"
+    if version not in CLAIM_FORMATS:
+        raise ExportError(f"export version must be one of {', '.join(CLAIM_FORMATS)}")
+    where = "export" if version == "1" else f"export v{version}"
+    formats = CLAIM_FORMATS[version]
     record = _closed(claim, {"payload", "refs"}, {"revision_id", "agent"}, where)
     payload = _closed(record["payload"], {"format", "media_type", "exporter", "key"},
                       {"options", "software", "losses"}, f"{where} payload")
     by_role = _refs_by_role(record["refs"], where)
-    if payload["format"] not in FORMATS:
-        raise ExportError(f"{where} format must be one of {', '.join(FORMATS)}")
+    if payload["format"] not in formats:
+        raise ExportError(f"{where} format must be one of {', '.join(formats)}")
     if payload["media_type"] != FORMATS[payload["format"]][0]:
         raise ExportError(f"{where} media_type of a {payload['format']} export is {FORMATS[payload['format']][0]}")
     _check_exporter(payload["exporter"], f"{where} exporter")
@@ -647,3 +668,312 @@ def musicxml_harmony(readings: list[dict[str, Any]], spelling: tuple[str, ...] |
         parts.append(f"<degree><degree-value>{value}</degree-value><degree-alter>{degree_alter}</degree-alter>"
                      f"<degree-type>subtract</degree-type></degree>")
     return "<harmony>" + "".join(parts) + "</harmony>", losses
+
+
+# ---------------------------------------------------------------------------
+# A form's repeat signs, stacked verses, and sketches (ADR 0113's amendment
+# of this record)
+
+# What MusicXML and LilyPond cannot say about a form or a folded chart, as
+# an export's losses name it.
+OPEN_COUNT_LOSS = "an open repeat's played count"
+VARIANT_LOSS = "a variant pass, written as a text direction"
+LAST_TIME = "Last time"
+
+
+def refuse_sketch(melody_payload: Any, where: str = "melody") -> None:
+    """An exporter never writes a sketch (ADR 0113, E.25): a melody with a
+    pitch item whose duration is unknown has no notation to write. A lead
+    sheet cannot pin one; this refuses a melody given alone."""
+    from world.notes import is_sketch  # world.notes imports nothing of this module's
+    if is_sketch(melody_payload):
+        raise ExportError(f"{where} is a sketch (an item has no duration), which is never exported")
+
+
+def _ending_numbers(repeat: dict[str, Any]) -> list[list[int]]:
+    """The pass numbers each ending of a repeat is printed with. A fixed
+    repeat's endings print the passes they name. An open repeat's are
+    printed as `form.form_order` lists its passes: numbered endings their
+    numbers, the default the open pass after the highest of them, and the
+    last-time ending the pass after that."""
+    endings = repeat.get("endings", [])
+    if "times" in repeat:
+        return [list(e["passes"]) for e in endings]
+    highest = max((n for e in endings for n in e.get("passes", []) if isinstance(n, int)), default=0)
+    return [[highest + 1] if "passes" not in e else [highest + 2] if e["passes"] == ["last"] else list(e["passes"])
+            for e in endings]
+
+
+def _ending_text(repeat: dict[str, Any], ending: dict[str, Any], numbers: list[int]) -> str:
+    if ending.get("passes") == ["last"]:
+        return repeat.get("instruction", LAST_TIME)
+    return ", ".join(f"{n}." for n in numbers)
+
+
+def form_marks(form_payload: dict[str, Any]) -> tuple[list[dict[str, list[dict[str, Any]]]], list[str]]:
+    """The repeat signs of a checked form (version 1 or 2), section by
+    section: what is written at the start (`before`) and at the end
+    (`after`) of each, in the order a score writes them, and the losses.
+    Each mark is a dict with its `kind` (`forward`, `backward`, `ending`,
+    `words`, `segno`, `coda`, `jump`, `fine`, `to_coda`) and its values. A
+    deterministic view of the form; MusicXML and LilyPond write it."""
+    sections = form_payload["sections"]
+    marks: list[dict[str, list[dict[str, Any]]]] = [{"before": [], "after": []} for _ in sections]
+    losses: list[str] = []
+    for repeat in form_payload.get("repeats", []):
+        first, last, times = repeat["first"], repeat["last"], repeat.get("times")
+        if times is None and OPEN_COUNT_LOSS not in losses:
+            losses.append(OPEN_COUNT_LOSS)
+        marks[first]["before"].append({"kind": "forward"})
+        if "instruction" in repeat:
+            marks[first]["before"].append({"kind": "words", "text": repeat["instruction"]})
+        endings = repeat.get("endings", [])
+        if not endings:
+            marks[last]["after"].append({"kind": "backward", "times": times})
+            continue
+        for ending, numbers in zip(endings, _ending_numbers(repeat)):
+            final = ending.get("passes") == ["last"] or (times is not None and times in ending["passes"])
+            text = _ending_text(repeat, ending, numbers)
+            marks[ending["first"]]["before"].append({"kind": "ending", "type": "start", "numbers": numbers,
+                                                     "text": text})
+            marks[ending["last"]]["after"].append({"kind": "ending", "type": "discontinue" if final else "stop",
+                                                   "numbers": numbers, "text": text})
+            if not final:
+                marks[ending["last"]]["after"].append({"kind": "backward", "times": times})
+    for jump in form_payload.get("jumps", []):
+        then = jump["then"]
+        if jump["kind"] == "dal_segno":
+            marks[jump["to"]]["before"].insert(0, {"kind": "segno"})
+        if then == "fine":
+            marks[jump["fine"]]["after"].append({"kind": "fine"})
+        if then == "coda":
+            marks[jump["coda_from"]]["after"].append({"kind": "to_coda"})
+            marks[jump["coda"]]["before"].insert(0, {"kind": "coda"})
+        sign = "D.C." if jump["kind"] == "da_capo" else "D.S."
+        text = sign + {"end": "", "fine": " al Fine", "coda": " al Coda"}[then]
+        marks[jump["after"]]["after"].append({"kind": "jump", "jump": jump["kind"], "text": text})
+    return marks, losses
+
+
+def _words_xml(text: str, sound: str = "") -> str:
+    return (f'<direction placement="above"><direction-type><words>{escape(text)}</words></direction-type>'
+            f"{sound}</direction>")
+
+
+def musicxml_form(form_payload: dict[str, Any]) -> tuple[list[dict[str, list[str]]], list[str]]:
+    """MusicXML for a form's repeat signs (ADR 0083's sketch): for each
+    section, the elements its first measure starts with and its last measure
+    ends with (`<barline>` with `<repeat>` and `<ending>`, `<direction>`
+    with `<words>`, `<segno>`, `<coda>`, and `<sound>`), and the losses. An
+    open repeat's backward repeat has no `times` attribute, and its
+    instruction is a `<words>` direction; a last-time ending prints "Last
+    time" or the instruction."""
+    marks, losses = form_marks(form_payload)
+    out = []
+    for section in marks:
+        before, after = [], []
+        left = [m for m in section["before"] if m["kind"] in ("forward", "ending")]
+        if left:
+            inner = "".join('<repeat direction="forward"/>' if m["kind"] == "forward" else
+                            f'<ending number="{", ".join(map(str, m["numbers"]))}" type="start">'
+                            f'{escape(m["text"])}</ending>' for m in left)
+            before.append(f'<barline location="left">{inner}</barline>')
+        for mark in section["before"]:
+            if mark["kind"] == "words":
+                before.append(_words_xml(mark["text"]))
+            elif mark["kind"] == "segno":
+                before.append('<direction placement="above"><direction-type><segno/></direction-type>'
+                              '<sound segno="segno"/></direction>')
+            elif mark["kind"] == "coda":
+                before.append('<direction placement="above"><direction-type><coda/></direction-type>'
+                              '<sound coda="coda"/></direction>')
+        for mark in section["after"]:
+            if mark["kind"] == "fine":
+                after.append(_words_xml("Fine", '<sound fine="yes"/>'))
+            elif mark["kind"] == "to_coda":
+                after.append(_words_xml("To Coda", '<sound tocoda="coda"/>'))
+            elif mark["kind"] == "jump":
+                sound = '<sound dacapo="yes"/>' if mark["jump"] == "da_capo" else '<sound dalsegno="segno"/>'
+                after.append(_words_xml(mark["text"], sound))
+        right = [m for m in section["after"] if m["kind"] in ("backward", "ending")]
+        if right:
+            inner = "".join(
+                f'<ending number="{", ".join(map(str, m["numbers"]))}" type="{m["type"]}"/>' if m["kind"] == "ending"
+                else '<repeat direction="backward"' + (f' times="{m["times"]}"' if m["times"] else "") + "/>"
+                for m in right)
+            after.append(f'<barline location="right">{inner}</barline>')
+        out.append({"before": before, "after": after})
+    return out, losses
+
+
+def _lily_text(text: str) -> str:
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+# A written bar's directions (ADR 0116, decision D) and what an export of
+# them loses.
+FRACTIONAL_TEMPO_LOSS = "a direction's fractional tempo (LilyPond writes whole beats a minute)"
+NOTE_TYPES = {1: "whole", 2: "half", 4: "quarter", 8: "eighth", 16: "16th", 32: "32nd", 64: "64th"}
+
+
+def _beat_of(tempo: dict[str, Any], bar: dict[str, Any]) -> tuple[int, int]:
+    """The note value a tempo counts, as (denominator, dots): its `beat`, or,
+    without one, the bar's own beat (its denominator), since a direction's
+    tempo without a beat counts whatever beat the band counts."""
+    beat = tempo.get("beat")
+    if beat is None:
+        return bar["denominator"], 0
+    return beat["denominator"], beat.get("dots", 0)
+
+
+def musicxml_directions(bar: dict[str, Any]) -> str:
+    """MusicXML for a written bar's directions, each a `<direction>` above the
+    staff with its text as `<words>` and its tempo, when it has one, as a
+    `<metronome>` (beat unit, dots, and the per-minute text exactly as
+    written). An intention, so no `<sound tempo>`: playback is not told a
+    tempo nobody measured. Empty for a bar with none."""
+    out = []
+    for direction in bar.get("directions", []):
+        inner = f"<direction-type><words>{escape(direction['text'])}</words></direction-type>"
+        tempo = direction.get("tempo")
+        if tempo is not None:
+            denominator, dots = _beat_of(tempo, bar)
+            inner += (f'<direction-type><metronome parentheses="no"><beat-unit>{NOTE_TYPES[denominator]}</beat-unit>'
+                      + "<beat-unit-dot/>" * dots + f"<per-minute>{escape(tempo['bpm'])}</per-minute>"
+                      "</metronome></direction-type>")
+        out.append(f'<direction placement="above">{inner}</direction>')
+    return "".join(out)
+
+
+def lilypond_directions(bar: dict[str, Any]) -> tuple[str, list[str]]:
+    """LilyPond for a written bar's directions, written before its music: one
+    with a tempo as `\\tempo "text" 4 = 120` (LilyPond counts whole beats a
+    minute, so a fractional tempo is rounded and is a loss), one without as
+    `\\tempo "text"`, and every one after the first as a `\\mark`, since a bar
+    holds one tempo mark. Returns the text and the losses."""
+    parts, losses = [], []
+    for index, direction in enumerate(bar.get("directions", [])):
+        text = _lily_text(direction["text"])
+        tempo = direction.get("tempo")
+        if index > 0:
+            parts.append(f"\\mark {text}")
+            continue
+        if tempo is None:
+            parts.append(f"\\tempo {text}")
+            continue
+        denominator, dots = _beat_of(tempo, bar)
+        bpm = Fraction(tempo["bpm"])
+        if bpm.denominator != 1 and FRACTIONAL_TEMPO_LOSS not in losses:
+            losses.append(FRACTIONAL_TEMPO_LOSS)
+        parts.append(f"\\tempo {text} {denominator}{'.' * dots} = {max(1, round(bpm))}")
+    return " ".join(parts), losses
+
+
+def lilypond_form(form_payload: dict[str, Any], music: list[str]) -> tuple[str, list[str]]:
+    """LilyPond for a form, given each section's music: `\\repeat volta`
+    with `\\alternative`, `\\segno`, `\\coda`, and `\\mark` text, and the
+    losses. LilyPond needs a count, so an open repeat is written with as
+    many voltas as `form.form_order` lists its passes, its instruction as a
+    `\\mark`, and its played count is a loss."""
+    sections = form_payload["sections"]
+    if len(music) != len(sections):
+        raise ExportError("lilypond_form needs one music text per section")
+    marks, losses = form_marks(form_payload)
+
+    def section(index: int) -> str:
+        parts = []
+        for mark in marks[index]["before"]:
+            if mark["kind"] == "segno":
+                parts.append("\\segnoMark")
+            elif mark["kind"] == "coda":
+                parts.append("\\codaMark")
+        parts.append(music[index])
+        for mark in marks[index]["after"]:
+            if mark["kind"] == "fine":
+                parts.append("\\fine")
+            elif mark["kind"] == "to_coda":
+                parts.append("\\textEndMark \"To Coda\"")
+            elif mark["kind"] == "jump":
+                parts.append(f"\\textEndMark {_lily_text(mark['text'])}")
+        return " ".join(parts)
+
+    repeats = form_payload.get("repeats", [])
+
+    def span(first: int, last: int, outer: dict[str, Any] | None) -> str:
+        out, index = [], first
+        while index <= last:
+            # Repeats are listed outer first, so the first that starts here
+            # and fits is the outermost one inside this span.
+            repeat = next((r for r in repeats if r["first"] == index and r is not outer and r["last"] <= last), None)
+            if repeat is None:
+                out.append(section(index))
+                index += 1
+                continue
+            out.append(volta(repeat))
+            index = repeat["last"] + 1
+        return " ".join(out)
+
+    def volta(repeat: dict[str, Any]) -> str:
+        endings = repeat.get("endings", [])
+        numbers = _ending_numbers(repeat)
+        count = repeat.get("times") or (max((n for ns in numbers for n in ns), default=1) if endings else 2)
+        body_last = endings[0]["first"] - 1 if endings else repeat["last"]
+        head = f"\\mark {_lily_text(repeat['instruction'])} " if "instruction" in repeat else ""
+        alternatives = []
+        for ending, ns in zip(endings, numbers):
+            label = f"\\mark {_lily_text(_ending_text(repeat, ending, ns))} " if ending.get("passes") == ["last"] else ""
+            alternatives.append(f"{{ \\volta {','.join(map(str, ns))} {label}"
+                                f"{span(ending['first'], ending['last'], repeat)} }}")
+        tail = f" \\alternative {{ {' '.join(alternatives)} }}" if alternatives else ""
+        return f"{head}\\repeat volta {count} {{ {span(repeat['first'], body_last, repeat)}{tail} }}"
+
+    return span(0, len(sections) - 1, None), losses
+
+
+def verse_numbers(underlays: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The lyric line number and printed prefix of each underlay a lead
+    sheet pins, given their payloads in its order of `underlay` references
+    (ADR 0113): an underlay naming passes takes the number of its lowest
+    pass, `"last"` counting as one more than the highest pass any underlay
+    of the same repeat numbers; a second underlay on a number already taken
+    takes the next free number; an underlay naming no passes follows them
+    all, in order. The prefix is its label, or its passes ("1., 3."), or
+    none. MusicXML writes `<lyric number="n">`; LilyPond a verse per number."""
+    highest: dict[int, int] = {}
+    for payload in underlays:
+        named = payload.get("passes")
+        if named:
+            numbers = [n for n in named["passes"] if isinstance(n, int)]
+            highest[named["repeat"]] = max([highest.get(named["repeat"], 0)] + numbers)
+    taken: set[int] = set()
+    out: list[dict[str, Any] | None] = [None] * len(underlays)
+
+    def free(number: int) -> int:
+        while number in taken:
+            number += 1
+        taken.add(number)
+        return number
+
+    for index, payload in enumerate(underlays):
+        named = payload.get("passes")
+        if not named:
+            continue
+        lowest = min(n if isinstance(n, int) else highest[named["repeat"]] + 1 for n in named["passes"])
+        printed = ", ".join(f"{n}." if isinstance(n, int) else LAST_TIME for n in named["passes"])
+        out[index] = {"number": free(lowest), "prefix": payload.get("label", printed)}
+    for index, payload in enumerate(underlays):
+        if out[index] is None:
+            out[index] = {"number": free(max(taken, default=0) + 1), "prefix": payload.get("label")}
+    return [item for item in out if item is not None]
+
+
+def musicxml_lyric(number: int, text: str, syllabic: str = "single", *, prefix: str | None = None,
+                   extend: bool = False) -> str:
+    """One `<lyric number="n">` of a stacked verse, with its prefix (the
+    verse's label or passes, given on its first syllable) before the text,
+    and an extender on a melisma's first note."""
+    if syllabic not in ("single", "begin", "middle", "end"):
+        raise ExportError("syllabic must be single, begin, middle, or end")
+    words = (f"{prefix} " if prefix else "") + text
+    return (f'<lyric number="{number}"><syllabic>{syllabic}</syllabic><text>{escape(words)}</text>'
+            + ("<extend/>" if extend else "") + "</lyric>")

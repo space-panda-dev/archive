@@ -343,6 +343,9 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
 - Can a lead sheet part say a partial or per-string capo? Is a band's
   adoption of a lead sheet checked against the members' membership dates,
   and does adoption need a quorum ([ADR 0084](decisions/0084-lead-sheets.md))?
+- Is iReal Pro's chord `2` an add2 (0 2 4 7) or a sus2 (0 2 7)? Until it is
+  settled the importer reads it as text only
+  ([ADR 0116](decisions/0116-ireal-charts.md), decision Q).
 
 ## Policy
 

@@ -298,6 +298,14 @@ times, about a Work or a document rather than a recording; each **sequence
 entry** is located by line and word, never by the lyric's text. A
 **correction** is a claim that names the claims it corrects; they stay, and
 the resolved view shows the correction first where they overlap.
+**Chart**: an iReal Pro chart document, one chart's verbatim slice of a
+playlist ([ADR 0116](decisions/0116-ireal-charts.md)). **Grammar**: an
+importer's stated reading of a source's symbols, versioned as its run's
+method. **Direction**: written text and an intended tempo over an untimed
+bar, such as a chart's style; an intention, never a measurement. **Link
+candidate**: a Work or person an importer lists for the operator to confirm;
+never a link by itself. **Chord bench**: the private bench set that scores
+machine chords, key, meter and sections against charts placed on recordings.
 
 **Meter layer**: one counting of the music, as a sequence of bars or, in a
 **beat-only layer**, as beats alone with no time signature. Several layers
@@ -311,6 +319,9 @@ ratio. **Regrouping**: a link between adjacent bars where every note value
 keeps its length and the felt pulse moves (quarter to dotted quarter, the
 eighth unchanged). **Tempo** is derived from bars and beats, never stored; a
 set list's target tempo is a stated intention, not a tempo ([ADR 0106](decisions/0106-set-lists-and-clocks.md)).
+A **direction** is text written over an untimed bar, with an optional
+tempo: a chart's style, "Solos", "Repeat and Fade". A written direction's
+tempo, like a target tempo, is an intention ([ADR 0116](decisions/0116-ireal-charts.md)).
 
 **Document**: an outside source's admitted bytes (a transcription file, a
 saved chart) that a claim pins to say where its readings came from. A

@@ -27,7 +27,8 @@ checks. A change elsewhere leaves its derivation
 unchanged.
 
 **Three Python checks instead of one.** `checks.python` runs World with its
-conformance tests, relay, `enrich/tests`, shadow, migration, and fixture;
+conformance tests, relay, `enrich/tests`, shadow, migration, fixture, and the
+documents importers (`documents/ireal`, and `documents/tests` against Door);
 `checks.enrich` and `checks.capture` run those suites on their own
 interpreter. `nix flake check` still runs all of them, and `release.yml`
 still runs it before publishing.

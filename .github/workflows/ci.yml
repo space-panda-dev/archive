@@ -55,7 +55,7 @@ jobs:
       - run: nix build -L .#checks.x86_64-linux.archive -o result-archive
 
   # The Python suites against that build: World (with conformance), relay,
-  # shadow, migration and fixture; enrich; capture.
+  # shadow, migration, fixture and documents; enrich; capture.
   tests:
     needs: archive
     runs-on: ubuntu-24.04
