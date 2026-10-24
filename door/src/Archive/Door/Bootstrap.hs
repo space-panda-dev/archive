@@ -113,6 +113,7 @@ import Archive.Door.RecordCommit
   )
 import Archive.Executables (resolveAnnexExecutable, resolveGitExecutable)
 import qualified Control.Exception as Exception
+import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, throwE, withExceptT)
 import Data.Aeson.RFC8785 (encodeCanonical)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.List (sortOn)
@@ -153,20 +154,15 @@ initArchive operator root = case parseIdentityName operator of
       initArchiveWith (bootstrapEnvironmentFor git annex) operator root
 
 initArchiveWith :: BootstrapEnvironment -> Text -> FilePath -> IO (Either MutationError InitResult)
-initArchiveWith environment operatorName root = do
-  case parseIdentityName operatorName of
-    Left problem -> pure (Left (MutationRejected problem))
-    Right _ -> do
-      rootStateResult <- tryIO (inspectRoot root)
-      case rootStateResult of
-        Left problem -> pure (Left problem)
-        Right rootState -> case rootState of
-          Left problem -> pure (Left (MutationRejected problem))
-          Right (ExistingRoot existingPath existingRoot expectedDevice expectedFile) ->
-            inspectExisting environment operatorName existingPath expectedDevice expectedFile existingRoot
-          Right (NewRoot rootPath archiveRootValue rootCreatedParents expectedDevice expectedFile) -> do
-            result <- tryBuild environment operatorName rootPath expectedDevice expectedFile archiveRootValue rootCreatedParents
-            pure result
+initArchiveWith environment operatorName root = runExceptT $ do
+  _ <- withExceptT MutationRejected (except (parseIdentityName operatorName))
+  rootState <- ExceptT (tryIO (inspectRoot root))
+  case rootState of
+    Left problem -> throwE (MutationRejected problem)
+    Right (ExistingRoot existingPath existingRoot expectedDevice expectedFile) -> ExceptT
+      (inspectExisting environment operatorName existingPath expectedDevice expectedFile existingRoot)
+    Right (NewRoot rootPath archiveRootValue rootCreatedParents expectedDevice expectedFile) -> ExceptT
+      (tryBuild environment operatorName rootPath expectedDevice expectedFile archiveRootValue rootCreatedParents)
 
 data RootState
   = ExistingRoot FilePath ArchiveRoot DeviceID FileID

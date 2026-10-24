@@ -37,6 +37,8 @@ import qualified Archive.GitSnapshot as Git
 import Data.Aeson (Value (..))
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy as LazyByteString
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, withExceptT)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -70,44 +72,38 @@ prepareUpgrade gitSnapshot snapshot proposal =
     citesUpgrade record = any ((== upgradeContractId) . contractId)
       (envelopeContracts (proposalRecordDraft record))
 
-    prepareNew record = do
-      manifestResult <- Git.readPath gitSnapshot "archive.json"
-      case manifestResult of
-        Left problem -> pure (Left (TransitionSnapshotFailure problem))
-        Right manifestBytes -> case decodeUnique manifestBytes of
-          Left problem -> pure (Left (TransitionSnapshotIntegrityFailure ("archive.json: " <> Text.pack problem)))
-          Right manifestValue -> case parseArchiveManifest manifestValue of
-            Left problem -> pure (Left (TransitionSnapshotIntegrityFailure problem))
-            Right manifest -> do
-              let current = manifestSpec manifest
-                  draft = proposalRecordDraft record
-              case upgradeRequest current draft of
-                Left problem -> pure (rejected problem)
-                Right to -> do
-                  contextResult <- currentContext current
-                  case contextResult of
-                    Left problem -> pure (Left problem)
-                    Right context -> do
-                      let release = SpecificationRelease
-                            { releaseSpecification = current
-                            , releaseCatalog = Map.keysSet (snapshotInstalled snapshot)
-                            , releaseLayout = manifestLayout manifest
-                            , releaseContext = context
-                            }
-                      targetResult <- loadUpgradeTarget release to
-                      pure $ do
-                        target <- either rejected Right targetResult
-                        requireTargetSpec to draft
-                        upgraded <- either rejected Right
-                          (makeArchiveManifest (manifestArchiveId manifest) to)
-                        let added = targetAddedBundles target
-                            installed = Map.union (snapshotInstalled snapshot)
-                              (Map.fromList [(key, bundle) | (key, bundle) <- added])
-                        mapM_ (requireCitable to installed) (envelopeContracts draft)
-                        pure
-                          ( prospective added target installed
-                          , ("archive.json", archiveManifestBytes upgraded) : targetFiles target
-                          )
+    prepareNew record = runExceptT $ do
+      manifestBytes <- withExceptT TransitionSnapshotFailure
+        (ExceptT (Git.readPath gitSnapshot "archive.json"))
+      manifestValue <- except $ either
+        (\problem -> Left (TransitionSnapshotIntegrityFailure ("archive.json: " <> Text.pack problem)))
+        Right (decodeUnique manifestBytes)
+      manifest <- withExceptT TransitionSnapshotIntegrityFailure
+        (except (parseArchiveManifest manifestValue))
+      let current = manifestSpec manifest
+          draft = proposalRecordDraft record
+      to <- except (either rejected Right (upgradeRequest current draft))
+      context <- ExceptT (currentContext current)
+      let release = SpecificationRelease
+            { releaseSpecification = current
+            , releaseCatalog = Map.keysSet (snapshotInstalled snapshot)
+            , releaseLayout = manifestLayout manifest
+            , releaseContext = context
+            }
+      targetResult <- lift (loadUpgradeTarget release to)
+      except $ do
+        target <- either rejected Right targetResult
+        requireTargetSpec to draft
+        upgraded <- either rejected Right
+          (makeArchiveManifest (manifestArchiveId manifest) to)
+        let added = targetAddedBundles target
+            installed = Map.union (snapshotInstalled snapshot)
+              (Map.fromList [(key, bundle) | (key, bundle) <- added])
+        mapM_ (requireCitable to installed) (envelopeContracts draft)
+        pure
+          ( prospective added target installed
+          , ("archive.json", archiveManifestBytes upgraded) : targetFiles target
+          )
 
     -- The payload's `from` must be the archive's specification and `to` a
     -- later version; once the target is known to this Door, the record must
