@@ -65,6 +65,8 @@ import Archive.Door.VerifiedCheckpoint
   )
 import Archive.GitSnapshot (GitSnapshot)
 import qualified Archive.GitSnapshot as Git
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, withExceptT)
 import Archive.Read.Core (CommittedRecord (..))
 import qualified Crypto.Hash.SHA256 as SHA256
 import Data.Aeson (Value (Object))
@@ -109,62 +111,60 @@ loadSnapshot snapshot = do
 -- repeated, because they held for this commit when the checkpoint was written.
 loadCheckpointedSnapshot
   :: GitSnapshot -> VerifiedCheckpoint -> IO (Either AdmissionSnapshotLoadError SnapshotData)
-loadCheckpointedSnapshot snapshot verified = do
+loadCheckpointedSnapshot snapshot verified = runExceptT $ do
   -- Record bytes are read only if planning parses a record (see
   -- 'loadTrustedRecord'); everything else is read now.
-  prefetched <- Git.prefetchPaths snapshot ["archive.json", "spec", "contracts"]
-  case prefetched of
-    Left problem -> pure (Left (AdmissionSnapshotGitError problem))
-    Right () -> do
-      manifestResult <- readJson snapshot "archive.json"
-      contracts <- loadContracts snapshot
-      pathsResult <- Git.listPaths snapshot "records"
-      specResult <- Git.listPaths snapshot "spec"
-      case (manifestResult >>= mapIntegrity . parseArchiveManifest, contracts, (,) <$> pathsResult <*> specResult) of
-        (Left problem, _, _) -> pure (Left problem)
-        (_, Left problem, _) -> pure (Left problem)
-        (_, _, Left problem) -> pure (Left (AdmissionSnapshotGitError problem))
-        (Right manifest, Right installed, Right (paths, specPaths)) -> do
-          loaded <- mapM (loadTrustedRecord snapshot (checkpointRecords verified)) paths
-          pure $ do
-            entries <- sequence loaded
-            let additions = checkpointAdditions verified
-                summaries = checkpointRecords verified
-            if Map.keysSet additions /= Set.fromList
-                ("archive.json" : specPaths <> map installedPath installed <> paths)
-                || Map.keysSet summaries /= Set.fromList paths
-              then Left (AdmissionSnapshotIntegrityError
-                "checkpoint paths do not match the committed tree")
-              else Right ()
-            shaped <- mapM (\(entry, summary) -> (,) entry <$> summaryShapeOf summary)
-              [(entry, summary) | entry <- entries, Just summary <- [Map.lookup (entryPath entry) summaries]]
-            objects <- mapM (\(entry, _) -> mapIntegrity (parseObjectId (entryObject entry))) shaped
-            revisions <- mapM (\(entry, _) -> mapIntegrity (parseRevisionId (entryRevision entry))) shaped
-            let store = foldl' (\index ((_, shape), objectId, revision) -> insertKnown objectId revision shape index)
-                  emptyIndex (zip3 shaped objects revisions)
-                superseded = Set.fromList
-                  [ (summaryObject summary, revision)
-                  | summary <- Map.elems summaries
-                  , revision <- summarySupersedes summary
-                  ]
-                byObject = Map.fromListWith (<>) [(entryObject entry, [entry]) | entry <- entries]
-            heads <- mapIntegrity (deriveHeads byObject superseded)
-            batches <- mapIntegrity (loadIntroducers additions entries)
-            pure SnapshotData
-              { snapshotCommitId = Git.snapshotCommit snapshot
-              , snapshotManifestId = manifestArchiveId manifest
-              , snapshotRecords = entries
-              , snapshotInstalled = installedMap installed
-              , snapshotStore = store
-              , snapshotHeadsByObject = heads
-              , snapshotRevisionIntroducers = batches
-              , snapshotCommitOrder = checkpointHistory verified
-              , snapshotImmutableAdditions = additions
-              , snapshotTransitionKeys = transitionKeys installed
-              , snapshotRecordSummaries = summaries
-              , snapshotCheckpointChain = checkpointChain verified
-              , snapshotFromCheckpoint = True
-              }
+  withExceptT AdmissionSnapshotGitError
+    (ExceptT (Git.prefetchPaths snapshot ["archive.json", "spec", "contracts"]))
+  -- All four reads run before any result is checked.
+  manifestResult <- lift (readJson snapshot "archive.json")
+  contracts <- lift (loadContracts snapshot)
+  pathsResult <- lift (Git.listPaths snapshot "records")
+  specResult <- lift (Git.listPaths snapshot "spec")
+  manifest <- except (manifestResult >>= mapIntegrity . parseArchiveManifest)
+  installed <- except contracts
+  (paths, specPaths) <- withExceptT AdmissionSnapshotGitError
+    (except ((,) <$> pathsResult <*> specResult))
+  loaded <- lift (mapM (loadTrustedRecord snapshot (checkpointRecords verified)) paths)
+  except $ do
+    entries <- sequence loaded
+    let additions = checkpointAdditions verified
+        summaries = checkpointRecords verified
+    if Map.keysSet additions /= Set.fromList
+        ("archive.json" : specPaths <> map installedPath installed <> paths)
+        || Map.keysSet summaries /= Set.fromList paths
+      then Left (AdmissionSnapshotIntegrityError
+        "checkpoint paths do not match the committed tree")
+      else Right ()
+    shaped <- mapM (\(entry, summary) -> (,) entry <$> summaryShapeOf summary)
+      [(entry, summary) | entry <- entries, Just summary <- [Map.lookup (entryPath entry) summaries]]
+    objects <- mapM (\(entry, _) -> mapIntegrity (parseObjectId (entryObject entry))) shaped
+    revisions <- mapM (\(entry, _) -> mapIntegrity (parseRevisionId (entryRevision entry))) shaped
+    let store = foldl' (\index ((_, shape), objectId, revision) -> insertKnown objectId revision shape index)
+          emptyIndex (zip3 shaped objects revisions)
+        superseded = Set.fromList
+          [ (summaryObject summary, revision)
+          | summary <- Map.elems summaries
+          , revision <- summarySupersedes summary
+          ]
+        byObject = Map.fromListWith (<>) [(entryObject entry, [entry]) | entry <- entries]
+    heads <- mapIntegrity (deriveHeads byObject superseded)
+    batches <- mapIntegrity (loadIntroducers additions entries)
+    pure SnapshotData
+      { snapshotCommitId = Git.snapshotCommit snapshot
+      , snapshotManifestId = manifestArchiveId manifest
+      , snapshotRecords = entries
+      , snapshotInstalled = installedMap installed
+      , snapshotStore = store
+      , snapshotHeadsByObject = heads
+      , snapshotRevisionIntroducers = batches
+      , snapshotCommitOrder = checkpointHistory verified
+      , snapshotImmutableAdditions = additions
+      , snapshotTransitionKeys = transitionKeys installed
+      , snapshotRecordSummaries = summaries
+      , snapshotCheckpointChain = checkpointChain verified
+      , snapshotFromCheckpoint = True
+      }
   where
     summaryShapeOf summary = case summaryShape summary of
       "artifact" -> Right Artifact
@@ -215,74 +215,52 @@ loadTrustedRecord snapshot summaries path = do
       }
 
 loadVerifiedSnapshot :: GitSnapshot -> IO (Either AdmissionSnapshotLoadError SnapshotData)
-loadVerifiedSnapshot snapshot = do
+loadVerifiedSnapshot snapshot = runExceptT $ do
   -- Every committed file is checked below; read them all in bulk first, so
   -- the Git processes do not grow with the number of records.
-  prefetched <- Git.prefetchPaths snapshot archivePaths
+  prefetched <- lift (Git.prefetchPaths snapshot archivePaths)
   -- Only the manifest may change after it is added, and only by a
   -- specification upgrade; 'validateUpgradeHistory' proves every change is
   -- one (ADR 0068).
-  historyResult <- case prefetched of
-    Left problem -> pure (Left problem)
-    Right () -> Git.archivePathHistory snapshot archivePaths ["archive.json"]
-  case historyResult of
-    Left problem -> pure (Left (AdmissionSnapshotGitError problem))
-    Right (additions, modifications) -> do
-      let upgradeCommits = map snd modifications
-      manifestResult <- readCanonicalJson snapshot "archive.json"
-      case manifestResult >>= mapIntegrity . parseArchiveManifest of
-        Left problem -> pure (Left problem)
-        Right manifest -> do
-          resources <- validateResources snapshot additions upgradeCommits (manifestSpec manifest)
-          case resources of
-            Left problem -> pure (Left problem)
-            Right () -> do
-              contracts <- loadContracts snapshot
-              case contracts of
-                Left problem -> pure (Left problem)
-                Right installed -> do
-                  catalogResult <- mapIntegrity <$> validateInstalledCatalog additions
-                    upgradeCommits (manifestSpec manifest) installed
-                  case catalogResult of
-                    Left problem -> pure (Left problem)
-                    Right () -> do
-                      records <- loadRecords snapshot installed
-                      case records of
-                        Left problem -> pure (Left problem)
-                        Right entries -> do
-                          immutable <- validateImmutablePaths snapshot additions
-                            installed entries
-                          upgrades <- validateUpgradeHistory snapshot additions upgradeCommits
-                            manifest installed entries
-                          case immutable >> upgrades of
-                            Left problem -> pure (Left problem)
-                            Right () -> do
-                              let indexed = indexRecords entries
-                              case mapIntegrity indexed of
-                                Left problem -> pure (Left problem)
-                                Right (store, heads) -> do
-                                  history <- Git.linearHistory snapshot
-                                  pure $ do
-                                    commits <- either (Left . AdmissionSnapshotGitError) Right history
-                                    batches <- mapIntegrity (loadIntroducers additions entries)
-                                    mapIntegrity (validateCitationOrder commits additions installed entries)
-                                    pure SnapshotData
-                                      { snapshotCommitId = Git.snapshotCommit snapshot
-                                      , snapshotManifestId = manifestArchiveId manifest
-                                      , snapshotRecords = entries
-                                      , snapshotInstalled = installedMap installed
-                                      , snapshotStore = store
-                                      , snapshotHeadsByObject = heads
-                                      , snapshotRevisionIntroducers = batches
-                                      , snapshotCommitOrder = commits
-                                      , snapshotImmutableAdditions = additions
-                                      , snapshotTransitionKeys = transitionKeys installed
-                                      , snapshotRecordSummaries = Map.fromList
-                                          [ (entryPath entry, summarizeEnvelope (entryEnvelope entry))
-                                          | entry <- entries ]
-                                      , snapshotCheckpointChain = Nothing
-                                      , snapshotFromCheckpoint = False
-                                      }
+  (additions, modifications) <- withExceptT AdmissionSnapshotGitError $ ExceptT $
+    case prefetched of
+      Left problem -> pure (Left problem)
+      Right () -> Git.archivePathHistory snapshot archivePaths ["archive.json"]
+  let upgradeCommits = map snd modifications
+  manifest <- ExceptT (readCanonicalJson snapshot "archive.json")
+    >>= except . mapIntegrity . parseArchiveManifest
+  ExceptT (validateResources snapshot additions upgradeCommits (manifestSpec manifest))
+  installed <- ExceptT (loadContracts snapshot)
+  ExceptT (mapIntegrity <$> validateInstalledCatalog additions
+    upgradeCommits (manifestSpec manifest) installed)
+  entries <- ExceptT (loadRecords snapshot installed)
+  -- Both histories are checked before either result is.
+  immutable <- lift (validateImmutablePaths snapshot additions installed entries)
+  upgrades <- lift (validateUpgradeHistory snapshot additions upgradeCommits
+    manifest installed entries)
+  except (immutable >> upgrades)
+  (store, heads) <- except (mapIntegrity (indexRecords entries))
+  history <- lift (Git.linearHistory snapshot)
+  commits <- withExceptT AdmissionSnapshotGitError (except history)
+  batches <- except (mapIntegrity (loadIntroducers additions entries))
+  except (mapIntegrity (validateCitationOrder commits additions installed entries))
+  pure SnapshotData
+    { snapshotCommitId = Git.snapshotCommit snapshot
+    , snapshotManifestId = manifestArchiveId manifest
+    , snapshotRecords = entries
+    , snapshotInstalled = installedMap installed
+    , snapshotStore = store
+    , snapshotHeadsByObject = heads
+    , snapshotRevisionIntroducers = batches
+    , snapshotCommitOrder = commits
+    , snapshotImmutableAdditions = additions
+    , snapshotTransitionKeys = transitionKeys installed
+    , snapshotRecordSummaries = Map.fromList
+        [ (entryPath entry, summarizeEnvelope (entryEnvelope entry))
+        | entry <- entries ]
+    , snapshotCheckpointChain = Nothing
+    , snapshotFromCheckpoint = False
+    }
 
 archivePaths :: [FilePath]
 archivePaths = ["archive.json", "spec", "contracts", "records"]

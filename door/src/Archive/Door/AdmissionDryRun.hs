@@ -46,6 +46,8 @@ import Archive.GitSnapshot
   , gitSnapshotErrorMessage
   )
 import qualified Archive.GitSnapshot as Git
+import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, withExceptT)
+import Data.Bifunctor (first)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -88,42 +90,31 @@ dryRunAdmissionVerified
   :: FilePath
   -> Proposal
   -> IO (Either AdmissionPlanningError (AdmissionPlan, SnapshotData))
-dryRunAdmissionVerified root proposal = do
-  snapshotResult <- Git.resolveSnapshot root
-  case snapshotResult of
-    Left problem -> pure (Left (AdmissionSnapshotFailure problem))
-    Right snapshot -> do
-      loaded <- loadSnapshot snapshot
-      case loaded of
-        Left problem -> pure (Left (planningSnapshotError problem))
-        Right data' -> do
-          proposalContracts <- validateProposalContracts data' proposal
-          case proposalContracts of
-            Left problem -> pure (Left (AdmissionProposalRejected problem))
-            Right () -> do
-              let admissionSnapshot = AdmissionSnapshot
-                    { snapshotArchiveId = snapshotManifestId data'
-                    , snapshotHeads = snapshotHeadsByObject data'
-                    , snapshotRevisions = Set.fromList
-                        (Map.keys (snapshotRevisionIntroducers data'))
-                    , snapshotRevisionBatches = snapshotRevisionIntroducers data'
-                    , snapshotReferenceIndex = snapshotStore data'
-                    , snapshotTransitionContracts = snapshotTransitionKeys data'
-                    }
-              case planAdmission admissionSnapshot proposal of
-                Left (PlanRefused problem) -> pure (Left (AdmissionProposalRejected problem))
-                Left (PlanStale problem) -> pure (Left (AdmissionProposalStale problem))
-                Right plan -> do
-                  rechecked <- recheckProposal proposal
-                  pure $ case rechecked of
-                    Left problem -> Left (AdmissionProposalRejected problem)
-                    Right () -> Right
-                      ( plan
-                          { plannedAdmissionSnapshot = Git.snapshotCommit snapshot
-                          , plannedGitExecutableIdentity = Git.snapshotExecutableIdentity snapshot
-                          }
-                      , data'
-                      )
+dryRunAdmissionVerified root proposal = runExceptT $ do
+  snapshot <- withExceptT AdmissionSnapshotFailure (ExceptT (Git.resolveSnapshot root))
+  data' <- withExceptT planningSnapshotError (ExceptT (loadSnapshot snapshot))
+  withExceptT AdmissionProposalRejected (ExceptT (validateProposalContracts data' proposal))
+  let admissionSnapshot = AdmissionSnapshot
+        { snapshotArchiveId = snapshotManifestId data'
+        , snapshotHeads = snapshotHeadsByObject data'
+        , snapshotRevisions = Set.fromList
+            (Map.keys (snapshotRevisionIntroducers data'))
+        , snapshotRevisionBatches = snapshotRevisionIntroducers data'
+        , snapshotReferenceIndex = snapshotStore data'
+        , snapshotTransitionContracts = snapshotTransitionKeys data'
+        }
+  plan <- except (first planningRefusal (planAdmission admissionSnapshot proposal))
+  withExceptT AdmissionProposalRejected (ExceptT (recheckProposal proposal))
+  pure
+    ( plan
+        { plannedAdmissionSnapshot = Git.snapshotCommit snapshot
+        , plannedGitExecutableIdentity = Git.snapshotExecutableIdentity snapshot
+        }
+    , data'
+    )
+  where
+    planningRefusal (PlanRefused problem) = AdmissionProposalRejected problem
+    planningRefusal (PlanStale problem) = AdmissionProposalStale problem
 
 -- | Plan again immediately before commit, under the same archive lock.
 --

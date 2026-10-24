@@ -88,6 +88,9 @@ import Archive.Door.Types
   )
 import qualified Archive.GitSnapshot as Git
 import Control.Monad (foldM)
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, withExceptT)
+import Data.Bifunctor (first)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -114,45 +117,32 @@ dryRunTransitionVerified
   :: FilePath
   -> Proposal
   -> IO (Either TransitionPlanningError (TransitionPlan, SnapshotData))
-dryRunTransitionVerified root proposal = do
-  snapshotResult <- Git.resolveSnapshot root
+dryRunTransitionVerified root proposal = runExceptT $ do
+  snapshotResult <- lift (Git.resolveSnapshot root)
   -- The day the archive's own limits are read on (S-30): today, in UTC.
-  today <- utctDay <$> getCurrentTime
-  case snapshotResult of
-    Left problem -> pure (Left (TransitionSnapshotFailure problem))
-    Right gitSnapshot -> do
-      snapshotResult' <- loadSnapshot gitSnapshot
-      -- Transition planning reads every committed record; read their bytes
-      -- in bulk rather than one at a time as each is first used. A failure
-      -- here is reported by the read that needs the bytes.
-      _ <- Git.prefetchPaths gitSnapshot ["records"]
-      case snapshotResult' of
-        Left problem -> pure (Left (transitionSnapshotError problem))
-        Right snapshot -> do
-          upgrade <- prepareUpgrade gitSnapshot snapshot proposal
-          case upgrade of
-            Left problem -> pure (Left problem)
-            Right (planning, files) -> do
-              contracts <- validateProposalContracts planning proposal
-              case contracts of
-                Left problem -> pure (Left (TransitionProposalRejected problem))
-                Right () -> do
-                  let result = planTransition today planning proposal
-                  case result of
-                    Left (PlanRefused problem) -> pure (Left (TransitionProposalRejected problem))
-                    Left (PlanStale problem) -> pure (Left (TransitionProposalStale problem))
-                    Right plan -> do
-                      rechecked <- recheckProposal proposal
-                      pure $ case rechecked of
-                        Left problem -> Left (TransitionProposalRejected problem)
-                        Right () -> Right
-                          ( plan
-                              { plannedTransitionSnapshot = Git.snapshotCommit gitSnapshot
-                              , plannedGitExecutableIdentity = Git.snapshotExecutableIdentity gitSnapshot
-                              , plannedSpecificationFiles = if transitionRetry plan then [] else files
-                              }
-                          , snapshot
-                          )
+  today <- lift (utctDay <$> getCurrentTime)
+  gitSnapshot <- withExceptT TransitionSnapshotFailure (except snapshotResult)
+  loaded <- lift (loadSnapshot gitSnapshot)
+  -- Transition planning reads every committed record; read their bytes
+  -- in bulk rather than one at a time as each is first used. A failure
+  -- here is reported by the read that needs the bytes.
+  _ <- lift (Git.prefetchPaths gitSnapshot ["records"])
+  snapshot <- withExceptT transitionSnapshotError (except loaded)
+  (planning, files) <- ExceptT (prepareUpgrade gitSnapshot snapshot proposal)
+  withExceptT TransitionProposalRejected (ExceptT (validateProposalContracts planning proposal))
+  plan <- except (first planningRefusal (planTransition today planning proposal))
+  withExceptT TransitionProposalRejected (ExceptT (recheckProposal proposal))
+  pure
+    ( plan
+        { plannedTransitionSnapshot = Git.snapshotCommit gitSnapshot
+        , plannedGitExecutableIdentity = Git.snapshotExecutableIdentity gitSnapshot
+        , plannedSpecificationFiles = if transitionRetry plan then [] else files
+        }
+    , snapshot
+    )
+  where
+    planningRefusal (PlanRefused problem) = TransitionProposalRejected problem
+    planningRefusal (PlanStale problem) = TransitionProposalStale problem
 
 planTransition :: Day -> SnapshotData -> Proposal -> Either PlanRefusal TransitionPlan
 planTransition today snapshot proposal = do
@@ -217,9 +207,9 @@ prepare record = do
 
 completeRetry :: SnapshotData -> [Text] -> Bool
 completeRetry snapshot revisions = case mapM lookupIntroducer revisions of
-  Just (first : rest)
-    | all (== first) rest ->
-        let committed = Map.keysSet (Map.filter (== first) (snapshotRevisionIntroducers snapshot))
+  Just (introducer : rest)
+    | all (== introducer) rest ->
+        let committed = Map.keysSet (Map.filter (== introducer) (snapshotRevisionIntroducers snapshot))
         in committed == Set.fromList revisions
   _ -> False
   where

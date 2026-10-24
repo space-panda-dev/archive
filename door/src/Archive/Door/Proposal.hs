@@ -33,6 +33,7 @@ import Archive.Door.Types
   , parseDraftEnvelope
   )
 import Control.Exception (IOException, try)
+import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT)
 import Data.Aeson (Value (..))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -126,45 +127,30 @@ readProposal :: ProposalKind -> FilePath -> IO (Either Text Proposal)
 readProposal kind root = first proposalProblemMessage <$> readProposalChecked kind root
 
 readProposalChecked :: ProposalKind -> FilePath -> IO (Either ProposalProblem Proposal)
-readProposalChecked kind root = do
-  absoluteResult <- tryIO (makeAbsolute root)
-  case absoluteResult of
-    Left problem -> pure (Left problem)
-    Right absoluteRoot -> do
-      rootResult <- tryIO (openProposalRoot absoluteRoot)
-      case rootResult of
-        Left problem -> pure (Left problem)
-        Right rootFd -> finallyIO rootFd (readProposalFromFd kind absoluteRoot rootFd)
+readProposalChecked kind root = runExceptT $ do
+  absoluteRoot <- ExceptT (tryIO (makeAbsolute root))
+  rootFd <- ExceptT (tryIO (openProposalRoot absoluteRoot))
+  ExceptT (finallyIO rootFd (readProposalFromFd kind absoluteRoot rootFd))
 
 -- The descriptor traversal is authoritative for files named by the manifest.
 -- The unix package exposes openat/nofollow but no directory-stream operation
 -- relative to an already-open descriptor, so this module does not claim a
 -- race-free stray-entry check.
 readProposalFromFd :: ProposalKind -> FilePath -> Fd -> IO (Either ProposalProblem Proposal)
-readProposalFromFd kind root rootFd = do
-  manifestResult <- readRegularAt manifestLimit (Just rootFd) "manifest.json"
-  case manifestResult of
-    Left problem -> pure (Left problem)
-    Right manifestBytes ->
-      case decodeValue "manifest.json" manifestBytes >>= parseManifest kind of
-        Left problem -> pure (Left problem)
-        Right manifest -> do
-          recordsFdResult <- tryIO (openDirectoryAt (Just rootFd) "records")
-          case recordsFdResult of
-            Left problem -> pure (Left problem)
-            Right recordsFd -> finallyIO recordsFd $ do
-              recordsResult <- readRecordsAt recordsFd (manifestRecords manifest)
-              case recordsResult of
-                Left problem -> pure (Left problem)
-                Right records ->
-                  pure $ validateProposalAgainstFiles manifest records
-                    >>= \() -> Right Proposal
-                      { proposalRoot = root
-                      , proposalKind = kind
-                      , proposalManifestBytes = manifestBytes
-                      , proposalManifest = manifest
-                      , proposalRecords = records
-                      }
+readProposalFromFd kind root rootFd = runExceptT $ do
+  manifestBytes <- ExceptT (readRegularAt manifestLimit (Just rootFd) "manifest.json")
+  manifest <- except (decodeValue "manifest.json" manifestBytes >>= parseManifest kind)
+  recordsFd <- ExceptT (tryIO (openDirectoryAt (Just rootFd) "records"))
+  ExceptT $ finallyIO recordsFd $ runExceptT $ do
+    records <- ExceptT (readRecordsAt recordsFd (manifestRecords manifest))
+    except (validateProposalAgainstFiles manifest records)
+    pure Proposal
+      { proposalRoot = root
+      , proposalKind = kind
+      , proposalManifestBytes = manifestBytes
+      , proposalManifest = manifest
+      , proposalRecords = records
+      }
 
 -- | Check again immediately before an operation. Comparison is byte-for-byte,
 -- not semantic: whitespace and key-order changes are changes to the proposal.
