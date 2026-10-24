@@ -137,8 +137,9 @@ arrayAt name fields = case KeyMap.lookup (Key.fromText name) fields of
 -- | The objects that hold a path's last field: every object the path
 -- without its last name reaches, entering arrays on the way.
 holders :: [Text] -> KeyMap.KeyMap Value -> [KeyMap.KeyMap Value]
-holders [] _ = []
-holders path payload = [fields | Object fields <- enter (go (init path) [Object payload])]
+holders path payload = case splitLast path of
+  Nothing -> []
+  Just (parents, _) -> [fields | Object fields <- enter (go parents [Object payload])]
   where
     go [] values = values
     go (name : rest) values = go rest (concat [maybe [] (: []) (KeyMap.lookup (Key.fromText name) fields)
@@ -146,9 +147,17 @@ holders path payload = [fields | Object fields <- enter (go (init path) [Object 
 
 -- | The values of a path's last field on each of its holders, as they are.
 reached :: [Text] -> KeyMap.KeyMap Value -> [Value]
-reached [] _ = []
-reached path payload = [value | fields <- holders path payload
-                              , Just value <- [KeyMap.lookup (Key.fromText (last path)) fields]]
+reached path payload = case splitLast path of
+  Nothing -> []
+  Just (_, name) -> [value | fields <- holders path payload
+                           , Just value <- [KeyMap.lookup (Key.fromText name) fields]]
+
+-- | A path's names before its last, and its last; an empty path has neither.
+splitLast :: [a] -> Maybe ([a], a)
+splitLast = foldr step Nothing
+  where
+    step name Nothing = Just ([], name)
+    step name (Just (rest, final)) = Just (name : rest, final)
 
 -- | What a path reaches with its last array entered too: "every object the
 -- path reaches" (a payload object, or each element of a payload array).

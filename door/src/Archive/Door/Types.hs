@@ -27,6 +27,7 @@ module Archive.Door.Types
   , validateStoredEnvelope
   ) where
 
+import Archive.Door.Json.Access (requiredArray, requiredText, requiredValue)
 import Data.Aeson (Value (Array, Number, Object, String))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -275,18 +276,6 @@ allowedFields =
   , "payload", "refs", "supersedes", "source", "contracts"
   ]
 
-requiredValue :: Text -> KeyMap.KeyMap Value -> Either Text Value
-requiredValue name object = case KeyMap.lookup (Key.fromText name) object of
-  Nothing -> Left (name <> " is required")
-  Just value -> Right value
-
-requiredText :: Text -> KeyMap.KeyMap Value -> Either Text Text
-requiredText name object = case KeyMap.lookup (Key.fromText name) object of
-  Nothing -> Left (name <> " is required")
-  Just (String value) | Text.null value -> Left (name <> " must not be empty")
-  Just (String value) -> Right value
-  Just _ -> Left (name <> " must be a string")
-
 parseShape :: Text -> Either Text Shape
 parseShape "artifact" = Right Artifact
 parseShape "entity" = Right Entity
@@ -401,8 +390,8 @@ validatePackageUrl field value =
           let labels = Text.splitOn "." component
           in length labels > 1 && all validDnsLabel labels
         validDnsLabel label = not (Text.null label)
-          && Text.head label /= '-'
-          && Text.last label /= '-'
+          && not ("-" `Text.isPrefixOf` label)
+          && not ("-" `Text.isSuffixOf` label)
           && Text.all (\character -> isAlphaNum character || character == '-') label
 
 -- | Construct a revision identifier only from the canonical digest spelling.
@@ -469,7 +458,7 @@ validDate value =
               leap = yearNumber `mod` 4 == 0 && (yearNumber `mod` 100 /= 0 || yearNumber `mod` 400 == 0)
               days = [31, if leap then 29 else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
           in monthNumber >= 1 && monthNumber <= 12 && dayNumber >= 1
-             && dayNumber <= days !! (monthNumber - 1)
+             && any (dayNumber <=) (take 1 (drop (monthNumber - 1) days))
     _ -> False
 
 validClock :: String -> Bool
@@ -477,9 +466,9 @@ validClock value =
   let clock = take 8 value
       fractional = drop 8 value
   in allDigits (take 2 clock)
-      && clock !! 2 == ':'
+      && take 1 (drop 2 clock) == ":"
       && allDigits (take 2 (drop 3 clock))
-      && clock !! 5 == ':'
+      && take 1 (drop 5 clock) == ":"
       && allDigits (take 2 (drop 6 clock))
       && validFraction fractional
       && read (take 2 clock) <= (23 :: Int)
@@ -586,22 +575,16 @@ containsHostname value =
   "://" `Text.isInfixOf` value || any isDomainName candidates
   where
     candidates = value : suffixes "@" value <> suffixes ":" value
-    suffixes separator text = case Text.splitOn separator text of
-      [_] -> []
-      parts -> [last parts]
+    suffixes separator text = case reverse (Text.splitOn separator text) of
+      final : _ : _ -> [final]
+      _ -> []
     isDomainName candidate = case Text.splitOn "." candidate of
       [_] -> False
       labels -> all validLabel labels
     validLabel label = not (Text.null label)
-      && Text.head label /= '-'
-      && Text.last label /= '-'
+      && not ("-" `Text.isPrefixOf` label)
+      && not ("-" `Text.isSuffixOf` label)
       && Text.all (\character -> isAlphaNum character || character == '-') label
-
-requiredArray :: Text -> KeyMap.KeyMap Value -> Either Text [Value]
-requiredArray name object = case KeyMap.lookup (Key.fromText name) object of
-  Nothing -> Left (name <> " is required")
-  Just (Array values) -> Right (toList values)
-  Just _ -> Left (name <> " must be an array")
 
 parseSupersedes :: Value -> Either Text ParsedReference
 parseSupersedes value = do

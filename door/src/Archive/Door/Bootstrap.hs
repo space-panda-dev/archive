@@ -46,6 +46,7 @@ import Archive.Door.Identity
   , parseArchiveId
   , parseIdentityName
   )
+import Archive.Door.Hex (hexText)
 import Archive.Door.Json (decodeUnique)
 import Archive.Door.Layout
   ( ArchiveManifest (..)
@@ -517,7 +518,7 @@ writeBootstrapJournal tracker rootFd rootPath archiveId operatorId files = do
     journalEntry (path, contents) = do
       let relative = makeRelative rootPath path
           bytes = LazyByteString.toStrict contents
-      pure (relative, digestHex (SHA256.hash bytes))
+      pure (relative, hexText (SHA256.hash bytes))
 
 bootstrapJournalByteLimit :: Int
 bootstrapJournalByteLimit = 1024 * 1024
@@ -617,7 +618,7 @@ loadContractResource directory fileName = do
   fields <- ioEither (objectFields "contract bundle" value)
   identifier <- ioEither (requiredString "id" fields)
   version <- ioEither (requiredString "version" fields)
-  let digest = "sha256:" <> digestHex (SHA256.hashlazy bytes)
+  let digest = "sha256:" <> hexText (SHA256.hashlazy bytes)
   parsedDigest <- ioEither (parseSha256Digest digest)
   if encodeCanonical value /= bytes
     then failIO "contract bundle is not RFC 8785 canonical"
@@ -1029,7 +1030,7 @@ verifyBootstrapJournal journal rootFd rootPath requestedOperator result expected
       rejectSymlink "bootstrap file" path
       contents <- LazyByteString.readFile path
       verifyRootStillPinned rootPath rootFd
-      pure (digestHex (SHA256.hash (LazyByteString.toStrict contents)))
+      pure (hexText (SHA256.hash (LazyByteString.toStrict contents)))
 
 verifyBootstrapStaged
   :: BootstrapEnvironment -> FilePath -> Fd -> Fd -> [FilePath] -> IO ()
@@ -1141,7 +1142,7 @@ committedFileDigest
 committedFileDigest environment rootPath rootFd gitFd (path, _expectedDigest) = do
   contents <- runCheckedOutput environment rootPath rootFd (Just gitFd) "git"
     ["show", "HEAD:" <> path]
-  pure (digestHex (SHA256.hash (TextEncoding.encodeUtf8 contents)))
+  pure (hexText (SHA256.hash (TextEncoding.encodeUtf8 contents)))
 
 inspectExisting :: BootstrapEnvironment -> Text -> FilePath -> DeviceID -> FileID -> ArchiveRoot -> IO (Either MutationError InitResult)
 inspectExisting environment requested rootPath expectedDevice expectedFile root = do
@@ -1468,12 +1469,6 @@ requiredString name fields = case KeyMap.lookup (Key.fromText name) fields of
   Just (String _) -> Left (name <> " must not be empty")
   Just _ -> Left (name <> " must be a string")
   Nothing -> Left (name <> " is required")
-
-digestHex :: ByteString.ByteString -> Text
-digestHex = Text.pack . concatMap byteHex . ByteString.unpack
-  where
-    byteHex byte = [digits !! fromIntegral (byte `div` 16), digits !! fromIntegral (byte `mod` 16)]
-    digits = "0123456789abcdef"
 
 ioEither :: Either Text a -> IO a
 ioEither (Right value) = pure value

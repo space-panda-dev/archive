@@ -106,15 +106,15 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 <!-- wf:gen lines door/src/Archive/Door/AdmissionDryRun.hs door/src/Archive/Door/TransitionDryRun.hs door/src/Archive/Door/Contracts.hs door/src/Archive/Door/RecordCommit.hs door/src/Archive/Door/Bootstrap.hs door/src/Archive/Read/Core.hs door/src/Archive/GitSnapshot.hs door/src/Archive/ProcessPinned.c door/test/Main.hs archive/test/Main.hs -->
 | file | lines |
 |---|---|
-| `door/src/Archive/Door/AdmissionDryRun.hs` | 1579 |
+| `door/src/Archive/Door/AdmissionDryRun.hs` | 1572 |
 | `door/src/Archive/Door/TransitionDryRun.hs` | 1119 |
-| `door/src/Archive/Door/Contracts.hs` | 2449 |
-| `door/src/Archive/Door/RecordCommit.hs` | 3015 |
-| `door/src/Archive/Door/Bootstrap.hs` | 1627 |
-| `door/src/Archive/Read/Core.hs` | 617 |
-| `door/src/Archive/GitSnapshot.hs` | 660 |
+| `door/src/Archive/Door/Contracts.hs` | 2443 |
+| `door/src/Archive/Door/RecordCommit.hs` | 3010 |
+| `door/src/Archive/Door/Bootstrap.hs` | 1622 |
+| `door/src/Archive/Read/Core.hs` | 611 |
+| `door/src/Archive/GitSnapshot.hs` | 661 |
 | `door/src/Archive/ProcessPinned.c` | 799 |
-| `door/test/Main.hs` | 7844 |
+| `door/test/Main.hs` | 7846 |
 | `archive/test/Main.hs` | 1001 |
 <!-- /wf:gen -->
 

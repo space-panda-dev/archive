@@ -33,6 +33,7 @@ module Archive.Door.RecordCommit
   , withArchiveWriteLockAtPinned
   ) where
 
+import Archive.Door.Hex (hexText)
 import Archive.Door.Layout
   ( contentRelativePath
   , digestText
@@ -1429,10 +1430,6 @@ syncGitObjectStoreIncrement executable rootPath rootFd gitFd baseCommit targetCo
       fanoutFd <- openDirectoryAt objectsDirectory (Text.unpack fanout)
       Exception.bracket (pure fanoutFd) closeFd syncDirectoryFdOrFail
 
-    hexText digest = Text.pack (concatMap byteHex (ByteString.unpack digest))
-    byteHex byte = [hexDigit (byte `div` 16), hexDigit (byte `mod` 16)]
-    hexDigit value = "0123456789abcdef" !! fromIntegral value
-
 -- | The object-store baseline for a new commit: only its new objects when a
 -- checkpoint proved the base's objects, otherwise every reachable object.
 syncBaselineFrom :: Executable -> FilePath -> Fd -> Fd -> Maybe Text -> Text -> IO (Either Text ())
@@ -2171,13 +2168,11 @@ gitBlobForBytes executable rootPath rootFd gitFd bytes = do
 -- name's length selects.
 blobMatches :: Text -> ByteString.ByteString -> Bool
 blobMatches name bytes = case Text.length name of
-  40 -> hex (SHA1.hash framed) == name
-  64 -> hex (SHA256.hash framed) == name
+  40 -> hexText (SHA1.hash framed) == name
+  64 -> hexText (SHA256.hash framed) == name
   _ -> False
   where
     framed = "blob " <> TextEncoding.encodeUtf8 (Text.pack (show (ByteString.length bytes))) <> "\0" <> bytes
-    hex = Text.pack . concatMap byteHex . ByteString.unpack
-    byteHex byte = ["0123456789abcdef" !! fromIntegral (div byte 16), "0123456789abcdef" !! fromIntegral (mod byte 16)]
 
 -- | Hash bytes of any size as a loose Git blob. A pipe holds only a bounded
 -- amount before its reader starts, and Git starts after the write, so the

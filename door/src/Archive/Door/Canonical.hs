@@ -7,17 +7,14 @@ module Archive.Door.Canonical
   ) where
 
 import qualified Crypto.Hash.SHA256 as SHA256
+import Archive.Door.Hex (hexText)
 import Archive.Door.Types (parseStoredEnvelope, validateDraftEnvelope)
 import Data.Aeson (Value (Array, Bool, Null, Number, Object, String))
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.RFC8785 (encodeCanonical)
-import qualified Data.ByteString as ByteString
-import Data.Char (intToDigit)
 import Data.Ratio (denominator, numerator, (%))
 import Data.Scientific (Scientific, scientific, toRealFloat)
 import Data.Text (Text)
-import qualified Data.Text as Text
-import Data.Word (Word8)
 import GHC.Float (castDoubleToWord64, castWord64ToDouble)
 
 canonicalizeDraft :: Value -> Either Text (Text, Value)
@@ -50,7 +47,7 @@ canonicalizeWith validate (Object submitted) = do
     Object object -> pure object
     _ -> Left "record must be a JSON object"
   let identityInput = Object (foldl' (flip KeyMap.delete) normalizedObject ["revision_id", "at"])
-      revision = "sha256:" <> hex (SHA256.hashlazy (encodeCanonical identityInput))
+      revision = "sha256:" <> hexText (SHA256.hashlazy (encodeCanonical identityInput))
   case KeyMap.lookup "revision_id" normalizedObject of
     Just (String supplied) | supplied /= revision -> Left "revision_id does not match the submitted record"
     Just (String _) -> pure ()
@@ -60,12 +57,6 @@ canonicalizeWith validate (Object submitted) = do
                      (KeyMap.delete "at" normalizedObject))
   pure (revision, record)
 canonicalizeWith _ _ = Left "record must be a JSON object"
-
-hex :: ByteString.ByteString -> Text
-hex = Text.pack . concatMap byteHex . ByteString.unpack
-
-byteHex :: Word8 -> String
-byteHex byte = [intToDigit (fromIntegral byte `div` 16), intToDigit (fromIntegral byte `mod` 16)]
 
 normalizeIJson :: Value -> Either Text Value
 normalizeIJson Null = Right Null

@@ -27,6 +27,7 @@ module Archive.Door.VerifiedCheckpoint
   , checkpointCompactAfter
   ) where
 
+import Archive.Door.Hex (hexText)
 import Archive.Door.Json (decodeUnique)
 import Archive.Door.Types
   ( DraftEnvelope (..)
@@ -53,7 +54,6 @@ import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Vector as Vector
-import Numeric (showHex)
 import System.Directory (listDirectory)
 import System.Environment (getExecutablePath)
 import System.FilePath ((</>))
@@ -351,9 +351,7 @@ extendCheckpoint base commit records = VerifiedCheckpoint
   }
 
 digestText :: ByteString.ByteString -> Text
-digestText bytes = "sha256:" <> Text.pack (concatMap byteHex (ByteString.unpack (SHA256.hash bytes)))
-  where
-    byteHex byte = let value = showHex byte "" in if length value == 1 then '0' : value else value
+digestText bytes = "sha256:" <> hexText (SHA256.hash bytes)
 
 -- | The sorted names of the object store's pack files. Coordinated maintenance
 -- that replaces packs changes this list, so an old checkpoint no longer applies.

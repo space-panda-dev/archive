@@ -43,6 +43,7 @@ import Archive.Door.Identity (parseIdentityName, parseIdentityNamespace, uuidV5)
 import Archive.Door.Contracts (validateCoreContextForSpecification, validateContractInstance)
 import Archive.Door.Json (decodeUnique)
 import BeyondCircle010 (beyondCircle010Checks)
+import IdentityVectors (identityVectorChecks)
 import Rules010 (rules010Checks)
 import Specification010 (specification010Checks)
 import Rules011 (rules011Checks)
@@ -302,6 +303,7 @@ main = do
       (Right namespace, Right name) -> isLeft (uuidV5 "not-a-uuid" namespace name)
       _ -> False)
     ExitSuccess "" ""
+  mapM_ (\(label, passed, detail) -> assert label passed ExitSuccess detail "") identityVectorChecks
   versionedContextChecks
   audioContractChecks
   assert "object identifier smart constructor accepts a canonical UUID URN"

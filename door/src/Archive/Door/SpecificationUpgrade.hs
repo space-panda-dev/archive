@@ -22,6 +22,7 @@ module Archive.Door.SpecificationUpgrade
 
 import Archive.Door.Catalog (CatalogEntry, loadContractCatalog)
 import Archive.Door.Contracts (ContractBundle, validateContractBundle, validateCoreContextForSpecification)
+import Archive.Door.Hex (hexText)
 import Archive.Door.Json (decodeUnique)
 import Archive.Door.Layout (specVersion, specificationLayout)
 import Control.Exception (IOException, try)
@@ -30,7 +31,6 @@ import Data.Aeson (Value (..))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.RFC8785 (encodeCanonical)
-import qualified Data.ByteString as StrictByteString
 import qualified Data.ByteString.Lazy as LazyByteString
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
@@ -193,7 +193,7 @@ loadBundle entry@(identifier, version, digest) = do
     if encodeCanonical value /= bytes
       then Left ("bundle " <> digest <> " is not RFC 8785 canonical")
       else Right ()
-    if "sha256:" <> hexDigest (SHA256.hashlazy bytes) /= digest
+    if "sha256:" <> hexText (SHA256.hashlazy bytes) /= digest
       then Left ("bundle bytes do not match the catalog digest " <> digest)
       else Right ()
     bundle <- validateContractBundle identifier version digest value
@@ -206,10 +206,3 @@ readDataFile relative = do
   pure $ case result of
     Left _ -> Left ("this Door cannot read its specification file " <> Text.pack relative)
     Right bytes -> Right (LazyByteString.fromStrict (LazyByteString.toStrict bytes))
-
-hexDigest :: StrictByteString.ByteString -> Text
-hexDigest bytes = Text.pack (concatMap byteHex (StrictByteString.unpack bytes))
-  where
-    byteHex byte =
-      ["0123456789abcdef" !! fromIntegral (div byte 16)
-      ,"0123456789abcdef" !! fromIntegral (mod byte 16)]

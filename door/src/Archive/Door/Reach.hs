@@ -171,9 +171,9 @@ reachBlockers index operator today wanted object = labelled <> righted
       , let limit = labelClass (label held), classIndex limit < want ]
     claims = [held | held <- indexHeads index, heldCites rights held]
     about subject = [held | held <- claims, subject `elem` heldRefIds "subject" held]
-    needsRights subject = case Map.lookup subject (indexObjectRecords index) of
-      Just records@(_ : _) -> let held = last records
-        in isArtifact held || heldKind held `elem` map Just ["musical_work", "recording", "release"]
+    needsRights subject = case reverse <$> Map.lookup subject (indexObjectRecords index) of
+      Just (held : _) ->
+        isArtifact held || heldKind held `elem` map Just ["musical_work", "recording", "release"]
       _ -> False
     righted = concat
       [ case about subject of

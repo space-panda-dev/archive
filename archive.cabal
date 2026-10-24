@@ -42,8 +42,10 @@ library
     , Archive.Door.Catalog
     , Archive.Door.Bootstrap
     , Archive.Door.Contracts
+    , Archive.Door.Hex
     , Archive.Door.Identity
     , Archive.Door.Json
+    , Archive.Door.Json.Access
     , Archive.Door.Layout
     , Archive.Door.MutationError
     , Archive.Door.AgentRules
@@ -129,7 +131,7 @@ executable archive
 test-suite door-test
   type: exitcode-stdio-1.0
   main-is: Main.hs
-  other-modules: BeyondCircle010, Rules010, Rules011, Specification010, Specification011
+  other-modules: BeyondCircle010, IdentityVectors, Rules010, Rules011, Specification010, Specification011
   hs-source-dirs: door/test
   build-tool-depends:
       archive:archive
