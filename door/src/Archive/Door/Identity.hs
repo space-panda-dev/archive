@@ -4,9 +4,9 @@
 --
 -- UUIDv5 is used only as a deterministic namespace.  The name is the exact
 -- UTF-8 byte sequence specified by ADR 0021: namespace, a NUL byte, then
--- name.  The SHA-1 implementation is kept here so identifier allocation does
--- not acquire a second package dependency merely for a digest that is not an
--- integrity claim.
+-- name.  SHA-1 here is only RFC 9562's UUIDv5 name hash, not an integrity
+-- claim; it comes from cryptohash-sha1, which Door already uses to check
+-- Git object names, so allocation carries no digest code of its own.
 module Archive.Door.Identity
   ( IdentityName
   , IdentityNamespace
@@ -19,19 +19,18 @@ module Archive.Door.Identity
   , parseIdentityNamespace
   , uuidV4
   , uuidV5
+  , uuidV5Name
   ) where
 
 import Archive.Door.Hex (byteHex)
+import qualified Crypto.Hash.SHA1 as SHA1
 import qualified Data.ByteString as ByteString
-import Data.Bits
-  ( Bits (complement, shiftL, shiftR, xor, (.&.), (.|.))
-  , rotateL
-  )
+import Data.Bits (Bits ((.&.), (.|.)))
 import Data.Char (ord)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text.Encoding
-import Data.Word (Word32, Word8)
+import Data.Word (Word8)
 import System.IO (IOMode (ReadMode), withBinaryFile)
 
 newtype IdentityNamespace = IdentityNamespace Text
@@ -84,12 +83,18 @@ allocateObjectId archive namespace name = do
 -- | Derive a portable object URN. The namespace and name are validated types;
 -- the archive UUID is checked here as well.
 uuidV5 :: Text -> IdentityNamespace -> IdentityName -> Either Text Text
-uuidV5 archiveUuid (IdentityNamespace namespace) (IdentityName name) = do
-  archiveBytes <- parseUuidBytes archiveUuid
-  let nameBytes = Text.Encoding.encodeUtf8 namespace
-        <> ByteString.singleton 0
-        <> Text.Encoding.encodeUtf8 name
-      digest = sha1 (archiveBytes <> nameBytes)
+uuidV5 archiveUuid (IdentityNamespace namespace) (IdentityName name) =
+  uuidV5Name archiveUuid (Text.Encoding.encodeUtf8 namespace
+    <> ByteString.singleton 0
+    <> Text.Encoding.encodeUtf8 name)
+
+-- | RFC 9562 UUIDv5 of raw name bytes under a namespace UUID, as a URN.
+-- 'uuidV5' fixes the name's spelling; this is the bare algorithm, exported
+-- so the RFC's own known-answer vectors can check it.
+uuidV5Name :: Text -> ByteString.ByteString -> Either Text Text
+uuidV5Name namespaceUuid nameBytes = do
+  namespaceBytes <- parseUuidBytes namespaceUuid
+  let digest = SHA1.hash (namespaceBytes <> nameBytes)
   ("urn:uuid:" <>) <$> formatUuid (setVersionAndVariant (ByteString.take 16 digest))
 
 -- | Generate a random canonical lowercase RFC 9562 UUIDv4 and wrap it as an
@@ -165,76 +170,3 @@ isLowerAsciiLetter character = 'a' <= character && character <= 'z'
 
 isAsciiDigit :: Char -> Bool
 isAsciiDigit character = '0' <= character && character <= '9'
-
--- SHA-1, with the algorithm used only for UUIDv5 namespacing.
-sha1 :: ByteString.ByteString -> ByteString.ByteString
-sha1 input = ByteString.pack (concatMap wordBytes finalState)
-  where
-    padded = pad input
-    chunks = chunk64 padded
-    finalState = stateWords (foldl processChunk initialState chunks)
-
-pad :: ByteString.ByteString -> ByteString.ByteString
-pad input = input <> ByteString.singleton 0x80 <> ByteString.replicate zeroCount 0
-  <> word64Bytes (fromIntegral (ByteString.length input) * 8)
-  where
-    zeroCount = (56 - ((ByteString.length input + 1) `mod` 64)) `mod` 64
-
-chunk64 :: ByteString.ByteString -> [ByteString.ByteString]
-chunk64 bytes
-  | ByteString.null bytes = []
-  | otherwise = ByteString.take 64 bytes : chunk64 (ByteString.drop 64 bytes)
-
-type Sha1State = (Word32, Word32, Word32, Word32, Word32)
-
-initialState :: Sha1State
-initialState = (0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0)
-
-stateWords :: Sha1State -> [Word32]
-stateWords (a, b, c, d, e) = [a, b, c, d, e]
-
-processChunk :: Sha1State -> ByteString.ByteString -> Sha1State
-processChunk (h0, h1, h2, h3, h4) chunk =
-  (add32 h0 a, add32 h1 b, add32 h2 c, add32 h3 d, add32 h4 e)
-  where
-    words16 = map bytesWord32 (chunk64Words chunk)
-    words80 = words16 <> [rotateL (words80 !! (index - 3) `xor` words80 !! (index - 8)
-      `xor` words80 !! (index - 14) `xor` words80 !! (index - 16)) 1 | index <- [16 .. 79]]
-    (a, b, c, d, e) = foldl roundStep (h0, h1, h2, h3, h4) [0 .. 79]
-    roundStep (a0, b0, c0, d0, e0) index =
-      let (function, constant) = roundConstants index
-          temp = add32 (rotateL a0 5) (add32 (function b0 c0 d0) (add32 e0 (add32 (words80 !! index) constant)))
-      in (temp, a0, rotateL b0 30, c0, d0)
-
-roundConstants :: Int -> ((Word32 -> Word32 -> Word32 -> Word32), Word32)
-roundConstants index
-  | index < 20 = (\b c d -> (b .&. c) .|. (complement b .&. d), 0x5a827999)
-  | index < 40 = (\b c d -> b `xor` c `xor` d, 0x6ed9eba1)
-  | index < 60 = (\b c d -> (b .&. c) .|. (b .&. d) .|. (c .&. d), 0x8f1bbcdc)
-  | otherwise = (\b c d -> b `xor` c `xor` d, 0xca62c1d6)
-
-chunk64Words :: ByteString.ByteString -> [ByteString.ByteString]
-chunk64Words bytes
-  | ByteString.null bytes = []
-  | otherwise = ByteString.take 4 bytes : chunk64Words (ByteString.drop 4 bytes)
-
-bytesWord32 :: ByteString.ByteString -> Word32
-bytesWord32 bytes = foldl (\value byte -> shiftL value 8 .|. fromIntegral byte) 0 (ByteString.unpack bytes)
-
-add32 :: Word32 -> Word32 -> Word32
-add32 = (+)
-
-wordBytes :: Word32 -> [Word8]
-wordBytes word = [ fromIntegral (word `shiftR` 24)
-                 , fromIntegral (word `shiftR` 16)
-                 , fromIntegral (word `shiftR` 8)
-                 , fromIntegral word
-                 ]
-
-word64Bytes :: Integer -> ByteString.ByteString
-word64Bytes value = ByteString.pack
-  [ fromIntegral (value `shiftR` 56), fromIntegral (value `shiftR` 48)
-  , fromIntegral (value `shiftR` 40), fromIntegral (value `shiftR` 32)
-  , fromIntegral (value `shiftR` 24), fromIntegral (value `shiftR` 16)
-  , fromIntegral (value `shiftR` 8), fromIntegral value
-  ]
