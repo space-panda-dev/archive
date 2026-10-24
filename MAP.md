@@ -114,8 +114,8 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 | `door/src/Archive/Read/Core.hs` | 617 |
 | `door/src/Archive/GitSnapshot.hs` | 660 |
 | `door/src/Archive/ProcessPinned.c` | 799 |
-| `door/test/Main.hs` | 7844 |
-| `archive/test/Main.hs` | 1001 |
+| `door/test/Main.hs` | 7882 |
+| `archive/test/Main.hs` | 1015 |
 <!-- /wf:gen -->
 
 <!-- wf:gen anchors door/src/Archive/Door/Contracts.hs#validateSchema door/src/Archive/Door/TransitionDryRun.hs#transitionDispatchTable -->

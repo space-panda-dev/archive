@@ -14,6 +14,7 @@ import Archive.Door.RecordCommit (withArchiveWriteLock)
 import Archive.Door.MutationError (MutationError (..))
 import qualified Data.Text as Text
 import Data.List (sort)
+import GHC.Stack (HasCallStack)
 import System.Directory
   ( createDirectory
   , createDirectoryIfMissing
@@ -32,7 +33,7 @@ import System.Directory
   , setPermissions
   )
 import System.Environment (getEnvironment, setEnv)
-import System.Exit (ExitCode (ExitFailure, ExitSuccess), exitFailure)
+import System.Exit (ExitCode (ExitFailure, ExitSuccess))
 import System.FilePath ((</>))
 import System.FilePath (takeDirectory)
 import System.IO (hClose, openTempFile)
@@ -43,6 +44,8 @@ import System.Process
   , readProcessWithExitCode
   )
 import System.Timeout (timeout)
+import Test.Tasty (defaultMain, testGroup)
+import Test.Tasty.HUnit (assertFailure, testCase)
 
 main :: IO ()
 main = do
@@ -52,33 +55,47 @@ main = do
     (ioError (userError "tests require an installed git-annex executable")) pure
   setEnv "ARCHIVE_GIT_EXECUTABLE" gitPath
   setEnv "ARCHIVE_GIT_ANNEX_EXECUTABLE" annexPath
-  currentBoundary
-  withArchive $ \root -> do
-    initialize root
-    statusReadsHead root
-    exportIsCompleteAndPinned root
-    doctorIsPublic root
-    prunePackedCommand root
-    lsIsPublic root
-    showEmptyIsComplete root
-    showFindsCommittedObject root
-    pinnedHeadIsUsed root
-  withArchive $ \root -> initialize root >> exportSinceChecks root
-  withArchive $ \root -> initialize root >> repackChecks root
-  withArchive $ \root -> initialize root >> missingContractIsIncomplete root
-  withArchive $ \root -> initialize root >> malformedRecordRetainsGoodRecords root
-  withArchive $ \root -> initialize root >> missingContextIsIncomplete root
-  withArchive $ \root -> initialize root >> missingVersionIsIncomplete root
-  withArchive $ \root -> initialize root >> missingSpecificationIsIncomplete root
-  withArchive $ \root -> initialize root >> noncanonicalManifestIsIncomplete root
-  withArchive $ \root -> initialize root >> malformedManifestRetainsRecords root
-  withArchive $ \root -> initialize root >> missingManifestRetainsRecords root
-  withArchive $ \root -> initialize root >> noisyGitDoesNotDeadlock root
-  withArchive $ \root -> initialize root >> decayedObjectIsReported root
-  withArchive $ \first -> withArchive $ \second -> do
-    initialize first
-    initialize second
-    inheritedGitEnvironmentIsIgnored first second
+  -- One case per check, in the old order, each on its own initialized
+  -- archive except the reader commands, which share one. The cases share the
+  -- process environment, so they run one at a time (no -threaded).
+  defaultMain $ testGroup "archive-test"
+    [ testCase "currentBoundary" currentBoundary
+    , testCase "sharedArchiveChecks" (withArchive sharedArchiveChecks)
+    , testCase "exportSinceChecks" (initialized exportSinceChecks)
+    , testCase "repackChecks" (initialized repackChecks)
+    , testCase "missingContractIsIncomplete" (initialized missingContractIsIncomplete)
+    , testCase "malformedRecordRetainsGoodRecords" (initialized malformedRecordRetainsGoodRecords)
+    , testCase "missingContextIsIncomplete" (initialized missingContextIsIncomplete)
+    , testCase "missingVersionIsIncomplete" (initialized missingVersionIsIncomplete)
+    , testCase "missingSpecificationIsIncomplete" (initialized missingSpecificationIsIncomplete)
+    , testCase "noncanonicalManifestIsIncomplete" (initialized noncanonicalManifestIsIncomplete)
+    , testCase "malformedManifestRetainsRecords" (initialized malformedManifestRetainsRecords)
+    , testCase "missingManifestRetainsRecords" (initialized missingManifestRetainsRecords)
+    , testCase "noisyGitDoesNotDeadlock" (initialized noisyGitDoesNotDeadlock)
+    , testCase "decayedObjectIsReported" (initialized decayedObjectIsReported)
+    , testCase "inheritedGitEnvironmentIsIgnored" $ withArchive $ \first -> withArchive $ \second -> do
+        initialize first
+        initialize second
+        inheritedGitEnvironmentIsIgnored first second
+    ]
+
+-- | The reader commands in sequence over one archive: each reads what the
+-- one before it left, so they stay one case.
+sharedArchiveChecks :: FilePath -> IO ()
+sharedArchiveChecks root = do
+  initialize root
+  statusReadsHead root
+  exportIsCompleteAndPinned root
+  doctorIsPublic root
+  prunePackedCommand root
+  lsIsPublic root
+  showEmptyIsComplete root
+  showFindsCommittedObject root
+  pinnedHeadIsUsed root
+
+-- | A check on a freshly initialized archive of its own.
+initialized :: (FilePath -> IO ()) -> IO ()
+initialized check = withArchive $ \root -> initialize root >> check root
 
 withArchive :: (FilePath -> IO ()) -> IO ()
 withArchive action = do
@@ -638,12 +655,11 @@ gitChecked root arguments = do
 parent :: FilePath -> FilePath
 parent = takeDirectory
 
-assert :: String -> Bool -> String -> String -> IO ()
+-- | Fails the running test case with the label and the command's output.
+assert :: HasCallStack => String -> Bool -> String -> String -> IO ()
 assert label condition output errors
   | condition = pure ()
-  | otherwise = do
-      putStrLn ("not ok - " <> label <> "\nstdout: " <> output <> "\nstderr: " <> errors)
-      exitFailure
+  | otherwise = assertFailure (label <> "\nstdout: " <> output <> "\nstderr: " <> errors)
 
 jsonStringField :: String -> String -> Maybe String
 jsonStringField name value =
@@ -995,7 +1011,5 @@ admitWith extra root archiveId namespace name draftFor = do
       pure (objectId, Text.unpack revision)
     _ -> failWith ("door reports the revision of " <> name) output
 
-failWith :: String -> String -> IO a
-failWith label output = do
-  putStrLn ("not ok - " <> label <> "\nstdout: " <> output)
-  exitFailure
+failWith :: HasCallStack => String -> String -> IO a
+failWith label output = assertFailure (label <> "\nstdout: " <> output)

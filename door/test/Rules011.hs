@@ -6,7 +6,7 @@
 -- under a melody it pins, a version 1 lead sheet's next revision may be
 -- version 2, and ADR 0088's member-contract rule holds for melody version 2.
 --
--- Each check is a (label, passed, detail) row; Main asserts them.
+-- Each check is a (label, passed, detail) row; Main makes each a test case.
 module Rules011 (rules011Checks) where
 
 import Archive.Door.Catalog (loadContractCatalog)

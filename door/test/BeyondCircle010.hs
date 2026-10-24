@@ -7,7 +7,7 @@
 -- agreement test in world/tests drives the same rules through the real
 -- `door transition` and `door admit` against the published fixture.
 --
--- Each check is a (label, passed, detail) row; Main asserts them.
+-- Each check is a (label, passed, detail) row; Main makes each a test case.
 module BeyondCircle010 (beyondCircle010Checks) where
 
 import Archive.Door.BeyondCircle (BeyondCircleRule, beyondCircleBlockers, beyondCircleRule)
