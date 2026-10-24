@@ -57,7 +57,15 @@ library
     , Archive.Door.AdmissionPlan
     , Archive.Door.Canonical
     , Archive.Door.Catalog
+    , Archive.Door.ContractCitations
     , Archive.Door.Bootstrap
+    , Archive.Door.Bootstrap.Abort
+    , Archive.Door.Bootstrap.Contents
+    , Archive.Door.Bootstrap.Git
+    , Archive.Door.Bootstrap.Journal
+    , Archive.Door.Bootstrap.Pinned
+    , Archive.Door.Bootstrap.Tracked
+    , Archive.Door.Bootstrap.Verify
     , Archive.Door.Contracts
     , Archive.Door.Contracts.Context
     , Archive.Door.Contracts.Evaluate
@@ -100,13 +108,30 @@ library
     , Archive.Door.WhenPinned
     , Archive.Door.WrittenBars
     , Archive.Door.Proposal
+    , Archive.Door.ProposalContracts
+    , Archive.Door.ProposalProblem
     , Archive.Door.RecordCommit
     , Archive.Door.SchemaObjectKeywords
     , Archive.Door.SpecificationUpgrade
+    , Archive.Door.Snapshot.Data
+    , Archive.Door.Snapshot.History
+    , Archive.Door.Snapshot.Load
+    , Archive.Door.Snapshot.Memo
+    , Archive.Door.Snapshot.Read
+    , Archive.Door.Snapshot.Supersession
     , Archive.Door.References
+    , Archive.Door.ReferenceTargets
+    , Archive.Door.PlanProblem
     , Archive.Door.Refusal
     , Archive.Door.TransitionDryRun
     , Archive.Door.TransitionCommit
+    , Archive.Door.TargetMeasures
+    , Archive.Door.Transition.Dispatch
+    , Archive.Door.Transition.Plan
+    , Archive.Door.Transition.Problem
+    , Archive.Door.Transition.Replay
+    , Archive.Door.Transition.Rules
+    , Archive.Door.Transition.Upgrade
     , Archive.Door.Types
     , Archive.Door.VerifiedCheckpoint
     , Archive.Process
