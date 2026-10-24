@@ -42,6 +42,11 @@ import System.IO.Unsafe (unsafePerformIO)
 -- stale; a long-running Door answers each request on an unchanged HEAD from
 -- memory and extends the snapshot after its own commits. It is never written
 -- anywhere and is lost with the process.
+--
+-- A process-global 'unsafePerformIO' reference is safe here only because Door
+-- serves one connection at a time, so one thread reads and writes it; a Door
+-- that served requests concurrently would need a lock or per-request state.
+-- NOINLINE keeps GHC from duplicating the reference.
 snapshotMemo :: IORef (Maybe (FilePath, Text, SnapshotData))
 snapshotMemo = unsafePerformIO (newIORef Nothing)
 {-# NOINLINE snapshotMemo #-}
