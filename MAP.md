@@ -79,6 +79,7 @@ Build: [archive.cabal](archive.cabal): library `door/src`, executables
 | `door/src/Archive/Door/TransitionCommit.hs` | `commitTransition` |
 | `door/src/Archive/Door/Contracts.hs` | bundle loading; `validateSchema` parses the `x-archive-*` rule keywords; `validate*Rule` functions implement them |
 | `door/src/Archive/Door/RecordCommit.hs` | `commitRecordBatch*`, write lock, git-annex content |
+| `door/src/Archive/Door/RecordCommit/*.hs` | the writer's private parts: `Lock`, `Journal` and `Recovery` (operation journal), `Records`, `IndexReservation`, `Durability` (object store and ref sync), `Git`, `Descriptors` (fd primitives), `Paths`, `Worktree`, `Maintenance` |
 | `door/src/Archive/Door/Bootstrap.hs` | `initArchive` |
 | `door/src/Archive/Door/VerifiedCheckpoint.hs` | incremental verification checkpoint (ADR 0052) |
 | `door/src/Archive/Door/Refusal.hs` | `RefusalCode` (ADR 0058) |
@@ -109,7 +110,7 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 | `door/src/Archive/Door/AdmissionDryRun.hs` | 1572 |
 | `door/src/Archive/Door/TransitionDryRun.hs` | 1119 |
 | `door/src/Archive/Door/Contracts.hs` | 2443 |
-| `door/src/Archive/Door/RecordCommit.hs` | 3010 |
+| `door/src/Archive/Door/RecordCommit.hs` | 619 |
 | `door/src/Archive/Door/Bootstrap.hs` | 1622 |
 | `door/src/Archive/Read/Core.hs` | 611 |
 | `door/src/Archive/GitSnapshot.hs` | 661 |

@@ -33,7 +33,23 @@ data-files:
 library
   c-sources: door/src/Archive/ProcessPinned.c
   autogen-modules: Paths_archive
-  other-modules: Paths_archive
+  -- The writer's parts stay private: RecordCommit exports ArchiveWriteLock
+  -- abstractly, and only these modules may see its constructor.
+  other-modules:
+      Paths_archive
+    , Archive.Door.RecordCommit.Descriptors
+    , Archive.Door.RecordCommit.Durability
+    , Archive.Door.RecordCommit.Failure
+    , Archive.Door.RecordCommit.Git
+    , Archive.Door.RecordCommit.IndexReservation
+    , Archive.Door.RecordCommit.Internal
+    , Archive.Door.RecordCommit.Journal
+    , Archive.Door.RecordCommit.Lock
+    , Archive.Door.RecordCommit.Maintenance
+    , Archive.Door.RecordCommit.Paths
+    , Archive.Door.RecordCommit.Records
+    , Archive.Door.RecordCommit.Recovery
+    , Archive.Door.RecordCommit.Worktree
   exposed-modules:
       Archive.Door.AdmissionDryRun
     , Archive.Door.AdmissionCommit
