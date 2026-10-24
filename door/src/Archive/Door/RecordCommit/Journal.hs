@@ -30,7 +30,7 @@ import Archive.Door.RecordCommit.Descriptors
   , withDuplicatedBinaryHandle
   , writeAll
   )
-import Archive.Door.RecordCommit.Failure (failText, tryIO, unlessEither)
+import Archive.Door.RecordCommit.Failure (failText, orFail, require, tryIO, tryPresent, unlessEither)
 import Archive.Door.RecordCommit.Paths
   ( uniqueSorted
   , validateArchiveFilePath
@@ -39,13 +39,14 @@ import Archive.Door.RecordCommit.Paths
   )
 import qualified Control.Exception as Exception
 import Control.Monad (unless)
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, throwE)
 import qualified Data.ByteString as ByteString
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
 import Data.Unique (hashUnique, newUnique)
 import System.IO (Handle)
-import System.IO.Error (isDoesNotExistError)
 import System.Posix.Files (deviceID, fileID, getFdStatus, isRegularFile)
 import System.Posix.IO
   ( OpenFileFlags (cloexec, creat, exclusive, nofollow, nonBlock)
@@ -99,87 +100,61 @@ operationJournalByteLimit :: Int
 operationJournalByteLimit = 16 * 1024 * 1024
 
 createOperationJournal :: Fd -> OperationJournal -> IO (Either Text ())
-createOperationJournal gitFd journal = case encodeOperationJournal journal of
-  Left problem -> pure (Left problem)
-  Right bytes -> do
-    opened <- Exception.try $ openFdAt (Just gitFd) operationJournalName WriteOnly
+createOperationJournal gitFd journal = runExceptT $ do
+  bytes <- except (encodeOperationJournal journal)
+  fd <- orFail ("could not reserve Door operation journal: " <>) $ tryIO $
+    openFdAt (Just gitFd) operationJournalName WriteOnly
       defaultFileFlags { creat = Just ownerFileModes, exclusive = True, nofollow = True, cloexec = True }
-      :: IO (Either Exception.IOException Fd)
-    case opened of
-      Left problem -> pure (Left ("could not reserve Door operation journal: " <> Text.pack (show problem)))
-      Right fd -> Exception.bracket (pure fd) closeFd $ \journalFd -> do
-        written <- tryIO (writeAll journalFd bytes >> syncStrongFdOrFail journalFd >> syncDirectoryFdOrFail gitFd)
-        pure (written >> Right ())
+  ExceptT $ Exception.bracket (pure fd) closeFd $ \journalFd ->
+    tryIO (writeAll journalFd bytes >> syncStrongFdOrFail journalFd >> syncDirectoryFdOrFail gitFd)
 
+-- | Replace the journal only while it still holds what this operation last
+-- wrote: the replacement is written and synchronized under a fresh name,
+-- renamed over the journal, and the rename synchronized.
 replaceOperationJournal :: Fd -> OperationJournal -> OperationJournal -> IO (Either Text ())
-replaceOperationJournal gitFd expected replacement = do
-  current <- readOperationJournal gitFd
+replaceOperationJournal gitFd expected replacement = runExceptT $ do
+  current <- ExceptT (readOperationJournal gitFd)
   case current of
-    Left problem -> pure (Left problem)
-    Right Nothing -> pure (Left "Door operation journal disappeared during mutation")
-    Right (Just (journal, _))
-      | journal /= expected -> pure (Left "Door operation journal changed during mutation")
-      | otherwise -> case encodeOperationJournal replacement of
-          Left problem -> pure (Left problem)
-          Right bytes -> do
-            temporary <- freshJournalTemporaryName
-            opened <- Exception.try $ openFdAt (Just gitFd) temporary WriteOnly
-              defaultFileFlags { creat = Just ownerFileModes, exclusive = True, nofollow = True, cloexec = True }
-              :: IO (Either Exception.IOException Fd)
-            case opened of
-              Left problem -> pure (Left ("could not create replacement operation journal: " <> Text.pack (show problem)))
-              Right fd -> Exception.bracket (pure fd) closeFd $ \temporaryFd -> do
-                written <- tryIO (writeAll temporaryFd bytes >> syncStrongFdOrFail temporaryFd)
-                case written of
-                  Left problem -> pure (Left problem)
-                  Right () -> do
-                    renamed <- tryIO (renameAt gitFd temporary operationJournalName)
-                    case renamed of
-                      Left problem -> pure (Left problem)
-                      Right () -> do
-                        synced <- syncFd gitFd
-                        pure $ case synced of
-                          Left problem -> Left ("could not sync operation journal directory: " <> problem)
-                          Right () -> Right ()
+    Nothing -> throwE "Door operation journal disappeared during mutation"
+    Just (journal, _) -> require (journal == expected) "Door operation journal changed during mutation"
+  bytes <- except (encodeOperationJournal replacement)
+  temporary <- lift freshJournalTemporaryName
+  fd <- orFail ("could not create replacement operation journal: " <>) $ tryIO $
+    openFdAt (Just gitFd) temporary WriteOnly
+      defaultFileFlags { creat = Just ownerFileModes, exclusive = True, nofollow = True, cloexec = True }
+  ExceptT $ Exception.bracket (pure fd) closeFd $ \temporaryFd -> runExceptT $ do
+    ExceptT (tryIO (writeAll temporaryFd bytes >> syncStrongFdOrFail temporaryFd))
+    ExceptT (tryIO (renameAt gitFd temporary operationJournalName))
+    orFail ("could not sync operation journal directory: " <>) (syncFd gitFd)
 
+-- | Remove the journal only while its contents and inode are still the ones
+-- recovery reconciled, re-proving the inode immediately before the unlink.
 clearJournalIfSame :: Fd -> JournalIdentity -> OperationJournal -> IO (Either Text ())
-clearJournalIfSame gitFd identity expected = do
-  current <- readOperationJournal gitFd
+clearJournalIfSame gitFd identity expected = runExceptT $ do
+  current <- ExceptT (readOperationJournal gitFd)
   case current of
-    Left problem -> pure (Left problem)
-    Right Nothing -> pure (Left "Door operation journal disappeared before cleanup")
-    Right (Just (journal, observedIdentity))
-      | journal /= expected -> pure (Left "Door operation journal changed before cleanup")
-      | observedIdentity /= identity -> pure (Left "Door operation journal inode changed before cleanup")
-      | otherwise -> do
-          opened <- Exception.try $ openFdAt (Just gitFd) operationJournalName ReadOnly
-            defaultFileFlags { nofollow = True, nonBlock = True, cloexec = True }
-            :: IO (Either Exception.IOException Fd)
-          case opened of
-            Left problem -> pure (Left ("Door operation journal path changed before cleanup: " <> Text.pack (show problem)))
-            Right fd -> Exception.bracket (pure fd) closeFd $ \journalFd -> do
-              status <- tryIO (getFdStatus journalFd)
-              case status of
-                Left problem -> pure (Left problem)
-                Right fileStatus
-                  | JournalIdentity (deviceID fileStatus) (fileID fileStatus) /= identity ->
-                      pure (Left "Door operation journal inode changed immediately before unlink")
-                  | otherwise -> do
-                      removed <- tryIO (unlinkAt gitFd operationJournalName)
-                      case removed of
-                        Left problem -> pure (Left problem)
-                        Right () -> syncFd gitFd
+    Nothing -> throwE "Door operation journal disappeared before cleanup"
+    Just (journal, observedIdentity) -> do
+      require (journal == expected) "Door operation journal changed before cleanup"
+      require (observedIdentity == identity) "Door operation journal inode changed before cleanup"
+  fd <- orFail ("Door operation journal path changed before cleanup: " <>) $ tryIO $
+    openFdAt (Just gitFd) operationJournalName ReadOnly
+      defaultFileFlags { nofollow = True, nonBlock = True, cloexec = True }
+  ExceptT $ Exception.bracket (pure fd) closeFd $ \journalFd -> runExceptT $ do
+    fileStatus <- ExceptT (tryIO (getFdStatus journalFd))
+    require (JournalIdentity (deviceID fileStatus) (fileID fileStatus) == identity)
+      "Door operation journal inode changed immediately before unlink"
+    ExceptT (tryIO (unlinkAt gitFd operationJournalName))
+    ExceptT (syncFd gitFd)
 
 readOperationJournal :: Fd -> IO (Either Text (Maybe (OperationJournal, JournalIdentity)))
-readOperationJournal gitFd = do
-  opened <- Exception.try $ openFdAt (Just gitFd) operationJournalName ReadOnly
-    defaultFileFlags { nofollow = True, nonBlock = True, cloexec = True }
-    :: IO (Either Exception.IOException Fd)
+readOperationJournal gitFd = runExceptT $ do
+  opened <- orFail ("could not open Door operation journal: " <>) $ tryPresent $
+    openFdAt (Just gitFd) operationJournalName ReadOnly
+      defaultFileFlags { nofollow = True, nonBlock = True, cloexec = True }
   case opened of
-    Left problem
-      | isDoesNotExistError problem -> pure (Right Nothing)
-      | otherwise -> pure (Left ("could not open Door operation journal: " <> Text.pack (show problem)))
-    Right fd -> Exception.bracket (pure fd) closeFd $ \journalFd -> do
+    Nothing -> pure Nothing
+    Just fd -> ExceptT $ Exception.bracket (pure fd) closeFd $ \journalFd -> do
       result <- tryIO $ do
         status <- getFdStatus journalFd
         unless (isRegularFile status) (failText "Door operation journal is not regular")
@@ -190,7 +165,6 @@ readOperationJournal gitFd = do
         (status, bytes) <- result
         journal <- parseOperationJournal bytes
         Right (Just (journal, JournalIdentity (deviceID status) (fileID status)))
-
 
 readBoundedJournal :: Handle -> IO (Either Text ByteString.ByteString)
 readBoundedJournal handle = collect [] 0

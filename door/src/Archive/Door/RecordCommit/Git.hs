@@ -34,6 +34,8 @@ import Archive.Process (ProcessError, processErrorMessage, runProcessBoundedAt)
 import qualified Control.Exception as Exception
 import qualified Crypto.Hash.SHA1 as SHA1
 import qualified Crypto.Hash.SHA256 as SHA256
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Except (ExceptT (..), runExceptT)
 import qualified Data.ByteString as ByteString
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -82,18 +84,13 @@ gitFailureMessage failure = case failure of
 -- them from an inherited pipe descriptor, as 'gitBlobForFd' reads records.
 gitBlobForBytes :: Executable -> FilePath -> Fd -> Fd -> ByteString.ByteString
                 -> IO (Either Text Text)
-gitBlobForBytes executable rootPath rootFd gitFd bytes = do
-  opened <- tryIO createPipe
-  case opened of
-    Left problem -> pure (Left problem)
-    Right (readFd, writeFd) -> Exception.bracket (pure readFd) closeFd $ \_ -> do
-      written <- tryIO (writeAll writeFd bytes `Exception.finally` closeFd writeFd)
-      case written of
-        Left problem -> pure (Left problem)
-        Right () -> do
-          setFdOption readFd CloseOnExec False
-          fmap Text.strip <$> runGit executable rootPath rootFd gitFd Nothing
-            ["hash-object", "-w", "--no-filters", "--", "/dev/fd/" <> showFd readFd]
+gitBlobForBytes executable rootPath rootFd gitFd bytes = runExceptT $ do
+  (readFd, writeFd) <- ExceptT (tryIO createPipe)
+  ExceptT $ Exception.bracket (pure readFd) closeFd $ \_ -> runExceptT $ do
+    ExceptT (tryIO (writeAll writeFd bytes `Exception.finally` closeFd writeFd))
+    lift (setFdOption readFd CloseOnExec False)
+    ExceptT $ fmap Text.strip <$> runGit executable rootPath rootFd gitFd Nothing
+      ["hash-object", "-w", "--no-filters", "--", "/dev/fd/" <> showFd readFd]
 
 -- | Whether bytes hash, as a Git blob, to a name, in the object format the
 -- name's length selects.

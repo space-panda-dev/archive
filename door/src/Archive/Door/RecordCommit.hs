@@ -45,7 +45,7 @@ import Archive.Door.RecordCommit.Durability
   , syncReferenceDirectories
   , validateGitObjectStoreTopology
   )
-import Archive.Door.RecordCommit.Failure (tryIO)
+import Archive.Door.RecordCommit.Failure (orFail, require, tryIO)
 import Archive.Door.RecordCommit.Git
   ( gitBlobForBytes
   , gitBlobForFileBytes
@@ -60,7 +60,10 @@ import Archive.Door.RecordCommit.Git
   , runGitTyped
   )
 import Archive.Door.RecordCommit.IndexReservation
-  ( IndexReservation (..)
+  ( IndexReservation
+  , attachJournal
+  , detachJournal
+  , reservedIndex
   , runIndexGit
   , withNewIndexReservation
   )
@@ -121,7 +124,9 @@ import Archive.Executables (Executable, executablePath, executableStillMatches)
 import Archive.Process (processErrorMessage, runProcessBoundedAt)
 import Control.Applicative ((<|>))
 import qualified Control.Exception as Exception
-import Data.IORef (newIORef, readIORef, writeIORef)
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, throwE)
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.List (sort)
 import qualified Data.Map.Strict as Map
@@ -247,16 +252,15 @@ commitRecordBatchWithFiles (ArchiveWriteLock rootPath rootFd gitFd executable) e
       | otherwise -> commitAt
   where
     commitAt = Exception.mask $ \restore -> do
-      pinnedRecordsRef <- newIORef Nothing
-      explicitFailureRef <- newIORef Nothing
-      result <- restore (runCommit pinnedRecordsRef explicitFailureRef)
-        `Exception.onException` closePinnedRecords pinnedRecordsRef
-      pinnedRecords <- readIORef pinnedRecordsRef
+      scope <- CommitScope <$> newIORef Nothing <*> newIORef Nothing
+      result <- restore (runCommit scope)
+        `Exception.onException` closePinnedRecords scope
+      pinnedRecords <- readIORef (scopePinnedRecords scope)
       recovered <- case pinnedRecords of
         Nothing -> reconcileOperationJournal executable rootPath rootFd gitFd
         Just fd -> Exception.bracket_ (pure ()) (closeFd fd)
           (reconcileOperationJournalWithRecords executable rootPath rootFd gitFd (Just fd) provenBase)
-      explicitFailure <- readIORef explicitFailureRef
+      explicitFailure <- readIORef (scopeExplicitFailure scope)
       let resultError problem = maybe (MutationOperationFailure problem) id explicitFailure
       case (result, recovered) of
         (Left problem, Left cleanupProblem) -> pure (Left
@@ -272,134 +276,109 @@ commitRecordBatchWithFiles (ArchiveWriteLock rootPath rootFd gitFd executable) e
             && checkpointCommit (verifiedBase verified) == expectedHead -> Just expectedHead
       _ -> Nothing
 
-    runCommit pinnedRecordsRef explicitFailureRef = do
-        prepared <- prepareCommit
-        case prepared of
-          Left problem -> pure (Left problem)
-          Right (branch, newLinks, newFiles) ->
-            withNewIndexReservation gitFd $ \reservation -> tryIO $ do
-              checked <- finalCheck
-              case checked of
-                Left problem -> do
-                  writeIORef explicitFailureRef (Just problem)
-                  pure (Left (mutationErrorMessage problem))
-                Right () -> withRecordsDirectory rootFd $ \recordsFd -> do
-                  Exception.mask_ $ do
-                    duplicate <- dup recordsFd
-                    writeIORef pinnedRecordsRef (Just duplicate)
-                  temporaryNames <- mapM (const freshTemporaryName) records
-                  (indexName, indexIdentity) <- case reservation of
-                    IndexReservation name identityRef _ -> do
-                      (_, identity) <- readIORef identityRef
-                      pure (name, identity)
-                  let indexJournal = JournalIndex indexName (fst indexIdentity) (snd indexIdentity)
-                      preparing = OperationJournal expectedHead branch "preparing" Nothing indexJournal
-                        (zipWith (\(path, _) name -> JournalEntry path name Nothing Nothing Nothing)
-                          records temporaryNames)
-                        newLinks
-                        newFiles
-                  journalState <- newIORef preparing
-                  case reservation of
-                    IndexReservation _ _ writerRef -> writeIORef writerRef (Just journalState)
-                  reserved <- createOperationJournal gitFd preparing
-                  case reserved of
-                    Left problem -> do
-                      case reservation of
-                        IndexReservation _ _ writerRef -> writeIORef writerRef Nothing
-                      pure (Left problem)
-                    Right () -> do
-                      staged <- prepareAll executable rootPath rootFd gitFd
-                        (zip temporaryNames records)
-                      case staged of
-                        Left problem -> pure (Left problem)
-                        Right preparedRecords -> Exception.bracket_
-                          (pure ()) (closePrepared preparedRecords) $ do
-                            let installing = preparing
-                                  { journalPhase = "installing"
-                                  , journalEntries = map preparedToJournal preparedRecords
-                                  }
-                            journaled <- replaceOperationJournal gitFd preparing installing
-                            case journaled of
-                              Left problem -> do
-                                cleaned <- cleanupPrepared gitFd preparedRecords
-                                pure $ case cleaned of
-                                  Left cleanupProblem -> Left
-                                    (problem <> "; staged source cleanup also failed: " <> cleanupProblem)
-                                  Right () -> Left problem
-                              Right () -> do
-                                writeIORef journalState installing
-                                installed <- installPreparedAll executable rootPath rootFd gitFd
-                                  recordsFd preparedRecords
-                                case installed of
-                                  Left problem -> pure (Left problem)
-                                  Right ownedRecords -> do
-                                    journal <- readIORef journalState
-                                    synced <- syncRecordDirectoryAndBarrier recordsFd
-                                      (journalEntries journal)
-                                    case synced of
-                                      Left problem -> pure (Left problem)
-                                      Right () -> do
-                                        committed <- buildAndAdvance recordsFd branch reservation
-                                          ownedRecords newLinks newFiles journalState explicitFailureRef
-                                        case committed of
-                                          Left problem -> pure (Left problem)
-                                          Right commit -> do
-                                            temps <- cleanupPrepared gitFd preparedRecords
-                                            case temps of
-                                              Left problem -> pure (Left
-                                                ("archive commit succeeded; operation journal retained because staged source cleanup failed: " <> problem))
-                                              -- The ordinary index follows the commit when
-                                              -- the journal is reconciled below: the one path
-                                              -- a killed process's successor also takes.
-                                              Right () -> do
-                                                installWorktreeLinks
-                                                pure (Right commit)
+    runCommit scope = runExceptT $ do
+      (branch, newLinks, newFiles) <- ExceptT prepareCommit
+      ExceptT $ withNewIndexReservation gitFd $ \reservation -> tryIO $ runExceptT $ do
+        checked <- lift finalCheck
+        case checked of
+          Left problem -> do
+            lift (writeIORef (scopeExplicitFailure scope) (Just problem))
+            throwE (mutationErrorMessage problem)
+          Right () -> pure ()
+        ExceptT $ withRecordsDirectory rootFd $ \recordsFd -> runExceptT $ do
+          lift $ Exception.mask_ $ do
+            duplicate <- dup recordsFd
+            writeIORef (scopePinnedRecords scope) (Just duplicate)
+          temporaryNames <- lift (mapM (const freshTemporaryName) records)
+          (indexName, indexIdentity) <- lift (reservedIndex reservation)
+          let indexJournal = JournalIndex indexName (fst indexIdentity) (snd indexIdentity)
+              preparing = OperationJournal expectedHead branch "preparing" Nothing indexJournal
+                (zipWith (\(path, _) name -> JournalEntry path name Nothing Nothing Nothing)
+                  records temporaryNames)
+                newLinks
+                newFiles
+          journalState <- lift (newIORef preparing)
+          lift (attachJournal reservation journalState)
+          reserved <- lift (createOperationJournal gitFd preparing)
+          case reserved of
+            Left problem -> do
+              lift (detachJournal reservation)
+              throwE problem
+            Right () -> pure ()
+          preparedRecords <- ExceptT $ prepareAll executable rootPath rootFd gitFd
+            (zip temporaryNames records)
+          ExceptT $ Exception.bracket_ (pure ()) (closePrepared preparedRecords) $ runExceptT $ do
+            let installing = preparing
+                  { journalPhase = "installing"
+                  , journalEntries = map preparedToJournal preparedRecords
+                  }
+            journaled <- lift (replaceOperationJournal gitFd preparing installing)
+            case journaled of
+              Left problem -> do
+                cleaned <- lift (cleanupPrepared gitFd preparedRecords)
+                throwE $ case cleaned of
+                  Left cleanupProblem ->
+                    problem <> "; staged source cleanup also failed: " <> cleanupProblem
+                  Right () -> problem
+              Right () -> pure ()
+            lift (writeIORef journalState installing)
+            ownedRecords <- ExceptT $ installPreparedAll executable rootPath rootFd gitFd
+              recordsFd preparedRecords
+            journal <- lift (readIORef journalState)
+            ExceptT (syncRecordDirectoryAndBarrier recordsFd (journalEntries journal))
+            commit <- ExceptT $ buildAndAdvance recordsFd branch reservation
+              ownedRecords newLinks newFiles journalState scope
+            orFail ("archive commit succeeded; operation journal retained because staged source cleanup failed: " <>)
+              (cleanupPrepared gitFd preparedRecords)
+            -- The ordinary index follows the commit when the journal is
+            -- reconciled below: the one path a killed process's successor
+            -- also takes.
+            lift installWorktreeLinks
+            pure commit
 
-    closePinnedRecords reference = do
-      pinned <- readIORef reference
-      writeIORef reference Nothing
+    closePinnedRecords scope = do
+      pinned <- readIORef (scopePinnedRecords scope)
+      writeIORef (scopePinnedRecords scope) Nothing
       maybe (pure ()) closeFd pinned
 
-    prepareCommit = do
-      objectStoreTopology <- validateGitObjectStoreTopology executable rootPath rootFd gitFd
-      targetsClear <- mapM (targetAbsent rootFd . fst) records
-      case sequence targetsClear of
-        Left problem -> pure (Left problem)
-        Right _ -> do
-          refFormatResult <- runGit executable rootPath rootFd gitFd Nothing
-            ["rev-parse", "--show-ref-format"]
-          headResult <- runGit executable rootPath rootFd gitFd Nothing ["rev-parse", "--verify", "HEAD^{commit}"]
-          stagedResult <- runGitStatus executable rootPath rootFd gitFd Nothing
-            ["diff", "--cached", "--quiet", Text.unpack expectedHead, "--"]
-          branchResult <- runGit executable rootPath rootFd gitFd Nothing ["symbolic-ref", "-q", "HEAD"]
-          checked <- pure $ do
-            either Left Right objectStoreTopology
-            refFormat <- Text.strip <$> refFormatResult
-            if refFormat == "files"
-              then Right ()
-              else Left "Door durability barrier currently requires Git's files ref backend"
-            headValue <- Text.strip <$> headResult
-            if headValue == expectedHead
-              then Right ()
-              else Left "archive HEAD changed after validation"
-            staged <- stagedResult
-            if staged == ExitSuccess
-              then Right ()
-              else Left "archive index has staged changes"
-            branch <- Text.strip <$> branchResult
-            if Text.isPrefixOf "refs/heads/" branch
-              then Right ()
-              else Left "archive HEAD is detached"
-            Right branch
-          case checked of
-            Left problem -> pure (Left problem)
-            Right branch -> do
-              classified <- mapM classifyLink contentLinks
-              files <- mapM classifyFile archiveFiles
-              pure $ case (sequence classified, sequence files) of
-                (Left problem, _) -> Left problem
-                (_, Left problem) -> Left problem
-                (Right links, Right fileBlobs) -> Right (branch, [link | Just link <- links], fileBlobs)
+    prepareCommit = runExceptT $ do
+      -- The topology is read first and judged after the record targets, so
+      -- a batch that names an existing record says so first.
+      objectStoreTopology <- lift (validateGitObjectStoreTopology executable rootPath rootFd gitFd)
+      targetsClear <- lift (mapM (targetAbsent rootFd . fst) records)
+      _ <- except (sequence targetsClear)
+      refFormatResult <- lift $ runGit executable rootPath rootFd gitFd Nothing
+        ["rev-parse", "--show-ref-format"]
+      headResult <- lift $ runGit executable rootPath rootFd gitFd Nothing ["rev-parse", "--verify", "HEAD^{commit}"]
+      stagedResult <- lift $ runGitStatus executable rootPath rootFd gitFd Nothing
+        ["diff", "--cached", "--quiet", Text.unpack expectedHead, "--"]
+      branchResult <- lift $ runGit executable rootPath rootFd gitFd Nothing ["symbolic-ref", "-q", "HEAD"]
+      branch <- except $ do
+        objectStoreTopology
+        refFormat <- Text.strip <$> refFormatResult
+        if refFormat == "files"
+          then Right ()
+          else Left "Door durability barrier currently requires Git's files ref backend"
+        headValue <- Text.strip <$> headResult
+        if headValue == expectedHead
+          then Right ()
+          else Left "archive HEAD changed after validation"
+        staged <- stagedResult
+        if staged == ExitSuccess
+          then Right ()
+          else Left "archive index has staged changes"
+        branch <- Text.strip <$> branchResult
+        if Text.isPrefixOf "refs/heads/" branch
+          then Right ()
+          else Left "archive HEAD is detached"
+        Right branch
+      -- Every link and file is classified before any verdict.
+      classified <- lift (mapM classifyLink contentLinks)
+      files <- lift (mapM classifyFile archiveFiles)
+      except $ case (sequence classified, sequence files) of
+        (Left problem, _) -> Left problem
+        (_, Left problem) -> Left problem
+        (Right links, Right fileBlobs) -> Right (branch, [link | Just link <- links], fileBlobs)
 
     -- A link already committed at this exact path with the same target is
     -- content another artifact admitted earlier; the tree keeps it unchanged.
@@ -448,101 +427,75 @@ commitRecordBatchWithFiles (ArchiveWriteLock rootPath rootFd gitFd executable) e
           ("door: warning: archive commit succeeded but a content location could not be created: " <> Text.unpack problem)
         Right () -> pure ()
 
-    buildAndAdvance recordsFd branch reservation hashed newLinks newFiles journalState explicitFailureRef = do
-          readTree <- runIndexGit executable rootPath rootFd gitFd reservation
-            ["-c", "core.hooksPath=/dev/null", "read-tree", Text.unpack expectedHead]
-          buildFromTree recordsFd branch reservation hashed newLinks newFiles journalState explicitFailureRef readTree
-
-    buildFromTree recordsFd branch reservation hashed newLinks newFiles journalState explicitFailureRef readTree =
-      case readTree of
-        Left problem -> pure (Left problem)
+    -- Build the batch's tree in the reserved index, commit it, make the new
+    -- objects and records durable, journal the proposed commit, and only
+    -- then advance the branch with an expected-parent compare-and-swap.
+    buildAndAdvance recordsFd branch reservation hashed newLinks newFiles journalState scope = runExceptT $ do
+      _ <- ExceptT $ runIndexGit executable rootPath rootFd gitFd reservation
+        ["-c", "core.hooksPath=/dev/null", "read-tree", Text.unpack expectedHead]
+      let paths = map installedRecordPath hashed <> map fst newLinks <> map fst newFiles
+      _ <- ExceptT $ updateIndexEntries executable rootPath rootFd gitFd reservation
+        ([("100644", installedRecordBlob record, installedRecordPath record) | record <- hashed]
+          <> [("120000", blob, path) | (path, blob) <- newLinks]
+          <> [("100644", blob, path) | (path, blob) <- newFiles])
+      names <- ExceptT $ runIndexGit executable rootPath rootFd gitFd reservation
+        (["diff", "--cached", "--name-only", Text.unpack expectedHead, "--"] <> paths)
+      require (sort (filter (not . Text.null) (Text.lines names)) == sort (map Text.pack paths))
+        "temporary Git index does not contain exactly the record, content, and specification batch"
+      treeId <- ExceptT $ runIndexGit executable rootPath rootFd gitFd reservation ["write-tree"]
+      let treeObject = Text.strip treeId
+      commitId <- ExceptT $ runIndexGit executable rootPath rootFd gitFd reservation
+        [ "-c", "user.name=Archive"
+        , "-c", "user.email=archive@localhost"
+        , "commit-tree", Text.unpack treeObject
+        , "-p", Text.unpack expectedHead
+        , "-m", Text.unpack message
+        ]
+      let newCommit = Text.strip commitId
+      ExceptT (syncBaselineFrom executable rootPath rootFd gitFd provenBase newCommit)
+      journal <- lift (readIORef journalState)
+      ExceptT (syncRecordDirectoryAndBarrier recordsFd (journalEntries journal))
+      ExceptT (verifyRecordsDirectory rootFd recordsFd)
+      let withTarget = journal { journalTargetCommit = Just newCommit }
+      orFail ("could not durably record proposed commit before ref update: " <>)
+        (replaceOperationJournal gitFd journal withTarget)
+      lift (writeIORef journalState withTarget)
+      advanced <- lift $ runGitTyped executable rootPath rootFd gitFd Nothing
+        [ "-c", "core.hooksPath=/dev/null"
+        , "update-ref", "--create-reflog", Text.unpack branch
+        , Text.unpack newCommit, Text.unpack expectedHead
+        ]
+      case advanced of
         Right _ -> do
-          let paths = map installedRecordPath hashed <> map fst newLinks <> map fst newFiles
-          indexed <- updateIndexEntries executable rootPath rootFd gitFd reservation
-            ([("100644", installedRecordBlob record, installedRecordPath record) | record <- hashed]
-              <> [("120000", blob, path) | (path, blob) <- newLinks]
-              <> [("100644", blob, path) | (path, blob) <- newFiles])
-          case indexed of
-            Left problem -> pure (Left problem)
-            Right _ -> do
-              staged <- runIndexGit executable rootPath rootFd gitFd reservation
-                (["diff", "--cached", "--name-only", Text.unpack expectedHead, "--"] <> paths)
-              case staged of
-                Left problem -> pure (Left problem)
-                Right names
-                  | sort (filter (not . Text.null) (Text.lines names))
-                      /= sort (map Text.pack paths) ->
-                      pure (Left "temporary Git index does not contain exactly the record, content, and specification batch")
-                  | otherwise -> do
-                      tree <- runIndexGit executable rootPath rootFd gitFd reservation ["write-tree"]
-                      case tree of
-                        Left problem -> pure (Left problem)
-                        Right treeId -> do
-                          let treeObject = Text.strip treeId
-                          commit <- runIndexGit executable rootPath rootFd gitFd reservation
-                            [ "-c", "user.name=Archive"
-                            , "-c", "user.email=archive@localhost"
-                            , "commit-tree", Text.unpack treeObject
-                            , "-p", Text.unpack expectedHead
-                            , "-m", Text.unpack message
-                            ]
-                          case commit of
-                            Left problem -> pure (Left problem)
-                            Right commitId -> do
-                              let newCommit = Text.strip commitId
-                              baselineSynced <- syncBaselineFrom executable rootPath
-                                rootFd gitFd provenBase newCommit
-                              case baselineSynced of
-                                Left problem -> pure (Left problem)
-                                Right () -> do
-                                  journal <- readIORef journalState
-                                  syncedRecords <- syncRecordDirectoryAndBarrier recordsFd
-                                    (journalEntries journal)
-                                  case syncedRecords of
-                                    Left problem -> pure (Left problem)
-                                    Right () -> do
-                                      verified <- verifyRecordsDirectory rootFd recordsFd
-                                      case verified of
-                                        Left problem -> pure (Left problem)
-                                        Right () -> do
-                                          let withTarget = journal { journalTargetCommit = Just newCommit }
-                                          journaled <- replaceOperationJournal gitFd journal withTarget
-                                          case journaled of
-                                            Left problem -> pure (Left
-                                              ("could not durably record proposed commit before ref update: " <> problem))
-                                            Right () -> do
-                                              writeIORef journalState withTarget
-                                              advanced <- runGitTyped executable rootPath rootFd gitFd Nothing
-                                                [ "-c", "core.hooksPath=/dev/null"
-                                                , "update-ref", "--create-reflog", Text.unpack branch
-                                                , Text.unpack newCommit, Text.unpack expectedHead
-                                                ]
-                                              case advanced of
-                                                Right _ -> do
-                                                  syncedRef <- syncReferenceDirectories gitFd branch
-                                                  case syncedRef of
-                                                    Left problem -> uncertainFailure explicitFailureRef problem
-                                                    Right () -> do
-                                                      syncedRecordBarrier <- syncRecordDirectoryAndBarrier recordsFd
-                                                        (journalEntries withTarget)
-                                                      case syncedRecordBarrier of
-                                                        Left problem -> uncertainFailure explicitFailureRef problem
-                                                        Right () -> pure (Right newCommit)
-                                                Left problem -> do
-                                                  observed <- if gitPinChanged problem
-                                                    then pure (Left problem)
-                                                    else runGitTyped executable rootPath rootFd gitFd Nothing
-                                                      ["rev-parse", "--verify", Text.unpack branch]
-                                                  case observed of
-                                                    Right current | Text.strip current == expectedHead ->
-                                                      pure (Left (gitFailureMessage problem))
-                                                    _ -> uncertainFailure explicitFailureRef
-                                                      (gitFailureMessage problem)
+          -- From here the ref may have moved, so a failure is uncertain.
+          lift (syncReferenceDirectories gitFd branch) >>= either uncertain pure
+          lift (syncRecordDirectoryAndBarrier recordsFd (journalEntries withTarget))
+            >>= either uncertain pure
+          pure newCommit
+        Left problem -> do
+          observed <- lift $ if gitPinChanged problem
+            then pure (Left problem)
+            else runGitTyped executable rootPath rootFd gitFd Nothing
+              ["rev-parse", "--verify", Text.unpack branch]
+          case observed of
+            Right current | Text.strip current == expectedHead ->
+              throwE (gitFailureMessage problem)
+            _ -> uncertain (gitFailureMessage problem)
+      where
+        uncertain problem = ExceptT (uncertainFailure scope problem)
 
-    uncertainFailure explicitFailureRef problem = do
+    uncertainFailure scope problem = do
       let errorMessage = uncertainRefOutcomeMessage <> ": " <> problem
-      writeIORef explicitFailureRef (Just (MutationUncertain errorMessage))
+      writeIORef (scopeExplicitFailure scope) (Just (MutationUncertain errorMessage))
       pure (Left errorMessage)
+
+-- | What one batch commit leaves for the code that finishes it, however the
+-- commit ends: the records directory pinned for journal recovery, and a
+-- typed failure that outranks the diagnostic text the commit returned.
+data CommitScope = CommitScope
+  { scopePinnedRecords :: IORef (Maybe Fd)
+  , scopeExplicitFailure :: IORef (Maybe MutationError)
+  }
 
 -- | Add every record and content link of a batch to the temporary index in
 -- one Git process: one @--cacheinfo mode,blob,path@ per entry.

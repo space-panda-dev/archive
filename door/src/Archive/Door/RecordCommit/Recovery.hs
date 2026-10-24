@@ -13,9 +13,14 @@ module Archive.Door.RecordCommit.Recovery
   , reconcileOperationJournalWithRecords
   ) where
 
-import Archive.Door.RecordCommit.Descriptors (syncFd, unlinkAt, withDuplicatedBinaryHandle)
+import Archive.Door.RecordCommit.Descriptors
+  ( syncFd
+  , unlinkAt
+  , withDuplicatedBinaryHandle
+  , withTrackedDescriptors
+  )
 import Archive.Door.RecordCommit.Durability (syncBaselineFrom, syncReferenceDirectories)
-import Archive.Door.RecordCommit.Failure (failText, tryIO, whenEither)
+import Archive.Door.RecordCommit.Failure (failText, orFail, require, tryIO, tryPresent, unlessEither)
 import Archive.Door.RecordCommit.Git
   ( blobMatches
   , gitBlobForFd
@@ -48,14 +53,14 @@ import Archive.Door.RecordCommit.Worktree (installWorktreeFile)
 import Archive.Executables (Executable)
 import qualified Control.Exception as Exception
 import Control.Monad (unless)
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, throwE, withExceptT)
 import qualified Data.ByteString.Lazy as LazyByteString
-import Data.IORef (modifyIORef, newIORef, readIORef)
 import Data.List (sort)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import System.Exit (ExitCode (..))
 import System.IO (hPutStrLn, stderr)
-import System.IO.Error (isDoesNotExistError)
 import System.Posix.Files (deviceID, fileID, getFdStatus, isRegularFile)
 import System.Posix.IO
   ( FdOption (CloseOnExec)
@@ -77,69 +82,55 @@ reconcileOperationJournal executable rootPath rootFd gitFd =
 -- synchronized again.
 reconcileOperationJournalWithRecords :: Executable -> FilePath -> Fd -> Fd -> Maybe Fd -> Maybe Text
                                       -> IO (Either Text ())
-reconcileOperationJournalWithRecords executable rootPath rootFd gitFd pinnedRecords provenBase = do
-  opened <- Exception.try $ openFdAt (Just gitFd) operationJournalName ReadOnly
-    defaultFileFlags { nofollow = True, nonBlock = True, cloexec = True }
-    :: IO (Either Exception.IOException Fd)
+reconcileOperationJournalWithRecords executable rootPath rootFd gitFd pinnedRecords provenBase = runExceptT $ do
+  opened <- orFail ("could not open Door operation journal: " <>) $ tryPresent $
+    openFdAt (Just gitFd) operationJournalName ReadOnly
+      defaultFileFlags { nofollow = True, nonBlock = True, cloexec = True }
   case opened of
-    Left problem
-      | isDoesNotExistError problem -> pure (Right ())
-      | otherwise -> pure (Left ("could not open Door operation journal: " <> Text.pack (show problem)))
-    Right fd -> Exception.bracket (pure fd) closeFd $ \journalFd -> do
-      inspected <- tryIO $ do
+    Nothing -> pure ()
+    Just fd -> ExceptT $ Exception.bracket (pure fd) closeFd $ \journalFd -> runExceptT $ do
+      (status, bytes) <- orFail ("could not read Door operation journal: " <>) $ tryIO $ do
         status <- getFdStatus journalFd
         unless (isRegularFile status) (failText "Door operation journal is not a regular file")
         bytes <- withDuplicatedBinaryHandle journalFd readBoundedJournal
           >>= either failText pure
         pure (status, bytes)
-      case inspected of
-        Left problem -> pure (Left ("could not read Door operation journal: " <> problem))
-        Right (status, bytes) -> case parseOperationJournal bytes of
-          Left problem -> pure (Left ("Door operation journal requires operator inspection: " <> problem))
-          Right journal -> do
-            let identity = JournalIdentity (deviceID status) (fileID status)
-            reconciledResult <- tryIO (reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journal)
-            let reconciled = case reconciledResult of
-                  Left problem -> Left ("journal recovery could not complete safely: " <> problem)
-                  Right value -> value
-            case reconciled of
-              Left problem -> pure (Left problem)
-              Right () -> clearJournalIfSame gitFd identity journal
+      journal <- withExceptT ("Door operation journal requires operator inspection: " <>)
+        (except (parseOperationJournal bytes))
+      let identity = JournalIdentity (deviceID status) (fileID status)
+      reconciled <- orFail ("journal recovery could not complete safely: " <>)
+        (tryIO (reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journal))
+      except reconciled
+      ExceptT (clearJournalIfSame gitFd identity journal)
 
 reconcileJournal :: Executable -> FilePath -> Fd -> Fd -> Maybe Fd -> Maybe Text -> OperationJournal
                  -> IO (Either Text ())
-reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journal = do
-  currentBranch <- runGit executable rootPath rootFd gitFd Nothing ["symbolic-ref", "-q", "HEAD"]
-  currentHead <- runGit executable rootPath rootFd gitFd Nothing ["rev-parse", "--verify", "HEAD^{commit}"]
-  pureBranch <- pure $ do
+reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journal = runExceptT $ do
+  currentBranch <- lift $ runGit executable rootPath rootFd gitFd Nothing ["symbolic-ref", "-q", "HEAD"]
+  currentHead <- lift $ runGit executable rootPath rootFd gitFd Nothing ["rev-parse", "--verify", "HEAD^{commit}"]
+  headValue <- except $ do
     branch <- Text.strip <$> currentBranch
-    whenEither (branch == journalBranch journal) "archive branch changed while a Door operation journal remained"
+    unlessEither (branch == journalBranch journal) "archive branch changed while a Door operation journal remained"
     headValue <- Text.strip <$> currentHead
     Right (Text.strip headValue)
-  case pureBranch of
-    Left problem -> pure (Left problem)
-    Right headValue -> case journalPhase journal of
-      "preparing" -> reconcilePreparing headValue
-      "installing" -> reconcileInstalling headValue
-      _ -> pure (Left "unsupported Door operation journal phase")
+  ExceptT $ case journalPhase journal of
+    "preparing" -> reconcilePreparing headValue
+    "installing" -> reconcileInstalling headValue
+    _ -> pure (Left "unsupported Door operation journal phase")
   where
     reconcilePreparing headValue
       | headValue /= journalOldHead journal = pure (Left "archive HEAD changed during record preparation; operation journal retained")
-      | otherwise = do
-          history <- oldHistoryClear
-          case history of
-            Left problem -> pure (Left problem)
-            Right () -> do
-              absent <- mapM (targetAbsent rootFd . journalPath) (journalEntries journal)
-              case sequence absent of
-                Left problem -> pure (Left ("record path appeared before journaled installation: " <> problem))
-                Right _ -> do
-                  temps <- mapM (removePreparingTemporary gitFd . journalTemporary) (journalEntries journal)
-                  case sequence_ temps of
-                    Left problem -> pure (Left problem)
-                    Right () -> cleanupJournalIndex gitFd (journalIndex journal)
+      | otherwise = runExceptT $ do
+          ExceptT oldHistoryClear
+          -- Every path and staging name is checked before any verdict.
+          absent <- lift $ mapM (targetAbsent rootFd . journalPath) (journalEntries journal)
+          _ <- withExceptT ("record path appeared before journaled installation: " <>)
+            (except (sequence absent))
+          temps <- lift $ mapM (removePreparingTemporary gitFd . journalTemporary) (journalEntries journal)
+          except (sequence_ temps)
+          ExceptT (cleanupJournalIndex gitFd (journalIndex journal))
 
-    reconcileInstalling headValue = do
+    reconcileInstalling headValue =
       case journalTargetCommit journal of
         Nothing
           | headValue /= journalOldHead journal -> pure (Left
@@ -147,26 +138,16 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
           | otherwise -> cleanupUncommitted
         Just target
           | headValue == journalOldHead journal -> cleanupUncommitted
-          | otherwise -> do
-              committed <- verifyCommittedBatch headValue target
-              case committed of
-                Left problem -> pure (Left problem)
-                Right () -> do
-                  recordsVerified <- withPinnedRecords rootFd pinnedRecords $ \recordsFd -> do
-                    verified <- verifyCommittedRecords recordsFd (journalEntries journal)
-                    case verified of
-                      Left problem -> pure (Left problem)
-                      Right () -> syncCommittedState gitFd recordsFd target
-                        (journalBranch journal) (journalEntries journal)
-                  case recordsVerified of
-                    Left problem -> pure (Left
-                      ("committed batch durability barrier failed; operation journal retained: " <> problem))
-                    Right () -> do
-                      installCommittedFiles
-                      cleaned <- cleanupTemporariesOnly
-                      case cleaned of
-                        Left problem -> pure (Left problem)
-                        Right () -> refreshCommittedIndex headValue target
+          | otherwise -> runExceptT $ do
+              ExceptT (verifyCommittedBatch headValue target)
+              orFail ("committed batch durability barrier failed; operation journal retained: " <>) $
+                withPinnedRecords rootFd pinnedRecords $ \recordsFd -> runExceptT $ do
+                  ExceptT (verifyCommittedRecords recordsFd (journalEntries journal))
+                  ExceptT (syncCommittedState gitFd recordsFd target
+                    (journalBranch journal) (journalEntries journal))
+              lift installCommittedFiles
+              ExceptT cleanupTemporariesOnly
+              ExceptT (refreshCommittedIndex headValue target)
 
     -- The worktree copies of a committed upgrade's specification files,
     -- from the committed blobs. This runs after every committed batch, also
@@ -214,16 +195,12 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
     indexComparisonFailure problem =
       "could not compare the archive index with the journaled old commit; operation journal retained: " <> problem
 
-    cleanupUncommitted = withPinnedRecords rootFd pinnedRecords $ \recordsFd -> do
-      history <- oldHistoryClear
-      case history of
-        Left problem -> pure (Left problem)
-        Right () -> do
-          let records = map journalToInstalled (journalEntries journal)
-          cleaned <- cleanupInstalled executable rootPath rootFd gitFd recordsFd records
-          case cleaned of
-            Left problem -> pure (Left ("could not prove cleanup ownership for interrupted record batch: " <> problem))
-            Right () -> cleanupTemporariesOnly
+    cleanupUncommitted = withPinnedRecords rootFd pinnedRecords $ \recordsFd -> runExceptT $ do
+      ExceptT oldHistoryClear
+      let records = map journalToInstalled (journalEntries journal)
+      orFail ("could not prove cleanup ownership for interrupted record batch: " <>)
+        (cleanupInstalled executable rootPath rootFd gitFd recordsFd records)
+      ExceptT cleanupTemporariesOnly
 
     -- The manifest is the one journaled path the old commit holds: an
     -- upgrade replaces it. Every other journaled path must be new.
@@ -235,14 +212,14 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
           <> filter (/= manifestFilePath) (map fst (journalFiles journal)))
       pure $ do
         paths <- contents
-        whenEither (Text.null (Text.strip paths))
+        unlessEither (Text.null (Text.strip paths))
           "journal record path already exists in the pinned old commit"
 
-    cleanupTemporariesOnly = do
-      results <- mapM (cleanupJournalTemporary executable rootPath rootFd gitFd) (journalEntries journal)
-      case sequence_ results of
-        Left problem -> pure (Left problem)
-        Right () -> cleanupJournalIndex gitFd (journalIndex journal)
+    -- Every staging file is attempted before any verdict.
+    cleanupTemporariesOnly = runExceptT $ do
+      results <- lift $ mapM (cleanupJournalTemporary executable rootPath rootFd gitFd) (journalEntries journal)
+      except (sequence_ results)
+      ExceptT (cleanupJournalIndex gitFd (journalIndex journal))
 
     verifyCommittedBatch currentHead target = do
       parent <- runGit executable rootPath rootFd gitFd Nothing ["rev-parse", "--verify", Text.unpack target <> "^"]
@@ -258,18 +235,18 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
           fileBlobsResult = map (\file -> listing >>= fileBlob file) (journalFiles journal)
       pure $ do
         parentValue <- Text.strip <$> parent
-        whenEither (parentValue == journalOldHead journal)
+        unlessEither (parentValue == journalOldHead journal)
           "journaled commit is not a direct child of the pinned old commit"
         status <- ancestor
-        whenEither (status == ExitSuccess) "journaled commit is not in the current branch history"
+        unlessEither (status == ExitSuccess) "journaled commit is not in the current branch history"
         diffValue <- diff
         changes <- traverse parseDiffLine (filter (not . Text.null) (Text.lines diffValue))
         treeBlobs <- sequence treeBlobsResult
         contentBlobs <- sequence contentBlobsResult
-        whenEither (contentBlobs == [blob | (_, blob) <- journalContent journal])
+        unlessEither (contentBlobs == [blob | (_, blob) <- journalContent journal])
           "journaled commit tree contains a content location with a different link"
         fileBlobs <- sequence fileBlobsResult
-        whenEither (fileBlobs == [blob | (_, blob) <- journalFiles journal])
+        unlessEither (fileBlobs == [blob | (_, blob) <- journalFiles journal])
           "journaled commit tree contains a specification file with a different blob"
         let expectedPaths = sort (map (Text.pack . journalPath) (journalEntries journal)
               <> map (Text.pack . fst) (journalContent journal)
@@ -277,9 +254,9 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
             actualPaths = sort changes
             expectedBlobs = sort [(Text.pack (journalPath entry), journalBlob entry) | entry <- journalEntries journal]
             actualBlobs = sort treeBlobs
-        whenEither (actualPaths == expectedPaths)
+        unlessEither (actualPaths == expectedPaths)
           "journaled commit tree does not contain exactly the expected record additions"
-        whenEither (actualBlobs == expectedBlobs)
+        unlessEither (actualBlobs == expectedBlobs)
           "journaled commit tree contains a record with a different Git blob"
 
     -- One listing of every journaled path in the proposed commit, keyed by
@@ -310,35 +287,27 @@ reconcileJournal executable rootPath rootFd gitFd pinnedRecords provenBase journ
       Just _ -> Left "journaled commit has an unexpected record tree entry"
       Nothing -> Left "journaled commit is missing a record tree entry"
 
-    syncCommittedState syncGitFd recordsFd commit branch entries = do
-      baselineSync <- syncBaselineFrom executable rootPath rootFd syncGitFd
+    syncCommittedState syncGitFd recordsFd commit branch entries = runExceptT $ do
+      ExceptT $ syncBaselineFrom executable rootPath rootFd syncGitFd
         (if provenBase == Just (journalOldHead journal) then provenBase else Nothing) commit
-      case baselineSync of
-        Left problem -> pure (Left problem)
-        Right () -> do
-          recordSync <- syncRecordDirectoryAndBarrier recordsFd entries
-          case recordSync of
-            Left problem -> pure (Left problem)
-            Right () -> syncReferenceDirectories syncGitFd branch
+      ExceptT (syncRecordDirectoryAndBarrier recordsFd entries)
+      ExceptT (syncReferenceDirectories syncGitFd branch)
 
     -- Hash every committed record file through a pinned descriptor in one
     -- Git process, and compare each with its journaled blob.
-    verifyCommittedRecords recordsFd entries = do
-      opened <- newIORef []
-      result <- tryIO (do
-          fds <- mapM (openCommitted opened recordsFd) entries
-          blobs <- gitBlobsForFds executable rootPath rootFd gitFd fds >>= either failText pure
-          mapM_ compareBlob (zip entries blobs))
-        `Exception.finally` (readIORef opened >>= mapM_ closeFd)
-      pure result
+    verifyCommittedRecords recordsFd entries = withTrackedDescriptors $ \track -> tryIO $ do
+      fds <- mapM (openCommitted track recordsFd) entries
+      blobs <- gitBlobsForFds executable rootPath rootFd gitFd fds >>= either failText pure
+      mapM_ compareBlob (zip entries blobs)
 
-    openCommitted opened recordsFd entry = case validateRecordPath (journalPath entry) of
+    openCommitted :: (Fd -> IO ()) -> Fd -> JournalEntry -> IO Fd
+    openCommitted track recordsFd entry = case validateRecordPath (journalPath entry) of
       Left problem -> failText problem
       Right filename -> do
         fd <- Exception.try (openRecordTargetForHash recordsFd filename)
           >>= either (\(problem :: Exception.IOException) -> failText
                 ("committed record path is unavailable: " <> Text.pack (show problem))) pure
-        modifyIORef opened (fd :)
+        track fd
         status <- getFdStatus fd
         unless (isRegularFile status) (failText "committed record path is not a regular file")
         pure fd
@@ -373,93 +342,67 @@ journalToInstalled entry = InstalledRecord
   }
 
 removePreparingTemporary :: Fd -> FilePath -> IO (Either Text ())
-removePreparingTemporary gitFd name = do
-  opened <- Exception.try $ openFdAt (Just gitFd) name ReadOnly
+removePreparingTemporary gitFd name = runExceptT $ do
+  opened <- ExceptT $ tryPresent $ openFdAt (Just gitFd) name ReadOnly
     defaultFileFlags { nofollow = True, nonBlock = True, cloexec = True }
-    :: IO (Either Exception.IOException Fd)
   case opened of
-    Left problem
-      | isDoesNotExistError problem -> pure (Right ())
-      | otherwise -> pure (Left (Text.pack (show problem)))
-    Right fd -> do
-      closeFd fd
-      pure (Left ("temporary file exists without a recorded inode; operation journal requires operator inspection: " <> Text.pack name))
+    Nothing -> pure ()
+    Just fd -> do
+      lift (closeFd fd)
+      throwE ("temporary file exists without a recorded inode; operation journal requires operator inspection: " <> Text.pack name)
 
+-- | Remove the reserved index the journal names only while it is still that
+-- inode, re-proved through a fresh open immediately before the unlink.
 cleanupJournalIndex :: Fd -> JournalIndex -> IO (Either Text ())
-cleanupJournalIndex gitFd entry = do
-  opened <- Exception.try $ openFdAt (Just gitFd) (journalIndexName entry) ReadOnly
-    defaultFileFlags { nofollow = True, nonBlock = True, cloexec = True }
-    :: IO (Either Exception.IOException Fd)
+cleanupJournalIndex gitFd entry = runExceptT $ do
+  opened <- orFail ("could not inspect reserved Git index: " <>) $ tryPresent $
+    openFdAt (Just gitFd) (journalIndexName entry) ReadOnly
+      defaultFileFlags { nofollow = True, nonBlock = True, cloexec = True }
   case opened of
-    Left problem
-      | isDoesNotExistError problem -> pure (Right ())
-      | otherwise -> pure (Left ("could not inspect reserved Git index: " <> Text.pack (show problem)))
-    Right fd -> Exception.bracket (pure fd) closeFd $ \indexFd -> do
-      status <- tryIO (getFdStatus indexFd)
-      case status of
-        Left problem -> pure (Left problem)
-        Right fileStatus
-          | not (isRegularFile fileStatus) -> pure (Left "reserved Git index is not regular")
-          | deviceID fileStatus /= journalIndexDevice entry
-              || fileID fileStatus /= journalIndexFile entry ->
-                pure (Left "reserved Git index inode changed before recovery")
-          | otherwise -> do
-              current <- Exception.try $ openFdAt (Just gitFd) (journalIndexName entry) ReadOnly
-                defaultFileFlags { nofollow = True, nonBlock = True, cloexec = True }
-                :: IO (Either Exception.IOException Fd)
-              case current of
-                Left problem -> pure (Left ("reserved Git index path changed before recovery: " <> Text.pack (show problem)))
-                Right currentFd -> Exception.bracket (pure currentFd) closeFd $ \_ -> do
-                  currentStatus <- tryIO (getFdStatus currentFd)
-                  case currentStatus of
-                    Left problem -> pure (Left problem)
-                    Right now
-                      | deviceID now /= journalIndexDevice entry || fileID now /= journalIndexFile entry ->
-                          pure (Left "reserved Git index inode changed immediately before unlink")
-                      | otherwise -> do
-                          removed <- tryIO (unlinkAt gitFd (journalIndexName entry))
-                          case removed of
-                            Left problem -> pure (Left problem)
-                            Right () -> syncFd gitFd
+    Nothing -> pure ()
+    Just fd -> ExceptT $ Exception.bracket (pure fd) closeFd $ \indexFd -> runExceptT $ do
+      fileStatus <- ExceptT (tryIO (getFdStatus indexFd))
+      require (isRegularFile fileStatus) "reserved Git index is not regular"
+      require (isReserved fileStatus) "reserved Git index inode changed before recovery"
+      currentFd <- orFail ("reserved Git index path changed before recovery: " <>) $ tryIO $
+        openFdAt (Just gitFd) (journalIndexName entry) ReadOnly
+          defaultFileFlags { nofollow = True, nonBlock = True, cloexec = True }
+      ExceptT $ Exception.bracket (pure currentFd) closeFd $ \_ -> runExceptT $ do
+        now <- ExceptT (tryIO (getFdStatus currentFd))
+        require (isReserved now) "reserved Git index inode changed immediately before unlink"
+        ExceptT (tryIO (unlinkAt gitFd (journalIndexName entry)))
+        ExceptT (syncFd gitFd)
+  where
+    isReserved status = deviceID status == journalIndexDevice entry
+      && fileID status == journalIndexFile entry
 
+-- | Remove a journaled staging file only while it is still the recorded
+-- inode holding the recorded blob, re-proved through a fresh open
+-- immediately before the unlink.
 cleanupJournalTemporary :: Executable -> FilePath -> Fd -> Fd -> JournalEntry
                         -> IO (Either Text ())
-cleanupJournalTemporary executable rootPath rootFd gitFd entry = do
-  opened <- Exception.try $ openFdAt (Just gitFd) (journalTemporary entry) ReadOnly
+cleanupJournalTemporary executable rootPath rootFd gitFd entry = runExceptT $ do
+  opened <- ExceptT $ tryPresent $ openFdAt (Just gitFd) (journalTemporary entry) ReadOnly
     defaultFileFlags { nofollow = True, nonBlock = True, cloexec = False }
-    :: IO (Either Exception.IOException Fd)
   case opened of
-    Left problem
-      | isDoesNotExistError problem -> pure (Right ())
-      | otherwise -> pure (Left (Text.pack (show problem)))
-    Right fd -> do
-      setFdOption fd CloseOnExec False
-      Exception.bracket (pure fd) closeFd $ \temporaryFd -> do
-        status <- tryIO (getFdStatus temporaryFd)
-        case status of
-          Left problem -> pure (Left problem)
-          Right fileStatus -> case (journalBlob entry, journalDevice entry, journalFile entry) of
-            (Just expectedBlob, Just expectedDevice, Just expectedFile)
-              | isRegularFile fileStatus
-                  && deviceID fileStatus == expectedDevice
-                  && fileID fileStatus == expectedFile -> do
-                    blob <- gitBlobForFd executable rootPath rootFd gitFd temporaryFd
-                    case blob of
-                      Left problem -> pure (Left problem)
-                      Right actual
-                        | Text.strip actual /= expectedBlob -> pure (Left "record temporary blob changed before cleanup")
-                        | otherwise -> do
-                            current <- Exception.try $ openFdAt (Just gitFd) (journalTemporary entry) ReadOnly
-                              defaultFileFlags { nofollow = True, nonBlock = True, cloexec = True }
-                              :: IO (Either Exception.IOException Fd)
-                            case current of
-                              Left problem -> pure (Left ("record temporary path changed before cleanup: " <> Text.pack (show problem)))
-                              Right currentFd -> Exception.bracket (pure currentFd) closeFd $ \_ -> do
-                                currentStatus <- tryIO (getFdStatus currentFd)
-                                case currentStatus of
-                                  Left problem -> pure (Left problem)
-                                  Right now
-                                    | deviceID now /= expectedDevice || fileID now /= expectedFile ->
-                                        pure (Left "record temporary inode changed before unlink")
-                                    | otherwise -> tryIO (unlinkAt gitFd (journalTemporary entry))
-            _ -> pure (Left ("temporary ownership is incomplete; operation journal retained: " <> Text.pack (journalTemporary entry)))
+    Nothing -> pure ()
+    Just fd -> do
+      lift (setFdOption fd CloseOnExec False)
+      ExceptT $ Exception.bracket (pure fd) closeFd $ \temporaryFd -> runExceptT $ do
+        fileStatus <- ExceptT (tryIO (getFdStatus temporaryFd))
+        case (journalBlob entry, journalDevice entry, journalFile entry) of
+          (Just expectedBlob, Just expectedDevice, Just expectedFile)
+            | isRegularFile fileStatus
+                && deviceID fileStatus == expectedDevice
+                && fileID fileStatus == expectedFile -> do
+                  actual <- ExceptT (gitBlobForFd executable rootPath rootFd gitFd temporaryFd)
+                  require (Text.strip actual == expectedBlob) "record temporary blob changed before cleanup"
+                  currentFd <- orFail ("record temporary path changed before cleanup: " <>) $ tryIO $
+                    openFdAt (Just gitFd) (journalTemporary entry) ReadOnly
+                      defaultFileFlags { nofollow = True, nonBlock = True, cloexec = True }
+                  ExceptT $ Exception.bracket (pure currentFd) closeFd $ \_ -> runExceptT $ do
+                    now <- ExceptT (tryIO (getFdStatus currentFd))
+                    require (deviceID now == expectedDevice && fileID now == expectedFile)
+                      "record temporary inode changed before unlink"
+                    ExceptT (tryIO (unlinkAt gitFd (journalTemporary entry)))
+          _ -> throwE ("temporary ownership is incomplete; operation journal retained: " <> Text.pack (journalTemporary entry))

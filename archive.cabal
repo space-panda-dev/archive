@@ -108,6 +108,7 @@ library
     , scientific
     , text
     , time
+    , transformers
     , unix
     , vector
     , zlib

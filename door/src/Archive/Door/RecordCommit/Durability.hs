@@ -25,7 +25,7 @@ import Archive.Door.RecordCommit.Descriptors
   , syncStrongFdOrFail
   , withDuplicatedBinaryHandle
   )
-import Archive.Door.RecordCommit.Failure (failText, tryIO, unlessEither)
+import Archive.Door.RecordCommit.Failure (failText, orFail, tryIO, tryPresent, unlessEither)
 import Archive.Door.RecordCommit.Git (runGit, runGitStatus)
 import Archive.Door.RecordCommit.Internal (ArchiveWriteLock (..))
 import Archive.Door.RecordCommit.Paths (uniqueSorted)
@@ -40,8 +40,9 @@ import Data.List (sort)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, throwE)
 import System.Exit (ExitCode (..))
-import System.IO.Error (isDoesNotExistError)
 import System.Posix.IO
   ( OpenFileFlags (cloexec, nofollow, nonBlock)
   , OpenMode (ReadOnly)
@@ -64,14 +65,14 @@ foreign import ccall safe "archive_sync_tree"
 -- archive. The lock must remain held until the caller has also synchronized
 -- the archive files and directory tree.
 durableBootstrapGitState :: ArchiveWriteLock -> IO (Either Text ())
-durableBootstrapGitState (ArchiveWriteLock rootPath rootFd gitFd executable) = do
-  branchResult <- runGit executable rootPath rootFd gitFd Nothing ["symbolic-ref", "-q", "HEAD"]
-  headResult <- runGit executable rootPath rootFd gitFd Nothing ["rev-parse", "--verify", "HEAD^{commit}"]
-  annexResult <- runGit executable rootPath rootFd gitFd Nothing
+durableBootstrapGitState (ArchiveWriteLock rootPath rootFd gitFd executable) = runExceptT $ do
+  branchResult <- lift $ runGit executable rootPath rootFd gitFd Nothing ["symbolic-ref", "-q", "HEAD"]
+  headResult <- lift $ runGit executable rootPath rootFd gitFd Nothing ["rev-parse", "--verify", "HEAD^{commit}"]
+  annexResult <- lift $ runGit executable rootPath rootFd gitFd Nothing
     ["rev-parse", "--verify", "refs/heads/git-annex^{commit}"]
-  refsResult <- runGit executable rootPath rootFd gitFd Nothing
+  refsResult <- lift $ runGit executable rootPath rootFd gitFd Nothing
     ["for-each-ref", "--format=%(refname)"]
-  checked <- pure $ do
+  (headCommit, annexCommit, refs) <- except $ do
     branch <- Text.strip <$> branchResult
     unlessEither ("refs/heads/" `Text.isPrefixOf` branch)
       "initialized Git HEAD is not a local branch"
@@ -86,146 +87,115 @@ durableBootstrapGitState (ArchiveWriteLock rootPath rootFd gitFd executable) = d
     unlessEither (all ("refs/heads/" `Text.isPrefixOf`) names)
       "initialized repository has an unsupported non-branch ref"
     Right (headCommit, annexCommit, names)
-  case checked of
-    Left problem -> pure (Left problem)
-    Right (headCommit, annexCommit, refs) -> do
-      -- Validate and synchronize the complete closure of each initial ref.
-      -- The object-store walker synchronizes every loose object and pack, so
-      -- the second pass is intentionally validation-only when both refs share
-      -- storage; it keeps the ref closure check explicit.
-      headSync <- syncGitObjectStoreBaseline executable rootPath rootFd gitFd headCommit
-      case headSync of
-        Left problem -> pure (Left problem)
-        Right () -> do
-          annexSync <- syncGitObjectStoreBaseline executable rootPath rootFd gitFd annexCommit
-          case annexSync of
-            Left problem -> pure (Left problem)
-            Right () -> do
-              refSync <- mapM (syncReferenceDirectories gitFd) refs
-              case sequence_ refSync of
-                Left problem -> pure (Left problem)
-                Right () -> do
-                  checkedFiles <- tryIO $ do
-                    syncRegularRelative gitFd ["HEAD"]
-                    syncRegularRelative gitFd ["config"]
-                    throwErrnoIfMinus1_ "archive sync initialized archive tree"
-                      (c_syncTree (fdValue rootFd))
-                  pure $ case checkedFiles of
-                    Left problem -> Left ("could not synchronize initialized archive files and Git-annex state: " <> problem)
-                    Right () -> Right ()
+  -- Validate and synchronize the complete closure of each initial ref.
+  -- The object-store walker synchronizes every loose object and pack, so
+  -- the second pass is intentionally validation-only when both refs share
+  -- storage; it keeps the ref closure check explicit.
+  ExceptT (syncGitObjectStoreBaseline executable rootPath rootFd gitFd headCommit)
+  ExceptT (syncGitObjectStoreBaseline executable rootPath rootFd gitFd annexCommit)
+  -- Every ref's directories are synchronized, even after one fails.
+  refSync <- lift (mapM (syncReferenceDirectories gitFd) refs)
+  except (sequence_ refSync)
+  orFail ("could not synchronize initialized archive files and Git-annex state: " <>) $ tryIO $ do
+    syncRegularRelative gitFd ["HEAD"]
+    syncRegularRelative gitFd ["config"]
+    throwErrnoIfMinus1_ "archive sync initialized archive tree"
+      (c_syncTree (fdValue rootFd))
 
 validateGitObjectStoreTopology :: Executable -> FilePath -> Fd -> Fd -> IO (Either Text ())
-validateGitObjectStoreTopology executable rootPath rootFd gitFd = do
-  commonDirectory <- absentAt gitFd "commondir"
+validateGitObjectStoreTopology executable rootPath rootFd gitFd = runExceptT $ do
+  ExceptT $ absentAt gitFd "commondir"
     "Git common-directory indirection is unsupported for durable Door commits"
-  case commonDirectory of
-    Left problem -> pure (Left problem)
-    Right () -> do
-      objectsResult <- tryIO (openDirectoryAt gitFd "objects")
-      case objectsResult of
-        Left problem -> pure (Left ("could not pin Git object directory: " <> problem))
-        Right objectsFd -> Exception.bracket (pure objectsFd) closeFd $ \objectsDirectory -> do
-          infoResult <- Exception.try (openDirectoryAt objectsDirectory "info")
-            :: IO (Either Exception.IOException Fd)
-          alternateStore <- case infoResult of
-            Left problem
-              | isDoesNotExistError problem -> pure (Right ())
-              | otherwise -> pure (Left ("could not pin Git object info directory: " <> Text.pack (show problem)))
-            Right infoFd -> Exception.bracket (pure infoFd) closeFd $ \infoDirectory ->
-              absentAt infoDirectory "alternates"
-                "Git alternate object stores are unsupported for durable Door commits"
-          case alternateStore of
-            Left problem -> pure (Left problem)
-            Right () -> do
-              shallow <- runGit executable rootPath rootFd gitFd Nothing
-                ["rev-parse", "--is-shallow-repository"]
-              partialClone <- runGit executable rootPath rootFd gitFd Nothing
-                ["config", "--null", "--default=__archive_no_partial_clone__"
-                , "--get", "extensions.partialClone"]
-              grafts <- do
-                graftInfoResult <- tryIO (openDirectoryAt gitFd "info")
-                case graftInfoResult of
-                  Left problem -> pure (Left ("could not inspect Git info directory: " <> problem))
-                  Right infoFd -> Exception.bracket (pure infoFd) closeFd $ \infoDirectory ->
-                    absentAt infoDirectory "grafts"
-                      "Git grafts are unsupported for durable Door commits"
-              replaceRefs <- runGit executable rootPath rootFd gitFd Nothing
-                ["for-each-ref", "--format=%(refname)", "refs/replace"]
-              fsckOverrides <- runGitStatus executable rootPath rootFd gitFd Nothing
-                [ "config", "--local", "--null", "--name-only", "--get-regexp"
-                , "^fsck\\."
-                ]
-              pure $ do
-                shallowValue <- Text.strip <$> shallow
-                unlessEither (shallowValue == "false")
-                  "shallow Git repositories are unsupported for durable Door commits"
-                partialValue <- partialClone
-                unlessEither (partialValue == "__archive_no_partial_clone__\NUL")
-                  "partial-clone Git repositories are unsupported for durable Door commits"
-                either (Left . ("could not verify absence of Git grafts: " <>)) Right grafts
-                replacements <- Text.strip <$> replaceRefs
-                unlessEither (Text.null replacements)
-                  "Git replacement refs are unsupported for durable Door commits"
-                fsckSettings <- fsckOverrides
-                unlessEither (fsckSettings == ExitFailure 1)
-                  "repository fsck configuration overrides are unsupported for durable Door commits"
-                Right ()
+  objectsFd <- orFail ("could not pin Git object directory: " <>)
+    (tryIO (openDirectoryAt gitFd "objects"))
+  ExceptT $ Exception.bracket (pure objectsFd) closeFd $ \objectsDirectory -> runExceptT $ do
+    info <- orFail ("could not pin Git object info directory: " <>)
+      (tryPresent (openDirectoryAt objectsDirectory "info"))
+    case info of
+      Nothing -> pure ()
+      Just infoFd -> ExceptT $ Exception.bracket (pure infoFd) closeFd $ \infoDirectory ->
+        absentAt infoDirectory "alternates"
+          "Git alternate object stores are unsupported for durable Door commits"
+    -- Each remaining property is read before any is judged, so the
+    -- refusal order below is the order of the checks, not of the reads.
+    shallow <- lift $ runGit executable rootPath rootFd gitFd Nothing
+      ["rev-parse", "--is-shallow-repository"]
+    partialClone <- lift $ runGit executable rootPath rootFd gitFd Nothing
+      ["config", "--null", "--default=__archive_no_partial_clone__"
+      , "--get", "extensions.partialClone"]
+    grafts <- lift $ do
+      graftInfoResult <- tryIO (openDirectoryAt gitFd "info")
+      case graftInfoResult of
+        Left problem -> pure (Left ("could not inspect Git info directory: " <> problem))
+        Right infoFd -> Exception.bracket (pure infoFd) closeFd $ \infoDirectory ->
+          absentAt infoDirectory "grafts"
+            "Git grafts are unsupported for durable Door commits"
+    replaceRefs <- lift $ runGit executable rootPath rootFd gitFd Nothing
+      ["for-each-ref", "--format=%(refname)", "refs/replace"]
+    fsckOverrides <- lift $ runGitStatus executable rootPath rootFd gitFd Nothing
+      [ "config", "--local", "--null", "--name-only", "--get-regexp"
+      , "^fsck\\."
+      ]
+    except $ do
+      shallowValue <- Text.strip <$> shallow
+      unlessEither (shallowValue == "false")
+        "shallow Git repositories are unsupported for durable Door commits"
+      partialValue <- partialClone
+      unlessEither (partialValue == "__archive_no_partial_clone__\NUL")
+        "partial-clone Git repositories are unsupported for durable Door commits"
+      either (Left . ("could not verify absence of Git grafts: " <>)) Right grafts
+      replacements <- Text.strip <$> replaceRefs
+      unlessEither (Text.null replacements)
+        "Git replacement refs are unsupported for durable Door commits"
+      fsckSettings <- fsckOverrides
+      unlessEither (fsckSettings == ExitFailure 1)
+        "repository fsck configuration overrides are unsupported for durable Door commits"
+      Right ()
   where
-    absentAt parent name refusal = do
-      opened <- Exception.try (openFdAt (Just parent) name ReadOnly
-        defaultFileFlags { nofollow = True, nonBlock = True, cloexec = True })
-        :: IO (Either Exception.IOException Fd)
+    absentAt parent name refusal = runExceptT $ do
+      opened <- orFail ("could not inspect Git object-store topology: " <>) $
+        tryPresent (openFdAt (Just parent) name ReadOnly
+          defaultFileFlags { nofollow = True, nonBlock = True, cloexec = True })
       case opened of
-        Left problem
-          | isDoesNotExistError problem -> pure (Right ())
-          | otherwise -> pure (Left ("could not inspect Git object-store topology: " <> Text.pack (show problem)))
-        Right fd -> closeFd fd >> pure (Left refusal)
+        Nothing -> pure ()
+        Just fd -> lift (closeFd fd) >> throwE refusal
 
 syncGitObjectStoreBaseline
   :: Executable -> FilePath -> Fd -> Fd -> Text -> IO (Either Text ())
-syncGitObjectStoreBaseline executable rootPath rootFd gitFd targetCommit = do
-  topology <- validateGitObjectStoreTopology executable rootPath rootFd gitFd
-  case topology of
-    Left problem -> pure (Left problem)
-    Right () -> do
-      objectFormat <- runGit executable rootPath rootFd gitFd Nothing
-        ["rev-parse", "--show-object-format=storage"]
-      closure <- runGitStatus executable rootPath rootFd gitFd Nothing
-        [ "rev-list", "--objects", "--missing=error", "--quiet"
-        , Text.unpack targetCommit
-        ]
-      fsck <- runGitStatus executable rootPath rootFd gitFd Nothing
-        [ "fsck", "--full", "--strict", "--no-reflogs", "--no-dangling", "--no-progress"
-        , Text.unpack targetCommit
-        ]
-      checked <- pure $ do
-        format <- Text.strip <$> objectFormat
-        objectTailLength <- (case format of
-          "sha1" -> Right 38
-          "sha256" -> Right 62
-          _ -> Left "Git object format is unsupported for durable Door commits") :: Either Text Int
-        closureStatus <- closure
-        unlessEither (closureStatus == ExitSuccess)
-          "Git could not traverse every object reachable from the proposed commit"
-        fsckStatus <- fsck
-        unlessEither (fsckStatus == ExitSuccess)
-          "Git fsck could not verify every reachable object and its contents"
-        Right objectTailLength
-      case checked of
-        Left problem -> pure (Left ("could not prove a complete, readable Git object closure: " <> problem))
-        Right objectTailLength -> do
-          objectsResult <- tryIO (openDirectoryAt gitFd "objects")
-          case objectsResult of
-            Left problem -> pure (Left ("could not pin Git object directory for synchronization: " <> problem))
-            Right objectsFd -> Exception.bracket (pure objectsFd) closeFd $ \objectsDirectory -> do
-              synced <- tryIO $ do
-                throwErrnoIfMinus1_ "archive sync Git object store"
-                  (c_syncObjectStore (fdValue objectsDirectory) (fromIntegral objectTailLength))
-                syncDirectoryFdOrFail gitFd
-              pure $ case synced of
-                Left problem -> Left ("could not synchronize the reachable Git object-store baseline: " <> problem)
-                Right () -> Right ()
+syncGitObjectStoreBaseline executable rootPath rootFd gitFd targetCommit = runExceptT $ do
+  ExceptT (validateGitObjectStoreTopology executable rootPath rootFd gitFd)
+  objectFormat <- lift $ runGit executable rootPath rootFd gitFd Nothing
+    ["rev-parse", "--show-object-format=storage"]
+  closure <- lift $ runGitStatus executable rootPath rootFd gitFd Nothing
+    [ "rev-list", "--objects", "--missing=error", "--quiet"
+    , Text.unpack targetCommit
+    ]
+  fsck <- lift $ runGitStatus executable rootPath rootFd gitFd Nothing
+    [ "fsck", "--full", "--strict", "--no-reflogs", "--no-dangling", "--no-progress"
+    , Text.unpack targetCommit
+    ]
+  objectTailLength <- withPrefix "could not prove a complete, readable Git object closure: " $ do
+    format <- Text.strip <$> objectFormat
+    objectTailLength <- (case format of
+      "sha1" -> Right 38
+      "sha256" -> Right 62
+      _ -> Left "Git object format is unsupported for durable Door commits") :: Either Text Int
+    closureStatus <- closure
+    unlessEither (closureStatus == ExitSuccess)
+      "Git could not traverse every object reachable from the proposed commit"
+    fsckStatus <- fsck
+    unlessEither (fsckStatus == ExitSuccess)
+      "Git fsck could not verify every reachable object and its contents"
+    Right objectTailLength
+  objectsFd <- orFail ("could not pin Git object directory for synchronization: " <>)
+    (tryIO (openDirectoryAt gitFd "objects"))
+  ExceptT $ Exception.bracket (pure objectsFd) closeFd $ \objectsDirectory -> runExceptT $
+    orFail ("could not synchronize the reachable Git object-store baseline: " <>) $ tryIO $ do
+      throwErrnoIfMinus1_ "archive sync Git object store"
+        (c_syncObjectStore (fdValue objectsDirectory) (fromIntegral objectTailLength))
+      syncDirectoryFdOrFail gitFd
   where
+    withPrefix prefix = either (throwE . (prefix <>)) pure
 
 -- | Establish the object-store baseline for a commit Door made on top of a
 -- checkpointed commit (ADR 0052). The objects reachable from the base were
@@ -262,36 +232,31 @@ syncGitObjectStoreIncrement executable rootPath rootFd gitFd baseCommit targetCo
   where
     verifyAndSync hashLazy width objects
       | null objects || any (\object -> Text.length object /= width) objects = pure (Right False)
-      | otherwise = do
-          objectsResult <- tryIO (openDirectoryAt gitFd "objects")
-          case objectsResult of
-            Left problem -> pure (Left ("could not pin Git object directory for synchronization: " <> problem))
-            Right objectsFd -> Exception.bracket (pure objectsFd) closeFd $ \objectsDirectory -> do
-              checked <- mapM (checkLoose hashLazy objectsDirectory) objects
-              case sequence checked of
-                Left problem -> pure (Left problem)
-                Right found
-                  | not (and found) -> pure (Right False)
-                  | otherwise -> do
-                      synced <- tryIO $ do
-                        mapM_ (syncFanout objectsDirectory) (sort (uniqueSorted (map (Text.take 2) objects)))
-                        syncDirectoryFdOrFail objectsDirectory
-                        syncDirectoryFdOrFail gitFd
-                      pure $ case synced of
-                        Left problem -> Left ("could not synchronize the new Git objects: " <> problem)
-                        Right () -> Right True
+      | otherwise = runExceptT $ do
+          objectsFd <- orFail ("could not pin Git object directory for synchronization: " <>)
+            (tryIO (openDirectoryAt gitFd "objects"))
+          ExceptT $ Exception.bracket (pure objectsFd) closeFd $ \objectsDirectory -> runExceptT $ do
+            -- Every new object is checked before any verdict.
+            checked <- lift (mapM (checkLoose hashLazy objectsDirectory) objects)
+            found <- except (sequence checked)
+            if not (and found)
+              then pure False
+              else do
+                orFail ("could not synchronize the new Git objects: " <>) $ tryIO $ do
+                  mapM_ (syncFanout objectsDirectory) (sort (uniqueSorted (map (Text.take 2) objects)))
+                  syncDirectoryFdOrFail objectsDirectory
+                  syncDirectoryFdOrFail gitFd
+                pure True
 
-    checkLoose hashLazy objectsDirectory object = do
+    checkLoose hashLazy objectsDirectory object = runExceptT $ do
       let fanout = Text.unpack (Text.take 2 object)
           name = Text.unpack (Text.drop 2 object)
-      opened <- Exception.try (openFdAt (Just objectsDirectory) (fanout <> "/" <> name) ReadOnly
-        defaultFileFlags { nofollow = True, nonBlock = True, cloexec = True })
-        :: IO (Either Exception.IOException Fd)
+      opened <- orFail (\problem -> "could not open new Git object " <> object <> ": " <> problem) $
+        tryPresent (openFdAt (Just objectsDirectory) (fanout <> "/" <> name) ReadOnly
+          defaultFileFlags { nofollow = True, nonBlock = True, cloexec = True })
       case opened of
-        Left problem
-          | isDoesNotExistError problem -> pure (Right False)
-          | otherwise -> pure (Left ("could not open new Git object " <> object <> ": " <> Text.pack (show problem)))
-        Right fd -> Exception.bracket (pure fd) closeFd $ \objectFd -> do
+        Nothing -> pure False
+        Just fd -> ExceptT $ Exception.bracket (pure fd) closeFd $ \objectFd -> do
           contents <- tryIO $ do
             compressed <- withDuplicatedBinaryHandle objectFd ByteString.hGetContents
             inflated <- Exception.evaluate (LazyByteString.toStrict
@@ -328,7 +293,6 @@ syncBaselineFrom executable rootPath rootFd gitFd provenBase target = case prove
       Right True -> pure (Right ())
       Right False -> syncGitObjectStoreBaseline executable rootPath rootFd gitFd target
       Left problem -> pure (Left problem)
-
 
 syncReferenceDirectories :: Fd -> Text -> IO (Either Text ())
 syncReferenceDirectories gitFd branch = do

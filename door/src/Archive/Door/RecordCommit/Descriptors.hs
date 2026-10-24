@@ -29,6 +29,7 @@ module Archive.Door.RecordCommit.Descriptors
   , unlinkAt
   , withDirectoryChain
   , withDuplicatedBinaryHandle
+  , withTrackedDescriptors
   , writeAll
   ) where
 
@@ -36,6 +37,7 @@ import Archive.Door.RecordCommit.Failure (failText, tryIO)
 import qualified Control.Exception as Exception
 import Control.Monad (unless, when)
 import qualified Data.ByteString as ByteString
+import Data.IORef (modifyIORef, newIORef, readIORef)
 import Data.List (inits)
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -113,6 +115,16 @@ listDirectoryDescriptor directoryFd = tryIO $ do
             else readEntries directoryStream nameBuffer (name : entries)
         _ -> throwErrnoIfMinus1_ "read pinned directory stream" (pure result)
           >> failText "pinned directory stream returned an invalid status"
+
+-- | Run an action that opens descriptors as it goes, registering each with
+-- the function it is given; every registered descriptor is closed, newest
+-- first, when the action ends, however it ends. A batch hashes all its
+-- records in one Git process, so their descriptors must stay open together.
+withTrackedDescriptors :: ((Fd -> IO ()) -> IO a) -> IO a
+withTrackedDescriptors action = do
+  opened <- newIORef []
+  action (\fd -> modifyIORef opened (fd :))
+    `Exception.finally` (readIORef opened >>= mapM_ closeFd)
 
 withDuplicatedBinaryHandle :: Fd -> (Handle -> IO a) -> IO a
 withDuplicatedBinaryHandle fd action = Exception.bracket acquire hClose $ \handle -> do

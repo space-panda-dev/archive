@@ -34,15 +34,18 @@ import Archive.Door.RecordCommit.Descriptors
   , syncStrongFdOrFail
   , unlinkAt
   , withDirectoryChain
+  , withTrackedDescriptors
   , writeAll
   )
-import Archive.Door.RecordCommit.Failure (failText, tryIO)
+import Archive.Door.RecordCommit.Failure (failText, orFail, require, tryIO, tryPresent)
 import Archive.Door.RecordCommit.Git (gitBlobForFd, gitBlobsForFds, runGit)
 import Archive.Door.RecordCommit.Journal (JournalEntry (..))
 import Archive.Door.RecordCommit.Paths (RecordLocation (..), uniqueSorted, validateRecordPath)
 import Archive.Executables (Executable)
 import qualified Control.Exception as Exception
 import Control.Monad (unless)
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, throwE)
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.IORef (modifyIORef, newIORef, readIORef)
 import Data.List (inits, sortOn)
@@ -120,38 +123,28 @@ cleanupPrepared gitFd prepared = do
     Left problem -> pure (Left problem)
     Right () -> syncFd gitFd
   where
-    removeOne record = do
-      opened <- Exception.try $ openFdAt (Just gitFd) (preparedRecordTemporary record) ReadOnly
+    -- Unlink a staging file only while its path still names the prepared
+    -- inode, checked through the open descriptor and again through a fresh
+    -- open immediately before the unlink.
+    removeOne record = runExceptT $ do
+      opened <- ExceptT $ tryPresent $ openFdAt (Just gitFd) (preparedRecordTemporary record) ReadOnly
         defaultFileFlags { nofollow = True, nonBlock = True, cloexec = True }
-        :: IO (Either Exception.IOException Fd)
       case opened of
-        Left problem
-          | isDoesNotExistError problem -> pure (Right ())
-          | otherwise -> pure (Left (Text.pack (show problem)))
-        Right fd -> Exception.bracket (pure fd) closeFd $ \temporaryFd -> do
-          status <- tryIO (getFdStatus temporaryFd)
-          case status of
-            Left problem -> pure (Left problem)
-            Right fileStatus
-              | not (isRegularFile fileStatus) -> pure (Left "Door record temporary is not regular")
-              | deviceID fileStatus /= preparedRecordDevice record
-                  || fileID fileStatus /= preparedRecordFile record ->
-                    pure (Left "Door record temporary inode changed before cleanup")
-              | otherwise -> do
-                  stillCurrent <- Exception.try $ openFdAt (Just gitFd) (preparedRecordTemporary record)
-                    ReadOnly defaultFileFlags { nofollow = True, nonBlock = True, cloexec = True }
-                    :: IO (Either Exception.IOException Fd)
-                  case stillCurrent of
-                    Left problem -> pure (Left ("Door record temporary path changed before cleanup: " <> Text.pack (show problem)))
-                    Right currentFd -> Exception.bracket (pure currentFd) closeFd $ \_ -> do
-                      currentStatus <- tryIO (getFdStatus currentFd)
-                      case currentStatus of
-                        Left problem -> pure (Left problem)
-                        Right current
-                          | deviceID current /= preparedRecordDevice record
-                              || fileID current /= preparedRecordFile record ->
-                                pure (Left "Door record temporary inode changed before unlink")
-                          | otherwise -> tryIO (unlinkAt gitFd (preparedRecordTemporary record))
+        Nothing -> pure ()
+        Just fd -> ExceptT $ Exception.bracket (pure fd) closeFd $ \temporaryFd -> runExceptT $ do
+          fileStatus <- ExceptT (tryIO (getFdStatus temporaryFd))
+          require (isRegularFile fileStatus) "Door record temporary is not regular"
+          require (isPrepared record fileStatus) "Door record temporary inode changed before cleanup"
+          currentFd <- orFail ("Door record temporary path changed before cleanup: " <>) $ tryIO $
+            openFdAt (Just gitFd) (preparedRecordTemporary record)
+              ReadOnly defaultFileFlags { nofollow = True, nonBlock = True, cloexec = True }
+          ExceptT $ Exception.bracket (pure currentFd) closeFd $ \_ -> runExceptT $ do
+            current <- ExceptT (tryIO (getFdStatus currentFd))
+            require (isPrepared record current) "Door record temporary inode changed before unlink"
+            ExceptT (tryIO (unlinkAt gitFd (preparedRecordTemporary record)))
+
+    isPrepared record status = deviceID status == preparedRecordDevice record
+      && fileID status == preparedRecordFile record
 
 cleanupUninstalledTemporary :: Fd -> Fd -> FilePath -> FileStatus -> IO (Either Text ())
 cleanupUninstalledTemporary gitFd ownedFd name ownedStatus = Exception.finally remove closeFdOwned
@@ -182,20 +175,16 @@ discardAfterFailure cleanup = do
   pure ()
 
 targetAbsent :: Fd -> FilePath -> IO (Either Text ())
-targetAbsent rootFd relative = case validateRecordPath relative of
-  Left problem -> pure (Left problem)
-  Right filename -> do
-    checked <- tryIO $ withRecordsDirectory rootFd $ \recordsFd -> do
-      opened <- Exception.try (openRecordTarget recordsFd filename)
-        :: IO (Either Exception.IOException Fd)
-      case opened of
-        Left problem
-          | isDoesNotExistError problem -> pure (Right ())
-          | otherwise -> pure (Left (Text.pack (show problem)))
-        Right fd -> do
-          closeFd fd
-          pure (Left ("record target already exists: " <> Text.pack relative))
-    pure (checked >>= id)
+targetAbsent rootFd relative = runExceptT $ do
+  filename <- except (validateRecordPath relative)
+  checked <- lift $ tryIO $ withRecordsDirectory rootFd $ \recordsFd -> runExceptT $ do
+    opened <- ExceptT (tryPresent (openRecordTarget recordsFd filename))
+    case opened of
+      Nothing -> pure ()
+      Just fd -> do
+        lift (closeFd fd)
+        throwE ("record target already exists: " <> Text.pack relative)
+  except (checked >>= id)
 
 withRecordsDirectory :: Fd -> (Fd -> IO a) -> IO a
 withRecordsDirectory rootFd action = Exception.bracket (openRecords rootFd) closeFd action
@@ -321,28 +310,27 @@ closePrepared = mapM_ (closeFd . preparedRecordFd)
 
 installPreparedAll :: Executable -> FilePath -> Fd -> Fd -> Fd -> [PreparedRecord]
                    -> IO (Either Text [InstalledRecord])
-installPreparedAll executable rootPath rootFd gitFd recordsFd prepared = do
-  opened <- newIORef []
-  result <- tryIO (go opened) `Exception.finally` (readIORef opened >>= mapM_ closeFd)
-  pure result
+installPreparedAll executable rootPath rootFd gitFd recordsFd prepared =
+  withTrackedDescriptors (tryIO . go)
   where
     -- Link every record, then hash all linked targets through their pinned
     -- descriptors in one Git process, then confirm each path still names its
     -- prepared inode.
-    go opened = do
-      linked <- mapM (linkOne opened) prepared
+    go track = do
+      linked <- mapM (linkOne track) prepared
       blobs <- gitBlobsForFds executable rootPath rootFd gitFd [fd | (_, _, _, fd) <- linked]
         >>= either failText pure
       mapM confirm (zip linked blobs)
 
-    linkOne opened record = case validateRecordPath (preparedRecordPath record) of
+    linkOne :: (Fd -> IO ()) -> PreparedRecord -> IO (PreparedRecord, RecordLocation, FileStatus, Fd)
+    linkOne track record = case validateRecordPath (preparedRecordPath record) of
       Left problem -> failText problem
       Right filename -> do
         withDirectoryChain recordsFd (recordLocationDirectories filename) True $ \directoryFd ->
           linkAt gitFd (preparedRecordTemporary record) directoryFd (recordLocationFile filename)
         sourceStatus <- getFdStatus (preparedRecordFd record)
         installedFd <- openRecordTargetForHash recordsFd filename
-        modifyIORef opened (installedFd :)
+        track installedFd
         status <- getFdStatus installedFd
         unless (isRegularFile status && sameDeviceAndFile sourceStatus status) $
           failText "record target does not match its prepared inode"

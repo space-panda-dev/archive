@@ -110,7 +110,7 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 | `door/src/Archive/Door/AdmissionDryRun.hs` | 1572 |
 | `door/src/Archive/Door/TransitionDryRun.hs` | 1119 |
 | `door/src/Archive/Door/Contracts.hs` | 2443 |
-| `door/src/Archive/Door/RecordCommit.hs` | 619 |
+| `door/src/Archive/Door/RecordCommit.hs` | 572 |
 | `door/src/Archive/Door/Bootstrap.hs` | 1622 |
 | `door/src/Archive/Read/Core.hs` | 611 |
 | `door/src/Archive/GitSnapshot.hs` | 661 |

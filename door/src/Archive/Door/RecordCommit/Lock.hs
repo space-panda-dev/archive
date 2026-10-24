@@ -13,13 +13,15 @@ module Archive.Door.RecordCommit.Lock
 import Archive.Door.MutationError (MutationError (..))
 import Archive.Door.RecordCommit.Descriptors (ownerFileModes)
 import Archive.Door.RecordCommit.Durability (validateGitObjectStoreTopology)
-import Archive.Door.RecordCommit.Failure (failText, tryIO)
+import Archive.Door.RecordCommit.Failure (failText, orFail, tryIO)
 import Archive.Door.RecordCommit.Git (gitDirectoryMatches, rootDirectoryMatches)
 import Archive.Door.RecordCommit.Internal (ArchiveWriteLock (..))
 import Archive.Door.RecordCommit.Recovery (reconcileOperationJournal)
-import Archive.Executables (resolveGitExecutable)
+import Archive.Executables (Executable, resolveGitExecutable)
 import Control.Concurrent.MVar (MVar, newMVar, withMVar)
 import qualified Control.Exception as Exception
+import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, throwE)
+import Data.Text (Text)
 import System.Directory (makeAbsolute)
 import System.IO (SeekMode (AbsoluteSeek))
 import System.IO.Unsafe (unsafePerformIO)
@@ -37,6 +39,10 @@ import System.Posix.Types (Fd)
 
 -- POSIX record locks are owned by a process, so a second thread in this
 -- process can acquire the same lock. Serialize those callers locally too.
+-- The serializing MVar must be one value for the whole process, which is
+-- why it is a top-level 'unsafePerformIO': NOINLINE stops GHC from inlining
+-- the definition at each use, which would give every caller a fresh MVar and
+-- no mutual exclusion at all.
 {-# NOINLINE processWriteLock #-}
 processWriteLock :: MVar ()
 processWriteLock = unsafePerformIO (newMVar ())
@@ -47,39 +53,14 @@ withArchiveWriteLock
   :: FilePath
   -> (ArchiveWriteLock -> IO (Either MutationError a))
   -> IO (Either MutationError a)
-withArchiveWriteLock root action = withMVar processWriteLock $ \_ -> do
-  executableResult <- resolveGitExecutable
-  case executableResult of
-    Left problem -> pure (Left (MutationConfigurationFailure problem))
-    Right executable -> do
-      absolute <- tryIO (makeAbsolute root)
-      case absolute of
-        Left problem -> pure (Left (MutationIoFailure problem))
-        Right absoluteRoot -> do
-          result <- tryIO $ Exception.bracket (openArchiveDirectories absoluteRoot)
-            closeArchiveDirectories $ \(rootFd, gitFd) ->
-              Exception.bracket (acquire gitFd) closeFd
-                (\_ -> do
-                  topology <- validateGitObjectStoreTopology executable absoluteRoot rootFd gitFd
-                  case topology of
-                    Left problem -> pure (Left (MutationOperationFailure problem))
-                    Right () -> do
-                      recovered <- reconcileOperationJournal executable absoluteRoot rootFd gitFd
-                      case recovered of
-                        Left problem -> pure (Left (MutationOperationFailure problem))
-                        Right () -> action (ArchiveWriteLock absoluteRoot rootFd gitFd executable))
-          pure $ case result of
-            Left problem -> Left (MutationIoFailure ("archive lock failed: " <> problem))
-            Right value -> value
-  where
-    acquire gitFd = do
-      fd <- openFdAt (Just gitFd) "archive-door.lock" ReadWrite
-        defaultFileFlags { creat = Just ownerFileModes, cloexec = True, nofollow = True }
-      locked <- tryIO (setLock fd (WriteLock, AbsoluteSeek, 0, 0))
-      case locked of
-        Right () -> pure fd
-        Left problem -> closeFd fd >> failText
-          ("another Door operation holds the archive lock: " <> problem)
+withArchiveWriteLock root action = withMVar processWriteLock $ \_ -> runExceptT $ do
+  executable <- orFail MutationConfigurationFailure resolveGitExecutable
+  absoluteRoot <- orFail MutationIoFailure (tryIO (makeAbsolute root))
+  result <- orFail lockFailure $ tryIO $ Exception.bracket (openArchiveDirectories absoluteRoot)
+    closeArchiveDirectories $ \(rootFd, gitFd) ->
+      Exception.bracket (acquireLockFile gitFd) closeFd
+        (\_ -> runLocked executable absoluteRoot rootFd gitFd action)
+  except result
 
 -- | Run initialization work under the same process and filesystem lock as
 -- ordinary Door mutations. Both directory descriptors are supplied by the
@@ -92,46 +73,47 @@ withArchiveWriteLockAtPinned
   -> (ArchiveWriteLock -> IO (Either MutationError a))
   -> IO (Either MutationError a)
 withArchiveWriteLockAtPinned root rootFd gitFd action =
-  withMVar processWriteLock $ \_ -> do
-    executableResult <- resolveGitExecutable
-    case executableResult of
-      Left problem -> pure (Left (MutationConfigurationFailure problem))
-      Right executable -> do
-        absolute <- tryIO (makeAbsolute root)
-        case absolute of
-          Left problem -> pure (Left (MutationIoFailure problem))
-          Right absoluteRoot -> do
-            pinned <- tryIO $ (,) <$> rootDirectoryMatches absoluteRoot rootFd
-              <*> gitDirectoryMatches rootFd gitFd
-            case pinned of
-              Left problem -> pure (Left (MutationIoFailure problem))
-              Right (False, _) -> pure (Left (MutationRejected
-                "archive root changed before the pinned archive lock was acquired"))
-              Right (_, False) -> pure (Left (MutationRejected
-                "Git directory changed before the pinned archive lock was acquired"))
-              Right (True, True) -> do
-                result <- tryIO $ Exception.bracket (acquire gitFd) closeFd $ \_ -> do
-                  topology <- validateGitObjectStoreTopology executable absoluteRoot rootFd gitFd
-                  case topology of
-                    Left problem -> pure (Left (MutationOperationFailure problem))
-                    Right () -> do
-                      recovered <- reconcileOperationJournal executable absoluteRoot rootFd gitFd
-                      case recovered of
-                        Left problem -> pure (Left (MutationOperationFailure problem))
-                        Right () -> action (ArchiveWriteLock absoluteRoot rootFd gitFd executable)
-                pure $ case result of
-                  Left problem -> Left (MutationIoFailure ("archive lock failed: " <> problem))
-                  Right (Left failure) -> Left failure
-                  Right (Right value) -> Right value
-  where
-    acquire directoryFd = do
-      fd <- openFdAt (Just directoryFd) "archive-door.lock" ReadWrite
-        defaultFileFlags { creat = Just ownerFileModes, cloexec = True, nofollow = True }
-      locked <- tryIO (setLock fd (WriteLock, AbsoluteSeek, 0, 0))
-      case locked of
-        Right () -> pure fd
-        Left problem -> closeFd fd >> failText
-          ("another Door operation holds the archive lock: " <> problem)
+  withMVar processWriteLock $ \_ -> runExceptT $ do
+    executable <- orFail MutationConfigurationFailure resolveGitExecutable
+    absoluteRoot <- orFail MutationIoFailure (tryIO (makeAbsolute root))
+    pinned <- orFail MutationIoFailure $ tryIO $ (,) <$> rootDirectoryMatches absoluteRoot rootFd
+      <*> gitDirectoryMatches rootFd gitFd
+    case pinned of
+      (False, _) -> throwE (MutationRejected
+        "archive root changed before the pinned archive lock was acquired")
+      (_, False) -> throwE (MutationRejected
+        "Git directory changed before the pinned archive lock was acquired")
+      (True, True) -> pure ()
+    result <- orFail lockFailure $ tryIO $ Exception.bracket (acquireLockFile gitFd) closeFd $ \_ ->
+      runLocked executable absoluteRoot rootFd gitFd action
+    except result
+
+lockFailure :: Text -> MutationError
+lockFailure problem = MutationIoFailure ("archive lock failed: " <> problem)
+
+-- | With the lock held: prove the object-store topology, finish or undo any
+-- journaled operation, and only then run the caller's mutation.
+runLocked
+  :: Executable
+  -> FilePath
+  -> Fd
+  -> Fd
+  -> (ArchiveWriteLock -> IO (Either MutationError a))
+  -> IO (Either MutationError a)
+runLocked executable absoluteRoot rootFd gitFd action = runExceptT $ do
+  orFail MutationOperationFailure (validateGitObjectStoreTopology executable absoluteRoot rootFd gitFd)
+  orFail MutationOperationFailure (reconcileOperationJournal executable absoluteRoot rootFd gitFd)
+  ExceptT (action (ArchiveWriteLock absoluteRoot rootFd gitFd executable))
+
+acquireLockFile :: Fd -> IO Fd
+acquireLockFile directoryFd = do
+  fd <- openFdAt (Just directoryFd) "archive-door.lock" ReadWrite
+    defaultFileFlags { creat = Just ownerFileModes, cloexec = True, nofollow = True }
+  locked <- tryIO (setLock fd (WriteLock, AbsoluteSeek, 0, 0))
+  case locked of
+    Right () -> pure fd
+    Left problem -> closeFd fd >> failText
+      ("another Door operation holds the archive lock: " <> problem)
 
 openArchiveDirectories :: FilePath -> IO (Fd, Fd)
 openArchiveDirectories root = do

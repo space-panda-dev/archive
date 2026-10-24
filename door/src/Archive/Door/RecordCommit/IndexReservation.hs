@@ -6,13 +6,16 @@
 -- tracked across every Git child, so the operation journal can name exactly
 -- the index this operation owns and recovery removes nothing else.
 module Archive.Door.RecordCommit.IndexReservation
-  ( IndexReservation (..)
+  ( IndexReservation
+  , attachJournal
+  , detachJournal
+  , reservedIndex
   , runIndexGit
   , withNewIndexReservation
   ) where
 
 import Archive.Door.RecordCommit.Descriptors (ownerFileModes, unlinkAt)
-import Archive.Door.RecordCommit.Failure (failText, tryIO)
+import Archive.Door.RecordCommit.Failure (failText, require, tryIO)
 import Archive.Door.RecordCommit.Git (runGit)
 import Archive.Door.RecordCommit.Journal
   ( JournalIndex (..)
@@ -21,6 +24,8 @@ import Archive.Door.RecordCommit.Journal
   )
 import Archive.Executables (Executable)
 import qualified Control.Exception as Exception
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -49,19 +54,44 @@ foreign import ccall unsafe "archive_has_entry_prefix"
 -- there is no hostile same-uid process racing inside .git; POSIX offers no
 -- conditional unlink-by-inode for Git's pathname-based index replacement.
 -- We still recheck before and after every child, and fail closed on mismatch.
-data IndexReservation = IndexReservation FilePath
-  (IORef (Fd, (DeviceID, FileID))) (IORef (Maybe (IORef OperationJournal)))
+data IndexReservation = IndexReservation
+  { reservationName :: FilePath
+  -- | The index inode this operation owns now; Git's replacements move it.
+  , reservationOwned :: IORef OwnedIndex
+  -- | The batch's current journal once it is published, so a replacement
+  -- of the index inode is journaled before the next Git child runs.
+  , reservationJournal :: IORef (Maybe (IORef OperationJournal))
+  }
+
+-- | A descriptor that keeps the owned index inode from being reused while
+-- Door holds it, and that inode's identity.
+data OwnedIndex = OwnedIndex
+  { ownedIndexFd :: Fd
+  , ownedIndexIdentity :: (DeviceID, FileID)
+  }
+
+-- | The reserved index's name and the identity of the inode owned now.
+reservedIndex :: IndexReservation -> IO (FilePath, (DeviceID, FileID))
+reservedIndex reservation = do
+  owned <- readIORef (reservationOwned reservation)
+  pure (reservationName reservation, ownedIndexIdentity owned)
+
+-- | Journal every later change of the owned index inode in this journal.
+attachJournal :: IndexReservation -> IORef OperationJournal -> IO ()
+attachJournal reservation journal = writeIORef (reservationJournal reservation) (Just journal)
+
+-- | Stop journaling index changes: the journal was never published.
+detachJournal :: IndexReservation -> IO ()
+detachJournal reservation = writeIORef (reservationJournal reservation) Nothing
 
 reserveIndex :: Fd -> IO (Either Text IndexReservation)
-reserveIndex gitFd = do
+reserveIndex gitFd = runExceptT $ do
   -- A kill after O_EXCL reservation but before the operation journal is
   -- published leaves no inode proof. The next mutation refuses this stale
   -- private-prefix artifact for operator inspection; it never guesses ownership.
-  scan <- hasStaleIndex gitFd
-  case scan of
-    Left problem -> pure (Left problem)
-    Right True -> pure (Left "stale Door index artifact requires operator inspection")
-    Right False -> tryNames
+  stale <- ExceptT (hasStaleIndex gitFd)
+  require (not stale) "stale Door index artifact requires operator inspection"
+  ExceptT tryNames
   where
     tryNames = do
       processId <- getProcessID
@@ -84,9 +114,9 @@ reserveIndex gitFd = do
           case status of
             Left problem -> closeFd fd >> pure (Left problem)
             Right fileStatus -> do
-              identity <- newIORef (fd, (deviceID fileStatus, fileID fileStatus))
+              owned <- newIORef (OwnedIndex fd (deviceID fileStatus, fileID fileStatus))
               journalWriter <- newIORef Nothing
-              pure (Right (IndexReservation name identity journalWriter))
+              pure (Right (IndexReservation name owned journalWriter))
 
 hasStaleIndex :: Fd -> IO (Either Text Bool)
 hasStaleIndex (Fd descriptor) =
@@ -96,48 +126,36 @@ hasStaleIndex (Fd descriptor) =
       then Left ("could not inspect stale Door indexes: " <> Text.pack (show result))
       else Right (result == 1)
 
+-- | Run Git on the reserved index, proving the index is still owned on each
+-- side of the child and journaling a replacement inode before returning.
 runIndexGit :: Executable -> FilePath -> Fd -> Fd -> IndexReservation -> [String]
             -> IO (Either Text Text)
-runIndexGit executable rootPath rootFd gitFd reservation arguments = do
-  before <- verifyIndexReservation gitFd reservation
-  case before of
-    Left problem -> pure (Left problem)
-    Right () -> do
-      result <- runGit executable rootPath rootFd gitFd (Just name) arguments
-      after <- verifyIndexReservation gitFd reservation
-      case after of
-        Left problem -> pure (Left problem)
-        Right () -> do
-          persisted <- persistIndexJournal gitFd reservation
-          pure $ case persisted of
-            Left problem -> Left problem
-            Right () -> result
-  where
-    name = case reservation of IndexReservation indexName _ _ -> indexName
+runIndexGit executable rootPath rootFd gitFd reservation arguments = runExceptT $ do
+  ExceptT (verifyIndexReservation gitFd reservation)
+  result <- lift $ runGit executable rootPath rootFd gitFd (Just (reservationName reservation)) arguments
+  ExceptT (verifyIndexReservation gitFd reservation)
+  ExceptT (persistIndexJournal gitFd reservation)
+  except result
 
 persistIndexJournal :: Fd -> IndexReservation -> IO (Either Text ())
-persistIndexJournal gitFd reservation = case reservation of
-  IndexReservation name identityRef writerRef -> do
-    writer <- readIORef writerRef
-    case writer of
-      Nothing -> pure (Right ())
-      Just journalRef -> do
-        (_, (device, inode)) <- readIORef identityRef
-        journal <- readIORef journalRef
-        let updated = journal { journalIndex = JournalIndex name device inode }
-        if updated == journal
-          then pure (Right ())
-          else do
-            replaced <- replaceOperationJournal gitFd journal updated
-            case replaced of
-              Left problem -> pure (Left problem)
-              Right () -> writeIORef journalRef updated >> pure (Right ())
+persistIndexJournal gitFd reservation = do
+  writer <- readIORef (reservationJournal reservation)
+  case writer of
+    Nothing -> pure (Right ())
+    Just journalRef -> do
+      (device, inode) <- ownedIndexIdentity <$> readIORef (reservationOwned reservation)
+      journal <- readIORef journalRef
+      let updated = journal { journalIndex = JournalIndex (reservationName reservation) device inode }
+      if updated == journal
+        then pure (Right ())
+        else runExceptT $ do
+          ExceptT (replaceOperationJournal gitFd journal updated)
+          lift (writeIORef journalRef updated)
 
 verifyIndexReservation :: Fd -> IndexReservation -> IO (Either Text ())
-verifyIndexReservation gitFd (IndexReservation name identityRef _) = do
-  previous <- readIORef identityRef
-  let (previousFd, previousIdentity) = previous
-  opened <- Exception.try $ openFdAt (Just gitFd) name ReadOnly
+verifyIndexReservation gitFd reservation = do
+  OwnedIndex previousFd previousIdentity <- readIORef (reservationOwned reservation)
+  opened <- Exception.try $ openFdAt (Just gitFd) (reservationName reservation) ReadOnly
     defaultFileFlags { nofollow = True, nonBlock = True, cloexec = True }
     :: IO (Either Exception.IOException Fd)
   case opened of
@@ -152,7 +170,8 @@ verifyIndexReservation gitFd (IndexReservation name identityRef _) = do
           else do
             previousStatus <- getFdStatus previousFd
             if linkCount previousStatus == 0
-              then writeIORef identityRef (currentFd, currentIdentity) >> closeFd previousFd >> pure True
+              then writeIORef (reservationOwned reservation) (OwnedIndex currentFd currentIdentity)
+                >> closeFd previousFd >> pure True
               else failText "Door index changed without unlinking the owned index inode"
       case inspected of
         Left problem -> closeFd currentFd >> pure (Left problem)
@@ -164,20 +183,17 @@ verifyIndexReservation gitFd (IndexReservation name identityRef _) = do
       else failText "Door index path is not a regular file"
 
 cleanupIndexReservation :: Fd -> IndexReservation -> IO (Either Text ())
-cleanupIndexReservation gitFd reservation@(IndexReservation name identityRef _) = do
+cleanupIndexReservation gitFd reservation = do
   verified <- verifyIndexReservation gitFd reservation
+  ownedFd <- ownedIndexFd <$> readIORef (reservationOwned reservation)
   case verified of
     Left problem -> do
-      (ownedFd, _) <- readIORef identityRef
       closeFd ownedFd
       pure (Left ("could not prove Door index ownership during cleanup: " <> problem))
     Right () -> do
-      (ownedFd, _) <- readIORef identityRef
-      removed <- Exception.try (unlinkAt gitFd name)
-        :: IO (Either Exception.IOException ())
-      case removed of
-        Left problem -> closeFd ownedFd >> pure (Left (Text.pack (show problem)))
-        Right () -> closeFd ownedFd >> pure (Right ())
+      removed <- tryIO (unlinkAt gitFd (reservationName reservation))
+      closeFd ownedFd
+      pure removed
 
 withNewIndexReservation :: Fd
                         -> (IndexReservation -> IO (Either Text (Either Text Text)))
