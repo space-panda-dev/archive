@@ -31,13 +31,15 @@ import Archive.Door.Snapshot.Data
   , Installed (..)
   , RecordEntry (..)
   )
+import Archive.Door.Distinct (distinctOr)
+import Archive.Door.Snapshot.Problem (SnapshotProblem (..), snapshotCheck)
 import Archive.Door.Snapshot.Read
   ( decodeBytes
+  , integrity
   , introducedAt
   , mapIntegrity
   , readBytes
   , readJson
-  , requireDistinct
   , requireIntroducedAt
   )
 import Archive.Door.SpecificationUpgrade
@@ -89,18 +91,18 @@ validateResources snapshot additions upgradeCommits specification = do
   documentResult <- readBytes snapshot documentPath
   contextResult <- readJson snapshot contextPath
   pure $ do
-    initialCommit <- mapIntegrity (introducedAt additions "archive.json")
+    initialCommit <- integrity (introducedAt additions "archive.json")
     let adoptingCommit = NonEmpty.last (initialCommit :| upgradeCommits)
-    mapM_ (mapIntegrity . requireIntroducedAt additions adoptingCommit)
+    mapM_ (integrity . requireIntroducedAt additions adoptingCommit)
       [versionPath, documentPath, contextPath]
     versionBytes <- versionResult
-    actualVersion <- mapIntegrity (decodeUtf8 versionPath versionBytes)
+    actualVersion <- integrity (decodeUtf8 versionPath versionBytes)
     if Text.stripEnd actualVersion /= version || Text.null (Text.stripEnd actualVersion)
-      then Left (AdmissionSnapshotIntegrityError "specification VERSION does not match archive.json")
+      then Left (AdmissionSnapshotIntegrityError VersionFileMismatch)
       else pure ()
     documentBytes <- documentResult
     if LazyByteString.null documentBytes
-      then Left (AdmissionSnapshotIntegrityError "copied specification is empty")
+      then Left (AdmissionSnapshotIntegrityError SpecificationEmpty)
       else pure ()
     context <- contextResult
     mapIntegrity (validateCoreContextForSpecification specification context)
@@ -109,20 +111,20 @@ validateResources snapshot additions upgradeCommits specification = do
 -- specification upgrade ('validateUpgradeHistory' says which upgrade adds
 -- which), and together they are exactly the governing release's catalog.
 validateInstalledCatalog :: Map.Map FilePath Text -> [Text] -> Text -> [Installed]
-                         -> IO (Either Text ())
+                         -> IO (Either SnapshotProblem ())
 validateInstalledCatalog additions upgradeCommits specification installed = do
   catalog <- loadContractCatalog specification
   pure $ do
     initialCommit <- introducedAt additions "archive.json"
     mapM_ (requireIntroducedAmong additions (initialCommit : upgradeCommits) . installedPath) installed
-    expected <- catalog
+    expected <- snapshotCheck catalog
     validateInstalledContexts expected installed
   where
     requireIntroducedAmong additions' commits path = do
       actual <- introducedAt additions' path
       if actual `elem` commits
         then Right ()
-        else Left (Text.pack path <> " was not introduced with the archive specification")
+        else Left (NotIntroducedWithSpecification path)
 
 -- | Prove that every change of the manifest is one specification upgrade
 -- (ADR 0068, D-15). Each changing commit keeps the archive identifier and
@@ -158,13 +160,13 @@ validateUpgradeHistory snapshot additions upgradeCommits current installed entri
           pure $ do
             loaded <- mapIntegrity (sequence catalogs)
             held <- sequence contexts
-            mapIntegrity $ do
+            integrity $ do
               case reverse chain of
                 final : _ | final == current -> Right ()
-                _ -> Left "the last specification upgrade does not name the archive's specification"
+                _ -> Left LastUpgradeNotCurrent
               case loaded of
                 rootCatalog : _ -> requireBundles initialCommit rootCatalog
-                [] -> Left "archive history has no root manifest"
+                [] -> Left NoRootManifest
               mapM_ step (zip3 upgradeCommits (zip chain (drop 1 chain))
                 (zip (zip loaded held) (drop 1 (zip loaded held))))
               let upgradeRecords = [entry | entry <- entries, citesUpgrade entry]
@@ -172,26 +174,25 @@ validateUpgradeHistory snapshot additions upgradeCommits current installed entri
               if length upgradeRecords == length upgradeCommits
                   && all (`elem` map Just upgradeCommits) introducers
                 then Right ()
-                else Left "a specification upgrade record exists outside a specification upgrade commit"
+                else Left UpgradeRecordOutsideUpgrade
   where
     manifestAt commit = do
       bytes <- Git.readPathAt snapshot commit "archive.json"
       pure $ case bytes of
         Left problem -> Left (AdmissionSnapshotGitError problem)
-        Right raw -> mapIntegrity $ do
+        Right raw -> integrity $ do
           value <- decodeBytes "archive.json" raw
           if encodeCanonical value /= raw
-            then Left ("archive.json at " <> commit <> " is not RFC 8785 canonical")
-            else parseArchiveManifest value
+            then Left (ManifestNotCanonicalAt commit)
+            else snapshotCheck (parseArchiveManifest value)
 
     contextAt specification = case specVersion specification of
-      Left problem -> pure (Left (AdmissionSnapshotIntegrityError problem))
+      Left problem -> pure (mapIntegrity (Left problem))
       Right version -> do
         value <- readJson snapshot ("spec/" <> Text.unpack version <> "/context.jsonld")
         pure $ value >>= \case
           Object outer | Just (Object inner) <- KeyMap.lookup "@context" outer -> Right inner
-          _ -> Left (AdmissionSnapshotIntegrityError
-            ("the core context of " <> specification <> " has no @context object"))
+          _ -> Left (AdmissionSnapshotIntegrityError (CoreContextMissing specification))
 
     contractsAddedAt commit = Set.fromList
       [ installedKey item | item <- installed, Map.lookup (installedPath item) additions == Just commit ]
@@ -202,7 +203,7 @@ validateUpgradeHistory snapshot additions upgradeCommits current installed entri
     requireBundles commit expected =
       if contractsAddedAt commit == expected
         then Right ()
-        else Left "a commit that adopted a specification did not add exactly the bundles its catalog adds"
+        else Left AdoptedBundlesMismatch
 
     citesUpgrade entry = any (\citation -> contractId citation == upgradeContractId)
       (envelopeContracts (storedDraft (entryEnvelope entry)))
@@ -212,19 +213,19 @@ validateUpgradeHistory snapshot additions upgradeCommits current installed entri
           to = manifestSpec next
       if manifestArchiveId next == manifestArchiveId previous && manifestLayout next == manifestLayout previous
         then Right ()
-        else Left "a specification upgrade changed the archive identifier or layout"
-      order <- compareSpecifications to from
-      if order == GT then Right () else Left "a specification upgrade does not name a later specification"
-      previousLayout <- specificationLayout from
-      nextLayout <- specificationLayout to
-      additiveUpgrade
+        else Left UpgradeChangedIdentity
+      order <- snapshotCheck (compareSpecifications to from)
+      if order == GT then Right () else Left UpgradeNotLater
+      previousLayout <- snapshotCheck (specificationLayout from)
+      nextLayout <- snapshotCheck (specificationLayout to)
+      snapshotCheck (additiveUpgrade
         (SpecificationRelease from previousCatalog previousLayout previousContext)
-        (SpecificationRelease to nextCatalog nextLayout nextContext)
+        (SpecificationRelease to nextCatalog nextLayout nextContext))
       requireBundles commit (nextCatalog `Set.difference` previousCatalog)
-      documents <- specificationFilePaths to
+      documents <- snapshotCheck (specificationFilePaths to)
       if pathsAddedAt "spec" commit == Set.fromList documents
         then Right ()
-        else Left "a specification upgrade commit did not add exactly its release's documents"
+        else Left UpgradeDocumentsMismatch
       case [entry | entry <- entries, Map.lookup (entryPath entry) additions == Just commit] of
         [entry] -> do
           let draft = storedDraft (entryEnvelope entry)
@@ -233,14 +234,14 @@ validateUpgradeHistory snapshot additions upgradeCommits current installed entri
           case keys of
             [(identifier, version, _)]
               | identifier == upgradeContractId && version == upgradeContractVersion -> Right ()
-            _ -> Left "a specification upgrade commit's record is not one upgrade claim"
+            _ -> Left UpgradeRecordNotClaim
           case envelopeBody draft of
             ClaimRecord (Object payload)
               | KeyMap.lookup "from" payload == Just (String from)
               , KeyMap.lookup "to" payload == Just (String to)
               , envelopeSpec draft == to -> Right ()
-            _ -> Left "a specification upgrade record does not name the manifest change it made"
-        _ -> Left "a specification upgrade commit must introduce exactly one record"
+            _ -> Left UpgradeRecordMismatch
+        _ -> Left UpgradeNotOneRecord
 
 -- | A record cites only bundles the archive held when it was committed: the
 -- bundle's path was added by the record's commit or an earlier one. Likewise
@@ -249,7 +250,7 @@ validateUpgradeHistory snapshot additions upgradeCommits current installed entri
 -- upgrade cannot make an earlier record readable after the fact (D-1,
 -- ADR 0068). A record whose context the archive never held is left to the
 -- checks that read it.
-validateCitationOrder :: [Text] -> Map.Map FilePath Text -> [Installed] -> [RecordEntry] -> Either Text ()
+validateCitationOrder :: [Text] -> Map.Map FilePath Text -> [Installed] -> [RecordEntry] -> Either SnapshotProblem ()
 validateCitationOrder commits additions installed entries = mapM_ check entries
   where
     position = Map.fromList (zip commits [0 :: Int ..])
@@ -265,32 +266,30 @@ validateCitationOrder commits additions installed entries = mapM_ check entries
           | let path = "spec/" <> Text.unpack version <> "/context.jsonld"
           , Map.member path additions -> case (at path, at (entryPath entry)) of
               (Just context, Just record) | context <= record -> Right ()
-              _ -> Left (Text.pack (entryPath entry) <> " is written under " <> specification
-                <> " before the archive held its core context")
+              _ -> Left (WrittenBeforeContext (entryPath entry) specification)
         _ -> Right ()
     cited entry citation =
       case Map.lookup (contractId citation, contractVersion citation, contractDigest citation) paths of
-        Nothing -> Left ("contract is not installed at this snapshot: " <> contractId citation)
+        Nothing -> Left (ContractNotInstalled (contractId citation))
         Just path -> case (at path, at (entryPath entry)) of
           (Just bundle, Just record) | bundle <= record -> Right ()
-          _ -> Left (Text.pack (entryPath entry) <> " cites " <> contractId citation
-            <> " before the archive held it")
+          _ -> Left (CitedBeforeHeld (entryPath entry) (contractId citation))
 
 -- | The installed bundles must be exactly the specification's catalog
 -- (ADR 0057), which Door reads from its own specification files.
-validateInstalledContexts :: Set.Set CatalogEntry -> [Installed] -> Either Text ()
+validateInstalledContexts :: Set.Set CatalogEntry -> [Installed] -> Either SnapshotProblem ()
 validateInstalledContexts expected installed = do
-  requireDistinct "installed contract tuple"
+  distinctOr (NotUnique "installed contract tuple")
     [Text.intercalate "\0" [identifier, version, digest]
     | item <- installed
     , let (identifier, version, digest) = installedKey item]
-  requireDistinct "installed contract identifier and version"
+  distinctOr (NotUnique "installed contract identifier and version")
     [Text.intercalate "\0" [identifier, version]
     | item <- installed
     , let (identifier, version, _) = installedKey item]
   if Set.fromList (map installedKey installed) == expected
     then Right ()
-    else Left "installed contract catalog does not match the selected specification"
+    else Left CatalogMismatch
 
 validateImmutablePaths
   :: GitSnapshot
@@ -308,10 +307,9 @@ validateImmutablePaths snapshot additions installed entries = do
             <> map entryPath entries)
     if current == Map.keysSet additions
       then Right ()
-      else Left (AdmissionSnapshotIntegrityError
-        "immutable archive path history does not match the committed tree")
+      else Left (AdmissionSnapshotIntegrityError PathHistoryMismatch)
 
-decodeUtf8 :: FilePath -> LazyByteString.ByteString -> Either Text Text
+decodeUtf8 :: FilePath -> LazyByteString.ByteString -> Either SnapshotProblem Text
 decodeUtf8 path bytes = case Text.decodeUtf8' (LazyByteString.toStrict bytes) of
-  Left _ -> Left (Text.pack path <> " is not valid UTF-8")
+  Left _ -> Left (NotUtf8 path)
   Right value -> Right value

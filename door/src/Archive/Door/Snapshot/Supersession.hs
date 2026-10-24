@@ -18,7 +18,9 @@ import Archive.Door.References
   , validateReferences
   )
 import Archive.Door.Snapshot.Data (RecordEntry (..))
-import Archive.Door.Snapshot.Read (requireDistinct, revisionText)
+import Archive.Door.Distinct (distinctOr)
+import Archive.Door.Snapshot.Problem (SnapshotProblem (..), snapshotCheck)
+import Archive.Door.Snapshot.Read (revisionText)
 import Archive.Door.Types
   ( Reference (..)
   , StoredEnvelope (..)
@@ -28,10 +30,10 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Text (Text)
 
-indexRecords :: [RecordEntry] -> Either Text (StoreIndex, Map.Map Text Text)
+indexRecords :: [RecordEntry] -> Either SnapshotProblem (StoreIndex, Map.Map Text Text)
 indexRecords entries = do
   let revisions = map entryRevision entries
-  requireDistinct "record revision" revisions
+  distinctOr (NotUnique "record revision") revisions
   let store = foldl' add emptyIndex entries
       superseded =
         Set.fromList
@@ -49,22 +51,22 @@ indexRecords entries = do
   where
     add store entry = insertRecord (storedRevision (entryEnvelope entry))
       (storedDraft (entryEnvelope entry)) store
-    validateOne store entry =
+    validateOne store entry = snapshotCheck $
       validateReferences store (storedRevision (entryEnvelope entry))
         (storedDraft (entryEnvelope entry))
 
-deriveHeads :: Map.Map Text [RecordEntry] -> Set.Set (Text, Text) -> Either Text (Map.Map Text Text)
+deriveHeads :: Map.Map Text [RecordEntry] -> Set.Set (Text, Text) -> Either SnapshotProblem (Map.Map Text Text)
 deriveHeads byObject superseded = Map.fromList <$> mapM one (Map.toList byObject)
   where
     one (objectId, entries) =
       case filter (not . isSuperseded objectId) entries of
         [entry] -> Right (objectId, entryRevision entry)
-        [] -> Left ("object has no unsuperseded head: " <> objectId)
-        _ -> Left ("object has forked unsuperseded heads: " <> objectId)
+        [] -> Left (NoUnsupersededHead objectId)
+        _ -> Left (ForkedHeads objectId)
     isSuperseded objectId entry =
       Set.member (objectId, entryRevision entry) superseded
 
-detectSupersessionCycles :: [RecordEntry] -> Either Text ()
+detectSupersessionCycles :: [RecordEntry] -> Either SnapshotProblem ()
 detectSupersessionCycles entries = go Set.empty Set.empty allRevisions
   where
     allRevisions = map entryRevision entries
@@ -82,7 +84,7 @@ detectSupersessionCycles entries = go Set.empty Set.empty allRevisions
           (newVisited, newVisiting) <- visit visiting visited revision
           go newVisiting newVisited rest
     visit visiting visited revision
-      | Set.member revision visiting = Left "supersession cycle detected"
+      | Set.member revision visiting = Left SupersessionCycle
       | Set.member revision visited = Right (visited, visiting)
       | otherwise = do
           let next = Map.findWithDefault [] revision edges

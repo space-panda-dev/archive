@@ -33,6 +33,7 @@ import Archive.Door.Contracts
   , targetMeasureRule
   , targetSamplesRule
   )
+import Archive.Door.ContractRuleProblem (ContractRuleProblem (..), outsideRule)
 import Archive.Door.ReferenceTargets
   ( Target (..)
   , referencedEntry
@@ -57,9 +58,9 @@ import qualified Data.Text as Text
 
 -- | A record's measurements fit the Claim that measured the audio: its rate
 -- equals the pinned Claim's, and no span ends past the pinned Claim's count.
-validateTargetMeasure :: [Target] -> DraftEnvelope -> ContractBundle -> Either Text ()
+validateTargetMeasure :: [Target] -> DraftEnvelope -> ContractBundle -> Either ContractRuleProblem ()
 validateTargetMeasure records draft bundle = do
-  rule <- targetMeasureRule (contractBundleSchema bundle)
+  rule <- outsideRule (targetMeasureRule (contractBundleSchema bundle))
   case rule of
     Nothing -> Right ()
     Just measure
@@ -72,41 +73,39 @@ validateTargetMeasure records draft bundle = do
       target <- targetClaimPayload records role reference
       own <- case envelopeBody draft of
         ClaimRecord (Object payload) -> Right payload
-        _ -> Left "target measure rule applies only to a Claim payload"
+        _ -> Left (RuleNeedsClaim "target measure")
       targetRate <- integerField (targetMeasureRate measure) target
       targetCount <- integerField (targetMeasureCount measure) target
       ownRate <- integerField (targetMeasureRate measure) own
       if ownRate /= targetRate
-        then Left (targetMeasureRate measure <> " must equal the " <> role <> " claim's "
-          <> targetMeasureRate measure)
+        then Left (MustEqualTarget (targetMeasureRate measure) role)
         else Right ()
       groups <- case targetMeasureWithin measure of
         Nothing -> Right [own]
         Just within -> case KeyMap.lookup (Key.fromText within) own of
           Just (Array values) -> mapM (\value -> case value of
             Object group -> Right group
-            _ -> Left (within <> " must contain objects")) (toList values)
-          _ -> Left (within <> " must be an array")
+            _ -> Left (MustContainObjects within)) (toList values)
+          _ -> Left (NotAnArray within)
       spans <- concat <$> mapM (\group -> case KeyMap.lookup (Key.fromText (targetMeasurePayload measure)) group of
         Just (Array values) -> Right (toList values)
         -- With within, an element without the array has nothing to measure.
         Nothing | targetMeasureWithin measure /= Nothing -> Right []
-        _ -> Left (targetMeasurePayload measure <> " must be an array")) groups
+        _ -> Left (NotAnArray (targetMeasurePayload measure))) groups
       ends <- mapM (spanEnd (targetMeasureEnd measure)) spans
       if all (<= targetCount) ends
         then Right ()
-        else Left (targetMeasureEnd measure <> " must not exceed the " <> role <> " claim's "
-          <> targetMeasureCount measure)
+        else Left (MustNotExceed (targetMeasureEnd measure) role (targetMeasureCount measure))
   where
     spanEnd name (Object piece) = integerField name piece
-    spanEnd _ _ = Left "span must be an object"
+    spanEnd _ _ = Left SpanNotObject
 
 -- | The pinned Claim is about the very revision this record names: its one
 -- subject reference and this record's one compared reference pin the same
 -- object and revision.
-validateSameSubject :: [Target] -> DraftEnvelope -> ContractBundle -> Either Text ()
+validateSameSubject :: [Target] -> DraftEnvelope -> ContractBundle -> Either ContractRuleProblem ()
 validateSameSubject records draft bundle = do
-  rule <- sameSubjectRule (contractBundleSchema bundle)
+  rule <- outsideRule (sameSubjectRule (contractBundleSchema bundle))
   case rule of
     Nothing -> Right ()
     Just same
@@ -122,47 +121,45 @@ validateSameSubject records draft bundle = do
           && referenceRevision subject == referenceRevision compared
           && referenceRevision compared /= Nothing
         then Right ()
-        else Left (role <> " claim must be about the same " <> sameSubjectEquals same
-          <> " revision as this record's " <> sameSubjectEquals same <> " reference")
+        else Left (NotSameSubject role (sameSubjectEquals same))
 
 -- | A payload index within what the pinned Claim counts: a channel index no
 -- greater than the pinned stream's channel count.
-validateTargetBound :: [Target] -> DraftEnvelope -> ContractBundle -> Either Text ()
+validateTargetBound :: [Target] -> DraftEnvelope -> ContractBundle -> Either ContractRuleProblem ()
 validateTargetBound records draft bundle = do
-  rule <- targetBoundRule (contractBundleSchema bundle)
+  rule <- outsideRule (targetBoundRule (contractBundleSchema bundle))
   case rule of
     Nothing -> Right ()
     Just bound -> do
       own <- case envelopeBody draft of
         ClaimRecord (Object payload) -> Right payload
-        _ -> Left "target bound rule applies only to a Claim payload"
+        _ -> Left (RuleNeedsClaim "target bound")
       case KeyMap.lookup (Key.fromText (targetBoundField bound)) own of
         Nothing -> Right ()
         Just _ -> do
           let role = targetBoundRole bound
           reference <- case filter ((== role) . referenceRole) (envelopeReferences draft) of
             [reference] -> Right reference
-            _ -> Left (targetBoundField bound <> " needs exactly one " <> role <> " reference")
+            _ -> Left (NeedsOneReference (targetBoundField bound) role)
           target <- targetClaimPayload records role reference
           value <- integerField (targetBoundField bound) own
           limit <- integerField (targetBoundBound bound) target
           if value <= limit
             then Right ()
-            else Left (targetBoundField bound <> " must not exceed the " <> role <> " claim's "
-              <> targetBoundBound bound)
+            else Left (MustNotExceed (targetBoundField bound) role (targetBoundBound bound))
 
 -- | Samples within what the pinned Claim counts: a beat-only layer's beats
 -- before the pinned stream's sample count.
-validateTargetSamples :: [Target] -> DraftEnvelope -> ContractBundle -> Either Text ()
+validateTargetSamples :: [Target] -> DraftEnvelope -> ContractBundle -> Either ContractRuleProblem ()
 validateTargetSamples records draft bundle = do
-  rule <- targetSamplesRule (contractBundleSchema bundle)
+  rule <- outsideRule (targetSamplesRule (contractBundleSchema bundle))
   case rule of
     Nothing -> Right ()
     Just samples -> do
       own <- case envelopeBody draft of
         ClaimRecord (Object payload) -> Right payload
-        _ -> Left "target samples rule applies only to a Claim payload"
-      values <- concat <$> mapM (`pathIntegers` own) (targetSamplesPaths samples)
+        _ -> Left (RuleNeedsClaim "target samples")
+      values <- concat <$> mapM (outsideRule . (`pathIntegers` own)) (targetSamplesPaths samples)
       if null values
         then Right ()
         else do
@@ -172,42 +169,41 @@ validateTargetSamples records draft bundle = do
           count <- integerField (targetSamplesCount samples) target
           if all (< count) values
             then Right ()
-            else Left ("samples must be before the " <> role <> " claim's " <> targetSamplesCount samples)
+            else Left (SamplesNotBefore role (targetSamplesCount samples))
 
 -- | Positions in the pinned Claim's array: each span's entry in the chord
 -- sequence it was placed from.
-validateTargetIndex :: [Target] -> DraftEnvelope -> ContractBundle -> Either Text ()
+validateTargetIndex :: [Target] -> DraftEnvelope -> ContractBundle -> Either ContractRuleProblem ()
 validateTargetIndex records draft bundle = do
-  rule <- targetIndexRule (contractBundleSchema bundle)
+  rule <- outsideRule (targetIndexRule (contractBundleSchema bundle))
   case rule of
     Nothing -> Right ()
     Just index -> do
       own <- case envelopeBody draft of
         ClaimRecord (Object payload) -> Right payload
-        _ -> Left "target index rule applies only to a Claim payload"
-      values <- pathIntegers (targetIndexPath index) own
+        _ -> Left (RuleNeedsClaim "target index")
+      values <- outsideRule (pathIntegers (targetIndexPath index) own)
       if null values
         then Right ()
         else do
           let role = targetIndexRole index
           reference <- case filter ((== role) . referenceRole) (envelopeReferences draft) of
             [reference] -> Right reference
-            _ -> Left (Text.intercalate "." (targetIndexPath index) <> " needs exactly one " <> role <> " reference")
+            _ -> Left (NeedsOneReference (Text.intercalate "." (targetIndexPath index)) role)
           target <- targetClaimPayload records role reference
           size <- case KeyMap.lookup (Key.fromText (targetIndexArray index)) target of
             Just (Array items) -> Right (fromIntegral (length items))
-            _ -> Left (role <> " claim's " <> targetIndexArray index <> " must be an array")
+            _ -> Left (TargetArrayNotArray role (targetIndexArray index))
           if all (\value -> value >= 0 && value < size) values
             then Right ()
-            else Left (Text.intercalate "." (targetIndexPath index) <> " must be a position in the "
-              <> role <> " claim's " <> targetIndexArray index)
+            else Left (NotAPosition (Text.intercalate "." (targetIndexPath index)) role (targetIndexArray index))
 
 -- | A window is a run of whole spans of the Claim it was cut from: its rate
 -- equals the pinned Claim's, its start is some span's start, and its end is
 -- the end of that span or of a later one.
-validateSpanWindow :: [Target] -> DraftEnvelope -> ContractBundle -> Either Text ()
+validateSpanWindow :: [Target] -> DraftEnvelope -> ContractBundle -> Either ContractRuleProblem ()
 validateSpanWindow records draft bundle = do
-  rule <- spanWindowRule (contractBundleSchema bundle)
+  rule <- outsideRule (spanWindowRule (contractBundleSchema bundle))
   case rule of
     Nothing -> Right ()
     Just window -> do
@@ -216,44 +212,41 @@ validateSpanWindow records draft bundle = do
       target <- targetClaimPayload records role reference
       own <- case envelopeBody draft of
         ClaimRecord (Object payload) -> Right payload
-        _ -> Left "span window rule applies only to a Claim payload"
+        _ -> Left (RuleNeedsClaim "span window")
       targetRate <- integerField (spanWindowRate window) target
       ownRate <- integerField (spanWindowRate window) own
       if ownRate /= targetRate
-        then Left (spanWindowRate window <> " must equal the " <> role <> " claim's "
-          <> spanWindowRate window)
+        then Left (MustEqualTarget (spanWindowRate window) role)
         else Right ()
       bounds <- case KeyMap.lookup (Key.fromText (spanWindowPayload window)) own of
         Just (Object fields) -> Right fields
-        _ -> Left (spanWindowPayload window <> " must be an object")
+        _ -> Left (NotAnObject (spanWindowPayload window))
       start <- integerField (spanWindowStart window) bounds
       end <- integerField (spanWindowEnd window) bounds
       spans <- case KeyMap.lookup (Key.fromText (spanWindowSpans window)) target of
         Just (Array values) -> mapM spanBounds (toList values)
-        _ -> Left (role <> " claim's " <> spanWindowSpans window <> " must be an array")
+        _ -> Left (TargetArrayNotArray role (spanWindowSpans window))
       case dropWhile ((/= start) . fst) spans of
-        [] -> Left (spanWindowPayload window <> " " <> spanWindowStart window
-          <> " must be the " <> spanWindowStart window <> " of one of the " <> role <> " claim's "
-          <> spanWindowSpans window)
+        [] -> Left (WindowStartNotSpanStart (spanWindowPayload window) (spanWindowStart window)
+          role (spanWindowSpans window))
         from | any ((== end) . snd) from -> Right ()
-        _ -> Left (spanWindowPayload window <> " " <> spanWindowEnd window
-          <> " must be the " <> spanWindowEnd window <> " of its first span or of a later one")
+        _ -> Left (WindowEndNotSpanEnd (spanWindowPayload window) (spanWindowEnd window))
       where
         spanBounds (Object piece) = (,) <$> integerField (spanWindowStart window) piece
           <*> integerField (spanWindowEnd window) piece
-        spanBounds _ = Left "span must be an object"
+        spanBounds _ = Left SpanNotObject
 
 -- | Bit-identical recordings are one source.  The digest is the pinned
 -- Artifact revision's committed content digest, never a proposer's claim.
-validateDistinctTrackContent :: [Target] -> DraftEnvelope -> Value -> ContractBundle -> Either Text ()
+validateDistinctTrackContent :: [Target] -> DraftEnvelope -> Value -> ContractBundle -> Either ContractRuleProblem ()
 validateDistinctTrackContent records draft instanceValue bundle = do
-  rule <- distinctTrackContentRule (contractBundleSchema bundle) instanceValue
+  rule <- outsideRule (distinctTrackContentRule (contractBundleSchema bundle) instanceValue)
   case rule of
     Nothing -> Right ()
     Just (role, counts) -> do
       let references = filter ((== role) . referenceRole) (envelopeReferences draft)
       if sum counts /= length references
-        then Left "track spans and span references must be equal in number"
+        then Left TrackSpanCountMismatch
         else pure ()
       digests <- mapM (artifactDigest role) references
       let perTrack = map Set.fromList (splitCounts counts digests)
@@ -266,7 +259,7 @@ validateDistinctTrackContent records draft instanceValue bundle = do
             ]
       if Set.null repeated
         then Right ()
-        else Left ("tracks must not pin the same content digest: " <> Text.intercalate ", " (Set.toList repeated))
+        else Left (RepeatedTrackContent (Set.toList repeated))
   where
     artifactDigest role reference = do
       target <- referencedEntry records role reference
@@ -274,15 +267,15 @@ validateDistinctTrackContent records draft instanceValue bundle = do
         ArtifactRecord (Object payload) -> case KeyMap.lookup "content" payload of
           Just (Object content) -> case KeyMap.lookup "digest" content of
             Just (String digest) -> Right digest
-            _ -> Left (role <> " Artifact has no content digest")
-          _ -> Left (role <> " Artifact has no content")
-        _ -> Left (role <> " reference must target an Artifact revision")
+            _ -> Left (ArtifactNoDigest role)
+          _ -> Left (ArtifactNoContent role)
+        _ -> Left (TargetWrongShape role "artifact")
     splitCounts [] _ = []
     splitCounts (count : rest) values = take count values : splitCounts rest (drop count values)
 
 -- | An integer field of a payload; the rules here all refuse a missing or
 -- fractional one with the same words.
-integerField :: Text -> KeyMap.KeyMap Value -> Either Text Integer
+integerField :: Text -> KeyMap.KeyMap Value -> Either ContractRuleProblem Integer
 integerField name fields = case KeyMap.lookup (Key.fromText name) fields of
   Just (Number value) | Right integer <- (floatingOrInteger value :: Either Double Integer) -> Right integer
-  _ -> Left (name <> " must be an integer")
+  _ -> Left (NotAnInteger name)

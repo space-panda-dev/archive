@@ -18,6 +18,7 @@ module Archive.Door.Snapshot.Data
 
 import Archive.Door.Contracts (ContractBundle)
 import Archive.Door.References (StoreIndex)
+import Archive.Door.Snapshot.Problem (SnapshotProblem)
 import Archive.Door.Types (StoredEnvelope)
 import Archive.Door.VerifiedCheckpoint
   ( RecordSummary
@@ -64,7 +65,7 @@ data SnapshotData = SnapshotData
 
 data AdmissionSnapshotLoadError
   = AdmissionSnapshotGitError GitSnapshotError
-  | AdmissionSnapshotIntegrityError Text
+  | AdmissionSnapshotIntegrityError SnapshotProblem
   deriving (Eq, Show)
 
 -- | What a snapshot says was verified about its commit, for a commit made on
