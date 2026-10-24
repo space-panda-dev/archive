@@ -46,6 +46,7 @@ from world import view_records  # noqa: E402
 from world import views as view_rules  # noqa: E402
 
 import access  # noqa: E402
+import metrics  # noqa: E402
 import practice  # noqa: E402
 from access import Caller  # noqa: E402
 from refusals import DOOR_STATUSES, RELAY_CODES, Refused, coded  # noqa: E402,F401
@@ -76,7 +77,7 @@ TEMPLATE_ROUTES = {
     "/documents/{digest}": "GET",
     "/exports/{key}": "GET",
 }
-ROUTES = {"/health": "GET", "/world/query": "POST", **{path: "POST" for path in DOOR_ROUTES},
+ROUTES = {"/health": "GET", "/metrics": "GET", "/world/query": "POST", **{path: "POST" for path in DOOR_ROUTES},
           "/world/views": "GET", "/world/view": "POST", "/documents/stage": "POST", "/exports": "POST",
           **TEMPLATE_ROUTES}
 TEMPLATES = [(template, re.compile(re.sub(r"\\\{([a-z]+)\\\}", "([^/?#]*)", re.escape(template))),
@@ -86,6 +87,12 @@ TEMPLATES = [(template, re.compile(re.sub(r"\\\{([a-z]+)\\\}", "([^/?#]*)", re.e
 # Headers that mark a request as forwarded from elsewhere: tailscale serve
 # adds Tailscale-* and X-Forwarded-For, a browser adds Origin (ADR 0114).
 FORWARDED_HEADERS = ("Origin", "X-Forwarded-For", "Forwarded")
+# What a local probe may ask without an identity: liveness (ADR 0114) and
+# aggregate metrics (ADR 0118).
+LOCAL_ROUTES = frozenset({"/health", "/metrics"})
+# Reading every record of a large generation for the metrics may take longer
+# than a query is allowed.
+METRICS_TIMEOUT_SECONDS = 600.0
 
 
 def served_build(source: Path = Path(__file__).resolve().parent) -> tuple[str | None, str | None]:
@@ -378,6 +385,7 @@ def _query_worker(store_root: str, max_rows: int, requests: Any) -> None:
     version, reopening one when its pointer moves."""
     opened: dict[int, tuple[str, Any]] = {}
     held: dict[str, list[dict[str, Any]]] = {}
+    counted: dict[str, dict[str, Any]] = {}
     store = Path(store_root)
     while True:
         message = requests.recv()
@@ -390,6 +398,15 @@ def _query_worker(store_root: str, max_rows: int, requests: Any) -> None:
             projection = opened[version][1]
             if message[0] == VIEW:
                 requests.send(_view_answer(projection, selected, held, *message[2:]))
+                continue
+            if message[0] == METRICS:
+                if selected not in counted:
+                    if selected not in held:
+                        held.clear()
+                        held[selected] = view_records.records(projection)
+                    counted.clear()
+                    counted[selected] = metrics.archive_counts(held[selected])
+                requests.send(("ok", selected, projection.snapshot, counted[selected]))
                 continue
             sparql, version, rdf_format = message
             answer = world.query(projection, sparql, max_rows, rdf_format)
@@ -413,6 +430,7 @@ def _query_worker(store_root: str, max_rows: int, requests: Any) -> None:
 
 
 VIEW = "\0view"
+METRICS = "\0metrics"
 
 
 def _view_answer(projection: Any, selected: str, held: dict[str, list[dict[str, Any]]], request: Any,
@@ -464,13 +482,14 @@ class QueryWorker:
     def query(self, sparql: str, version: int, rdf_format: str) -> tuple[str, str, Any]:
         return self.ask((sparql, version, rdf_format), "query")
 
-    def ask(self, message: tuple, what: str) -> tuple[str, str, Any]:
+    def ask(self, message: tuple, what: str, timeout: float | None = None) -> tuple[str, str, Any]:
         if self.process is None or not self.process.is_alive():
             self._start()
         self.connection.send(message)
-        if not self.connection.poll(self.timeout):
+        timeout = self.timeout if timeout is None else timeout
+        if not self.connection.poll(timeout):
             self.stop()
-            raise Refused("query_timeout", f"the {what} ran longer than {self.timeout:g} seconds")
+            raise Refused("query_timeout", f"the {what} ran longer than {timeout:g} seconds")
         try:
             answer = self.connection.recv()
         except EOFError as exc:
@@ -508,6 +527,14 @@ class QueryPool:
         worker = self.idle.get()
         try:
             return worker.ask((VIEW, version, request, caller, readable), "view")
+        finally:
+            self.idle.put(worker)
+
+    def metrics(self, version: int) -> tuple[str, str, dict[str, Any]]:
+        """(generation, snapshot, counts) of the selected generation (ADR 0118)."""
+        worker = self.idle.get()
+        try:
+            return worker.ask((METRICS, version), "metrics count", max(worker.timeout, METRICS_TIMEOUT_SECONDS))
         finally:
             self.idle.put(worker)
 
@@ -758,10 +785,14 @@ class Relay(Served):
         self.stopping = threading.Event()
         self.warmer = threading.Thread(target=self._warm_forever, name="relay-warmer", daemon=True)
         self.warmer.start()
+        self.metrics = metrics.Collector(lambda: self.queries.metrics(world.PROJECTION_VERSION)[2],
+                                         config.archive_root, config.world_store, config.staging,
+                                         config.media_root, config.bank_root)
 
     def stop(self) -> None:
         self.stopping.set()
         self.warm_now.set()
+        self.metrics.stop()
         self.warmer.join(timeout=30)
         self.queries.stop()
         self.renderer.stop()
@@ -799,6 +830,18 @@ class Relay(Served):
         answer = {"healthy": healthy, "writes": self.config.writes, "door": door, "world": world_state,
                   "commit": self.commit, "build": self.build}
         return (HTTPStatus.OK if healthy else HTTPStatus.SERVICE_UNAVAILABLE), answer
+
+    def metrics_text(self) -> str:
+        """The metrics exposition (ADR 0118): the relay's configuration and
+        code, the specification the manifest names now, the latest counts,
+        and request durations."""
+        _, spec = read_archive_manifest(self.config.archive_root)
+        own = [metrics.Family("archive_relay_info", "gauge", "The relay's role, writes, commit and build.",
+                              [("", {"role": self.config.role, "writes": self.config.writes,
+                                     "commit": self.commit or "", "build": self.build or ""}, 1)]),
+               metrics.Family("archive_specification_info", "gauge",
+                              "The specification the archive's manifest names.", [("", {"spec": spec}, 1)])]
+        return self.metrics.render(own)
 
     def query(self, body: Any) -> tuple[tuple, dict[str, Any]]:
         """The cache key and cached entry answering one query request."""
@@ -949,10 +992,15 @@ def make_handler(relay: Relay) -> type[BaseHTTPRequestHandler]:
                 raise Refused("forbidden_origin", "this origin may not use the relay")
             return config.callers[login]
 
+        def send_response(self, code: int, message: str | None = None) -> None:
+            self.status_sent = int(code)
+            super().send_response(code, message)
+
         def _local_probe(self, route: str, method: str) -> bool:
-            """A GET /health from this machine itself, carrying no identity and
-            not forwarded: it is answered liveness only (ADR 0114)."""
-            if route != "/health" or method != "GET" or "Tailscale-User-Login" in self.headers:
+            """A GET /health or /metrics from this machine itself, carrying no
+            identity and not forwarded: it is answered liveness only (ADR
+            0114), or aggregate metrics (ADR 0118)."""
+            if route not in LOCAL_ROUTES or method != "GET" or "Tailscale-User-Login" in self.headers:
                 return False
             if any(name.lower().startswith("tailscale-") for name in self.headers.keys()):
                 return False
@@ -991,10 +1039,33 @@ def make_handler(relay: Relay) -> type[BaseHTTPRequestHandler]:
             if self.command != "HEAD":
                 self.wfile.write(body)
 
+        def _send_text(self, text: str) -> None:
+            body = text.encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", metrics.CONTENT_TYPE)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
         def _answer(self, method: str) -> None:
+            started = time.monotonic()
+            route, _ = route_of(self.path)
+            self.status_sent = 0
+            try:
+                self._route(method)
+            finally:
+                # Only described routes are labels: a path is the caller's text.
+                relay.metrics.observe(route if route in ROUTES else "other", self.status_sent,
+                                      time.monotonic() - started)
+
+        def _route(self, method: str) -> None:
             authorized = None
             route, named = route_of(self.path)
             try:
+                if self._local_probe(route, method) and route == "/metrics":
+                    self._send_text(relay.metrics_text())
+                    return
                 if self._local_probe(route, method):
                     status, health = relay.health()
                     self._send(status, {"ok": health["healthy"], "healthy": health["healthy"],
@@ -1011,6 +1082,11 @@ def make_handler(relay: Relay) -> type[BaseHTTPRequestHandler]:
                 if caller.capacity != "operator" and route in access.OPERATOR_ROUTES:
                     raise Refused("operator_only", f"{route} answers the operator only (ADR 0088)")
                 status, result = HTTPStatus.OK, None
+                if route == "/metrics":
+                    if caller.capacity != "operator":
+                        raise Refused("operator_only", "/metrics answers the operator only (ADR 0118)")
+                    self._send_text(relay.metrics_text())
+                    return
                 if route == "/health":
                     status, result = relay.health()
                 elif route == "/world/query":

@@ -190,27 +190,28 @@ full rebuild (ADR 0055).
 
 `relay/relay.py` (`GET /media/{digest}/bank/{extractor}/{output}/{key}` serves a region entry's file by key): `DOOR_ROUTES`, `MEDIA_ROUTES`, `ROUTES`, `Relay`, `make_handler`, `main`.
 `relay/openapi.json` describes every route, answer, and refusal.
-Tests: suite `relay`; `relay/tests/test_relay.py`, `test_media.py`. A local
-probe's `GET /health` needs no login (ADR 0114). Every answer is validated against `openapi.json`, and Door refusals
+`relay/metrics.py` (`GET /metrics`): `archive_counts` (from World's records), `BankCounter`, `media_counts`, `derived_bytes`, `Collector` (background counts, request durations), `exposition`.
+Tests: suite `relay`; `relay/tests/test_relay.py`, `test_media.py`, `test_metrics.py`. A local
+probe's `GET /health` and `GET /metrics` need no login (ADR 0114, 0118). Every answer is validated against `openapi.json`, and Door refusals
 against `door/service.schema.json`.
 Rules: ADR 0054 (Door service), 0056, 0060 (interface and role), 0063 (read
-speed), 0069 (media by digest), 0114 (local health).
+speed), 0069 (media by digest), 0114 (local health), 0118 (metrics).
 
 <!-- wf:gen lines relay/relay.py relay/openapi.json relay/tests/test_relay.py -->
 | file | lines |
 |---|---|
-| `relay/relay.py` | 1216 |
-| `relay/openapi.json` | 4724 |
+| `relay/relay.py` | 1292 |
+| `relay/openapi.json` | 4777 |
 | `relay/tests/test_relay.py` | 981 |
 <!-- /wf:gen -->
 
 <!-- wf:gen anchors relay/relay.py#DOOR_ROUTES relay/relay.py#MEDIA_ROUTES relay/relay.py#ROUTES relay/relay.py#Relay relay/relay.py#make_handler relay/relay.py#main -->
-- `relay/relay.py#DOOR_ROUTES`: line 60
-- `relay/relay.py#MEDIA_ROUTES`: line 67
-- `relay/relay.py#ROUTES`: line 79
-- `relay/relay.py#Relay`: line 739
-- `relay/relay.py#make_handler`: line 927
-- `relay/relay.py#main`: line 1202
+- `relay/relay.py#DOOR_ROUTES`: line 61
+- `relay/relay.py#MEDIA_ROUTES`: line 68
+- `relay/relay.py#ROUTES`: line 80
+- `relay/relay.py#Relay`: line 766
+- `relay/relay.py#make_handler`: line 970
+- `relay/relay.py#main`: line 1278
 <!-- /wf:gen -->
 
 ## enrich (Python)

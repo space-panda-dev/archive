@@ -99,7 +99,8 @@ validate every answer against it.
 Every request must carry an allowed `Tailscale-User-Login`, except a local
 probe's `GET /health` (no identity, not forwarded), which is answered
 `{ok, healthy, writes, commit, build}` and nothing else
-([ADR 0114](../docs/decisions/0114-relay-local-health.md)); a request with an
+([ADR 0114](../docs/decisions/0114-relay-local-health.md)), and its
+`GET /metrics`, the aggregate metrics below; a request with an
 `Origin` must come from a listed origin; bodies are `application/json`, at
 most 1 MiB. Answers are `{"ok": true, "archive": ..., "result": ...}` or
 `{"ok": false, "error": {"code", "message"}, "archive": ...}`. `archive` names
@@ -109,6 +110,7 @@ versions served.
 | Route | Body | Result |
 | --- | --- | --- |
 | `GET /health` | | `{healthy, writes, door, world, commit, build}`; 503 unless Door and World both answer |
+| `GET /metrics` | | the Prometheus text format, operator or local probe only ([ADR 0118](../docs/decisions/0118-relay-metrics.md)) |
 | `POST /world/query` | `{"query": sparql, "projection": n}` | `{snapshot, projection, media_type, data}`: SPARQL Results JSON or N-Triples |
 | `POST /door/admit-dry-run`, `/door/transition-dry-run` | `{"manifest", "records"}` | `{"door": ...}`, Door's answer |
 | `POST /door/admit`, `/door/transition` | the same | `{"door": ..., "world": {"status": "refreshed" \| "stale", ...}}`; refused unless `writes` is `commit` |
@@ -221,3 +223,20 @@ ARCHIVE_TEST_DOOR=$(cabal list-bin door) ARCHIVE_TEST_ARCHIVE=$(cabal list-bin a
 
 Without the two variables, or without `ffmpeg` for the media tests, the
 tests that need them are skipped.
+
+## Metrics
+
+`GET /metrics` ([`metrics.py`](metrics.py), [ADR 0118](../docs/decisions/0118-relay-metrics.md))
+answers in the Prometheus text format, version 0.0.4, for a collector on
+the archive machine (`curl -s http://127.0.0.1:PORT/metrics`) or the
+operator. The first request starts a thread that counts every five minutes:
+record revisions by shape and contract from World's selected generation,
+derivation runs by method, feature-bank entries by extractor (made, failed,
+made by another version) and waiting requests, derived media and coverage
+(stems, practice renders, lead sheets, cover matches), and store sizes by
+state-model class. Each answer gives the latest counts, when they were
+collected, the relay's role, commit and build, the specification the
+manifest names, and request durations by described route and outcome. Every
+label comes from a fixed or code-defined set; no series names an archive,
+object, digest, person, or path. What is not configured has no series, and
+a part that cannot be read is logged (`relay: metrics: ...`) and left out.

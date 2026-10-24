@@ -8,7 +8,7 @@
       "name": "CC0-1.0",
       "identifier": "CC0-1.0"
     },
-    "description": "HTTP over Door's service and World's query and named views (ADRs 0056, 0060, 0082), derived media and practice audio by content digest (ADRs 0069, 0089), document staging (ADR 0085), and exports (ADR 0089), for the operator and, on a relay with a circle, its members (ADR 0088). Every answer is JSON: {ok, archive, result} or {ok: false, error: {code, message}}, except a file route's success, which is the file's bytes, and a local probe's /health, which is liveness only (ADR 0114). Codes are stable; messages are not. The archive block names the archive, its specification, the relay's role and writes, the World projection versions it serves, the caller and their capacity, and the circle."
+    "description": "HTTP over Door's service and World's query and named views (ADRs 0056, 0060, 0082), derived media and practice audio by content digest (ADRs 0069, 0089), document staging (ADR 0085), and exports (ADR 0089), for the operator and, on a relay with a circle, its members (ADR 0088). Every answer is JSON: {ok, archive, result} or {ok: false, error: {code, message}}, except a file route's success, which is the file's bytes, a local probe's /health, which is liveness only (ADR 0114), and /metrics, which is the Prometheus text format (ADR 0118). Codes are stable; messages are not. The archive block names the archive, its specification, the relay's role and writes, the World projection versions it serves, the caller and their capacity, and the circle."
   },
   "components": {
     "schemas": {
@@ -1585,6 +1585,59 @@
           },
           "500": {
             "description": "internal_error, or a server-side Door code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "summary": "Aggregate metrics in the Prometheus text format: record counts, the specification, derivation runs, the feature bank, derived media, coverage, store sizes and request durations; for an unforwarded local probe and the operator (ADR 0118)",
+        "security": [
+          {
+            "tailnet": []
+          },
+          {}
+        ],
+        "responses": {
+          "200": {
+            "description": "The latest counts, collected in the background, and the relay's own series. No series names an archive, object, revision, digest, person or path.",
+            "content": {
+              "text/plain; version=0.0.4": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden_identity, forbidden_origin, or operator_only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "method_not_allowed; Allow names the method.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error.",
             "content": {
               "application/json": {
                 "schema": {
