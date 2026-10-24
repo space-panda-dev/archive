@@ -132,3 +132,4 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0115](0115-ci-skips-prose-only-pushes.md) | CI skips the build for a push that changes only prose no build reads, and cancels superseded runs |
 | [0116](0116-ireal-charts.md) | iReal Pro charts are documents read into a Work's untimed claims, linked by a person, exported as a view, and aligned to recordings |
 | [0117](0117-ci-builds-haskell-once-and-runs-suites-side-by-side.md) | CI builds the Haskell package once, caches it, and runs the suites side by side |
+| [0118](0118-relay-metrics.md) | The relay answers aggregate metrics to a local probe |
