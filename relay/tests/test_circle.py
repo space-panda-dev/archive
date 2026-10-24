@@ -278,6 +278,27 @@ class CircleChecks(unittest.TestCase):
                 self.assertEqual((status, answer["error"]["code"]), (403, "operator_only"))
         self.assertEqual(call("POST", "/world/query", query)[0], 200)
 
+    def test_metrics_are_the_operators_and_count_the_archive(self) -> None:
+        # ADR 0118: a member is refused; the operator reads the counts.
+        call = self.relay()
+        status, _, answer = call("GET", "/metrics", login=MEMBER_LOGIN)
+        self.assertEqual((status, answer["error"]["code"]), (403, "operator_only"))
+        call.harness.relay.metrics.collect()
+        status, headers, body = call("GET", "/metrics")
+        self.assertEqual((status, headers["Content-Type"]), (200, "text/plain; version=0.0.4"))
+        text = body.decode()
+        self.assertIn('archive_coverage{feature="lead_sheet",state="covered"} 1', text)
+        # The fixture's work match names the occurrence it compared.
+        self.assertIn('archive_coverage{feature="work_match",state="covered"} 1', text)
+        self.assertRegex(text, r'archive_bank_entries\{extractor="stems",outcome="made"\} [1-9]')
+        # The recording is the fixture's audio Artifact: it has peaks and stems.
+        self.assertIn('archive_media{kind="peaks",state="derived"} 1', text)
+        self.assertIn('archive_coverage{feature="stems",state="covered"} 1', text)
+        self.assertIn('archive_records_by_contract{contract="archive.claim/lead_sheet"}', text)
+        self.assertRegex(text, r'archive_store_bytes\{store="content",class="evidence"\} [1-9]')
+        for private_value in (self.recording, self.member, self.operator, str(self.archive_root)):
+            self.assertNotIn(private_value, text)
+
     # -- named views ------------------------------------------------------
 
     def test_the_served_views_are_world_s_registry(self) -> None:
