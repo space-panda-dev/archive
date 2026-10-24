@@ -5,12 +5,11 @@
 -- @x-archive-ordered-distinct-refs@, with the reference readers the span
 -- rules share.
 module Archive.Door.Contracts.Profile.Refs
-  ( validateSortedRefsRule
-  , validateSingleRoleRule
-  , validateDistinctRefsRule
-  , validateSortedRefsInstance
-  , validateDistinctRefsInstance
-  , validateOrderedDistinctRefsInstance
+  ( roleRule
+  , distinctRefsRule
+  , checkSortedRefs
+  , checkDistinctRefs
+  , checkOrderedDistinctRefs
   , instanceReferences
   , referencesWithRole
   , refObject
@@ -25,41 +24,36 @@ import Data.List (sort)
 import Data.Text (Text)
 import Data.Text qualified as Text
 
-validateSortedRefsRule :: Value -> Either Text ()
-validateSortedRefsRule (Object fields) = do
-  requireExactKeys "unique sorted references rule" ["role"] fields
-  _ <- requiredText "role" fields
-  pure ()
-validateSortedRefsRule _ = Left "unique sorted references rule must be an object"
-
-validateSingleRoleRule :: Text -> Value -> Either Text ()
-validateSingleRoleRule label (Object fields) = do
+-- | A rule that names one reference role and nothing else
+-- (@x-archive-unique-sorted-refs@, @x-archive-distinct-track-content@,
+-- @x-archive-ordered-distinct-refs@): the role.
+roleRule :: Text -> Value -> Either Text Text
+roleRule label (Object fields) = do
   requireExactKeys label ["role"] fields
-  _ <- requiredText "role" fields
-  pure ()
-validateSingleRoleRule label _ = Left (label <> " must be an object")
+  requiredText "role" fields
+roleRule label _ = Left (label <> " must be an object")
 
-validateDistinctRefsRule :: Value -> Either Text ()
-validateDistinctRefsRule (Object fields) = do
+-- | @x-archive-distinct-refs@: at least two distinct roles whose references
+-- must name different objects.
+distinctRefsRule :: Value -> Either Text [Text]
+distinctRefsRule (Object fields) = do
   requireExactKeys "distinct references rule" ["roles"] fields
   names <- requiredStrings "roles" fields
   if length names >= 2 && length names == length (unique names)
-    then Right ()
+    then Right names
     else Left "distinct references rule must name at least two distinct roles"
-validateDistinctRefsRule _ = Left "distinct references rule must be an object"
+distinctRefsRule _ = Left "distinct references rule must be an object"
 
-validateDistinctRefsInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
-validateDistinctRefsInstance rule instanceValue = do
-  roles <- requiredStrings "roles" rule
+checkDistinctRefs :: [Text] -> KeyMap.KeyMap Value -> Either Text ()
+checkDistinctRefs roles instanceValue = do
   refs <- instanceReferences instanceValue
   objects <- concat <$> mapM (\role -> referencesWithRole role refs >>= mapM refObject) roles
   if length objects == length (unique objects)
     then Right ()
     else Left ("references in roles " <> Text.intercalate ", " roles <> " must name different objects")
 
-validateOrderedDistinctRefsInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
-validateOrderedDistinctRefsInstance rule instanceValue = do
-  role <- requiredText "role" rule
+checkOrderedDistinctRefs :: Text -> KeyMap.KeyMap Value -> Either Text ()
+checkOrderedDistinctRefs role instanceValue = do
   refs <- instanceReferences instanceValue
   objects <- referencesWithRole role refs >>= mapM refObject
   if length objects == length (unique objects)
@@ -78,9 +72,8 @@ refObject :: Value -> Either Text Text
 refObject (Object fields) = requiredText "id" fields
 refObject _ = Left "contract instance reference must be an object"
 
-validateSortedRefsInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
-validateSortedRefsInstance rule instanceValue = do
-  role <- requiredText "role" rule
+checkSortedRefs :: Text -> KeyMap.KeyMap Value -> Either Text ()
+checkSortedRefs role instanceValue = do
   refs <- instanceReferences instanceValue
   mapM_ (validateRefRole role) refs
   keys <- mapM refKey refs

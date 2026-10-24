@@ -3,12 +3,15 @@
 -- | The profile rules over musical structure: @x-archive-pitch-stacks@,
 -- @x-archive-bar-beats@, and @x-archive-metric-modulations@.
 module Archive.Door.Contracts.Profile.Music
-  ( validatePitchStacksRule
-  , validateBarBeatsRule
-  , validateMetricModulationsRule
-  , validatePitchStacksInstance
-  , validateBarBeatsInstance
-  , validateMetricModulationsInstance
+  ( PitchStacks (..)
+  , pitchStacksRule
+  , checkPitchStacks
+  , BarBeats (..)
+  , barBeatsRule
+  , checkBarBeats
+  , MetricModulations (..)
+  , metricModulationsRule
+  , checkMetricModulations
   ) where
 
 import Archive.Door.Contracts.Fields
@@ -37,34 +40,38 @@ import qualified Data.Set as Set
 -- are in ascending order of their classes; the voicing's lowest note is the
 -- bass, and the classes of its other notes include every tone and nothing
 -- outside the tones and uncertain classes.
-validatePitchStacksRule :: Value -> Either Text ()
-validatePitchStacksRule (Object fields) = do
+data PitchStacks = PitchStacks
+  { pitchStacksPath :: [Text]
+  , pitchStacksBass :: Text
+  , pitchStacksTones :: Text
+  , pitchStacksUncertain :: Text
+  , pitchStacksClasses :: Text
+  , pitchStacksVoicing :: Text
+  } deriving (Eq, Show)
+
+pitchStacksRule :: Value -> Either Text PitchStacks
+pitchStacksRule (Object fields) = do
   let names = ["bass", "tones", "uncertain", "classes", "voicing"]
   requireExactKeys "pitch stacks rule" ("payload" : names) fields
-  _ <- requiredPath "payload" fields
+  path <- requiredPath "payload" fields
   named <- mapM (`requiredText` fields) names
-  if length named /= length (unique named)
-    then Left "pitch stacks rule must name distinct fields"
-    else Right ()
-validatePitchStacksRule _ = Left "pitch stacks rule must be an object"
+  case named of
+    [bass, tones, uncertain, classes, voicing] | length named == length (unique named) ->
+      Right (PitchStacks path bass tones uncertain classes voicing)
+    _ -> Left "pitch stacks rule must name distinct fields"
+pitchStacksRule _ = Left "pitch stacks rule must be an object"
 
-validatePitchStacksInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
-validatePitchStacksInstance rule instanceValue = do
-  path <- requiredPath "payload" rule
-  bassName <- requiredText "bass" rule
-  tonesName <- requiredText "tones" rule
-  uncertainName <- requiredText "uncertain" rule
-  classesName <- requiredText "classes" rule
-  voicingName <- requiredText "voicing" rule
+checkPitchStacks :: PitchStacks -> KeyMap.KeyMap Value -> Either Text ()
+checkPitchStacks (PitchStacks path bassName tonesName uncertainName classesName voicingName) instanceValue = do
   payload <- requiredObject "payload" instanceValue
   holders <- pathHolders (path <> [bassName]) payload
   -- A stack has a bass and its tones; a bass-only reading (specification
   -- 0.0.10) has a bass and no tones, and nothing for this rule to check.
   let stacks = filter (\fields -> KeyMap.member (Key.fromText bassName) fields
         && KeyMap.member (Key.fromText tonesName) fields) holders
-  mapM_ (stack bassName tonesName uncertainName classesName voicingName) stacks
+  mapM_ stack stacks
   where
-    stack bassName tonesName uncertainName classesName voicingName fields = do
+    stack fields = do
       bass <- requiredInteger bassName fields
       tones <- integers tonesName fields
       groups <- case KeyMap.lookup (Key.fromText uncertainName) fields of
@@ -106,25 +113,29 @@ validatePitchStacksInstance rule instanceValue = do
 -- optional @beats@ MUST hold one sample per group (or per numerator unit
 -- without a grouping), the first at the bar's @start@, each later than the
 -- one before, and all before its @end@.
-validateBarBeatsRule :: Value -> Either Text ()
-validateBarBeatsRule (Object fields) = do
+data BarBeats = BarBeats
+  { barBeatsPath :: [Text]
+  , barBeatsStart :: Text
+  , barBeatsEnd :: Text
+  , barBeatsNumerator :: Text
+  , barBeatsGrouping :: Text
+  , barBeatsBeats :: Text
+  } deriving (Eq, Show)
+
+barBeatsRule :: Value -> Either Text BarBeats
+barBeatsRule (Object fields) = do
   let names = ["start", "end", "numerator", "grouping", "beats"]
   requireExactKeys "bar beats rule" ("payload" : names) fields
-  _ <- requiredPath "payload" fields
+  path <- requiredPath "payload" fields
   named <- mapM (`requiredText` fields) names
-  if length named /= length (unique named)
-    then Left "bar beats rule must name distinct fields"
-    else Right ()
-validateBarBeatsRule _ = Left "bar beats rule must be an object"
+  case named of
+    [start, end, numerator, grouping, beats] | length named == length (unique named) ->
+      Right (BarBeats path start end numerator grouping beats)
+    _ -> Left "bar beats rule must name distinct fields"
+barBeatsRule _ = Left "bar beats rule must be an object"
 
-validateBarBeatsInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
-validateBarBeatsInstance rule instanceValue = do
-  path <- requiredPath "payload" rule
-  startName <- requiredText "start" rule
-  endName <- requiredText "end" rule
-  numeratorName <- requiredText "numerator" rule
-  groupingName <- requiredText "grouping" rule
-  beatsName <- requiredText "beats" rule
+checkBarBeats :: BarBeats -> KeyMap.KeyMap Value -> Either Text ()
+checkBarBeats (BarBeats path startName endName numeratorName groupingName beatsName) instanceValue = do
   payload <- requiredObject "payload" instanceValue
   let bars = concatMap (\value -> case value of
         Array items -> toList items
@@ -167,32 +178,40 @@ validateBarBeatsInstance rule instanceValue = do
 -- in order of layer and bar. A link with both @pulse_before@ and
 -- @pulse_after@ (a regrouping) MUST name note values (an integer
 -- @denominator@ and optional @dots@) of different lengths: the pulse moves.
-validateMetricModulationsRule :: Value -> Either Text ()
-validateMetricModulationsRule value = do
+data MetricModulations = MetricModulations
+  { modulationsPayload :: Text
+  , modulationsLayers :: Text
+  , modulationsBars :: Text
+  , modulationsStart :: Text
+  , modulationsEnd :: Text
+  , modulationsLayer :: Text
+  , modulationsBar :: Text
+  , modulationsPulseBefore :: Text
+  , modulationsPulseAfter :: Text
+  , modulationsDenominator :: Text
+  , modulationsDots :: Text
+  } deriving (Eq, Show)
+
+metricModulationsRule :: Value -> Either Text MetricModulations
+metricModulationsRule value = do
   let names = [ "payload", "layers", "bars", "start", "end", "layer", "bar", "pulse_before", "pulse_after"
               , "denominator", "dots" ]
   validateNamedFieldsRule "metric modulations rule" names value
   case value of
     Object fields -> do
       named <- mapM (`requiredText` fields) names
-      if length named /= length (unique named)
-        then Left "metric modulations rule must name distinct fields"
-        else Right ()
+      case named of
+        [payload, layers, bars, start, end, layer, bar, pulseBefore, pulseAfter, denominator, dots]
+          | length named == length (unique named) ->
+              Right (MetricModulations payload layers bars start end layer bar pulseBefore pulseAfter denominator dots)
+        _ -> Left "metric modulations rule must name distinct fields"
     _ -> Left "metric modulations rule must be an object"
 
-validateMetricModulationsInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
-validateMetricModulationsInstance rule instanceValue = do
-  payloadName <- requiredText "payload" rule
-  layersName <- requiredText "layers" rule
-  barsName <- requiredText "bars" rule
-  startName <- requiredText "start" rule
-  endName <- requiredText "end" rule
-  layerName <- requiredText "layer" rule
-  barName <- requiredText "bar" rule
-  pulseBeforeName <- requiredText "pulse_before" rule
-  pulseAfterName <- requiredText "pulse_after" rule
-  denominatorName <- requiredText "denominator" rule
-  dotsName <- requiredText "dots" rule
+checkMetricModulations :: MetricModulations -> KeyMap.KeyMap Value -> Either Text ()
+checkMetricModulations
+  (MetricModulations payloadName layersName barsName startName endName layerName barName
+    pulseBeforeName pulseAfterName denominatorName dotsName)
+  instanceValue = do
   payload <- requiredObject "payload" instanceValue
   links <- case KeyMap.lookup (Key.fromText payloadName) payload of
     Nothing -> Right []
@@ -218,8 +237,8 @@ validateMetricModulationsInstance rule instanceValue = do
         else Right ()
       case (KeyMap.lookup (Key.fromText pulseBeforeName) fields, KeyMap.lookup (Key.fromText pulseAfterName) fields) of
         (Just (Object before), Just (Object after)) -> do
-          (beforeTop, beforeBottom) <- noteLength denominatorName dotsName before
-          (afterTop, afterBottom) <- noteLength denominatorName dotsName after
+          (beforeTop, beforeBottom) <- noteLength before
+          (afterTop, afterBottom) <- noteLength after
           if beforeTop * afterBottom == afterTop * beforeBottom
             then Left (payloadName <> " must move the pulse to a note value of another length")
             else Right ()
@@ -232,7 +251,7 @@ validateMetricModulationsInstance rule instanceValue = do
   where
     -- A note value's length in whole notes as (numerator, denominator):
     -- (2^(dots+1) - 1) / (denominator * 2^dots).
-    noteLength denominatorName dotsName fields = do
+    noteLength fields = do
       denominator <- requiredInteger denominatorName fields
       dots <- case KeyMap.lookup (Key.fromText dotsName) fields of
         Nothing -> Right 0

@@ -48,6 +48,7 @@ library
     , Archive.Door.Contracts.Pattern
     , Archive.Door.Contracts.Pointer
     , Archive.Door.Contracts.Profile
+    , Archive.Door.Contracts.Profile.Arrays
     , Archive.Door.Contracts.Profile.Music
     , Archive.Door.Contracts.Profile.Paths
     , Archive.Door.Contracts.Profile.Payload

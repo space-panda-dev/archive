@@ -4,7 +4,7 @@
 -- kinds, or contract a pinned record must have.
 module Archive.Door.Contracts.Profile.ReferenceTargets
   ( ReferenceTargetRule (..)
-  , validateReferenceTargetRules
+  , referenceTargetRules
   , contractReferenceTargets
   , requireSingleClaimTarget
   ) where
@@ -32,13 +32,15 @@ data ReferenceTargetRule = ReferenceTargetRule
   , referenceTargetAny :: [ReferenceTargetRule]
   } deriving (Eq, Show)
 
-validateReferenceTargetRules :: Value -> Either Text ()
-validateReferenceTargetRules (Object roles) = mapM_ validateRole (KeyMap.toList roles)
+-- | The value of @x-archive-reference-targets@: each role's rule, refusing
+-- an empty role.
+referenceTargetRules :: Value -> Either Text [(Text, ReferenceTargetRule)]
+referenceTargetRules (Object roles) = mapM validateRole (KeyMap.toList roles)
   where
     validateRole (role, value)
       | Text.null (Key.toText role) = Left "contract reference target role must not be empty"
-      | otherwise = () <$ parseTargetRule True value
-validateReferenceTargetRules _ = Left "contract reference targets must be an object"
+      | otherwise = (,) (Key.toText role) <$> parseTargetRule True value
+referenceTargetRules _ = Left "contract reference targets must be an object"
 
 -- | One role's target rule, checked strictly. With @any@ (specification
 -- 0.0.9) it lists at least two alternative rules, none of which may itself

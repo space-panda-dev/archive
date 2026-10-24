@@ -4,10 +4,12 @@
 -- @x-archive-track-sample-spans@, and @x-archive-distinct-track-content@,
 -- which join a record's spans to the references that pin their audio.
 module Archive.Door.Contracts.Profile.Spans
-  ( validateOrderedSpansRule
-  , validateTrackSpansRule
-  , validateOrderedSpansInstance
-  , validateTrackSpansInstance
+  ( OrderedSpans (..)
+  , orderedSpansRule
+  , checkOrderedSpans
+  , TrackSpans (..)
+  , trackSpansRule
+  , checkTrackSpans
   , distinctTrackContentRule
   ) where
 
@@ -29,83 +31,107 @@ import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Foldable (toList)
 import Data.Text (Text)
 
-validateOrderedSpansRule :: Value -> Either Text ()
-validateOrderedSpansRule (Object fields) = do
-  requireExactKeys "ordered sample spans rule" ["payload", "role", "start", "end", "rate"] fields
-  mapM_ (`requiredText` fields) ["payload", "role", "start", "end", "rate"]
-  pure ()
-validateOrderedSpansRule _ = Left "ordered sample spans rule must be an object"
+-- | @x-archive-ordered-sample-spans@: the payload array @payload@ holds one
+-- span per reference, every reference in @role@.
+data OrderedSpans = OrderedSpans
+  { orderedSpansPayload :: Text
+  , orderedSpansRole :: Text
+  , orderedSpansStart :: Text
+  , orderedSpansEnd :: Text
+  , orderedSpansRate :: Text
+  } deriving (Eq, Show)
 
-validateTrackSpansRule :: Value -> Either Text ()
-validateTrackSpansRule (Object fields) = do
-  let names = ["payload", "pieces", "role", "start", "end", "rate"]
-  requireExactKeys "track sample spans rule" names fields
-  mapM_ (`requiredText` fields) names
-validateTrackSpansRule _ = Left "track sample spans rule must be an object"
+orderedSpansRule :: Value -> Either Text OrderedSpans
+orderedSpansRule (Object fields) = do
+  requireExactKeys "ordered sample spans rule" ["payload", "role", "start", "end", "rate"] fields
+  OrderedSpans <$> requiredText "payload" fields <*> requiredText "role" fields
+    <*> requiredText "start" fields <*> requiredText "end" fields <*> requiredText "rate" fields
+orderedSpansRule _ = Left "ordered sample spans rule must be an object"
+
+-- | @x-archive-track-sample-spans@: the payload array @payload@ holds
+-- tracks, each an array @pieces@ of spans, and the references in @role@
+-- follow the spans in order.
+data TrackSpans = TrackSpans
+  { trackSpansPayload :: Text
+  , trackSpansPieces :: Text
+  , trackSpansRole :: Text
+  , trackSpansStart :: Text
+  , trackSpansEnd :: Text
+  , trackSpansRate :: Text
+  } deriving (Eq, Show)
+
+trackSpansRule :: Value -> Either Text TrackSpans
+trackSpansRule (Object fields) = do
+  requireExactKeys "track sample spans rule" ["payload", "pieces", "role", "start", "end", "rate"] fields
+  TrackSpans <$> requiredText "payload" fields <*> requiredText "pieces" fields
+    <*> requiredText "role" fields <*> requiredText "start" fields <*> requiredText "end" fields
+    <*> requiredText "rate" fields
+trackSpansRule _ = Left "track sample spans rule must be an object"
 
 -- | Spans are grouped by track, and references of the span role follow the
 -- tracks in order.  Bounds are compared only between consecutive spans of one
 -- track that pin the same Artifact object: different recordings have
 -- different clocks, so their sample offsets are not comparable here.
-validateTrackSpansInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
-validateTrackSpansInstance rule instanceValue = do
-  (role, tracks) <- trackSpans rule instanceValue
-  startName <- requiredText "start" rule
-  endName <- requiredText "end" rule
-  rateName <- requiredText "rate" rule
+checkTrackSpans :: TrackSpans -> KeyMap.KeyMap Value -> Either Text ()
+checkTrackSpans rule instanceValue = do
+  tracks <- trackPieces (trackSpansPayload rule) (trackSpansPieces rule) instanceValue
   refs <- instanceReferences instanceValue
-  roleRefs <- referencesWithRole role refs
+  roleRefs <- referencesWithRole (trackSpansRole rule) refs
   let spanCount = sum (map length tracks)
   if null tracks || any null tracks || spanCount /= length roleRefs
     then Left "track spans and span references must be nonempty and equal in number"
     else pure ()
   pieceObjects <- mapM refObject roleRefs
   let pinned = splitPlaces (map length tracks) pieceObjects
-  mapM_ (validateTrack startName endName rateName) (zip tracks pinned)
+  mapM_ validateTrack (zip tracks pinned)
   where
-    validateTrack startName endName rateName (pieces, objects) = do
-      bounds <- mapM (spanBounds startName endName rateName) pieces
+    validateTrack (pieces, objects) = do
+      bounds <- mapM spanBounds pieces
       let consecutive = zip (zip objects bounds) (drop 1 (zip objects bounds))
       if all (\((left, (_, leftEnd)), (right, (rightStart, _))) -> left /= right || rightStart >= leftEnd) consecutive
         then Right ()
         else Left "spans of one track that pin the same Artifact must not overlap or run backwards"
-    spanBounds startName endName rateName (Object piece) = do
-      start <- requiredInteger startName piece
-      end <- requiredInteger endName piece
-      rate <- requiredInteger rateName piece
+    spanBounds (Object piece) = do
+      start <- requiredInteger (trackSpansStart rule) piece
+      end <- requiredInteger (trackSpansEnd rule) piece
+      rate <- requiredInteger (trackSpansRate rule) piece
       if start >= 0 && end > start && rate > 0
         then Right (start, end)
         else Left "sample span requires 0 <= start < end and positive sample rate"
-    spanBounds _ _ _ _ = Left "sample span must be an object"
+    spanBounds _ = Left "sample span must be an object"
 
-trackSpans :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text (Text, [[Value]])
-trackSpans rule instanceValue = do
-  payloadName <- requiredText "payload" rule
-  piecesName <- requiredText "pieces" rule
-  role <- requiredText "role" rule
+-- | Each track's spans, from the payload array @payloadName@ of tracks that
+-- each hold the array @piecesName@.
+trackPieces :: Text -> Text -> KeyMap.KeyMap Value -> Either Text [[Value]]
+trackPieces payloadName piecesName instanceValue = do
   payload <- requiredObject "payload" instanceValue
   tracks <- case KeyMap.lookup (Key.fromText payloadName) payload of
     Just (Array values) -> Right (toList values)
     _ -> Left "track sample spans payload must be an array"
-  pieces <- mapM (trackPieces piecesName) tracks
-  pure (role, pieces)
+  mapM pieces tracks
   where
-    trackPieces piecesName (Object track) = case KeyMap.lookup (Key.fromText piecesName) track of
+    pieces (Object track) = case KeyMap.lookup (Key.fromText piecesName) track of
       Just (Array values) -> Right (toList values)
       _ -> Left "track must contain a span array"
-    trackPieces _ _ = Left "track must be an object"
+    pieces _ = Left "track must be an object"
 
 -- | For a schema with a distinct-track-content rule, the span role and the
 -- number of span references in each track, in reference order.  Door needs
 -- committed Artifact revisions to compare digests, so the comparison itself
 -- happens where the snapshot is available.
+--
+-- It reads the schema's rules as they are written rather than as a loaded
+-- bundle holds them, because admission calls it with a schema in hand.
 distinctTrackContentRule :: Value -> Value -> Either Text (Maybe (Text, [Int]))
 distinctTrackContentRule (Object schema) (Object instanceValue) =
   case (KeyMap.lookup "x-archive-distinct-track-content" schema, KeyMap.lookup "x-archive-track-sample-spans" schema) of
     (Nothing, _) -> Right Nothing
     (Just (Object distinctRule), Just (Object spansRule)) -> do
       role <- requiredText "role" distinctRule
-      (spanRole, tracks) <- trackSpans spansRule instanceValue
+      payloadName <- requiredText "payload" spansRule
+      piecesName <- requiredText "pieces" spansRule
+      spanRole <- requiredText "role" spansRule
+      tracks <- trackPieces payloadName piecesName instanceValue
       if role /= spanRole
         then Left "distinct track content rule must name the span reference role"
         else Right (Just (role, map length tracks))
@@ -116,29 +142,24 @@ splitPlaces :: [Int] -> [a] -> [[a]]
 splitPlaces [] _ = []
 splitPlaces (count : counts) values = take count values : splitPlaces counts (drop count values)
 
-validateOrderedSpansInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
-validateOrderedSpansInstance rule instanceValue = do
-  payloadName <- requiredText "payload" rule
-  role <- requiredText "role" rule
-  startName <- requiredText "start" rule
-  endName <- requiredText "end" rule
-  rateName <- requiredText "rate" rule
+checkOrderedSpans :: OrderedSpans -> KeyMap.KeyMap Value -> Either Text ()
+checkOrderedSpans rule instanceValue = do
   payload <- requiredObject "payload" instanceValue
-  pieces <- case KeyMap.lookup (Key.fromText payloadName) payload of
+  pieces <- case KeyMap.lookup (Key.fromText (orderedSpansPayload rule)) payload of
     Just (Array values) -> Right (toList values)
     _ -> Left "ordered sample spans payload must be an array"
   refs <- instanceReferences instanceValue
   if null pieces || length pieces /= length refs
     then Left "ordered sample spans and piece references must have equal nonzero length"
     else pure ()
-  mapM_ (validatePiece startName endName rateName) pieces
-  mapM_ (validateRefRole role) refs
+  mapM_ validatePiece pieces
+  mapM_ (validateRefRole (orderedSpansRole rule)) refs
   where
-    validatePiece startName endName rateName (Object piece) = do
-      start <- requiredInteger startName piece
-      end <- requiredInteger endName piece
-      rate <- requiredInteger rateName piece
+    validatePiece (Object piece) = do
+      start <- requiredInteger (orderedSpansStart rule) piece
+      end <- requiredInteger (orderedSpansEnd rule) piece
+      rate <- requiredInteger (orderedSpansRate rule) piece
       if start >= 0 && end > start && rate > 0
         then Right ()
         else Left "sample span requires 0 <= start < end and positive sample rate"
-    validatePiece _ _ _ _ = Left "sample span must be an object"
+    validatePiece _ = Left "sample span must be an object"

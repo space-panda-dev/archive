@@ -18,6 +18,7 @@ module Archive.Door.Contracts
   , validateCoreContext
   , validateCoreContextForSpecification
   , validateContractInstance
+  , validateBundleInstance
   , ReferenceTargetRule (..)
   , contractReferenceTargets
   , distinctTrackContentRule
@@ -51,22 +52,12 @@ import Archive.Door.Contracts.Fields
   , requiredText
   , requiredValue
   )
-import Archive.Door.Contracts.Profile (validateContractProfile)
-import Archive.Door.Contracts.Profile.Music
-  ( validateBarBeatsRule
-  , validateMetricModulationsRule
-  , validatePitchStacksRule
+import Archive.Door.Contracts.Profile
+  ( ProfileRules (..)
+  , checkProfile
+  , parseProfileRules
   )
 import Archive.Door.Contracts.Profile.Paths (pathIntegers)
-import Archive.Door.Contracts.Profile.Payload
-  ( validateAscendingItemsRule
-  , validateDocumentOrderRule
-  , validateMonotonicAnchorsRule
-  , validateNestedRangesRule
-  , validateOrderedInstantsRule
-  , validatePartialDatesRule
-  , validateSubsetRule
-  )
 import Archive.Door.Contracts.Profile.PinnedTargets
   ( SameSubjectRule (..)
   , SpanWindowRule (..)
@@ -84,24 +75,13 @@ import Archive.Door.Contracts.Profile.PinnedTargets
 import Archive.Door.Contracts.Profile.ReferenceTargets
   ( ReferenceTargetRule (..)
   , contractReferenceTargets
-  , validateReferenceTargetRules
   )
-import Archive.Door.Contracts.Profile.Refs
-  ( validateDistinctRefsRule
-  , validateSingleRoleRule
-  , validateSortedRefsRule
-  )
-import Archive.Door.Contracts.Profile.Spans
-  ( distinctTrackContentRule
-  , validateOrderedSpansRule
-  , validateTrackSpansRule
-  )
+import Archive.Door.Contracts.Profile.Spans (distinctTrackContentRule)
 import Archive.Door.Contracts.Schema (walkSchema)
 import Archive.Door.Hex (hexText)
 import Archive.Door.Json (decodeUnique)
 import Archive.Door.RecordRules (validateRecordRules)
 import Archive.Door.RuleSyntax (validateReleaseRules)
-import Archive.Door.SpanRules (sequentialSpansRule)
 import Archive.Door.WhenPinned (effectiveSchema)
 import Archive.Door.Layout
   ( archiveRoot
@@ -112,7 +92,6 @@ import Archive.Door.Layout
 import Control.Exception (IOException, try)
 import Crypto.Hash.SHA256 qualified as SHA256
 import Data.Aeson (Value (..))
-import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Aeson.RFC8785 (encodeCanonical)
 import Data.ByteString.Lazy qualified as LazyByteString
@@ -125,6 +104,11 @@ data ContractBundle = ContractBundle
   , contractBundleSchema :: Value
   , contractBundleContext :: KeyMap.KeyMap Value
   , contractBundleDigest :: Text
+  -- | The schema's profile rules, parsed when the bundle loaded. They are
+  -- the rules of 'contractBundleSchema' as loaded; a caller that swaps in a
+  -- record's effective schema keeps them, since they already hold each
+  -- form's rules.
+  , contractBundleRules :: ProfileRules
   }
   deriving (Eq, Show)
 
@@ -175,7 +159,7 @@ validateBundleValue expectedId expectedVersion digest value = do
       then Left "contract version does not match citation"
       else pure ()
   schema <- requiredValue "schema" fields
-  validateSchema schema
+  rules <- validateSchema schema
   context <- requiredObject "context" fields
   validateContractContext context
   pure ContractBundle
@@ -184,63 +168,34 @@ validateBundleValue expectedId expectedVersion digest value = do
     , contractBundleSchema = schema
     , contractBundleContext = context
     , contractBundleDigest = digest
+    , contractBundleRules = rules
     }
 
-validateSchema :: Value -> Either Text ()
+-- | Check a schema and parse its profile rules. A schema with
+-- @x-archive-when-pinned@ is checked once more for each form the rule makes,
+-- and keeps each form's rules.
+validateSchema :: Value -> Either Text ProfileRules
 validateSchema schema@(Object fields) = do
   marker <- requiredText "$schema" fields
   expect "JSON Schema marker" "https://json-schema.org/draft/2020-12/schema" marker
   additional <- requiredBool "additionalProperties" fields
   if additional then Left "contract schema must be closed" else pure ()
-  maybe (Right ()) validateReferenceTargetRules
-    (KeyMap.lookup (Key.fromText "x-archive-reference-targets") fields)
-  maybe (Right ()) validateOrderedSpansRule
-    (KeyMap.lookup "x-archive-ordered-sample-spans" fields)
-  maybe (Right ()) validateSortedRefsRule
-    (KeyMap.lookup "x-archive-unique-sorted-refs" fields)
-  maybe (Right ()) validateTrackSpansRule
-    (KeyMap.lookup "x-archive-track-sample-spans" fields)
-  maybe (Right ()) (validateSingleRoleRule "distinct track content rule")
-    (KeyMap.lookup "x-archive-distinct-track-content" fields)
-  maybe (Right ()) validateMonotonicAnchorsRule
-    (KeyMap.lookup "x-archive-monotonic-anchors" fields)
-  maybe (Right ()) validateDistinctRefsRule
-    (KeyMap.lookup "x-archive-distinct-refs" fields)
-  maybe (Right ()) (validateSingleRoleRule "ordered distinct references rule")
-    (KeyMap.lookup "x-archive-ordered-distinct-refs" fields)
-  case (KeyMap.member "x-archive-distinct-track-content" fields, KeyMap.member "x-archive-track-sample-spans" fields) of
-    (True, False) -> Left "distinct track content rule requires a track sample spans rule"
-    _ -> Right ()
-  maybe (Right ()) validateOrderedInstantsRule
-    (KeyMap.lookup "x-archive-ordered-instants" fields)
-  maybe (Right ()) (fmap (const ()) . sequentialSpansRule)
-    (KeyMap.lookup "x-archive-sequential-spans" fields)
-  _ <- targetMeasureRule schema
-  _ <- sameSubjectRule schema
-  _ <- spanWindowRule schema
-  maybe (Right ()) validateAscendingItemsRule
-    (KeyMap.lookup "x-archive-ascending-items" fields)
-  maybe (Right ()) validatePitchStacksRule
-    (KeyMap.lookup "x-archive-pitch-stacks" fields)
-  maybe (Right ()) validateBarBeatsRule
-    (KeyMap.lookup "x-archive-bar-beats" fields)
-  maybe (Right ()) validateMetricModulationsRule
-    (KeyMap.lookup "x-archive-metric-modulations" fields)
-  _ <- targetBoundRule schema
-  maybe (Right ()) validatePartialDatesRule
-    (KeyMap.lookup "x-archive-partial-dates" fields)
-  maybe (Right ()) validateSubsetRule (KeyMap.lookup "x-archive-subset" fields)
-  maybe (Right ()) validateDocumentOrderRule (KeyMap.lookup "x-archive-document-order" fields)
-  maybe (Right ()) validateNestedRangesRule (KeyMap.lookup "x-archive-nested-ranges" fields)
-  _ <- targetSamplesRule schema
-  _ <- targetIndexRule schema
-  validateReleaseRules nestedRules fields
+  rules <- parseProfileRules fields
+  forms <- validateReleaseRules nestedRules fields
   walkSchema schema [] schema
+  pure $ case forms of
+    Nothing -> ProfileRules rules
+    Just (role, pinned, unpinned) -> PinnedForms role (formRules pinned) (formRules unpinned)
+  where
+    -- A form's schema has no when-pinned rule of its own (nesting is
+    -- refused), so its rules are a plain list.
+    formRules (ProfileRules form) = form
+    formRules (PinnedForms _ form _) = form
 validateSchema _ = Left "contract schema must be a JSON object"
 
 -- | The schema one map of @x-archive-when-pinned@ makes (D-18), checked as
 -- a bundle's schema is.
-nestedRules :: KeyMap.KeyMap Value -> Either Text ()
+nestedRules :: KeyMap.KeyMap Value -> Either Text ProfileRules
 nestedRules = validateSchema . Object
 
 -- | Validate the instance object that a cited contract owns.  The first
@@ -249,7 +204,17 @@ nestedRules = validateSchema . Object
 -- treated as a non-match, which keeps an incomplete evaluator fail-closed.
 validateContractInstance :: Value -> Value -> Either Text ()
 validateContractInstance schema instanceValue = do
-  validateSchema schema
+  rules <- validateSchema schema
+  checkContractInstance schema rules instanceValue
+
+-- | 'validateContractInstance' for a loaded bundle, whose schema was checked
+-- and whose rules were parsed when it loaded.
+validateBundleInstance :: ContractBundle -> Value -> Either Text ()
+validateBundleInstance bundle =
+  checkContractInstance (contractBundleSchema bundle) (contractBundleRules bundle)
+
+checkContractInstance :: Value -> ProfileRules -> Value -> Either Text ()
+checkContractInstance schema rules instanceValue = do
   matches <- evaluateSchema schema [] schema instanceValue
   if not matches
     then do
@@ -257,7 +222,7 @@ validateContractInstance schema instanceValue = do
       Left ("contract instance does not satisfy its schema: " <> reason)
     else do
       effective <- effectiveSchema schema instanceValue
-      validateContractProfile effective instanceValue
+      checkProfile rules instanceValue
       case (effective, instanceValue) of
         (Object root, Object fields) -> validateRecordRules root fields
         _ -> Right ()
