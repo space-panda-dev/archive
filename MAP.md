@@ -77,12 +77,12 @@ Build: [archive.cabal](archive.cabal): library `door/src`, executables
 | `door/src/Archive/Door/Snapshot/` | `Load.loadSnapshot` (checkpointed or full read), `History` (immutable paths, upgrades, citation order), `Supersession` (heads, cycles), `Memo` (remembered snapshot, ADR 0054), `Data`, `Read` |
 | `door/src/Archive/Door/ProposalContracts.hs` | `validateProposalContracts` over `ContractCitations.hs`, `ReferenceTargets.hs` (what a reference must pin) and `TargetMeasures.hs` (payload bounded by the pinned Claim) |
 | `door/src/Archive/Door/AdmissionCommit.hs` | `commitAdmission`, `refreshVerificationCheckpoint` |
-| `door/src/Archive/Door/TransitionDryRun.hs` | `dryRunTransition`, `planTransition` |
-| `door/src/Archive/Door/Transition/` | `Dispatch.transitionDispatchTable` (contract id/version to kind), `Rules` (per kind), `Replay` (facts from history), `Upgrade` (prospective snapshot), `Plan` |
+| `door/src/Archive/Door/TransitionDryRun.hs` | `dryRunTransition`, `planTransition`; both planners' refusals are `PlanProblem.hs`, proposal-reading refusals `ProposalProblem.hs` |
+| `door/src/Archive/Door/Transition/` | `Dispatch.transitionDispatchTable` (contract id/version to kind), `Rules` (per kind), `Replay` (facts from history), `Upgrade` (prospective snapshot), `Plan`, `Problem` (rule and replay refusals) |
 | `door/src/Archive/Door/TransitionCommit.hs` | `commitTransition` |
 | `door/src/Archive/Door/Contracts.hs` | bundle loading; `validateSchema` parses the `x-archive-*` rule keywords; `validate*Rule` functions implement them |
 | `door/src/Archive/Door/RecordCommit.hs` | `commitRecordBatch*`, write lock, git-annex content |
-| `door/src/Archive/Door/Bootstrap.hs` | `initArchive`, rollback; steps in `Bootstrap/`: `Pinned` (writes under the root descriptor), `Journal` (ownership journal), `Git`, `Contents` (release files, bootstrap records), `Verify` (existing archive), `Tracked`, `Abort` |
+| `door/src/Archive/Door/Bootstrap.hs` | `initArchive`, rollback; steps in `Bootstrap/`: `Pinned` (writes under the root descriptor), `Journal` (ownership journal), `Git`, `Contents` (release files, bootstrap records), `Verify` (existing archive), `Tracked` (`PathTracker`, rollback), `Abort` |
 | `door/src/Archive/Door/VerifiedCheckpoint.hs` | incremental verification checkpoint (ADR 0052) |
 | `door/src/Archive/Door/Refusal.hs` | `RefusalCode` (ADR 0058) |
 | `door/src/Archive/Read/Core.hs`, `Archive/Doctor/Checks.hs` | reading commands, `doctor` |
@@ -109,11 +109,11 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 <!-- wf:gen lines door/src/Archive/Door/AdmissionDryRun.hs door/src/Archive/Door/TransitionDryRun.hs door/src/Archive/Door/Contracts.hs door/src/Archive/Door/RecordCommit.hs door/src/Archive/Door/Bootstrap.hs door/src/Archive/Read/Core.hs door/src/Archive/GitSnapshot.hs door/src/Archive/ProcessPinned.c door/test/Main.hs archive/test/Main.hs -->
 | file | lines |
 |---|---|
-| `door/src/Archive/Door/AdmissionDryRun.hs` | 160 |
-| `door/src/Archive/Door/TransitionDryRun.hs` | 315 |
+| `door/src/Archive/Door/AdmissionDryRun.hs` | 151 |
+| `door/src/Archive/Door/TransitionDryRun.hs` | 312 |
 | `door/src/Archive/Door/Contracts.hs` | 2443 |
 | `door/src/Archive/Door/RecordCommit.hs` | 3010 |
-| `door/src/Archive/Door/Bootstrap.hs` | 465 |
+| `door/src/Archive/Door/Bootstrap.hs` | 467 |
 | `door/src/Archive/Read/Core.hs` | 611 |
 | `door/src/Archive/GitSnapshot.hs` | 661 |
 | `door/src/Archive/ProcessPinned.c` | 799 |
