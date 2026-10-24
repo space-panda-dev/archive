@@ -27,6 +27,7 @@ module Archive.Door.Types
   , validateStoredEnvelope
   ) where
 
+import Archive.Door.Json.Access (requiredArray, requiredText, requiredValue)
 import Data.Aeson (Value (Array, Number, Object, String))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -274,18 +275,6 @@ allowedFields =
   [ "spec", "revision_id", "object_id", "shape", "by", "agent", "at"
   , "payload", "refs", "supersedes", "source", "contracts"
   ]
-
-requiredValue :: Text -> KeyMap.KeyMap Value -> Either Text Value
-requiredValue name object = case KeyMap.lookup (Key.fromText name) object of
-  Nothing -> Left (name <> " is required")
-  Just value -> Right value
-
-requiredText :: Text -> KeyMap.KeyMap Value -> Either Text Text
-requiredText name object = case KeyMap.lookup (Key.fromText name) object of
-  Nothing -> Left (name <> " is required")
-  Just (String value) | Text.null value -> Left (name <> " must not be empty")
-  Just (String value) -> Right value
-  Just _ -> Left (name <> " must be a string")
 
 parseShape :: Text -> Either Text Shape
 parseShape "artifact" = Right Artifact
@@ -596,12 +585,6 @@ containsHostname value =
       && Text.head label /= '-'
       && Text.last label /= '-'
       && Text.all (\character -> isAlphaNum character || character == '-') label
-
-requiredArray :: Text -> KeyMap.KeyMap Value -> Either Text [Value]
-requiredArray name object = case KeyMap.lookup (Key.fromText name) object of
-  Nothing -> Left (name <> " is required")
-  Just (Array values) -> Right (toList values)
-  Just _ -> Left (name <> " must be an array")
 
 parseSupersedes :: Value -> Either Text ParsedReference
 parseSupersedes value = do

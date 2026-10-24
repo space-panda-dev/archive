@@ -45,6 +45,7 @@ library
     , Archive.Door.Hex
     , Archive.Door.Identity
     , Archive.Door.Json
+    , Archive.Door.Json.Access
     , Archive.Door.Layout
     , Archive.Door.MutationError
     , Archive.Door.AgentRules
