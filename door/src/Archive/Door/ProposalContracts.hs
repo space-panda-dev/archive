@@ -40,6 +40,8 @@ import Archive.Door.Types
   , envelopeContracts
   , envelopeObject
   , objectIdText
+  , parseRevisionId
+  , revisionIdText
   )
 import Control.Monad (foldM_)
 import Data.Bifunctor (first)
@@ -75,10 +77,14 @@ validateProposalContracts snapshot proposal = pure $ first contractRuleMessage $
       mapM_ (validateTargetBound targets (proposalRecordDraft record)) effective
       mapM_ (validateTargetSamples targets (proposalRecordDraft record)) effective
       mapM_ (validateTargetIndex targets (proposalRecordDraft record)) effective
-      outsideRule (validateReleaseAdmission [(targetObject t, targetRevision t, targetDraft t) | t <- targets]
+      outsideRule (validateReleaseAdmission
+        [(objectIdText (targetObject t), revisionIdText (targetRevision t), targetDraft t) | t <- targets]
         (proposalRecordDraft record) effective)
-      (revision, _) <- outsideRule (canonicalizeDraftStrict (proposalRecordValue record))
-      pure (earlier <> [Target (objectIdText (envelopeObject (proposalRecordDraft record)))
+      (digest, _) <- outsideRule (canonicalizeDraftStrict (proposalRecordValue record))
+      -- The canonicalizer's digest is always a well-formed revision; the
+      -- parse gives it its type and cannot refuse.
+      revision <- outsideRule (parseRevisionId digest)
+      pure (earlier <> [Target (envelopeObject (proposalRecordDraft record))
         revision (proposalRecordDraft record)])
     -- D-1: the archive holds the local documents that interpret every
     -- admitted record, so a record's `spec` must select a core context this

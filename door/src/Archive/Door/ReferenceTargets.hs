@@ -26,7 +26,6 @@ import Archive.Door.ContractRuleProblem
   , shapeArticle
   )
 import Archive.Door.Snapshot.Data (RecordEntry (..))
-import Archive.Door.Snapshot.Read (revisionText)
 import Archive.Door.Types
   ( ContractCitation (..)
   , DraftEnvelope
@@ -36,7 +35,10 @@ import Archive.Door.Types
   , envelopeBody
   , envelopeContracts
   , envelopeReferences
+  , ObjectId
+  , RevisionId
   , objectIdText
+  , revisionIdText
   )
 import Data.Aeson (Value (Object, String))
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -47,8 +49,8 @@ import qualified Data.Text as Text
 -- | A record a contract reference may name: committed in the snapshot, or an
 -- earlier record of the proposed batch.
 data Target = Target
-  { targetObject :: Text
-  , targetRevision :: Text
+  { targetObject :: ObjectId
+  , targetRevision :: RevisionId
   , targetDraft :: DraftEnvelope
   }
 
@@ -157,7 +159,7 @@ referencedEntry records role reference = do
   -- An exact retry finds its own records both committed and proposed; they
   -- are one revision, so the first match is the committed one.
   case filter
-      (\target -> targetObject target == objectIdText (referenceObject reference)
-        && targetRevision target == revisionText revision) records of
+      (\target -> targetObject target == referenceObject reference
+        && targetRevision target == revision) records of
     target : _ -> Right target
-    [] -> Left (ReferenceNotAdmitted (revisionText revision) (objectIdText (referenceObject reference)))
+    [] -> Left (ReferenceNotAdmitted (revisionIdText revision) (objectIdText (referenceObject reference)))

@@ -20,24 +20,25 @@ import Archive.Door.References
 import Archive.Door.Snapshot.Data (RecordEntry (..))
 import Archive.Door.Distinct (distinctOr)
 import Archive.Door.Snapshot.Problem (SnapshotProblem (..), snapshotCheck)
-import Archive.Door.Snapshot.Read (revisionText)
 import Archive.Door.Types
-  ( Reference (..)
+  ( ObjectId
+  , Reference (..)
+  , RevisionId
   , StoredEnvelope (..)
   , envelopeSupersedes
+  , objectIdText
   )
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import Data.Text (Text)
 
-indexRecords :: [RecordEntry] -> Either SnapshotProblem (StoreIndex, Map.Map Text Text)
+indexRecords :: [RecordEntry] -> Either SnapshotProblem (StoreIndex, Map.Map ObjectId RevisionId)
 indexRecords entries = do
   let revisions = map entryRevision entries
   distinctOr (NotUnique "record revision") revisions
   let store = foldl' add emptyIndex entries
       superseded =
         Set.fromList
-          [ (entryObject entry, revisionText revision)
+          [ (entryObject entry, revision)
           | entry <- entries
           , reference <- envelopeSupersedes (storedDraft (entryEnvelope entry))
           , Just revision <- [referenceRevision reference]
@@ -55,14 +56,15 @@ indexRecords entries = do
       validateReferences store (storedRevision (entryEnvelope entry))
         (storedDraft (entryEnvelope entry))
 
-deriveHeads :: Map.Map Text [RecordEntry] -> Set.Set (Text, Text) -> Either SnapshotProblem (Map.Map Text Text)
+deriveHeads :: Map.Map ObjectId [RecordEntry] -> Set.Set (ObjectId, RevisionId)
+            -> Either SnapshotProblem (Map.Map ObjectId RevisionId)
 deriveHeads byObject superseded = Map.fromList <$> mapM one (Map.toList byObject)
   where
     one (objectId, entries) =
       case filter (not . isSuperseded objectId) entries of
         [entry] -> Right (objectId, entryRevision entry)
-        [] -> Left (NoUnsupersededHead objectId)
-        _ -> Left (ForkedHeads objectId)
+        [] -> Left (NoUnsupersededHead (objectIdText objectId))
+        _ -> Left (ForkedHeads (objectIdText objectId))
     isSuperseded objectId entry =
       Set.member (objectId, entryRevision entry) superseded
 
@@ -72,7 +74,7 @@ detectSupersessionCycles entries = go Set.empty Set.empty allRevisions
     allRevisions = map entryRevision entries
     edges = Map.fromList
       [ (entryRevision entry
-        , [revisionText revision
+        , [revision
           | reference <- envelopeSupersedes (storedDraft (entryEnvelope entry))
           , Just revision <- [referenceRevision reference]])
       | entry <- entries

@@ -37,6 +37,7 @@ import Archive.Door.Types
   ( ContractCitation (..)
   , DraftEnvelope (..)
   , RecordBody (..)
+  , parseRevisionId
   )
 import qualified Archive.GitSnapshot as Git
 import Data.Aeson (Value (..))
@@ -71,11 +72,15 @@ prepareUpgrade gitSnapshot snapshot proposal =
     record : _ -> case canonicalizeDraftStrict (proposalRecordValue record) of
       Left problem -> pure (rejected (OutsideCheck problem))
       Right (revision, _)
-        | Map.member revision (snapshotRevisionIntroducers snapshot) -> pure (Right (snapshot, []))
+        | committed revision -> pure (Right (snapshot, []))
         | otherwise -> prepareNew record
   where
     -- Every refusal here is a transition problem, rendered where it
     -- becomes a planning error.
+    -- Whether the archive already holds this revision. A digest that does
+    -- not parse cannot name a committed revision, as its text matched none.
+    committed revision = either (const False) (`Map.member` snapshotRevisionIntroducers snapshot)
+      (parseRevisionId revision)
     rejected :: TransitionProblem -> Either TransitionPlanningError a
     rejected = Left . TransitionProposalRejected . transitionProblemMessage
     rejectedBy :: Either Text a -> Either TransitionPlanningError a

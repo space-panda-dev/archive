@@ -20,8 +20,6 @@ import Archive.Door.Snapshot.Read
   , expectedRecordRevision
   , integrity
   , mapIntegrity
-  , objectText
-  , revisionText
   )
 import Archive.Door.Types
   ( StoredEnvelope (..)
@@ -97,12 +95,12 @@ extendSnapshot base commit chain records = do
       revision <- integrity (expectedRecordRevision path)
       value <- integrity (decodeBytes path bytes)
       envelope <- mapIntegrity (parseStoredEnvelope value)
-      if revisionText (storedRevision envelope) /= revision
+      if storedRevision envelope /= revision
         then Left (AdmissionSnapshotIntegrityError (EmbeddedRevisionDisagrees path))
         else Right RecordEntry
           { entryPath = path
           , entryRevision = revision
-          , entryObject = objectText (envelopeObject (storedDraft envelope))
+          , entryObject = envelopeObject (storedDraft envelope)
           , entryEnvelope = envelope
           , entryCommitted = CommittedRecord
               { committedPath = path

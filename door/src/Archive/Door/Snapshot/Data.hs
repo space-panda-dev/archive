@@ -19,7 +19,7 @@ module Archive.Door.Snapshot.Data
 import Archive.Door.Contracts (ContractBundle)
 import Archive.Door.References (StoreIndex)
 import Archive.Door.Snapshot.Problem (SnapshotProblem)
-import Archive.Door.Types (StoredEnvelope)
+import Archive.Door.Types (ObjectId, RevisionId, StoredEnvelope)
 import Archive.Door.VerifiedCheckpoint
   ( RecordSummary
   , VerifiedCheckpoint (..)
@@ -37,10 +37,12 @@ data Installed = Installed
   , installedBundle :: ContractBundle
   }
 
+-- | One committed record. Its revision and object are parsed where the
+-- snapshot is loaded, so nothing downstream compares unchecked text.
 data RecordEntry = RecordEntry
   { entryPath :: FilePath
-  , entryRevision :: Text
-  , entryObject :: Text
+  , entryRevision :: RevisionId
+  , entryObject :: ObjectId
   , entryEnvelope :: StoredEnvelope
   , entryCommitted :: CommittedRecord
   }
@@ -51,8 +53,9 @@ data SnapshotData = SnapshotData
   , snapshotRecords :: [RecordEntry]
   , snapshotInstalled :: Map.Map (Text, Text, Text) ContractBundle
   , snapshotStore :: StoreIndex
-  , snapshotHeadsByObject :: Map.Map Text Text
-  , snapshotRevisionIntroducers :: Map.Map Text Text
+  , snapshotHeadsByObject :: Map.Map ObjectId RevisionId
+  , snapshotRevisionIntroducers :: Map.Map RevisionId Text
+  -- ^ the commit that introduced each revision
   , snapshotCommitOrder :: [Text]
   , snapshotImmutableAdditions :: Map.Map FilePath Text
   , snapshotTransitionKeys :: Set.Set (Text, Text, Text)

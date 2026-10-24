@@ -27,7 +27,7 @@ import Archive.Door.Snapshot.Data
   , RecordEntry (..)
   )
 import Archive.Door.Snapshot.Problem (SnapshotProblem (..), snapshotCheck)
-import Archive.Door.Types (ObjectId, RevisionId, objectIdText, revisionIdText)
+import Archive.Door.Types (ObjectId, RevisionId, objectIdText, parseRevisionId, revisionIdText)
 import Archive.GitSnapshot (GitSnapshot)
 import qualified Archive.GitSnapshot as Git
 import Data.Aeson (Value)
@@ -49,7 +49,7 @@ requireIntroducedAt additions expected path = do
     else Left (NotIntroducedWithSpecification path)
 
 loadIntroducers :: Map.Map FilePath Text -> [RecordEntry]
-                -> Either SnapshotProblem (Map.Map Text Text)
+                -> Either SnapshotProblem (Map.Map RevisionId Text)
 loadIntroducers additions entries =
   Map.fromList <$> mapM one entries
   where
@@ -57,8 +57,14 @@ loadIntroducers additions entries =
       commit <- introducedAt additions (entryPath entry)
       pure (entryRevision entry, commit)
 
-expectedRecordRevision :: FilePath -> Either SnapshotProblem Text
-expectedRecordRevision path = digestText <$> snapshotCheck (parseRecordRelativePath path)
+-- | The revision a record path names. Layout's digest parser and
+-- 'parseRevisionId' accept exactly the same spellings, so the second parse
+-- cannot fail once the first has succeeded; it only gives the digest its
+-- revision type.
+expectedRecordRevision :: FilePath -> Either SnapshotProblem RevisionId
+expectedRecordRevision path = snapshotCheck $ do
+  digest <- parseRecordRelativePath path
+  parseRevisionId (digestText digest)
 
 readCanonicalJson
   :: GitSnapshot

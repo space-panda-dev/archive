@@ -43,11 +43,9 @@ import Archive.Door.Snapshot.Read
   , loadIntroducers
   , integrity
   , mapIntegrity
-  , objectText
   , readBytes
   , readCanonicalJson
   , readJson
-  , revisionText
   )
 import Archive.Door.Snapshot.Supersession (deriveHeads, indexRecords)
 import Archive.Door.Types
@@ -58,6 +56,7 @@ import Archive.Door.Types
   , parseObjectId
   , parseRevisionId
   , parseStoredEnvelope
+  , revisionIdText
   )
 import Archive.Door.VerifiedCheckpoint
   ( RecordSummary (..)
@@ -140,14 +139,17 @@ loadCheckpointedSnapshot snapshot verified = runExceptT $ do
       else Right ()
     shaped <- mapM (\(entry, summary) -> (,) entry <$> summaryShapeOf summary)
       [(entry, summary) | entry <- entries, Just summary <- [Map.lookup (entryPath entry) summaries]]
-    objects <- mapM (\(entry, _) -> mapIntegrity (parseObjectId (entryObject entry))) shaped
-    revisions <- mapM (\(entry, _) -> mapIntegrity (parseRevisionId (entryRevision entry))) shaped
-    let store = foldl' (\index ((_, shape), objectId, revision) -> insertKnown objectId revision shape index)
-          emptyIndex (zip3 shaped objects revisions)
+    let store = foldl' (\index (entry, shape) -> insertKnown (entryObject entry) (entryRevision entry) shape index)
+          emptyIndex shaped
+        -- The checkpoint keeps supersession as text. A pair that does not
+        -- parse names no committed record, so it could never match a head
+        -- and is dropped, exactly as comparing the text left it unmatched.
         superseded = Set.fromList
-          [ (summaryObject summary, revision)
+          [ (object, revision)
           | summary <- Map.elems summaries
-          , revision <- summarySupersedes summary
+          , Right object <- [parseObjectId (summaryObject summary)]
+          , supersededText <- summarySupersedes summary
+          , Right revision <- [parseRevisionId supersededText]
           ]
         byObject = Map.fromListWith (<>) [(entryObject entry, [entry]) | entry <- entries]
     heads <- integrity (deriveHeads byObject superseded)
@@ -194,6 +196,9 @@ loadTrustedRecord snapshot summaries path = do
     revision <- integrity (expectedRecordRevision path)
     summary <- maybe (Left (AdmissionSnapshotIntegrityError (MissingFromCheckpoint path)))
       Right (Map.lookup path summaries)
+    -- A checkpoint is not trusted to spell an object: one that does not
+    -- parse fails this load, and the caller falls back to full verification.
+    object <- mapIntegrity (parseObjectId (summaryObject summary))
     let parsed = do
           value <- first snapshotProblemMessage (decodeBytes path bytes)
           stored <- parseStoredEnvelope value
@@ -205,7 +210,7 @@ loadTrustedRecord snapshot summaries path = do
     Right RecordEntry
       { entryPath = path
       , entryRevision = revision
-      , entryObject = summaryObject summary
+      , entryObject = object
       , entryEnvelope = envelope
       , entryCommitted = CommittedRecord
           { committedPath = path
@@ -334,12 +339,12 @@ loadRecord snapshot installed path = do
       then Left (AdmissionSnapshotIntegrityError (NotCanonical path))
       else do
         envelope <- mapIntegrity (parseStoredEnvelope value)
-        let embedded = revisionText (storedRevision envelope)
+        let embedded = storedRevision envelope
         if embedded /= expected
           then Left (AdmissionSnapshotIntegrityError (EmbeddedRevisionDisagrees path))
           else do
             recomputed <- integrity (recomputeRevision value)
-            if recomputed /= embedded
+            if recomputed /= revisionIdText embedded
               then Left (AdmissionSnapshotIntegrityError (RevisionMismatch path))
               else do
                 integrity (first CitationRefused (validateCitations installed value
@@ -347,7 +352,7 @@ loadRecord snapshot installed path = do
                 pure RecordEntry
                   { entryPath = path
                   , entryRevision = embedded
-                  , entryObject = objectText (envelopeObject (storedDraft envelope))
+                  , entryObject = envelopeObject (storedDraft envelope)
                   , entryEnvelope = envelope
                   , entryCommitted = CommittedRecord
                       { committedPath = path
