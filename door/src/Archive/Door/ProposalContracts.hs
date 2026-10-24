@@ -11,7 +11,7 @@ module Archive.Door.ProposalContracts
 
 import Archive.Door.Canonical (canonicalizeDraftStrict)
 import Archive.Door.ContractCitations (contractInstance, validateCitationContexts)
-import Archive.Door.Contracts (ContractBundle (contractBundleSchema), validateContractInstance)
+import Archive.Door.Contracts (validateBundleInstance)
 import Archive.Door.Proposal (Proposal (..), ProposalRecord (..))
 import Archive.Door.ReferenceTargets
   ( Target (..)
@@ -90,5 +90,5 @@ validateProposalContracts snapshot proposal = pure $ do
       bundle <- case Map.lookup key catalog of
         Nothing -> Left ("proposed contract is not installed at this snapshot: " <> contractId citation)
         Just value -> Right value
-      validateContractInstance (contractBundleSchema bundle) instanceValue
+      validateBundleInstance bundle instanceValue
       pure bundle

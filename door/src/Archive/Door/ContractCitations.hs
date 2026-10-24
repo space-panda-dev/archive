@@ -16,10 +16,9 @@ import Archive.Door.Contracts
       ( contractBundleContext
       , contractBundleDigest
       , contractBundleId
-      , contractBundleSchema
       , contractBundleVersion
       )
-  , validateContractInstance
+  , validateBundleInstance
   )
 import Archive.Door.Snapshot.Data (Installed (..))
 import Archive.Door.Snapshot.Read (requireDistinct)
@@ -48,7 +47,7 @@ validateCitations installed value citations = do
       bundle <- case Map.lookup key catalog of
         Nothing -> Left ("contract is not installed at this snapshot: " <> contractId citation)
         Just value' -> Right value'
-      validateContractInstance (contractBundleSchema bundle) instanceValue
+      validateBundleInstance bundle instanceValue
       pure bundle
 
 validateCitationContexts :: [ContractBundle] -> Either Text ()

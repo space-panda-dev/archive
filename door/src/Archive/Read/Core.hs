@@ -24,10 +24,10 @@ import qualified Archive.GitSnapshot as GitSnapshot
 import Archive.GitSnapshot (GitSnapshot)
 import Archive.GitSnapshot (snapshotCommit)
 import Archive.Door.Contracts
-  ( ContractBundle (contractBundleContext, contractBundleSchema)
+  ( ContractBundle (contractBundleContext)
+  , validateBundleInstance
   , validateContractBundle
   , validateCoreContext
-  , validateContractInstance
   )
 import Archive.Door.Hex (hexText)
 import Archive.Door.Json (decodeUnique)
@@ -512,7 +512,7 @@ validateCitedContracts root snapshot path rawValue envelope = collect [] [] cita
       loaded <- loadCommittedContract root snapshot identifier version digest
       let issue = case loaded of
             Left problem -> Just (classifyContractReadFailure path problem)
-            Right bundle -> case validateContractInstance (contractBundleSchema bundle) instanceValue of
+            Right bundle -> case validateBundleInstance bundle instanceValue of
               Left problem -> Just (ParseFailure path
                 ("contract " <> identifier <> " rejected payload: " <> problem))
               Right () -> Nothing
