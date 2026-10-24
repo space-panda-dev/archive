@@ -25,7 +25,7 @@ import Archive.Door.Contracts.Fields
   , unique
   , validateNamedFieldsRule
   )
-import Archive.Door.Contracts.Profile.Paths (pathHolders, payloadPaths, requiredPath)
+import Archive.Door.Contracts.Profile.Paths (pathHolders, pathValues, payloadPaths, requiredPath)
 import Data.Aeson (Value (..))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -55,9 +55,9 @@ checkAscendingItems paths instanceValue = do
   mapM_ (checkPath payload) paths
   where
     checkPath payload path = do
-      holders <- pathHolders path payload
+      reached <- pathValues path payload
       let named = Text.intercalate "." path
-      mapM_ (\fields -> case KeyMap.lookup (Key.fromText (last path)) fields of
+      mapM_ (\found -> case found of
         Nothing -> Right ()
         Just (Array values) -> do
           items <- mapM (orderedItem named) (toList values)
@@ -65,7 +65,7 @@ checkAscendingItems paths instanceValue = do
           if sameKind && and (zipWith (<) items (drop 1 items))
             then Right ()
             else Left (named <> " must be distinct items in ascending order")
-        Just _ -> Left (named <> " must be an array")) holders
+        Just _ -> Left (named <> " must be an array")) reached
     orderedItem _ (Number value) | Right integer <- (floatingOrInteger value :: Either Double Integer) =
       Right (OrderedInteger integer)
     orderedItem _ (String text) = Right (OrderedText text)

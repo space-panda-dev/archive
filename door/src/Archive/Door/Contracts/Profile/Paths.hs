@@ -7,6 +7,7 @@ module Archive.Door.Contracts.Profile.Paths
   , requiredPath
   , descend
   , pathHolders
+  , pathValues
   , pathIntegers
   ) where
 
@@ -62,7 +63,7 @@ descend (name : rest) values = descend rest (concatMap step values)
 -- | The objects that hold a path's last field (or would): every object
 -- reached by the path without its last name, entering arrays.
 pathHolders :: [Text] -> KeyMap.KeyMap Value -> Either Text [KeyMap.KeyMap Value]
-pathHolders path payload = mapM holder (enter (descend (init path) [Object payload]))
+pathHolders path payload = mapM holder (enter (descend (take (length path - 1) path) [Object payload]))
   where
     enter = concatMap (\value -> case value of
       Array items -> toList items
@@ -70,15 +71,22 @@ pathHolders path payload = mapM holder (enter (descend (init path) [Object paylo
     holder (Object fields) = Right fields
     holder _ = Left (Text.intercalate "." path <> " must be reached through objects")
 
+-- | What a path's last field holds on each object that holds it (or
+-- would). A path is nonempty once parsed; an empty one reaches nothing.
+pathValues :: [Text] -> KeyMap.KeyMap Value -> Either Text [Maybe Value]
+pathValues path payload = case reverse path of
+  [] -> Right []
+  final : _ -> map (KeyMap.lookup (Key.fromText final)) <$> pathHolders path payload
+
 -- | The integers a path's last field holds, on every object it reaches: the
 -- field's value, or each item of it when it is an array.
 pathIntegers :: [Text] -> KeyMap.KeyMap Value -> Either Text [Integer]
 pathIntegers path payload = do
-  holders <- pathHolders path payload
-  concat <$> mapM (\fields -> case KeyMap.lookup (Key.fromText (last path)) fields of
+  values <- pathValues path payload
+  concat <$> mapM (\found -> case found of
     Nothing -> Right []
-    Just (Array values) -> mapM integerAt (toList values)
-    Just value -> (: []) <$> integerAt value) holders
+    Just (Array items) -> mapM integerAt (toList items)
+    Just value -> (: []) <$> integerAt value) values
   where
     integerAt (Number value) | Right integer <- (floatingOrInteger value :: Either Double Integer) = Right integer
     integerAt _ = Left (Text.intercalate "." path <> " must hold integers")

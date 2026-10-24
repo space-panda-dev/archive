@@ -172,7 +172,7 @@ validateTermDefinition :: (Key.Key, Value) -> Either Text ()
 validateTermDefinition (key, value)
   | Key.toText key `elem` coreContextNames =
       Left ("contract context redefines core term or prefix: " <> Key.toText key)
-  | Text.null (Key.toText key) || Text.head (Key.toText key) == '@' =
+  | Text.null (Key.toText key) || "@" `Text.isPrefixOf` Key.toText key =
       Left "contract context term name must be non-empty and not a directive"
   | otherwise = case value of
       String term

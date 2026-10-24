@@ -60,7 +60,7 @@ replace needle replacement input
 readNatural :: Text -> Maybe Int
 readNatural value
   | Text.null value = Nothing
-  | Text.head value == '0' && Text.length value > 1 = Nothing
+  | "0" `Text.isPrefixOf` value && Text.length value > 1 = Nothing
   | Text.all (\character -> '0' <= character && character <= '9') value =
       case reads (Text.unpack value) of
         [(index, "")] -> Just index
