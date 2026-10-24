@@ -1,12 +1,11 @@
-{-# LANGUAGE ScopedTypeVariables #-}
-
 -- | How Door's writer turns operating-system exceptions into the diagnostic
 -- text its callers report, and back, and how its steps short-circuit.
 --
 -- The writer's helpers return 'Either' 'Text' so a failure carries the exact
--- message the Python suites and door-test compare; 'tryIO' is the one place
--- an 'Exception.IOException' becomes that text, and 'failText' the one place
--- text becomes an exception inside a 'tryIO' block.
+-- message the Python suites and door-test compare; 'tryIO' is where an
+-- 'Exception.IOException' becomes that text, spelled by
+-- "Archive.Door.IOFailure" as bootstrap and proposal reading spell it, and
+-- 'failText' the one place text becomes an exception inside a 'tryIO' block.
 --
 -- A sequence of such steps runs in 'ExceptT': each step's 'Left' ends the
 -- sequence with that diagnostic, exactly where the nested @case@ it replaces
@@ -20,6 +19,7 @@ module Archive.Door.RecordCommit.Failure
   , unlessEither
   ) where
 
+import Archive.Door.IOFailure (ioFailureText, tryIOException)
 import qualified Control.Exception as Exception
 import Control.Monad (unless)
 import Control.Monad.Trans.Except (ExceptT (..), throwE, withExceptT)
@@ -40,21 +40,19 @@ orFail describe step = withExceptT describe (ExceptT step)
 require :: Monad m => Bool -> e -> ExceptT e m ()
 require condition problem = unless condition (throwE problem)
 
-tryIO :: forall a. IO a -> IO (Either Text a)
-tryIO action = do
-  result <- Exception.try action :: IO (Either Exception.IOException a)
-  pure (either (Left . Text.pack . show) Right result)
+tryIO :: IO a -> IO (Either Text a)
+tryIO action = either (Left . ioFailureText) Right <$> tryIOException action
 
 -- | 'tryIO' for a step whose missing target is an answer, not a failure:
 -- opening an operation journal, index or staging file that a finished
 -- operation already removed.
-tryPresent :: forall a. IO a -> IO (Either Text (Maybe a))
+tryPresent :: IO a -> IO (Either Text (Maybe a))
 tryPresent action = do
-  result <- Exception.try action :: IO (Either Exception.IOException a)
+  result <- tryIOException action
   pure $ case result of
     Left problem
       | isDoesNotExistError problem -> Right Nothing
-      | otherwise -> Left (Text.pack (show problem))
+      | otherwise -> Left (ioFailureText problem)
     Right value -> Right (Just value)
 
 failText :: Text -> IO a

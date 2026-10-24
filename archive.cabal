@@ -86,6 +86,7 @@ library
     , Archive.Door.Contracts.Schema
     , Archive.Door.Contracts.SchemaError
     , Archive.Door.Hex
+    , Archive.Door.IOFailure
     , Archive.Door.Identity
     , Archive.Door.Json
     , Archive.Door.Json.Access
