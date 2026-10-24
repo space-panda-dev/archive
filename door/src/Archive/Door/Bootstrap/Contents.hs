@@ -47,6 +47,7 @@ import Archive.Door.Layout
   , specDocumentPath
   , specVersionFilePath
   )
+import Archive.Door.Types (ObjectId, RevisionId, objectIdText, revisionIdText)
 import qualified Crypto.Hash.SHA256 as SHA256
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -165,25 +166,25 @@ findInitializationContract resources = case filter matches (resourceContracts re
     matches contract = installedContractId contract == initializationContractId
       && installedContractVersion contract == initializationContractVersion
 
-personDraftFor :: Text -> IO Value
+personDraftFor :: ObjectId -> IO Value
 personDraftFor operatorId = pure (object
   [ "spec" .= archiveVersion
-  , "object_id" .= operatorId
+  , "object_id" .= objectIdText operatorId
   , "shape" .= ("entity" :: Text)
   , "by" .= archiveProgram
-  , "agent" .= operatorId
+  , "agent" .= objectIdText operatorId
   , "payload" .= object ["kind" .= ("person" :: Text)]
   , "refs" .= ([] :: [Value])
   , "supersedes" .= ([] :: [Value])
   ])
 
-initializationDraftFor :: Text -> Text -> Text -> InstalledContract -> IO Value
+initializationDraftFor :: ObjectId -> ObjectId -> RevisionId -> InstalledContract -> IO Value
 initializationDraftFor claimId operatorId personRevision contract = pure (object
   [ "spec" .= archiveVersion
-  , "object_id" .= claimId
+  , "object_id" .= objectIdText claimId
   , "shape" .= ("claim" :: Text)
   , "by" .= archiveProgram
-  , "agent" .= operatorId
+  , "agent" .= objectIdText operatorId
   , "payload" .= object []
   , "refs" .= [ reference "author", reference "authorizer", reference "appoints" ]
   , "supersedes" .= ([] :: [Value])
@@ -197,8 +198,8 @@ initializationDraftFor claimId operatorId personRevision contract = pure (object
   where
     reference role = object
       [ "role" .= (role :: Text)
-      , "id" .= operatorId
-      , "revision_id" .= personRevision
+      , "id" .= objectIdText operatorId
+      , "revision_id" .= revisionIdText personRevision
       ]
 
 contractInstance :: Value -> Either Text Value
@@ -224,8 +225,10 @@ contractDestinationFiles root resources = pure
   | contract <- resourceContracts resources
   ]
 
-recordPathFor :: ArchiveRoot -> Text -> Either Text FilePath
-recordPathFor root revision = case parseSha256Digest revision of
+-- | A revision is a SHA-256 digest of the canonical record, and its record
+-- lives at the path that digest fans out to.
+recordPathFor :: ArchiveRoot -> RevisionId -> Either Text FilePath
+recordPathFor root revision = case parseSha256Digest (revisionIdText revision) of
   Right digest -> Right (recordPath root digest)
   Left problem -> Left problem
 

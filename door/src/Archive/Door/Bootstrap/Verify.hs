@@ -50,7 +50,6 @@ import Archive.Door.Types
   , RecordBody (..)
   , RevisionId
   , StoredEnvelope (..)
-  , objectIdText
   , parseObjectId
   , parseStoredEnvelope
   , revisionIdText
@@ -204,7 +203,7 @@ readBootstrapRecords root = do
           , bootstrapEnvelope = envelope
           }
 
-verifyPersonRecord :: [BootstrapRecord] -> ObjectId -> IO (Text, Text)
+verifyPersonRecord :: [BootstrapRecord] -> ObjectId -> IO (RevisionId, Text)
 verifyPersonRecord records operatorId = do
   matching <- pure [record | record <- records
     , envelopeObject (storedDraft (bootstrapEnvelope record)) == operatorId
@@ -219,9 +218,9 @@ verifyPersonRecord records operatorId = do
   let storedRevisionText = revisionText (storedRevision envelope)
   if revision /= storedRevisionText
     then failIO "bootstrap person revision is inconsistent"
-    else pure (revision, at)
+    else pure (storedRevision envelope, at)
 
-verifyClaimRecord :: [BootstrapRecord] -> ObjectId -> ObjectId -> Text -> Text -> Resources -> IO ()
+verifyClaimRecord :: [BootstrapRecord] -> ObjectId -> ObjectId -> RevisionId -> Text -> Resources -> IO ()
 verifyClaimRecord records claimId operatorId personRevision timestamp resources = do
   matching <- pure [record | record <- records
     , envelopeObject (storedDraft (bootstrapEnvelope record)) == claimId]
@@ -229,7 +228,7 @@ verifyClaimRecord records claimId operatorId personRevision timestamp resources 
     [value] -> pure value
     _ -> failIO "bootstrap initialization claim is missing or duplicated"
   contract <- findInitializationContract resources
-  expectedDraft <- initializationDraftFor (objectIdText claimId) (objectIdText operatorId) personRevision contract
+  expectedDraft <- initializationDraftFor claimId operatorId personRevision contract
   instanceValue <- ioEither (contractInstance expectedDraft)
   _ <- ioEither (validateContractInstance (installedContractSchema contract) instanceValue)
   (_, expectedRecord) <- ioEither (finalizeStored timestamp expectedDraft)

@@ -111,6 +111,7 @@ import Archive.Door.RecordCommit
   ( durableBootstrapGitState
   , withArchiveWriteLockAtPinned
   )
+import Archive.Door.Types (parseObjectId, parseRevisionId)
 import Archive.Executables (resolveAnnexExecutable, resolveGitExecutable)
 import qualified Control.Exception as Exception
 import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, throwE, withExceptT)
@@ -271,15 +272,17 @@ build environment operator rootPath rootFd root tracker commitAttempted = do
   manifest <- ioEither (makeArchiveManifest archiveId archiveVersion)
   operatorId <- ioEither (allocateObjectId archiveId operatorNamespace (identityNameText operatorIdentity))
   claimId <- ioEither (allocateObjectId archiveId initializationNamespace "initial")
-  personDraft <- personDraftFor operatorId
+  operatorObject <- ioEither (parseObjectId operatorId)
+  claimObject <- ioEither (parseObjectId claimId)
+  personDraft <- personDraftFor operatorObject
   timestamp <- currentTimestamp
-  (personRevision, personRecord) <- ioEither (finalizeStored timestamp personDraft)
+  (personRevision, personRecord) <- ioEither (finalizeStored timestamp personDraft >>= parsedRevision)
   personRecordPath <- ioEither (recordPathFor root personRevision)
   contract <- findInitializationContract resources
-  claimDraft <- initializationDraftFor claimId operatorId personRevision contract
+  claimDraft <- initializationDraftFor claimObject operatorObject personRevision contract
   claimInstance <- ioEither (contractInstance claimDraft)
   _ <- ioEither (validateContractInstance (installedContractSchema contract) claimInstance)
-  (claimRevision, claimRecord) <- ioEither (finalizeStored timestamp claimDraft)
+  (claimRevision, claimRecord) <- ioEither (finalizeStored timestamp claimDraft >>= parsedRevision)
   claimRecordPath <- ioEither (recordPathFor root claimRevision)
   let files = [ (archiveManifestPath root, archiveManifestBytes manifest)
               , (personRecordPath, encodeCanonical personRecord)
@@ -333,6 +336,9 @@ build environment operator rootPath rootFd root tracker commitAttempted = do
           pure (Right InitResult { initArchiveId = archiveId, initOperatorId = operatorId })
     either (failMutation . addBootstrapContext) pure locked
   where
+    -- A computed revision is always a well-formed digest; parsing it once
+    -- here lets the rest of the build carry a 'RevisionId'.
+    parsedRevision (revision, record) = (\parsed -> (parsed, record)) <$> parseRevisionId revision
     addBootstrapContext problem = case problem of
       MutationUncertain message -> MutationUncertain
         ("bootstrap archive lock or durability barrier failed: " <> message)
