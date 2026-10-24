@@ -24,7 +24,7 @@ import Archive.Door.Contracts.Fields
   ( requireExactKeys
   , requiredInteger
   , requiredObject
-  , requiredString
+  , requiredText
   , requiredStrings
   , unique
   , validateNamedFieldsRule
@@ -43,7 +43,7 @@ import Data.Time (Day, UTCTime, defaultTimeLocale, fromGregorian, fromGregorianV
 validateMonotonicAnchorsRule :: Value -> Either Text ()
 validateMonotonicAnchorsRule (Object fields) = do
   requireExactKeys "monotonic anchors rule" ["payload", "fields"] fields
-  _ <- requiredString "payload" fields
+  _ <- requiredText "payload" fields
   names <- requiredStrings "fields" fields
   if length names == 2 && length (unique names) == 2
     then Right ()
@@ -55,8 +55,8 @@ validateOrderedInstantsRule value = do
   validateNamedFieldsRule "ordered instants rule" ["start", "end"] value
   case value of
     Object fields -> do
-      start <- requiredString "start" fields
-      end <- requiredString "end" fields
+      start <- requiredText "start" fields
+      end <- requiredText "end" fields
       if start == end then Left "ordered instants rule must name two distinct fields" else Right ()
     _ -> Left "ordered instants rule must be an object"
 
@@ -107,16 +107,16 @@ validateSubsetRule :: Value -> Either Text ()
 validateSubsetRule (Object fields) = do
   requireExactKeys "subset rule" ["payload", "items", "of"] fields
   _ <- requiredPath "payload" fields
-  items <- requiredString "items" fields
-  others <- requiredString "of" fields
+  items <- requiredText "items" fields
+  others <- requiredText "of" fields
   if items == others then Left "subset rule must name two different arrays" else Right ()
 validateSubsetRule _ = Left "subset rule must be an object"
 
 validateSubsetInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
 validateSubsetInstance rule instanceValue = do
   path <- requiredPath "payload" rule
-  items <- requiredString "items" rule
-  others <- requiredString "of" rule
+  items <- requiredText "items" rule
+  others <- requiredText "of" rule
   payload <- requiredObject "payload" instanceValue
   holders <- pathHolders (path <> [items]) payload
   mapM_ (\fields -> case (KeyMap.lookup (Key.fromText items) fields, KeyMap.lookup (Key.fromText others) fields) of
@@ -132,7 +132,7 @@ validateSubsetInstance rule instanceValue = do
 validateDocumentOrderRule :: Value -> Either Text ()
 validateDocumentOrderRule (Object fields) = do
   requireExactKeys "document order rule" ["payload", "locator", "line", "within"] fields
-  mapM_ (`requiredString` fields) ["payload", "locator", "line"]
+  mapM_ (`requiredText` fields) ["payload", "locator", "line"]
   within <- requiredStrings "within" fields
   if null within || length within /= length (unique within)
     then Left "document order rule must name distinct within fields"
@@ -141,9 +141,9 @@ validateDocumentOrderRule _ = Left "document order rule must be an object"
 
 validateDocumentOrderInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
 validateDocumentOrderInstance rule instanceValue = do
-  payloadName <- requiredString "payload" rule
-  locatorName <- requiredString "locator" rule
-  lineName <- requiredString "line" rule
+  payloadName <- requiredText "payload" rule
+  locatorName <- requiredText "locator" rule
+  lineName <- requiredText "line" rule
   within <- requiredStrings "within" rule
   payload <- requiredObject "payload" instanceValue
   elements <- case KeyMap.lookup (Key.fromText payloadName) payload of
@@ -174,17 +174,17 @@ validateNestedRangesRule value = do
   validateNamedFieldsRule "nested ranges rule" ["payload", "first", "last", "of"] value
   case value of
     Object fields -> do
-      first <- requiredString "first" fields
-      lastName <- requiredString "last" fields
+      first <- requiredText "first" fields
+      lastName <- requiredText "last" fields
       if first == lastName then Left "nested ranges rule must name two bound fields" else Right ()
     _ -> Left "nested ranges rule must be an object"
 
 validateNestedRangesInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
 validateNestedRangesInstance rule instanceValue = do
-  payloadName <- requiredString "payload" rule
-  firstName <- requiredString "first" rule
-  lastName <- requiredString "last" rule
-  ofName <- requiredString "of" rule
+  payloadName <- requiredText "payload" rule
+  firstName <- requiredText "first" rule
+  lastName <- requiredText "last" rule
+  ofName <- requiredText "of" rule
   payload <- requiredObject "payload" instanceValue
   size <- case KeyMap.lookup (Key.fromText ofName) payload of
     Just (Array values) -> Right (fromIntegral (length values) :: Integer)
@@ -224,8 +224,8 @@ validatePartialDatesRule (Object fields) = do
     else Right ()
   if ordered
     then do
-      start <- requiredString "start" fields
-      end <- requiredString "end" fields
+      start <- requiredText "start" fields
+      end <- requiredText "end" fields
       if start /= end && start `elem` names && end `elem` names
         then Right ()
         else Left "partial dates rule must order two of its fields"
@@ -277,7 +277,7 @@ partialDate text = case Text.splitOn "-" text of
 
 validateMonotonicAnchorsInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
 validateMonotonicAnchorsInstance rule instanceValue = do
-  payloadName <- requiredString "payload" rule
+  payloadName <- requiredText "payload" rule
   names <- requiredStrings "fields" rule
   payload <- requiredObject "payload" instanceValue
   anchors <- case KeyMap.lookup (Key.fromText payloadName) payload of
@@ -296,8 +296,8 @@ validateMonotonicAnchorsInstance rule instanceValue = do
 -- suffix, and the second is not earlier than the first.
 validateOrderedInstantsInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
 validateOrderedInstantsInstance rule instanceValue = do
-  startName <- requiredString "start" rule
-  endName <- requiredString "end" rule
+  startName <- requiredText "start" rule
+  endName <- requiredText "end" rule
   payload <- requiredObject "payload" instanceValue
   start <- utcInstant startName payload
   end <- utcInstant endName payload
@@ -306,7 +306,7 @@ validateOrderedInstantsInstance rule instanceValue = do
     else Left (endName <> " must not be before " <> startName)
   where
     utcInstant name payload = do
-      value <- requiredString name payload
+      value <- requiredText name payload
       case parseUtcInstant value of
         Just instant -> Right instant
         Nothing -> Left (name <> " must be an RFC 3339 instant in UTC with a Z suffix")

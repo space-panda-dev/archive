@@ -22,7 +22,7 @@ module Archive.Door.Contracts.Profile.PinnedTargets
 import Archive.Door.Contracts.Fields
   ( objectValue
   , requireExactKeys
-  , requiredString
+  , requiredText
   , validateNamedFieldsRule
   )
 import Archive.Door.Contracts.Profile.Paths (payloadPaths, requiredPath)
@@ -59,11 +59,11 @@ targetMeasureRule schema@(Object fields) = case KeyMap.lookup "x-archive-target-
     validateWithinFieldsRule "target measure rule" names value
     rule <- objectValue "target measure rule" value
     optional <- optionalFlag rule
-    role <- requiredString "role" rule
-    rate <- requiredString "rate" rule
-    count <- requiredString "count" rule
-    payload <- requiredString "payload" rule
-    end <- requiredString "end" rule
+    role <- requiredText "role" rule
+    rate <- requiredText "rate" rule
+    count <- requiredText "count" rule
+    payload <- requiredText "payload" rule
+    end <- requiredText "end" rule
     within <- optionalWithin rule
     requireSingleClaimTarget "target measure rule" schema role
     pure (Just (TargetMeasureRule role rate count payload end within optional))
@@ -89,9 +89,9 @@ sameSubjectRule schema@(Object fields) = case KeyMap.lookup "x-archive-same-subj
     validateOptionalFieldsRule "same subject rule" names value
     rule <- objectValue "same subject rule" value
     optional <- optionalFlag rule
-    role <- requiredString "role" rule
-    subject <- requiredString "subject" rule
-    equals <- requiredString "equals" rule
+    role <- requiredText "role" rule
+    subject <- requiredText "subject" rule
+    equals <- requiredText "equals" rule
     if role == equals
       then Left "same subject rule must compare two different roles"
       else Right ()
@@ -121,12 +121,12 @@ spanWindowRule schema@(Object fields) = case KeyMap.lookup "x-archive-span-windo
     let names = ["role", "rate", "payload", "start", "end", "spans"]
     validateNamedFieldsRule "span window rule" names value
     rule <- objectValue "span window rule" value
-    role <- requiredString "role" rule
-    rate <- requiredString "rate" rule
-    payload <- requiredString "payload" rule
-    start <- requiredString "start" rule
-    end <- requiredString "end" rule
-    spans <- requiredString "spans" rule
+    role <- requiredText "role" rule
+    rate <- requiredText "rate" rule
+    payload <- requiredText "payload" rule
+    start <- requiredText "start" rule
+    end <- requiredText "end" rule
+    spans <- requiredText "spans" rule
     if start == end
       then Left "span window rule must name two distinct bound fields"
       else Right ()
@@ -160,7 +160,7 @@ optionalFlag rule = case KeyMap.lookup "optional" rule of
 optionalWithin :: KeyMap.KeyMap Value -> Either Text (Maybe Text)
 optionalWithin rule = case KeyMap.lookup "within" rule of
   Nothing -> Right Nothing
-  Just _ -> Just <$> requiredString "within" rule
+  Just _ -> Just <$> requiredText "within" rule
 
 -- | @x-archive-target-samples@: every integer the @paths@ reach MUST be
 -- less than the integer @count@ of the Claim the record pins in @role@ (a
@@ -177,8 +177,8 @@ targetSamplesRule schema@(Object fields) = case KeyMap.lookup "x-archive-target-
   Just value -> do
     rule <- objectValue "target samples rule" value
     requireExactKeys "target samples rule" ["role", "count", "paths"] rule
-    role <- requiredString "role" rule
-    count <- requiredString "count" rule
+    role <- requiredText "role" rule
+    count <- requiredText "count" rule
     paths <- maybe (Left "target samples rule requires paths") (payloadPaths "target samples rule paths")
       (KeyMap.lookup "paths" rule)
     if null paths then Left "target samples rule must name at least one path" else Right ()
@@ -202,9 +202,9 @@ targetIndexRule schema@(Object fields) = case KeyMap.lookup "x-archive-target-in
   Just value -> do
     rule <- objectValue "target index rule" value
     requireExactKeys "target index rule" ["role", "path", "array"] rule
-    role <- requiredString "role" rule
+    role <- requiredText "role" rule
     path <- requiredPath "path" rule
-    array <- requiredString "array" rule
+    array <- requiredText "array" rule
     requireSingleClaimTarget "target index rule" schema role
     pure (Just (TargetIndexRule role path array))
 targetIndexRule _ = Left "contract schema must be an object"
@@ -225,9 +225,9 @@ targetBoundRule schema@(Object fields) = case KeyMap.lookup "x-archive-target-bo
   Just value -> do
     validateNamedFieldsRule "target bound rule" ["role", "field", "bound"] value
     rule <- objectValue "target bound rule" value
-    role <- requiredString "role" rule
-    field <- requiredString "field" rule
-    bound <- requiredString "bound" rule
+    role <- requiredText "role" rule
+    field <- requiredText "field" rule
+    bound <- requiredText "bound" rule
     requireSingleClaimTarget "target bound rule" schema role
     pure (Just (TargetBoundRule role field bound))
 targetBoundRule _ = Left "contract schema must be an object"

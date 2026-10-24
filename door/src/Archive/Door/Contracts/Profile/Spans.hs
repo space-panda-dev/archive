@@ -15,7 +15,7 @@ import Archive.Door.Contracts.Fields
   ( requireExactKeys
   , requiredInteger
   , requiredObject
-  , requiredString
+  , requiredText
   )
 import Archive.Door.Contracts.Profile.Refs
   ( instanceReferences
@@ -32,7 +32,7 @@ import Data.Text (Text)
 validateOrderedSpansRule :: Value -> Either Text ()
 validateOrderedSpansRule (Object fields) = do
   requireExactKeys "ordered sample spans rule" ["payload", "role", "start", "end", "rate"] fields
-  mapM_ (`requiredString` fields) ["payload", "role", "start", "end", "rate"]
+  mapM_ (`requiredText` fields) ["payload", "role", "start", "end", "rate"]
   pure ()
 validateOrderedSpansRule _ = Left "ordered sample spans rule must be an object"
 
@@ -40,7 +40,7 @@ validateTrackSpansRule :: Value -> Either Text ()
 validateTrackSpansRule (Object fields) = do
   let names = ["payload", "pieces", "role", "start", "end", "rate"]
   requireExactKeys "track sample spans rule" names fields
-  mapM_ (`requiredString` fields) names
+  mapM_ (`requiredText` fields) names
 validateTrackSpansRule _ = Left "track sample spans rule must be an object"
 
 -- | Spans are grouped by track, and references of the span role follow the
@@ -50,9 +50,9 @@ validateTrackSpansRule _ = Left "track sample spans rule must be an object"
 validateTrackSpansInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
 validateTrackSpansInstance rule instanceValue = do
   (role, tracks) <- trackSpans rule instanceValue
-  startName <- requiredString "start" rule
-  endName <- requiredString "end" rule
-  rateName <- requiredString "rate" rule
+  startName <- requiredText "start" rule
+  endName <- requiredText "end" rule
+  rateName <- requiredText "rate" rule
   refs <- instanceReferences instanceValue
   roleRefs <- referencesWithRole role refs
   let spanCount = sum (map length tracks)
@@ -80,9 +80,9 @@ validateTrackSpansInstance rule instanceValue = do
 
 trackSpans :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text (Text, [[Value]])
 trackSpans rule instanceValue = do
-  payloadName <- requiredString "payload" rule
-  piecesName <- requiredString "pieces" rule
-  role <- requiredString "role" rule
+  payloadName <- requiredText "payload" rule
+  piecesName <- requiredText "pieces" rule
+  role <- requiredText "role" rule
   payload <- requiredObject "payload" instanceValue
   tracks <- case KeyMap.lookup (Key.fromText payloadName) payload of
     Just (Array values) -> Right (toList values)
@@ -104,7 +104,7 @@ distinctTrackContentRule (Object schema) (Object instanceValue) =
   case (KeyMap.lookup "x-archive-distinct-track-content" schema, KeyMap.lookup "x-archive-track-sample-spans" schema) of
     (Nothing, _) -> Right Nothing
     (Just (Object distinctRule), Just (Object spansRule)) -> do
-      role <- requiredString "role" distinctRule
+      role <- requiredText "role" distinctRule
       (spanRole, tracks) <- trackSpans spansRule instanceValue
       if role /= spanRole
         then Left "distinct track content rule must name the span reference role"
@@ -118,11 +118,11 @@ splitPlaces (count : counts) values = take count values : splitPlaces counts (dr
 
 validateOrderedSpansInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
 validateOrderedSpansInstance rule instanceValue = do
-  payloadName <- requiredString "payload" rule
-  role <- requiredString "role" rule
-  startName <- requiredString "start" rule
-  endName <- requiredString "end" rule
-  rateName <- requiredString "rate" rule
+  payloadName <- requiredText "payload" rule
+  role <- requiredText "role" rule
+  startName <- requiredText "start" rule
+  endName <- requiredText "end" rule
+  rateName <- requiredText "rate" rule
   payload <- requiredObject "payload" instanceValue
   pieces <- case KeyMap.lookup (Key.fromText payloadName) payload of
     Just (Array values) -> Right (toList values)

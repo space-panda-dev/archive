@@ -5,13 +5,15 @@
 -- A bundle is specification-owned, so its fields are read strictly and a
 -- refusal names the field. Every part of "Archive.Door.Contracts" reads
 -- through these, so the refusal text, which the suites compare, has one
--- spelling.
+-- spelling. 'requiredValue' and 'requiredText' are Door's shared accessors;
+-- 'requiredObject' stays here because Contracts refuses a non-object as "must
+-- be a JSON object", not the shared "must be an object".
 module Archive.Door.Contracts.Fields
   ( requireExactKeys
   , objectValue
   , requiredObject
   , requiredValue
-  , requiredString
+  , requiredText
   , requiredBool
   , requiredStrings
   , requiredInteger
@@ -20,6 +22,7 @@ module Archive.Door.Contracts.Fields
   , unique
   ) where
 
+import Archive.Door.Json.Access (requiredText, requiredValue)
 import Data.Aeson (Value (..))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -44,17 +47,6 @@ objectValue label _ = Left (label <> " must be a JSON object")
 requiredObject :: Text -> KeyMap.KeyMap Value -> Either Text (KeyMap.KeyMap Value)
 requiredObject name fields = maybe (Left (name <> " is required")) (objectValue name)
   (KeyMap.lookup (Key.fromText name) fields)
-
-requiredValue :: Text -> KeyMap.KeyMap Value -> Either Text Value
-requiredValue name fields = maybe (Left (name <> " is required")) Right
-  (KeyMap.lookup (Key.fromText name) fields)
-
-requiredString :: Text -> KeyMap.KeyMap Value -> Either Text Text
-requiredString name fields = case KeyMap.lookup (Key.fromText name) fields of
-  Just (String value) | not (Text.null value) -> Right value
-  Just (String _) -> Left (name <> " must not be empty")
-  Just _ -> Left (name <> " must be a string")
-  Nothing -> Left (name <> " is required")
 
 requiredBool :: Text -> KeyMap.KeyMap Value -> Either Text Bool
 requiredBool name fields = case KeyMap.lookup (Key.fromText name) fields of
@@ -85,7 +77,7 @@ requiredInteger name fields = case KeyMap.lookup (Key.fromText name) fields of
 validateNamedFieldsRule :: Text -> [Text] -> Value -> Either Text ()
 validateNamedFieldsRule label names (Object fields) = do
   requireExactKeys label names fields
-  mapM_ (`requiredString` fields) names
+  mapM_ (`requiredText` fields) names
 validateNamedFieldsRule label _ _ = Left (label <> " must be an object")
 
 unique :: Eq a => [a] -> [a]

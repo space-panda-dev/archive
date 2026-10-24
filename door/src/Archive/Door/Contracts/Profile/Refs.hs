@@ -17,7 +17,7 @@ module Archive.Door.Contracts.Profile.Refs
   , validateRefRole
   ) where
 
-import Archive.Door.Contracts.Fields (requireExactKeys, requiredString, requiredStrings, unique)
+import Archive.Door.Contracts.Fields (requireExactKeys, requiredText, requiredStrings, unique)
 import Data.Aeson (Value (..))
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Foldable (toList)
@@ -28,14 +28,14 @@ import Data.Text qualified as Text
 validateSortedRefsRule :: Value -> Either Text ()
 validateSortedRefsRule (Object fields) = do
   requireExactKeys "unique sorted references rule" ["role"] fields
-  _ <- requiredString "role" fields
+  _ <- requiredText "role" fields
   pure ()
 validateSortedRefsRule _ = Left "unique sorted references rule must be an object"
 
 validateSingleRoleRule :: Text -> Value -> Either Text ()
 validateSingleRoleRule label (Object fields) = do
   requireExactKeys label ["role"] fields
-  _ <- requiredString "role" fields
+  _ <- requiredText "role" fields
   pure ()
 validateSingleRoleRule label _ = Left (label <> " must be an object")
 
@@ -59,7 +59,7 @@ validateDistinctRefsInstance rule instanceValue = do
 
 validateOrderedDistinctRefsInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
 validateOrderedDistinctRefsInstance rule instanceValue = do
-  role <- requiredString "role" rule
+  role <- requiredText "role" rule
   refs <- instanceReferences instanceValue
   objects <- referencesWithRole role refs >>= mapM refObject
   if length objects == length (unique objects)
@@ -71,16 +71,16 @@ referencesWithRole role refs = do
   roles <- mapM refRole refs
   pure [ref | (ref, actual) <- zip refs roles, actual == role]
   where
-    refRole (Object fields) = requiredString "role" fields
+    refRole (Object fields) = requiredText "role" fields
     refRole _ = Left "contract instance reference must be an object"
 
 refObject :: Value -> Either Text Text
-refObject (Object fields) = requiredString "id" fields
+refObject (Object fields) = requiredText "id" fields
 refObject _ = Left "contract instance reference must be an object"
 
 validateSortedRefsInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
 validateSortedRefsInstance rule instanceValue = do
-  role <- requiredString "role" rule
+  role <- requiredText "role" rule
   refs <- instanceReferences instanceValue
   mapM_ (validateRefRole role) refs
   keys <- mapM refKey refs
@@ -95,10 +95,10 @@ instanceReferences instanceValue = case KeyMap.lookup "refs" instanceValue of
 
 validateRefRole :: Text -> Value -> Either Text ()
 validateRefRole expected (Object fields) = do
-  actual <- requiredString "role" fields
+  actual <- requiredText "role" fields
   if actual == expected then Right () else Left ("reference role must be " <> expected)
 validateRefRole _ _ = Left "contract instance reference must be an object"
 
 refKey :: Value -> Either Text (Text, Text)
-refKey (Object fields) = (,) <$> requiredString "id" fields <*> requiredString "revision_id" fields
+refKey (Object fields) = (,) <$> requiredText "id" fields <*> requiredText "revision_id" fields
 refKey _ = Left "contract instance reference must be an object"

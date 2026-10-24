@@ -9,7 +9,7 @@ module Archive.Door.Contracts.Profile.ReferenceTargets
   , requireSingleClaimTarget
   ) where
 
-import Archive.Door.Contracts.Fields (objectValue, requireExactKeys, requiredString, unique)
+import Archive.Door.Contracts.Fields (objectValue, requireExactKeys, requiredText, unique)
 import Data.Aeson (Value (..))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -120,8 +120,8 @@ optionalTargetContract fields = case KeyMap.lookup "contract" fields of
   Nothing -> Right Nothing
   Just (Object citation) -> do
     requireExactKeys "contract reference target citation" ["id", "version"] citation
-    identifier <- requiredString "id" citation
-    version <- requiredString "version" citation
+    identifier <- requiredText "id" citation
+    version <- requiredText "version" citation
     pure (Just (identifier, version))
   Just _ -> Left "contract reference target contract must be an object"
 

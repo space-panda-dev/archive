@@ -48,7 +48,7 @@ import Archive.Door.Contracts.Fields
   , requireExactKeys
   , requiredBool
   , requiredObject
-  , requiredString
+  , requiredText
   , requiredValue
   )
 import Archive.Door.Contracts.Profile (validateContractProfile)
@@ -167,8 +167,8 @@ validateBundleValue :: Text -> Text -> Text -> Value -> Either Text ContractBund
 validateBundleValue expectedId expectedVersion digest value = do
   fields <- objectValue "contract bundle" value
   requireExactKeys "contract bundle" ["id", "version", "schema", "context"] fields
-  bundleId <- requiredString "id" fields
-  bundleVersion <- requiredString "version" fields
+  bundleId <- requiredText "id" fields
+  bundleVersion <- requiredText "version" fields
   if bundleId /= expectedId
     then Left "contract identifier does not match citation"
     else if bundleVersion /= expectedVersion
@@ -188,7 +188,7 @@ validateBundleValue expectedId expectedVersion digest value = do
 
 validateSchema :: Value -> Either Text ()
 validateSchema schema@(Object fields) = do
-  marker <- requiredString "$schema" fields
+  marker <- requiredText "$schema" fields
   expect "JSON Schema marker" "https://json-schema.org/draft/2020-12/schema" marker
   additional <- requiredBool "additionalProperties" fields
   if additional then Left "contract schema must be closed" else pure ()

@@ -15,7 +15,7 @@ import Archive.Door.Contracts.Fields
   ( requireExactKeys
   , requiredInteger
   , requiredObject
-  , requiredString
+  , requiredText
   , unique
   , validateNamedFieldsRule
   )
@@ -42,7 +42,7 @@ validatePitchStacksRule (Object fields) = do
   let names = ["bass", "tones", "uncertain", "classes", "voicing"]
   requireExactKeys "pitch stacks rule" ("payload" : names) fields
   _ <- requiredPath "payload" fields
-  named <- mapM (`requiredString` fields) names
+  named <- mapM (`requiredText` fields) names
   if length named /= length (unique named)
     then Left "pitch stacks rule must name distinct fields"
     else Right ()
@@ -51,11 +51,11 @@ validatePitchStacksRule _ = Left "pitch stacks rule must be an object"
 validatePitchStacksInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
 validatePitchStacksInstance rule instanceValue = do
   path <- requiredPath "payload" rule
-  bassName <- requiredString "bass" rule
-  tonesName <- requiredString "tones" rule
-  uncertainName <- requiredString "uncertain" rule
-  classesName <- requiredString "classes" rule
-  voicingName <- requiredString "voicing" rule
+  bassName <- requiredText "bass" rule
+  tonesName <- requiredText "tones" rule
+  uncertainName <- requiredText "uncertain" rule
+  classesName <- requiredText "classes" rule
+  voicingName <- requiredText "voicing" rule
   payload <- requiredObject "payload" instanceValue
   holders <- pathHolders (path <> [bassName]) payload
   -- A stack has a bass and its tones; a bass-only reading (specification
@@ -111,7 +111,7 @@ validateBarBeatsRule (Object fields) = do
   let names = ["start", "end", "numerator", "grouping", "beats"]
   requireExactKeys "bar beats rule" ("payload" : names) fields
   _ <- requiredPath "payload" fields
-  named <- mapM (`requiredString` fields) names
+  named <- mapM (`requiredText` fields) names
   if length named /= length (unique named)
     then Left "bar beats rule must name distinct fields"
     else Right ()
@@ -120,11 +120,11 @@ validateBarBeatsRule _ = Left "bar beats rule must be an object"
 validateBarBeatsInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
 validateBarBeatsInstance rule instanceValue = do
   path <- requiredPath "payload" rule
-  startName <- requiredString "start" rule
-  endName <- requiredString "end" rule
-  numeratorName <- requiredString "numerator" rule
-  groupingName <- requiredString "grouping" rule
-  beatsName <- requiredString "beats" rule
+  startName <- requiredText "start" rule
+  endName <- requiredText "end" rule
+  numeratorName <- requiredText "numerator" rule
+  groupingName <- requiredText "grouping" rule
+  beatsName <- requiredText "beats" rule
   payload <- requiredObject "payload" instanceValue
   let bars = concatMap (\value -> case value of
         Array items -> toList items
@@ -174,7 +174,7 @@ validateMetricModulationsRule value = do
   validateNamedFieldsRule "metric modulations rule" names value
   case value of
     Object fields -> do
-      named <- mapM (`requiredString` fields) names
+      named <- mapM (`requiredText` fields) names
       if length named /= length (unique named)
         then Left "metric modulations rule must name distinct fields"
         else Right ()
@@ -182,17 +182,17 @@ validateMetricModulationsRule value = do
 
 validateMetricModulationsInstance :: KeyMap.KeyMap Value -> KeyMap.KeyMap Value -> Either Text ()
 validateMetricModulationsInstance rule instanceValue = do
-  payloadName <- requiredString "payload" rule
-  layersName <- requiredString "layers" rule
-  barsName <- requiredString "bars" rule
-  startName <- requiredString "start" rule
-  endName <- requiredString "end" rule
-  layerName <- requiredString "layer" rule
-  barName <- requiredString "bar" rule
-  pulseBeforeName <- requiredString "pulse_before" rule
-  pulseAfterName <- requiredString "pulse_after" rule
-  denominatorName <- requiredString "denominator" rule
-  dotsName <- requiredString "dots" rule
+  payloadName <- requiredText "payload" rule
+  layersName <- requiredText "layers" rule
+  barsName <- requiredText "bars" rule
+  startName <- requiredText "start" rule
+  endName <- requiredText "end" rule
+  layerName <- requiredText "layer" rule
+  barName <- requiredText "bar" rule
+  pulseBeforeName <- requiredText "pulse_before" rule
+  pulseAfterName <- requiredText "pulse_after" rule
+  denominatorName <- requiredText "denominator" rule
+  dotsName <- requiredText "dots" rule
   payload <- requiredObject "payload" instanceValue
   links <- case KeyMap.lookup (Key.fromText payloadName) payload of
     Nothing -> Right []

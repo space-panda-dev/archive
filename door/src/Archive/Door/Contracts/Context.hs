@@ -15,7 +15,7 @@ import Archive.Door.Contracts.Fields
   , objectValue
   , requireExactKeys
   , requiredObject
-  , requiredString
+  , requiredText
   )
 import Data.Aeson (Value (..))
 import Data.Aeson.Key qualified as Key
@@ -82,9 +82,9 @@ validateCoreContext (Object outer) = do
   case KeyMap.lookup (Key.fromText "recording") inner of
     Nothing -> Right ()
     Just _ -> checkCoreString inner ("recording", "arch:Recording")
-  requiredString "arch" inner >>= expect "Archive namespace" "urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#"
-  requiredString "by" inner >>= expect "by mapping" "as:generator"
-  requiredString "agent" inner >>= expect "agent mapping" "dcterms:creator"
+  requiredText "arch" inner >>= expect "Archive namespace" "urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#"
+  requiredText "by" inner >>= expect "by mapping" "as:generator"
+  requiredText "agent" inner >>= expect "agent mapping" "dcterms:creator"
   validateCoreObjectMapping inner "at" "prov:generatedAtTime" "xsd:dateTime"
   validateCoreObjectMapping inner "shape" "arch:shape" "@vocab"
   validateCoreObjectMapping inner "kind" "rdf:type" "@vocab"
@@ -153,14 +153,14 @@ expectProtected fields = case KeyMap.lookup "@protected" fields of
 
 checkCoreString :: KeyMap.KeyMap Value -> (Text, Text) -> Either Text ()
 checkCoreString fields (name, expected) =
-  requiredString name fields >>= expect (name <> " mapping") expected
+  requiredText name fields >>= expect (name <> " mapping") expected
 
 validateCoreObjectMapping :: KeyMap.KeyMap Value -> Text -> Text -> Text -> Either Text ()
 validateCoreObjectMapping fields name expectedId expectedType = do
   mapping <- requiredObject name fields
   requireExactKeys (name <> " mapping") ["@id", "@type"] mapping
-  requiredString "@id" mapping >>= expect (name <> " @id") expectedId
-  requiredString "@type" mapping >>= expect (name <> " @type") expectedType
+  requiredText "@id" mapping >>= expect (name <> " @id") expectedId
+  requiredText "@type" mapping >>= expect (name <> " @type") expectedType
 
 validateContractContext :: KeyMap.KeyMap Value -> Either Text ()
 validateContractContext context = do
@@ -188,7 +188,7 @@ validateTermDefinitionObject definition = do
   case unknown of
     [] -> pure ()
     names -> Left ("contract context definition has unknown keys: " <> Text.intercalate ", " names)
-  identifier <- requiredString "@id" definition
+  identifier <- requiredText "@id" definition
   if Text.null identifier
     then Left "contract context definition @id must not be empty"
     else pure ()
