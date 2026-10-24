@@ -145,7 +145,7 @@ library
   hs-source-dirs: door/src
   build-depends:
       aeson >=2.2.1 && <2.4
-    , base >=4.18 && <5
+    , base >=4.19 && <5
     , bytestring
     , cryptohash-sha256
     , containers
@@ -169,7 +169,7 @@ executable door
   build-depends:
       aeson >=2.2.1 && <2.4
     , archive
-    , base >=4.18 && <5
+    , base >=4.19 && <5
     , bytestring
     , directory
     , filepath
@@ -185,7 +185,7 @@ executable archive
   build-depends:
       aeson >=2.2.1 && <2.4
     , archive
-    , base >=4.18 && <5
+    , base >=4.19 && <5
     , bytestring
     , containers
     , text
@@ -215,7 +215,7 @@ test-suite door-test
   build-depends:
       aeson >=2.2.1 && <2.4
     , archive
-    , base >=4.18 && <5
+    , base >=4.19 && <5
     , bytestring
     , containers
     , cryptohash-sha256
@@ -243,7 +243,7 @@ test-suite archive-test
   build-depends:
       aeson >=2.2.1 && <2.4
     , archive
-    , base >=4.18 && <5
+    , base >=4.19 && <5
     , bytestring
     , containers
     , directory

@@ -22,7 +22,7 @@ import Archive.Door.RuleJson
 import Data.Aeson (Value (..))
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Foldable (toList)
-import Data.List (nub, sort)
+import Data.List (nub, sort, unsnoc)
 import Data.Maybe (isJust)
 import Data.Text (Text)
 
@@ -83,7 +83,7 @@ validateFormStructure payload named = do
         _ -> Left (named "repeats" <> " endings must follow a non-empty body")
       if and [low <= high && high <= lastSection | (low, high, _) <- ranges]
           && and (zipWith (\high low -> low == high + 1) ends (drop 1 starts))
-          && take 1 (reverse ends) == [lastSection]
+          && (snd <$> unsnoc ends) == Just lastSection
         then Right ()
         else Left (named "repeats" <> " endings must follow one another to the repeat's last section")
       let ascending = and [and (zipWith (<) numbers (drop 1 numbers)) && not (null numbers) | (_, _, Numbered numbers) <- ranges]

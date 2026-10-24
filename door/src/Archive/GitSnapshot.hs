@@ -43,7 +43,7 @@ import Control.Concurrent.MVar (MVar, modifyMVar, newMVar, readMVar)
 import Control.Exception (IOException, bracket, mask, onException, try)
 import qualified Data.ByteString as StrictByteString
 import qualified Data.ByteString.Lazy as LazyByteString
-import Data.List (isPrefixOf, sort)
+import Data.List (isPrefixOf, sort, unsnoc)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -519,7 +519,7 @@ parseLinearHistory pinned output = do
     values -> Right values
   commits <- mapM parseRow rows
   let identifiers = map fst commits
-  case lastMay identifiers of
+  case snd <$> unsnoc identifiers of
     Nothing -> Left (GitProcessFailure "Git returned an empty history")
     Just tip
       | tip /= pinned -> Left
@@ -555,10 +555,6 @@ parseLinearHistory pinned output = do
       _ -> Left (GitProcessFailure "Git history contains a merge commit")
 
     validCommitText value = validCommit (Text.unpack value)
-
-    lastMay values = case reverse values of
-      final : _ -> Just final
-      [] -> Nothing
 
 validatePath :: FilePath -> Either GitSnapshotError ()
 validatePath path
