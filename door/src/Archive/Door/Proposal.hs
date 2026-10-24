@@ -24,6 +24,7 @@ module Archive.Door.Proposal
   ) where
 
 import Archive.Door.Json (decodeUnique)
+import Archive.Door.ProposalProblem (ProposalProblem (..), proposalProblemMessage)
 import Archive.Door.Types
   ( DraftEnvelope (..)
   , ObjectId
@@ -35,6 +36,7 @@ import Control.Exception (IOException, try)
 import Data.Aeson (Value (..))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.Bifunctor (first)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Char (isControl)
@@ -119,8 +121,12 @@ readAdmissionProposal = readProposal AdmissionProposal
 readTransitionProposal :: FilePath -> IO (Either Text Proposal)
 readTransitionProposal = readProposal TransitionProposal
 
+-- | Read and check a proposal, rendering any problem to its message.
 readProposal :: ProposalKind -> FilePath -> IO (Either Text Proposal)
-readProposal kind root = do
+readProposal kind root = first proposalProblemMessage <$> readProposalChecked kind root
+
+readProposalChecked :: ProposalKind -> FilePath -> IO (Either ProposalProblem Proposal)
+readProposalChecked kind root = do
   absoluteResult <- tryIO (makeAbsolute root)
   case absoluteResult of
     Left problem -> pure (Left problem)
@@ -134,7 +140,7 @@ readProposal kind root = do
 -- The unix package exposes openat/nofollow but no directory-stream operation
 -- relative to an already-open descriptor, so this module does not claim a
 -- race-free stray-entry check.
-readProposalFromFd :: ProposalKind -> FilePath -> Fd -> IO (Either Text Proposal)
+readProposalFromFd :: ProposalKind -> FilePath -> Fd -> IO (Either ProposalProblem Proposal)
 readProposalFromFd kind root rootFd = do
   manifestResult <- readRegularAt manifestLimit (Just rootFd) "manifest.json"
   case manifestResult of
@@ -164,14 +170,14 @@ readProposalFromFd kind root rootFd = do
 -- not semantic: whitespace and key-order changes are changes to the proposal.
 recheckProposal :: Proposal -> IO (Either Text ())
 recheckProposal original = do
-  current <- readProposal (proposalKind original) (proposalRoot original)
-  pure $ case current of
-    Left problem -> Left ("proposal recheck failed: " <> problem)
+  current <- readProposalChecked (proposalKind original) (proposalRoot original)
+  pure $ first proposalProblemMessage $ case current of
+    Left problem -> Left (RecheckFailed problem)
     Right proposal
       | proposalManifestBytes proposal /= proposalManifestBytes original ->
-          Left "proposal manifest changed during operation"
+          Left ManifestChanged
       | sameRecords proposal original -> Right ()
-      | otherwise -> Left "proposal record bytes changed during operation"
+      | otherwise -> Left RecordBytesChanged
   where
     sameRecords left right =
       map recordFingerprint (proposalRecords left)
@@ -180,13 +186,13 @@ recheckProposal original = do
       (proposalRecordPath record, proposalRecordBytes record)
 
 validateProposal :: Proposal -> Either Text ()
-validateProposal proposal = do
+validateProposal proposal = first proposalProblemMessage $ do
   let manifest = proposalManifest proposal
   validateProtocol (proposalKind proposal) (manifestProtocol manifest)
   validateManifestLists (proposalKind proposal) manifest
   validateDraftRelationships (proposalKind proposal) manifest (proposalRecords proposal)
 
-validateManifestLists :: ProposalKind -> ProposalManifest -> Either Text ()
+validateManifestLists :: ProposalKind -> ProposalManifest -> Either ProposalProblem ()
 validateManifestLists kind manifest = do
   requireDistinct "manifest records path" (map pathText (manifestRecords manifest))
   requireDistinct "identity object_id" (map identityObjectId (manifestIdentities manifest))
@@ -196,12 +202,12 @@ validateManifestLists kind manifest = do
       | null (manifestRecords manifest)
           || null (manifestIdentities manifest)
           || null (manifestExpectedHeads manifest) ->
-          Left "transition manifest arrays must be non-empty"
+          Left TransitionArraysEmpty
     _ -> pure ()
   where
     pathText (ProposalPath path) = path
 
-readRecordsAt :: Fd -> [ProposalPath] -> IO (Either Text [ProposalRecord])
+readRecordsAt :: Fd -> [ProposalPath] -> IO (Either ProposalProblem [ProposalRecord])
 readRecordsAt recordsFd = go proposalRecordsLimit []
   where
     go _ records [] = pure (Right (reverse records))
@@ -212,13 +218,13 @@ readRecordsAt recordsFd = go proposalRecordsLimit []
         Right record -> go (remaining - fromIntegral (ByteString.length (proposalRecordBytes record)))
           (record : records) paths
 
-readRecordAt :: Integer -> Fd -> ProposalPath -> IO (Either Text ProposalRecord)
+readRecordAt :: Integer -> Fd -> ProposalPath -> IO (Either ProposalProblem ProposalRecord)
 readRecordAt limit recordsFd path@(ProposalPath pathText) = do
   let filename = Text.unpack (Text.drop (Text.length "records/") pathText)
   result <- readRegularAt limit (Just recordsFd) filename
   pure $ result >>= \bytes -> do
     value <- decodeValue pathText bytes
-    draft <- either (\problem -> Left ("invalid draft " <> pathText <> ": " <> problem)) Right
+    draft <- either (Left . InvalidDraft pathText) Right
       (parseDraftEnvelope value)
     pure ProposalRecord
       { proposalRecordPath = path
@@ -227,19 +233,19 @@ readRecordAt limit recordsFd path@(ProposalPath pathText) = do
       , proposalRecordDraft = draft
       }
 
-readRegularAt :: Integer -> Maybe Fd -> FilePath -> IO (Either Text ByteString.ByteString)
+readRegularAt :: Integer -> Maybe Fd -> FilePath -> IO (Either ProposalProblem ByteString.ByteString)
 readRegularAt limit parent name = do
   opened <- tryIO (openFdAt parent name ReadOnly noFollowFlags)
   case opened of
-    Left problem -> pure (Left (pathMessage name problem))
+    Left problem -> pure (Left (AtPath name problem))
     Right fd -> do
       status <- tryIO (getFdStatus fd)
       case status of
         Left problem -> closeFd fd >> pure (Left problem)
         Right value
-          | not (isRegularFile value) -> closeFd fd >> pure (Left (pathMessage name "must be a regular file"))
+          | not (isRegularFile value) -> closeFd fd >> pure (Left (AtPath name NotRegularFile))
           | toInteger (fileSize value) > limit ->
-              closeFd fd >> pure (Left (pathMessage name "exceeds the proposal size limit"))
+              closeFd fd >> pure (Left (AtPath name ExceedsSizeLimit))
           | otherwise -> do
               handleResult <- tryIO (fdToHandle fd)
               case handleResult of
@@ -250,7 +256,7 @@ readRegularAt limit parent name = do
                   pure $ do
                     content <- bytes
                     if toInteger (ByteString.length content) > limit
-                      then Left (pathMessage name "exceeds the proposal size limit")
+                      then Left (AtPath name ExceedsSizeLimit)
                       else Right content
 
 readAtMost :: Int -> Handle -> IO ByteString.ByteString
@@ -285,14 +291,14 @@ openProposalRoot root = do
 validateProposalAgainstFiles
   :: ProposalManifest
   -> [ProposalRecord]
-  -> Either Text ()
+  -> Either ProposalProblem ()
 validateProposalAgainstFiles manifest records = do
   let listed = manifestRecords manifest
       expected = Set.fromList listed
   if Set.size expected /= length listed
-    then Left "manifest records contains a duplicate path"
+    then Left DuplicateManifestPath
     else if length records /= length listed
-      then Left "proposal record count does not match manifest"
+      then Left RecordCountMismatch
       else do
         validateProtocol kindFromManifest (manifestProtocol manifest)
         validateManifestLists kindFromManifest manifest
@@ -302,7 +308,7 @@ validateProposalAgainstFiles manifest records = do
       | manifestProtocol manifest == "archive-transition/1" = TransitionProposal
       | otherwise = AdmissionProposal
 
-validateDraftRelationships :: ProposalKind -> ProposalManifest -> [ProposalRecord] -> Either Text ()
+validateDraftRelationships :: ProposalKind -> ProposalManifest -> [ProposalRecord] -> Either ProposalProblem ()
 validateDraftRelationships kind manifest records = do
   let drafts = map proposalRecordDraft records
       draftObjects = map (objectText . envelopeObject) drafts
@@ -311,22 +317,22 @@ validateDraftRelationships kind manifest records = do
       headSet = Set.fromList headObjects
       draftSet = Set.fromList draftObjects
   if not (all (\object -> Set.member object headSet) draftObjects)
-    then Left "expected_heads must include every drafted object"
+    then Left HeadsOmitDraft
     else if kind == AdmissionProposal && headSet /= draftSet
-      then Left "expected_heads must contain exactly the drafted objects"
+      then Left HeadsNotExactlyDrafts
     else if not (all (\object -> Set.member object draftSet) identityObjects)
-      then Left "identities must refer to drafted objects"
+      then Left IdentitiesOutsideDrafts
       else if Set.fromList identityObjects /= Set.fromList
         [ expectedObjectId expected
         | expected <- manifestExpectedHeads manifest
         , expectedRevisionId expected == Nothing
         ]
-        then Left "identities must equal the objects with null expected heads"
+        then Left IdentitiesNotNullHeads
       else case kind of
         AdmissionProposal -> validateAdmissionContent manifest drafts
         TransitionProposal -> pure ()
 
-validateAdmissionContent :: ProposalManifest -> [DraftEnvelope] -> Either Text ()
+validateAdmissionContent :: ProposalManifest -> [DraftEnvelope] -> Either ProposalProblem ()
 validateAdmissionContent manifest drafts = do
   let declared = manifestContents manifest
       declaredDigests = map contentDigest declared
@@ -335,28 +341,28 @@ validateAdmissionContent manifest drafts = do
       referencedDigests = map fst referenced
   requireDistinct "content digest" declaredDigests
   if Set.fromList declaredDigests /= Set.fromList referencedDigests
-    then Left "contents must match artifact content references exactly"
+    then Left ContentsMismatch
     else mapM_ (checkContentReference declared) referenced
   where
     checkContentReference declarations (digest, size) =
       case findDigest digest declarations of
-        Nothing -> Left "artifact content is not declared in contents"
+        Nothing -> Left ContentUndeclared
         Just declaration
-          | contentSize declaration /= size -> Left "content size disagrees with artifact payload"
+          | contentSize declaration /= size -> Left ContentSizeDisagrees
           | otherwise -> Right ()
 
-contentReferences :: DraftEnvelope -> Either Text [(Text, Word64)]
+contentReferences :: DraftEnvelope -> Either ProposalProblem [(Text, Word64)]
 contentReferences draft = case envelopeBody draft of
   ArtifactRecord (Object fields) -> case KeyMap.lookup "content" fields of
     Just (Object content) -> case (KeyMap.lookup "digest" content, KeyMap.lookup "size" content) of
       (Just (String digest), Just (Number number)) -> case integerNumber number of
         Just size -> Right [(digest, size)]
-        Nothing -> Left "artifact content size is not a non-negative integer"
-      (Nothing, _) -> Left "artifact content digest is missing"
-      (_, Nothing) -> Left "artifact content size is missing"
-      _ -> Left "artifact content digest and size have invalid types"
-    _ -> Left "artifact content is not an object"
-  ArtifactRecord _ -> Left "artifact payload is not an object"
+        Nothing -> Left ContentSizeNotInteger
+      (Nothing, _) -> Left ContentDigestMissing
+      (_, Nothing) -> Left ContentSizeMissing
+      _ -> Left ContentFieldTypes
+    _ -> Left ContentNotObject
+  ArtifactRecord _ -> Left ArtifactPayloadNotObject
   _ -> Right []
 
 findDigest :: Text -> [ContentDeclaration] -> Maybe ContentDeclaration
@@ -367,7 +373,7 @@ findDigest digest = go
       | contentDigest declaration == digest = Just declaration
       | otherwise = go rest
 
-parseManifest :: ProposalKind -> Value -> Either Text ProposalManifest
+parseManifest :: ProposalKind -> Value -> Either ProposalProblem ProposalManifest
 parseManifest kind (Object fields) = do
   let expected = case kind of
         AdmissionProposal -> ["protocol", "records", "identities", "contents", "expected_heads"]
@@ -383,7 +389,7 @@ parseManifest kind (Object fields) = do
   expectedHeads <- requiredArray "expected_heads" fields >>= mapM parseExpectedHead
   if kind == TransitionProposal
     && (null recordValues || null identities || null expectedHeads)
-    then Left "transition manifest arrays must be non-empty"
+    then Left TransitionArraysEmpty
     else pure ProposalManifest
       { manifestProtocol = protocol
       , manifestRecords = recordValues
@@ -391,36 +397,36 @@ parseManifest kind (Object fields) = do
       , manifestContents = contents
       , manifestExpectedHeads = expectedHeads
       }
-parseManifest _ _ = Left "proposal manifest must be a JSON object"
+parseManifest _ _ = Left ManifestNotObject
 
-validateProtocol :: ProposalKind -> Text -> Either Text ()
+validateProtocol :: ProposalKind -> Text -> Either ProposalProblem ()
 validateProtocol AdmissionProposal "archive-admission/1" = Right ()
 validateProtocol TransitionProposal "archive-transition/1" = Right ()
-validateProtocol _ _ = Left "proposal manifest has the wrong protocol"
+validateProtocol _ _ = Left WrongProtocol
 
-parseRecordPath :: Value -> Either Text ProposalPath
+parseRecordPath :: Value -> Either ProposalProblem ProposalPath
 parseRecordPath (String value) = do
   path <- parseSafePath value
   case Text.splitOn "/" value of
     ["records", filename]
       | Text.isSuffixOf ".json" filename && Text.length filename > 5 -> Right path
-    _ -> Left "record path must be records/<name>.json"
-parseRecordPath _ = Left "manifest records entries must be strings"
+    _ -> Left RecordPathShape
+parseRecordPath _ = Left RecordPathNotString
 
-parseSafePath :: Text -> Either Text ProposalPath
+parseSafePath :: Text -> Either ProposalProblem ProposalPath
 parseSafePath value
-  | Text.null value = Left "proposal path must not be empty"
-  | Text.head value == '/' = Left "proposal path must be relative"
-  | Text.any (== '\0') value = Left "proposal path must not contain NUL"
-  | any invalidComponent components = Left "proposal path contains an unsafe component"
-  | Text.intercalate "/" components /= value = Left "proposal path is not normalized"
+  | Text.null value = Left PathEmpty
+  | Text.head value == '/' = Left PathAbsolute
+  | Text.any (== '\0') value = Left PathHasNul
+  | any invalidComponent components = Left PathUnsafeComponent
+  | Text.intercalate "/" components /= value = Left PathNotNormalized
   | otherwise = Right (ProposalPath value)
   where
     components = Text.splitOn "/" value
     invalidComponent component =
       Text.null component || component == "." || component == ".."
 
-parseIdentityAllocation :: Value -> Either Text IdentityAllocation
+parseIdentityAllocation :: Value -> Either ProposalProblem IdentityAllocation
 parseIdentityAllocation (Object fields) = do
   requireExactKeys "identity allocation" ["object_id", "namespace", "name"] fields
   objectId <- requiredText "object_id" fields >>= validateObjectUrn
@@ -431,13 +437,13 @@ parseIdentityAllocation (Object fields) = do
     , identityNamespace = namespace
     , identityName = name
     }
-parseIdentityAllocation _ = Left "identity allocation must be an object"
+parseIdentityAllocation _ = Left AllocationNotObject
 
-parseContentDeclaration :: Value -> Either Text ContentDeclaration
+parseContentDeclaration :: Value -> Either ProposalProblem ContentDeclaration
 parseContentDeclaration (Object fields) = do
   requireExactKeys "content declaration" ["digest", "size", "annex_key", "staging_remote"] fields
   digest <- requiredText "digest" fields >>= validateDigest
-  size <- requiredNumber "size" fields >>= integerNumberOr "size must be a non-negative integer"
+  size <- requiredNumber "size" fields >>= integerNumberOr DeclaredSizeNotInteger
   annexKey <- requiredText "annex_key" fields >>= processArgument "annex_key"
   remote <- requiredText "staging_remote" fields >>= processArgument "staging_remote"
   pure ContentDeclaration
@@ -446,50 +452,50 @@ parseContentDeclaration (Object fields) = do
     , contentAnnexKey = annexKey
     , contentStagingRemote = remote
     }
-parseContentDeclaration _ = Left "content declaration must be an object"
+parseContentDeclaration _ = Left DeclarationNotObject
 
-parseExpectedHead :: Value -> Either Text ExpectedHead
+parseExpectedHead :: Value -> Either ProposalProblem ExpectedHead
 parseExpectedHead (Object fields) = do
   requireExactKeys "expected head" ["object_id", "revision_id"] fields
   objectId <- requiredText "object_id" fields >>= validateObjectUrn
   revision <- case KeyMap.lookup "revision_id" fields of
     Just Null -> Right Nothing
     Just (String value) -> Just <$> validateDigest value
-    _ -> Left "expected_heads revision_id must be null or a digest"
+    _ -> Left ExpectedRevisionInvalid
   pure ExpectedHead
     { expectedObjectId = objectId
     , expectedRevisionId = revision
     }
-parseExpectedHead _ = Left "expected head must be an object"
+parseExpectedHead _ = Left ExpectedHeadNotObject
 
-requireExactKeys :: Text -> [Text] -> KeyMap.KeyMap Value -> Either Text ()
+requireExactKeys :: Text -> [Text] -> KeyMap.KeyMap Value -> Either ProposalProblem ()
 requireExactKeys label expected fields =
   let actual = sort (map Key.toText (KeyMap.keys fields))
       wanted = sort expected
   in if actual == wanted
        then Right ()
-       else Left (label <> " has unknown or missing fields")
+       else Left (UnknownOrMissingFields label)
 
-requiredText :: Text -> KeyMap.KeyMap Value -> Either Text Text
+requiredText :: Text -> KeyMap.KeyMap Value -> Either ProposalProblem Text
 requiredText name fields = case KeyMap.lookup (Key.fromText name) fields of
   Just (String value) | not (Text.null value) -> Right value
-  Just (String _) -> Left (name <> " must not be empty")
-  Just _ -> Left (name <> " must be a string")
-  Nothing -> Left (name <> " is required")
+  Just (String _) -> Left (FieldEmpty name)
+  Just _ -> Left (FieldNotString name)
+  Nothing -> Left (FieldRequired name)
 
-requiredArray :: Text -> KeyMap.KeyMap Value -> Either Text [Value]
+requiredArray :: Text -> KeyMap.KeyMap Value -> Either ProposalProblem [Value]
 requiredArray name fields = case KeyMap.lookup (Key.fromText name) fields of
   Just (Array values) -> Right (toList values)
-  Just _ -> Left (name <> " must be an array")
-  Nothing -> Left (name <> " is required")
+  Just _ -> Left (FieldNotArray name)
+  Nothing -> Left (FieldRequired name)
 
-requiredNumber :: Text -> KeyMap.KeyMap Value -> Either Text Value
+requiredNumber :: Text -> KeyMap.KeyMap Value -> Either ProposalProblem Value
 requiredNumber name fields = case KeyMap.lookup (Key.fromText name) fields of
   Just value@(Number _) -> Right value
-  Just _ -> Left (name <> " must be a number")
-  Nothing -> Left (name <> " is required")
+  Just _ -> Left (FieldNotNumber name)
+  Nothing -> Left (FieldRequired name)
 
-integerNumberOr :: Text -> Value -> Either Text Word64
+integerNumberOr :: ProposalProblem -> Value -> Either ProposalProblem Word64
 integerNumberOr message value = maybe (Left message) Right (integerNumberValue value)
 
 integerNumber :: Scientific -> Maybe Word64
@@ -503,22 +509,22 @@ integerNumberValue :: Value -> Maybe Word64
 integerNumberValue (Number number) = integerNumber number
 integerNumberValue _ = Nothing
 
-validateDigest :: Text -> Either Text Text
+validateDigest :: Text -> Either ProposalProblem Text
 validateDigest value
   | Text.length value == 71
       && Text.isPrefixOf "sha256:" value
       && Text.all isLowerHex (Text.drop 7 value) = Right value
-  | otherwise = Left "digest must be sha256 followed by 64 lowercase hexadecimal characters"
+  | otherwise = Left DigestInvalid
   where
     isLowerHex character = ('0' <= character && character <= '9')
       || ('a' <= character && character <= 'f')
 
-validateObjectUrn :: Text -> Either Text Text
+validateObjectUrn :: Text -> Either ProposalProblem Text
 validateObjectUrn value
   | Text.length value == 45
       && Text.isPrefixOf "urn:uuid:" value
       && validUuid uuid = Right value
-  | otherwise = Left "object_id must be a lowercase urn:uuid identifier"
+  | otherwise = Left ObjectUrnInvalid
   where
     uuid = Text.drop 9 value
     validUuid candidate = Text.length candidate == 36
@@ -529,61 +535,58 @@ validateObjectUrn value
     isLowerHex character = ('0' <= character && character <= '9')
       || ('a' <= character && character <= 'f')
 
-validateNamespace :: Text -> Either Text Text
+validateNamespace :: Text -> Either ProposalProblem Text
 validateNamespace value
   | all validSegment (Text.splitOn "/" value) = Right value
-  | otherwise = Left "identity namespace has an invalid segment"
+  | otherwise = Left NamespaceInvalid
   where
     validSegment segment = case Text.uncons segment of
-      Just (first, rest) -> isLowerLetter first && Text.all validTail rest
+      Just (initial, rest) -> isLowerLetter initial && Text.all validTail rest
       Nothing -> False
     validTail character = isLowerLetter character || isDigit character
       || character == '.' || character == '_' || character == '-'
     isLowerLetter character = 'a' <= character && character <= 'z'
     isDigit character = '0' <= character && character <= '9'
 
-validateIdentityName :: Text -> Either Text Text
+validateIdentityName :: Text -> Either ProposalProblem Text
 validateIdentityName value
   | not (Text.null value) && Text.all valid value = Right value
-  | otherwise = Left "identity name has invalid characters"
+  | otherwise = Left IdentityNameInvalid
   where
     valid character = ('a' <= character && character <= 'z')
       || ('A' <= character && character <= 'Z')
       || ('0' <= character && character <= '9')
       || character == '-' || character == '_'
 
-processArgument :: Text -> Text -> Either Text Text
+processArgument :: Text -> Text -> Either ProposalProblem Text
 processArgument field value
-  | Text.any isControl value = Left (field <> " must not contain control characters")
+  | Text.any isControl value = Left (ControlCharacters field)
   | otherwise = Right value
 
-requireDistinct :: Text -> [Text] -> Either Text ()
+requireDistinct :: Text -> [Text] -> Either ProposalProblem ()
 requireDistinct label values
   | Set.size (Set.fromList values) == length values = Right ()
-  | otherwise = Left (label <> " must be unique")
+  | otherwise = Left (NotUnique label)
 
 objectText :: ObjectId -> Text
 objectText = objectIdText
 
-decodeValue :: Text -> ByteString.ByteString -> Either Text Value
+decodeValue :: Text -> ByteString.ByteString -> Either ProposalProblem Value
 decodeValue label bytes = case decodeUnique (LazyByteString.fromStrict bytes) of
-  Left problem -> Left ("invalid JSON in " <> label <> ": " <> Text.pack problem)
+  Left problem -> Left (InvalidJson label problem)
   Right value -> Right value
 
-pathMessage :: FilePath -> Text -> Text
-pathMessage path message = Text.pack path <> ": " <> message
-
-finallyIO :: Fd -> IO (Either Text a) -> IO (Either Text a)
+finallyIO :: Fd -> IO (Either ProposalProblem a) -> IO (Either ProposalProblem a)
 finallyIO fd action = do
   result <- tryIO action
   cleanup <- tryIO (closeFd fd)
   case cleanup of
-    Left problem -> pure (Left ("proposal descriptor close failed: " <> problem))
+    Left problem -> pure (Left (DescriptorCloseFailed problem))
     Right () -> pure (either Left id result)
 
-tryIO :: forall a. IO a -> IO (Either Text a)
+tryIO :: forall a. IO a -> IO (Either ProposalProblem a)
 tryIO action = do
   result <- try action :: IO (Either IOException a)
   pure $ case result of
-    Left problem -> Left ("proposal I/O failure: " <> Text.pack (show problem))
+    Left problem -> Left (ProposalIoFailure (Text.pack (show problem)))
     Right value -> Right value
