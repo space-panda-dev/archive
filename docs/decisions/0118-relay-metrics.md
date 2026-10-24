@@ -1,6 +1,6 @@
 # 0118. The relay answers aggregate metrics to a local probe
 
-Status: proposed; amends [ADR 0114](0114-relay-local-health.md)'s local
+Status: accepted; amends [ADR 0114](0114-relay-local-health.md)'s local
 probe, which this extends from `/health` to `/metrics`
 
 ## Context
