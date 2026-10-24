@@ -152,11 +152,15 @@ class ArchiveCountChecks(unittest.TestCase):
                    refs=[ref("occurrence", "urn:uuid:o1", "r-o1"), ref("work", other_work)]),
             record("r-m2", "urn:uuid:m2", "claim", "archive.claim/work_match",
                    refs=[ref("occurrence", "urn:uuid:o1", "r-o1"), ref("work", work)]),
+            # A version 3 window match names suggested spans, not an occurrence.
+            record("r-m3", "urn:uuid:m3", "claim", "archive.claim/work_match",
+                   refs=[ref("suggestions", "urn:uuid:sg", "r-sg"), ref("work", work),
+                         ref("corpus", "urn:uuid:o2", "r-o2")]),
         ]
 
     def test_records_are_counted_by_shape_and_contract(self) -> None:
         counts = metrics.archive_counts(self.records())
-        self.assertEqual(counts["shapes"], {"artifact": 3, "claim": 13, "transition": 1, "entity": 3})
+        self.assertEqual(counts["shapes"], {"artifact": 3, "claim": 14, "transition": 1, "entity": 3})
         self.assertEqual(counts["contracts"]["archive.claim/lead_sheet"], 2)
         self.assertEqual(counts["contracts"]["archive.claim/derivation_run"], 3)
         self.assertNotIn("", counts["contracts"])

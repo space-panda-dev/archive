@@ -233,7 +233,7 @@ operator. The first request starts a thread that counts every five minutes:
 record revisions by shape and contract from World's selected generation,
 derivation runs by method, feature-bank entries by extractor (made, failed,
 made by another version) and waiting requests, derived media and coverage
-(stems, practice renders, lead sheets, cover matches), and store sizes by
+(stems, practice renders, lead sheets, work matches), and store sizes by
 state-model class. Each answer gives the latest counts, when they were
 collected, the relay's role, commit and build, the specification the
 manifest names, and request durations by described route and outcome. Every

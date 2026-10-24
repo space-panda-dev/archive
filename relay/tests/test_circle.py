@@ -288,6 +288,8 @@ class CircleChecks(unittest.TestCase):
         self.assertEqual((status, headers["Content-Type"]), (200, "text/plain; version=0.0.4"))
         text = body.decode()
         self.assertIn('archive_coverage{feature="lead_sheet",state="covered"} 1', text)
+        # The fixture's work match names the occurrence it compared.
+        self.assertIn('archive_coverage{feature="work_match",state="covered"} 1', text)
         self.assertRegex(text, r'archive_bank_entries\{extractor="stems",outcome="made"\} [1-9]')
         # The recording is the fixture's audio Artifact: it has peaks and stems.
         self.assertIn('archive_media{kind="peaks",state="derived"} 1', text)

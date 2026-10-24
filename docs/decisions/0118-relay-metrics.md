@@ -8,7 +8,7 @@ probe, which this extends from `/health` to `/metrics`
 The fleet's Archive pane wants to see the archive's shape over time: how
 many records of each contract, which specification the archive is at, how
 far the media and feature-bank backfills have gone, how much of the archive
-has stems, practice renders, lead sheets and cover matches, how large each
+has stems, practice renders, lead sheets and work matches, how large each
 store is, and how quickly the relay answers. The fleet collects metrics with
 Grafana Alloy on each host and asks projects to expose them on localhost
 without learning the backend (fleet ADR 0007), labelled by the subjects they
@@ -54,7 +54,7 @@ version of this public repository's contract.
 | `archive_bank_entries_outdated` | gauge | `extractor` | entries made by a version other than the installed one |
 | `archive_bank_requests` | gauge | | bank requests waiting for the scheduler (ADR 0112) |
 | `archive_media` | gauge | `kind`, `state` | audio Artifacts with each derived-media kind `derived` or `missing` (ADR 0069) |
-| `archive_coverage` | gauge | `feature`, `state` | `covered` or `uncovered`: audio Artifacts with `stems` and with a `practice_render`, musical Works with a `lead_sheet`, song occurrences with a `cover_match` |
+| `archive_coverage` | gauge | `feature`, `state` | `covered` or `uncovered`: audio Artifacts with `stems` and with a `practice_render`, musical Works with a `lead_sheet`, song occurrences with a `work_match` (versions 1 and 2 name the occurrence they compared; a version 3 window match names none and covers no occurrence) |
 | `archive_store_bytes` | gauge | `store`, `class` | bytes of regular files in `records`, `content` (annexed objects held here), `world`, `media`, `bank`, `staging`, by state-model class |
 | `archive_metrics_collected_timestamp_seconds` | gauge | | when the counts above were collected |
 | `archive_metrics_collection_seconds` | gauge | | how long that collection took |
@@ -81,8 +81,10 @@ the relay's `unit`. Every label here is a dimension.
 ## Consequences
 
 - Alloy scrapes `http://127.0.0.1:PORT/metrics` with no credentials.
-- Series stay bounded: about fifty contracts, twenty extractors, a dozen
-  routes; a few hundred series in all, most of them the latency histogram.
+- Series stay bounded: about fifty contracts, twenty extractors, and the
+  latency histogram, which is most of them: seven buckets plus `+Inf`,
+  `_sum` and `_count` for each described route (twenty, and `other`) and
+  outcome seen, at most 630 series and in practice the few routes used.
 - `relay/openapi.json` describes the route; its 200 answer is
   `text/plain; version=0.0.4`.
 - The relay gains no dependency: the text format is written by hand.

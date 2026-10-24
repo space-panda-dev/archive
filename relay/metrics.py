@@ -27,7 +27,8 @@ import derived
 CONTENT_TYPE = "text/plain; version=0.0.4"
 # How often the collector counts again once the first scrape started it.
 COLLECT_SECONDS = 300.0
-DURATION_BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0)
+# Few buckets: every described route and outcome carries all of them (ADR 0118).
+DURATION_BUCKETS = (0.01, 0.05, 0.25, 1.0, 5.0, 30.0, 120.0)
 # State-model class of each store (docs/state-model.md).
 STORE_CLASSES = {"records": "evidence", "content": "evidence", "world": "regenerable", "media": "regenerable",
                  "bank": "regenerable", "staging": "operational"}
@@ -164,6 +165,9 @@ def archive_counts(records: list[dict[str, Any]]) -> dict[str, Any]:
             sheeted.update(r["id"] for r in refs if r.get("role") == "work")
         if "archive.claim/song_occurrence" in cited:
             occurrences.add(item["object_id"])
+        # Work matches of versions 1 and 2 name the occurrence they compared;
+        # a version 3 window match compares a window of suggested spans and
+        # names no occurrence, so it covers none (ADR 0118).
         if "archive.claim/work_match" in cited:
             matched.update(r["id"] for r in refs if r.get("role") == "occurrence")
     audio = sorted({artifact_digest[o] for o in described if o in artifact_digest} - destroyed)
@@ -496,13 +500,13 @@ def _bank_families(found: BankCounts) -> list[Family]:
 def _coverage_families(audio: list[str], counts: dict[str, Any], media: MediaCounts | None,
                        with_stems: set[str] | None) -> list[Family]:
     rows = [("lead_sheet", counts["works_with_lead_sheet"], counts["works"]),
-            ("cover_match", counts["occurrences_matched"], counts["occurrences"])]
+            ("work_match", counts["occurrences_matched"], counts["occurrences"])]
     if with_stems is not None:
         rows.append(("stems", len(with_stems & set(audio)), len(audio)))
     if media is not None:
         rows.append(("practice_render", len(media.with_practice), len(audio)))
     return [Family("archive_coverage", "gauge",
                    "Audio Artifacts with stems and practice renders, musical Works with a lead sheet, and song "
-                   "occurrences with a cover match: covered or uncovered.",
+                   "occurrences with a work match: covered or uncovered.",
                    [("", {"feature": feature, "state": state}, n) for feature, covered, total in sorted(rows)
                     for state, n in (("covered", covered), ("uncovered", total - covered))])]
