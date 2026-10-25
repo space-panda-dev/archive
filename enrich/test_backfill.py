@@ -588,6 +588,17 @@ class LaterSources(unittest.TestCase):
         self.assertEqual(backfill.later_sources({"archive_id": self.ARCHIVE, "records": records}), {"mic"})
 
 
+class CommandLog(unittest.TestCase):
+    def test_a_refused_configuration_closes_the_log(self) -> None:
+        handle = io.StringIO()
+        args = argparse.Namespace(commit=False, dry_run=False, follow=False, log="events.jsonl", config=None)
+        with patch("backfill.open", return_value=handle, create=True), \
+                patch.object(backfill.extract, "load_config", side_effect=backfill.extract.RunError("bad config")), \
+                self.assertRaisesRegex(backfill.BackfillError, "bad config"):
+            backfill.main(args)
+        self.assertTrue(handle.closed)
+
+
 class Real(unittest.TestCase):
     """The planner over a real bank directory: what failed is not retried."""
 

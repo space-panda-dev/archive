@@ -316,7 +316,7 @@ shipped extractors").
 | `enrich/extract.py` | 1060 |
 | `enrich/bank.py` | 1498 |
 | `enrich/remote.py` | 720 |
-| `enrich/backfill.py` | 1223 |
+| `enrich/backfill.py` | 1235 |
 | `enrich/backfill_queue.py` | 613 |
 | `enrich/extractors/stems/stems.py` | 755 |
 | `enrich/extractors/quality/quality.py` | 1317 |

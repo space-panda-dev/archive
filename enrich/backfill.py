@@ -932,6 +932,10 @@ class Log:
         self.handle = open(path, "a", encoding="utf-8") if path else None
         self.lock = threading.Lock()
 
+    def close(self) -> None:
+        if self.handle is not None:
+            self.handle.close()
+
     def __call__(self, **entry: Any) -> None:
         entry = {"at": time.strftime("%H:%M:%S"), **{k: v for k, v in entry.items() if v is not None}}
         line = json.dumps(entry, sort_keys=False)
@@ -1067,6 +1071,14 @@ def main(args: argparse.Namespace, env: dict[str, str] | None = None,
     if args.follow and not args.commit:
         raise BackfillError("--follow makes what arrives, so it needs --commit")
     note = Log(args.log)
+    try:
+        return _run(args, env, run_unit, note)
+    finally:
+        note.close()
+
+
+def _run(args: argparse.Namespace, env: dict[str, str] | None,
+         run_unit: Callable[[Job], tuple[dict[str, Any], float]] | None, note: Log) -> int:
     started = time.monotonic()
     try:
         config = extract.load_config(args.config)
