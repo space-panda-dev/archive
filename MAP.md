@@ -163,7 +163,7 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 <!-- wf:gen lines spec/archive-spec.md -->
 | file | lines |
 |---|---|
-| `spec/archive-spec.md` | 2851 |
+| `spec/archive-spec.md` | 2862 |
 <!-- /wf:gen -->
 
 Rules: never delete a version or a bundle an archive may cite; supersede it
@@ -198,7 +198,7 @@ full rebuild (ADR 0055).
 <!-- wf:gen lines world/world.py world/harmony.py world/contributions.py world/documents.py world/notes.py world/circle.py world/tests/test_world.py -->
 | file | lines |
 |---|---|
-| `world/world.py` | 2177 |
+| `world/world.py` | 2184 |
 | `world/harmony.py` | 1061 |
 | `world/contributions.py` | 810 |
 | `world/documents.py` | 1287 |
@@ -208,12 +208,12 @@ full rebuild (ADR 0055).
 <!-- /wf:gen -->
 
 <!-- wf:gen anchors world/world.py#_main world/world.py#_project world/world.py#_project_review_claim world/world.py#_project_derivation_claim world/world.py#_project_music_claim world/world.py#refresh_store -->
-- `world/world.py#_main`: line 2066
+- `world/world.py#_main`: line 2073
 - `world/world.py#_project`: line 273
-- `world/world.py#_project_review_claim`: line 618
-- `world/world.py#_project_derivation_claim`: line 891
-- `world/world.py#_project_music_claim`: line 1136
-- `world/world.py#refresh_store`: line 1847
+- `world/world.py#_project_review_claim`: line 625
+- `world/world.py#_project_derivation_claim`: line 898
+- `world/world.py#_project_music_claim`: line 1143
+- `world/world.py#refresh_store`: line 1854
 <!-- /wf:gen -->
 
 ## Relay (Python): HTTP for the browser; no state; loopback only
@@ -477,3 +477,11 @@ snapshot and writes a reviewed Door proposal (ADR 0121).
 `migration/test_legacy_sessions.py` covers ambiguity, exact pins, ordering,
 existing groups, deterministic retry and real Door provenance targets; suite
 `migration`. No archive mutation occurs in the planner.
+
+`migration/legacy_inventory.py` extracts explicit V2 session rows or persisted
+UI sidecar membership without rerunning grouping; it preserves raw source
+bytes and reports missing/conflicting coverage. Its tests are in
+`migration/test_legacy_inventory.py`, suite `migration`.
+
+`world/legacy_translation.py` re-checks the closed legacy translation payload,
+operator and exact provenance target types before World projects its records.

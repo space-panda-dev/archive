@@ -6,6 +6,30 @@ its output is operational and regenerable. The admitted source snapshot and
 translation Claims are durable evidence. Rehearse on scratch and review the
 inventory before the operator applies any proposal to archival environments.
 
+
+Prepare the snapshot mechanically from a retained V2 records copy:
+
+```sh
+python -m migration.legacy_inventory RETAINED_RECORDS --output source-inventory
+# Optional: include the persisted grouping the legacy UI actually consumed.
+python -m migration.legacy_inventory RETAINED_RECORDS \
+  --sidecars LEGACY_PREVIEW_CACHE --output source-with-sidecars
+```
+
+The adapter reads explicit V2 `session.source_artifact_ids` order. Optional
+sidecar mode reads only `*.session.json` metadata, preserving its persisted
+ordered `parts` rather than running a recorder grammar. The snapshot embeds
+exact source bytes and locators, including tool/version and derived origin;
+operator review of this translation does not turn the original grouping into
+a human assertion. Sidecar reads are stable per file, not an atomic cache
+snapshot; the captured exact bytes and any disagreement remain reviewable.
+No original audio is read or copied by sidecar mode. Source records retain
+the scanner's frozen-source precondition. Conflicting grouping, source
+revision histories, digest mismatches and artifacts without grouping stay
+explicit in `inventory.json`; exit 2 means unresolved coverage. No source
+rows means no invented sessions. Review the source inventory and admit the
+resulting `snapshot.json` as evidence before planning against its exact pin.
+
 The admitted source snapshot uses JSON format `archive.legacy-sessions/1`.
 Its `groups` array contains `id`, `label` and `sources`; each source has `id`,
 `primary` (boolean) and ordered `files` with `path` and `digest` (sha256).

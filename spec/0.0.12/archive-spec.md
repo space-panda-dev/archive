@@ -2849,3 +2849,14 @@ first file establishes ADR 0048 identity. Labels never establish a date.
 Proposals use expected absent output heads and atomic referenced-head guards.
 The planner emits an operational inventory and proposal only; Door admission
 is a separate operator step. It copies no audio and makes no archive writes.
+
+The source adapter `migration.legacy_inventory` reads V2 `session` version 1
+records' explicit `source_artifact_ids` order and content digests. When
+requested it can translate persisted `session_identity_sidecar` version 1
+`parts` arrays verbatim, validating part indices/counts and content hashes;
+it never reruns their grouping algorithm. Their derived origin, tool/version,
+exact raw source bytes and source-record locators remain inside the admitted
+source snapshot. A translating operator asserts the translation, not human
+authorship of the source grouping. Conflicting memberships, unsupported
+revision histories and missing source evidence are reported for review.
+Dates and ensemble associations are not inferred from sidecars or labels.

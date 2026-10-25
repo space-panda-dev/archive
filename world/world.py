@@ -450,6 +450,13 @@ def _project(store: Store, data: ExportData, known_object: Any = None) -> None:
                 raise ProjectionError(str(exc)) from exc
             if claim.get("agent") != lookups.operator():
                 raise ProjectionError("a session ensemble must be asserted by the active operator")
+        if ("archive.migration/session_translation", "1") in cited:
+            from world.legacy_translation import check as check_legacy_translation
+            try:
+                envelope_rules.check(claim, ("archive.migration/session_translation", "1"), lookups.entity_kind, records_by_revision)
+                check_legacy_translation(claim, records_by_revision, lookups.operator())
+            except (envelope_rules.EnvelopeRuleError, ValueError) as exc:
+                raise ProjectionError(str(exc)) from exc
         _project_review_claim(store, archive_id, core_terms, contract_contexts, claim, cited,
                               records_by_revision, domain_graph, kind_scheme)
         _project_derivation_claim(store, archive_id, core_terms, contract_contexts, claim, cited,
