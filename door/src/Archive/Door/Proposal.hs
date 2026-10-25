@@ -401,7 +401,7 @@ parseRecordPath _ = Left RecordPathNotString
 parseSafePath :: Text -> Either ProposalProblem ProposalPath
 parseSafePath value
   | Text.null value = Left PathEmpty
-  | Text.head value == '/' = Left PathAbsolute
+  | "/" `Text.isPrefixOf` value = Left PathAbsolute
   | Text.any (== '\0') value = Left PathHasNul
   | any invalidComponent components = Left PathUnsafeComponent
   | Text.intercalate "/" components /= value = Left PathNotNormalized
