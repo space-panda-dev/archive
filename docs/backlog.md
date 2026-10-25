@@ -433,6 +433,37 @@ with its implementation in a later specification release.
   redistribution, judged by the operator listening to the neighbours of
   twenty library sounds.
 
+## Door code
+
+Left over from the idiomatic-Haskell pass (PR #4); none changes behaviour.
+
+- **Release note for the pointer fix.** Door now decodes a `$ref` token
+  `~01` to `~1` (RFC 6901 section 4) instead of `/`. Record it in the 0.0.12
+  release notes when they are started. Door still does not percent-decode the
+  URI fragment before applying RFC 6901; no released contract needs it.
+- **Mismatched bundle rules.** `ReleaseAdmission.effectiveBundles` swaps a
+  bundle's schema for the when-pinned one but keeps the rules parsed from the
+  original. Its results reach only `validateReleaseAdmission` today; make it
+  return the schema on its own, or stop exporting the `ContractBundle` fields,
+  before anything passes them to `validateBundleInstance`.
+- **Partial `last`.** `Transition/Replay.hs` (also quadratic: it calls `last`
+  on a growing list every step) and `RecordCommit/Worktree.hs` still call
+  `last`; both are safe as written. Use `Data.List.unsnoc` or an accumulator.
+- **Journal temporaries.** A crash during journal creation or replacement can
+  leave a `.git/.archive-door-journal-*` file. Nothing reads them; nothing
+  sweeps them either.
+- **Large test modules.** `door/test/AdmissionChecks.hs` (1252 lines),
+  `ContractAdmissionChecks.hs` (1035) and `UpgradeChecks.hs` (963) are over
+  the 800-line guideline; split them by concept.
+- **Small tidy-ups.** `Snapshot.Read` still exports the unused `objectText`
+  and `revisionText`; imports in `Read/Core.hs` and several RecordCommit and
+  Bootstrap modules are unsorted; the RFC 6901 section 5 cases in
+  `PointerProperties` use the JSON-string pointers with `#` prefixed rather
+  than the percent-encoded fragments of section 6.
+- **Flaky enrich test.** `test_backfill` `EndToEnd`
+  `test_an_export_that_fails_stops_the_backfill_rather_than_finding_nothing_unprobed`
+  failed once in a full night run with empty stderr and passed alone.
+
 ## Operations
 
 - Deploy Spool 0.0.4 to both machines, add the GPU-stems grant, and give
