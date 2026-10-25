@@ -118,7 +118,7 @@ reviewContractProfileChecks check = do
     (either (const False) (isLeft . validateCoreContextForSpecification "archive/0.0.5") priorContext)
     ExitSuccess "" ""
   (kindCode, kindOutput, kindErrors) <- dryRun
-    (replace "archive/0.0.11" "archive/0.0.4"
+    (replace "archive/0.0.12" "archive/0.0.4"
       (replace "{\"kind\":\"person\"" "{\"kind\":\"recording_session\"" (entityDraft entity)))
   check "specification 0.0.4 refuses the later recording_session kind"
     (kindCode /= ExitSuccess && "entity kind is not defined by the core context" `contains` kindErrors)
@@ -501,7 +501,7 @@ musicAndCreditProfileChecks check = do
       && isLeft (validateCoreContextForSpecification "archive/0.0.8" context))
     ExitSuccess "" ""
   refuses "specification 0.0.8 refuses the later release kind"
-    (replace "archive/0.0.11" "archive/0.0.8" (replace "{\"kind\":\"person\"" "{\"kind\":\"release\"" (entityDraft entity)))
+    (replace "archive/0.0.12" "archive/0.0.8" (replace "{\"kind\":\"person\"" "{\"kind\":\"release\"" (entityDraft entity)))
     "entity kind is not defined by the core context"
   succeeds "specification 0.0.11 keeps the recording kind of 0.0.9"
     (replace "{\"kind\":\"person\"" "{\"kind\":\"recording\"" (entityDraft entity))
@@ -600,5 +600,22 @@ tests = fmap (testGroup "contracts") $ sequence
   , releaseOf "beyondCircle010Checks" beyondCircle010Checks
   , releaseOf "specification011Checks" specification011Checks
   , releaseOf "rules011Checks" rules011Checks
+  , rowsOf "captureStartChecks" captureStartChecks
   , rowsOf "contractCatalogChecks" contractCatalogChecks
   ]
+
+captureStartChecks :: Recorder -> IO ()
+captureStartChecks check = do
+  schema <- installedSchema "spec/contracts/sha256-4455669535970080270e51d738140e63d4f3a5d89b8c8f2781ca610d74b4a194.json"
+  let refs = [Aeson.object ["role" .= ("subject" :: Text.Text), "id" .= Text.pack entity, "revision_id" .= Text.pack zeroDigest]]
+      instanceOf fields = Aeson.object ["payload" .= Aeson.object fields, "refs" .= refs]
+      basis = ["basis" .= ("grammar" :: Text.Text)]
+      clock time kind = instanceOf (basis <> ["started" .= (time :: Text.Text), "clock" .= (kind :: Text.Text)])
+      judge label expected value = check label ((validateContractInstance schema value == Right ()) == expected) ExitSuccess (show (validateContractInstance schema value)) ""
+  judge "capture start admits explicit unknown" True (instanceOf basis)
+  judge "capture start admits local leap-day clock" True (clock "2000-02-29T12:34:56" "local")
+  judge "capture start admits a zoned clock" True (clock "2001-01-01T12:34:56+01:00" "zoned")
+  judge "capture start refuses an impossible calendar date" False (clock "2001-02-29T12:34:56" "local")
+  judge "capture start refuses a zoned value labelled local" False (clock "2001-01-01T12:34:56Z" "local")
+  judge "capture start refuses a local value labelled zoned" False (clock "2001-01-01T12:34:56" "zoned")
+  judge "capture start refuses an unpaired clock" False (instanceOf (basis <> ["clock" .= ("local" :: Text.Text)]))

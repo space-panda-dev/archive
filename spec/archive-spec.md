@@ -1,6 +1,6 @@
 # Archive Specification
 
-Version: 0.0.11
+Version: 0.0.12
 Status: draft
 
 This is the contract an archive is governed by. It is copied into every archive
@@ -2756,3 +2756,38 @@ does:
 The version follows `MAJOR.MINOR.PATCH`. Until 1.0.0, any release may change the
 requirements. After 1.0.0, a change that makes a previously conforming archive
 non-conforming requires a MAJOR increment.
+
+
+## D-20. Capture starts (0.0.12)
+
+Specification 0.0.12 adds `archive.claim/capture_start` version 1, as
+accepted in ADR 0107, beside every 0.0.11 contract with its exact bytes.
+The core context and layout are unchanged; adoption is additive under D-15.
+
+A capture start pins exactly one Artifact revision in role `subject`. Its
+closed payload requires `basis`, one of `grammar`, `header`, `client`, or
+`person`, and optionally `started` and `clock`, which appear together.
+`clock` is `local` for device wall time with no offset, or `zoned` for
+RFC 3339 time with a stated offset. `started` uses a valid Gregorian date,
+`T`, hour, minute and second, optional fractional seconds, and, only when
+zoned, `Z` or an offset `+HH:MM`/`-HH:MM`. The time is not Door's `at`.
+A missing start explicitly states unknown; it is never replaced by an
+admission time or by parsing an Entity label.
+
+`x-archive-capture-start` is the boolean `true`. Door checks that pairing,
+the clock's syntax and calendar validity, and that a software agent asserts
+only a `grammar` or `header` basis. `x-archive-agent` with kind `software`
+also accepts a Package URL identifying software; its existing Entity
+behaviour is unchanged. A `person` or `client` basis requires a person
+Entity agent. The subject must be audio or MIDI; as with source facts,
+byte interpretation is the proposer's responsibility, not a filename test
+in Door.
+
+Claims coexist. A person correcting a recorder's clock asserts another
+capture start; no universal ranking is stored. World projects
+`arch:capture_started` typed `xsd:dateTime` for zoned time and as a string
+for local time, alongside `arch:capture_clock` and `arch:capture_basis`.
+The session-date reader uses the primary source's first part. With several
+starts, or none with `started`, it answers unavailable and gives a reason.
+The primary source and all joins retain ADR 0107's operator-established
+meaning; this release introduces no automatic session reconstruction.

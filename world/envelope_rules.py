@@ -18,6 +18,7 @@ from typing import Any, Callable
 # `x-archive-agent`: the envelope agent is an Archive object whose Entity has
 # one of these kinds.
 AGENT_KINDS: dict[tuple[str, str], frozenset[str]] = {
+    ("archive.claim/capture_start", "1"): frozenset({"person", "software"}),
     ("archive.claim/lead_sheet", "1"): frozenset({"person", "organisation"}),
     ("archive.claim/lead_sheet", "2"): frozenset({"person", "organisation"}),
     ("archive.claim/sensitivity", "1"): frozenset({"person"}),
@@ -54,6 +55,10 @@ def check(record: dict[str, Any], contract: tuple[str, str], entity_kind: Callab
     if kinds is not None:
         agent = record.get("agent")
         kind = entity_kind(agent) if isinstance(agent, str) and agent.startswith("urn:uuid:") else None
+        if contract == ("archive.claim/capture_start", "1") and isinstance(agent, str) and agent.startswith("pkg:"):
+            kind = "software"
+        if contract == ("archive.claim/capture_start", "1") and (record.get("payload") or {}).get("basis") in {"person", "client"} and kind != "person":
+            raise EnvelopeRuleError("a person or client capture start requires a person agent")
         if kind not in kinds:
             raise EnvelopeRuleError(f"{contract[0]} version {contract[1]}: the agent must be an Archive object "
                                     f"identifying a {' or '.join(sorted(kinds))} Entity")

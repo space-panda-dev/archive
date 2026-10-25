@@ -146,14 +146,14 @@ envelopeChecks = testGroup "envelopeChecks"
   , succeedsCase "specification 0.0.5 admits its installed musical_work kind"
       (replace "{\"kind\":\"person\"" "{\"kind\":\"musical_work\"" (entityDraft entity))
   , refusesCase "specification 0.0.2 refuses the later musical_work kind"
-      (replace "archive/0.0.11" "archive/0.0.2"
+      (replace "archive/0.0.12" "archive/0.0.2"
         (replace "{\"kind\":\"person\"" "{\"kind\":\"musical_work\"" (entityDraft entity)))
       "entity kind is not defined by the core context"
   , refusesCase "a supplied recording time is not a draft" (withField (entityDraft entity) "at" "1900-01-01T00:00:00Z") "draft envelope must omit at"
   , refusesCase "a supplied revision is not a draft" (withField (entityDraft entity) "revision_id" zeroDigest) "draft envelope must omit revision_id"
-  , comparesDifferentCase "the specification version remains in revision identity" (entityDraft entity) (replace "archive/0.0.11" "archive/0.0.2" (entityDraft entity))
+  , comparesDifferentCase "the specification version remains in revision identity" (entityDraft entity) (replace "archive/0.0.12" "archive/0.0.2" (entityDraft entity))
   , refusesCase "an empty batch is not a successful admission" "[]" "admission batch must contain at least one record"
-  , refusesCase "a malformed specification identifier is refused" (replace "archive/0.0.11" "not-an-archive-spec" (entityDraft entity)) "spec must be archive/ followed by a three-part numeric version"
+  , refusesCase "a malformed specification identifier is refused" (replace "archive/0.0.12" "not-an-archive-spec" (entityDraft entity)) "spec must be archive/ followed by a three-part numeric version"
   , refusesCase "an object identifier containing a hostname is refused" (replace entity "http://host.example/path" (entityDraft entity)) "object_id must not contain a hostname"
   , refusesCase "a non-UUID object identifier is refused" (replace entity "local-object" (entityDraft entity)) "object_id must be a lowercase urn:uuid identifier"
   , refusesCase "draft field errors keep precedence over object UUID validation"

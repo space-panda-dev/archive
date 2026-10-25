@@ -27,7 +27,7 @@ CONTENT = (ROOT / "fixture/content", FIXTURES / "content")
 BASE = FIXTURES / "door-world-chain-export.json"
 # The current release: the drafts cite its catalog, which holds every 0.0.10
 # bundle with its exact bytes and the versions 0.0.11 adds (ADR 0113).
-SPEC = "0.0.11"
+SPEC = "0.0.12"
 
 
 def _content(name: str) -> dict[str, Any]:

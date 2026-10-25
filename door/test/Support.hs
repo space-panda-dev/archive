@@ -108,7 +108,7 @@ claimDraft objectId target = envelope objectId "claim" "{}"
 
 envelope :: String -> String -> String -> String -> String -> String
 envelope objectId shape payload refs extra =
-  "{\"spec\":\"archive/0.0.11\",\"object_id\":\"" <> objectId
+  "{\"spec\":\"archive/0.0.12\",\"object_id\":\"" <> objectId
   <> "\",\"shape\":\"" <> shape <> "\",\"by\":\"" <> writer
   <> "\",\"agent\":\"" <> person <> "\",\"payload\":" <> payload
   <> ",\"refs\":" <> refs <> ",\"supersedes\":[]" <> extra <> "}"
@@ -337,7 +337,7 @@ retireDraft :: String -> String -> String -> String -> String
             -> (String, String, String) -> String
 retireDraft objectId operatorId operatorRevision targetId targetRevision
     (contractId, version, digest) =
-  "{\"spec\":\"archive/0.0.11\",\"object_id\":" <> jsonString objectId
+  "{\"spec\":\"archive/0.0.12\",\"object_id\":" <> jsonString objectId
   <> ",\"shape\":\"claim\",\"by\":" <> jsonString writer
   <> ",\"agent\":" <> jsonString operatorId
   <> ",\"payload\":{\"reason\":\"test retirement\"},\"refs\":["
@@ -352,7 +352,7 @@ destroyDraft :: String -> String -> String -> String -> String -> String
              -> Integer -> (String, String, String) -> String
 destroyDraft objectId operatorId operatorRevision targetId targetRevision digest size
     (contractId, version, contractDigest) =
-  "{\"spec\":\"archive/0.0.11\",\"object_id\":" <> jsonString objectId
+  "{\"spec\":\"archive/0.0.12\",\"object_id\":" <> jsonString objectId
   <> ",\"shape\":\"claim\",\"by\":" <> jsonString writer
   <> ",\"agent\":" <> jsonString operatorId
   <> ",\"payload\":{\"content\":{\"digest\":" <> jsonString digest

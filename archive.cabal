@@ -17,6 +17,7 @@ data-files:
   , spec/0.0.9/context.jsonld
   , spec/0.0.10/context.jsonld
   , spec/0.0.11/context.jsonld
+  , spec/0.0.12/context.jsonld
   , spec/0.0.1/contracts.json
   , spec/0.0.2/contracts.json
   , spec/0.0.3/contracts.json
@@ -28,6 +29,7 @@ data-files:
   , spec/0.0.9/contracts.json
   , spec/0.0.10/contracts.json
   , spec/0.0.11/contracts.json
+  , spec/0.0.12/contracts.json
   , spec/contracts/*.json
 
 library

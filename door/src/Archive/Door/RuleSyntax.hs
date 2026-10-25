@@ -9,6 +9,8 @@
 module Archive.Door.RuleSyntax
   ( releaseRuleNames
   , release011RuleNames
+  , release012RuleNames
+  , captureStartRule
   , validateReleaseRules
   , ruleAt
     -- * Typed rules
@@ -124,7 +126,7 @@ validateReleaseRules
   :: (Text -> e) -> (KeyMap.KeyMap Value -> Either e a) -> KeyMap.KeyMap Value -> Either e (Maybe (Text, a, a))
 validateReleaseRules refuse nested schema = do
   first refuse $ mapM_ (\(name, parse) -> maybe (Right ()) parse (KeyMap.lookup (Key.fromText name) schema))
-    (parsers <> parsers011)
+    (parsers <> parsers011 <> [("x-archive-capture-start", captureStartRule)])
   case KeyMap.lookup "x-archive-when-pinned" schema of
     Nothing -> Right Nothing
     Just value -> do
@@ -350,3 +352,11 @@ operatorWritersRule = namedFields "operator writers rule" ["field", "role"]
 
 consentingWriterRule :: Value -> Either Text NamedFields
 consentingWriterRule = namedFields "consenting writer rule" ["role", "writers"]
+
+-- | D-20's capture clock validation is enabled only by literal true.
+release012RuleNames :: [Text]
+release012RuleNames = ["x-archive-capture-start"]
+
+captureStartRule :: Value -> Either Text ()
+captureStartRule (Bool True) = Right ()
+captureStartRule _ = Left "capture start rule must be true"

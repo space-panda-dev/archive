@@ -86,7 +86,7 @@ import Archive.Door.Contracts.Profile.Spans
   , trackSpansRule
   )
 import Archive.Door.RuleJson (InstanceRef (..), instanceRefs)
-import Archive.Door.RuleSyntax (release011RuleNames, releaseRuleNames)
+import Archive.Door.RuleSyntax (release011RuleNames, release012RuleNames, releaseRuleNames)
 import Archive.Door.SpanRules (SequentialSpans, sequentialSpansRule, validateSequentialSpans)
 import Data.Aeson (Value (..))
 import Data.Aeson.Key qualified as Key
@@ -106,7 +106,7 @@ profileRuleNames =
   , "x-archive-metric-modulations", "x-archive-target-bound", "x-archive-partial-dates"
   , "x-archive-subset", "x-archive-document-order", "x-archive-nested-ranges"
   , "x-archive-target-samples", "x-archive-target-index"
-  ] <> releaseRuleNames <> release011RuleNames
+  ] <> releaseRuleNames <> release011RuleNames <> release012RuleNames
 
 -- | One profile rule of a bundle's schema, parsed. The rules that compare a
 -- record with what it pins ('RuleReferenceTargets', 'RuleDistinctTrackContent'

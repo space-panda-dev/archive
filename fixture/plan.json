@@ -32,6 +32,16 @@
       ]
     },
     {
+      "name": "capture starts",
+      "command": "admit",
+      "records": [
+        {"key": "capture-start-a", "namespace": "archive.claim/capture_start", "name": "fixture-capture-start-a", "shape": "claim",
+         "contracts": [{"id": "archive.claim/capture_start", "version": "1"}],
+         "payload": {"started": "2001-01-01T12:00:00", "clock": "local", "basis": "person"},
+         "refs": [{"role": "subject", "pin": "take-a"}]}
+      ]
+    },
+    {
       "name": "correspondences",
       "command": "admit",
       "records": [

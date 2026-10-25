@@ -224,7 +224,7 @@ worldContractAdmissionChecks parent = do
   assert "archive export carries the admitted World chain at 0.0.5"
     (exportCode == ExitSuccess
       && contains "\"status\":\"ok\"" exportOut
-      && contains "\"spec\":\"archive/0.0.11\"" exportOut
+      && contains "\"spec\":\"archive/0.0.12\"" exportOut
       && all (`contains` exportOut)
         ([ workRevision, correspondenceRevision, performanceRevision, audioRevision
          , selectionRevision, occurrenceRevision, typedRevision ] <> reviewRevisions))
