@@ -11,7 +11,12 @@ module Archive.Door.ProposalContracts
 
 import Archive.Door.Canonical (canonicalizeDraftStrict)
 import Archive.Door.ContractCitations (contractInstance, validateCitationContexts)
-import Archive.Door.Contracts (ContractBundle (contractBundleSchema), validateContractInstance)
+import Archive.Door.ContractRuleProblem
+  ( ContractRuleProblem (..)
+  , contractRuleMessage
+  , outsideRule
+  )
+import Archive.Door.Contracts (validateBundleInstance)
 import Archive.Door.Proposal (Proposal (..), ProposalRecord (..))
 import Archive.Door.ReferenceTargets
   ( Target (..)
@@ -35,14 +40,19 @@ import Archive.Door.Types
   , envelopeContracts
   , envelopeObject
   , objectIdText
+  , parseRevisionId
+  , revisionIdText
   )
 import Control.Monad (foldM_)
+import Data.Bifunctor (first)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as Text
 
+-- | The checks refuse with typed values; the refusal leaves as the text the
+-- planners have always reported.
 validateProposalContracts :: SnapshotData -> Proposal -> IO (Either Text ())
-validateProposalContracts snapshot proposal = pure $ do
+validateProposalContracts snapshot proposal = pure $ first contractRuleMessage $ do
   let catalog = snapshotInstalled snapshot
   -- Door's reference validation lets a record pin an earlier record of the
   -- same batch, so contract target rules see those records too.
@@ -58,7 +68,7 @@ validateProposalContracts snapshot proposal = pure $ do
       let targets = committed <> earlier
       validateReferenceTargetRules targets (proposalRecordDraft record) bundles
       -- Rules nested by when-pinned apply to the form this record has (D-18).
-      effective <- effectiveBundles instanceValue bundles
+      effective <- outsideRule (effectiveBundles instanceValue bundles)
       mapM_ (validateDistinctTrackContent targets
         (proposalRecordDraft record) instanceValue) effective
       mapM_ (validateTargetMeasure targets (proposalRecordDraft record)) effective
@@ -67,10 +77,14 @@ validateProposalContracts snapshot proposal = pure $ do
       mapM_ (validateTargetBound targets (proposalRecordDraft record)) effective
       mapM_ (validateTargetSamples targets (proposalRecordDraft record)) effective
       mapM_ (validateTargetIndex targets (proposalRecordDraft record)) effective
-      validateReleaseAdmission [(targetObject t, targetRevision t, targetDraft t) | t <- targets]
-        (proposalRecordDraft record) effective
-      (revision, _) <- canonicalizeDraftStrict (proposalRecordValue record)
-      pure (earlier <> [Target (objectIdText (envelopeObject (proposalRecordDraft record)))
+      outsideRule (validateReleaseAdmission
+        [(objectIdText (targetObject t), revisionIdText (targetRevision t), targetDraft t) | t <- targets]
+        (proposalRecordDraft record) effective)
+      (digest, _) <- outsideRule (canonicalizeDraftStrict (proposalRecordValue record))
+      -- The canonicalizer's digest is always a well-formed revision; the
+      -- parse gives it its type and cannot refuse.
+      revision <- outsideRule (parseRevisionId digest)
+      pure (earlier <> [Target (envelopeObject (proposalRecordDraft record))
         revision (proposalRecordDraft record)])
     -- D-1: the archive holds the local documents that interpret every
     -- admitted record, so a record's `spec` must select a core context this
@@ -83,12 +97,11 @@ validateProposalContracts snapshot proposal = pure $ do
             Nothing -> Nothing
       in case contextPath of
         Just path | Map.member path (snapshotImmutableAdditions snapshot) -> Right ()
-        _ -> Left ("record spec " <> specification
-          <> " selects a core context this archive does not hold")
+        _ -> Left (ContextNotHeld specification)
     validateCitation catalog instanceValue citation = do
       let key = (contractId citation, contractVersion citation, contractDigest citation)
       bundle <- case Map.lookup key catalog of
-        Nothing -> Left ("proposed contract is not installed at this snapshot: " <> contractId citation)
+        Nothing -> Left (ProposedNotInstalled (contractId citation))
         Just value -> Right value
-      validateContractInstance (contractBundleSchema bundle) instanceValue
+      outsideRule (validateBundleInstance bundle instanceValue)
       pure bundle

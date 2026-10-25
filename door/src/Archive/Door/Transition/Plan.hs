@@ -13,6 +13,7 @@ module Archive.Door.Transition.Plan
   ) where
 
 import Archive.Door.Snapshot.Data (AdmissionSnapshotLoadError (..))
+import Archive.Door.Snapshot.Problem (snapshotProblemMessage)
 import Archive.GitSnapshot (GitSnapshotError, gitSnapshotErrorMessage)
 import Data.Aeson (Value)
 import qualified Data.ByteString.Lazy as LazyByteString
@@ -51,4 +52,4 @@ transitionPlanningErrorMessage problem = case problem of
 transitionSnapshotError :: AdmissionSnapshotLoadError -> TransitionPlanningError
 transitionSnapshotError problem = case problem of
   AdmissionSnapshotGitError issue -> TransitionSnapshotFailure issue
-  AdmissionSnapshotIntegrityError message -> TransitionSnapshotIntegrityFailure message
+  AdmissionSnapshotIntegrityError integrity -> TransitionSnapshotIntegrityFailure (snapshotProblemMessage integrity)

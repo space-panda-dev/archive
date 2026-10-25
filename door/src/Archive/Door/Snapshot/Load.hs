@@ -36,16 +36,16 @@ import Archive.Door.Snapshot.History
   , validateUpgradeHistory
   )
 import Archive.Door.Snapshot.Memo (remember, snapshotMemo)
+import Archive.Door.Snapshot.Problem (SnapshotProblem (..), snapshotCheck, snapshotProblemMessage)
 import Archive.Door.Snapshot.Read
   ( decodeBytes
   , expectedRecordRevision
   , loadIntroducers
+  , integrity
   , mapIntegrity
-  , objectText
   , readBytes
   , readCanonicalJson
   , readJson
-  , revisionText
   )
 import Archive.Door.Snapshot.Supersession (deriveHeads, indexRecords)
 import Archive.Door.Types
@@ -56,6 +56,7 @@ import Archive.Door.Types
   , parseObjectId
   , parseRevisionId
   , parseStoredEnvelope
+  , revisionIdText
   )
 import Archive.Door.VerifiedCheckpoint
   ( RecordSummary (..)
@@ -72,6 +73,7 @@ import qualified Crypto.Hash.SHA256 as SHA256
 import Data.Aeson (Value (Object))
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.RFC8785 (encodeCanonical)
+import Data.Bifunctor (first)
 import Data.IORef (readIORef)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -133,23 +135,25 @@ loadCheckpointedSnapshot snapshot verified = runExceptT $ do
     if Map.keysSet additions /= Set.fromList
         ("archive.json" : specPaths <> map installedPath installed <> paths)
         || Map.keysSet summaries /= Set.fromList paths
-      then Left (AdmissionSnapshotIntegrityError
-        "checkpoint paths do not match the committed tree")
+      then Left (AdmissionSnapshotIntegrityError CheckpointPathsMismatch)
       else Right ()
     shaped <- mapM (\(entry, summary) -> (,) entry <$> summaryShapeOf summary)
       [(entry, summary) | entry <- entries, Just summary <- [Map.lookup (entryPath entry) summaries]]
-    objects <- mapM (\(entry, _) -> mapIntegrity (parseObjectId (entryObject entry))) shaped
-    revisions <- mapM (\(entry, _) -> mapIntegrity (parseRevisionId (entryRevision entry))) shaped
-    let store = foldl' (\index ((_, shape), objectId, revision) -> insertKnown objectId revision shape index)
-          emptyIndex (zip3 shaped objects revisions)
+    let store = foldl' (\index (entry, shape) -> insertKnown (entryObject entry) (entryRevision entry) shape index)
+          emptyIndex shaped
+        -- The checkpoint keeps supersession as text. A pair that does not
+        -- parse names no committed record, so it could never match a head
+        -- and is dropped, exactly as comparing the text left it unmatched.
         superseded = Set.fromList
-          [ (summaryObject summary, revision)
+          [ (object, revision)
           | summary <- Map.elems summaries
-          , revision <- summarySupersedes summary
+          , Right object <- [parseObjectId (summaryObject summary)]
+          , supersededText <- summarySupersedes summary
+          , Right revision <- [parseRevisionId supersededText]
           ]
         byObject = Map.fromListWith (<>) [(entryObject entry, [entry]) | entry <- entries]
-    heads <- mapIntegrity (deriveHeads byObject superseded)
-    batches <- mapIntegrity (loadIntroducers additions entries)
+    heads <- integrity (deriveHeads byObject superseded)
+    batches <- integrity (loadIntroducers additions entries)
     pure SnapshotData
       { snapshotCommitId = Git.snapshotCommit snapshot
       , snapshotManifestId = manifestArchiveId manifest
@@ -171,7 +175,7 @@ loadCheckpointedSnapshot snapshot verified = runExceptT $ do
       "entity" -> Right Entity
       "claim" -> Right Claim
       "assessment" -> Right Assessment
-      _ -> Left (AdmissionSnapshotIntegrityError "checkpoint names an unknown record shape")
+      _ -> Left (AdmissionSnapshotIntegrityError CheckpointUnknownShape)
 
 -- | A checkpointed record: its identity comes from the path and the
 -- checkpoint; its envelope is parsed only if planning looks at it. The
@@ -189,11 +193,14 @@ loadTrustedRecord snapshot summaries path = do
     either (\problem -> error ("door: checkpointed record " <> path <> " is unreadable: "
       <> show problem)) pure result
   pure $ do
-    revision <- mapIntegrity (expectedRecordRevision path)
-    summary <- maybe (Left (AdmissionSnapshotIntegrityError
-      (Text.pack path <> " is missing from the checkpoint"))) Right (Map.lookup path summaries)
+    revision <- integrity (expectedRecordRevision path)
+    summary <- maybe (Left (AdmissionSnapshotIntegrityError (MissingFromCheckpoint path)))
+      Right (Map.lookup path summaries)
+    -- A checkpoint is not trusted to spell an object: one that does not
+    -- parse fails this load, and the caller falls back to full verification.
+    object <- mapIntegrity (parseObjectId (summaryObject summary))
     let parsed = do
-          value <- decodeBytes path bytes
+          value <- first snapshotProblemMessage (decodeBytes path bytes)
           stored <- parseStoredEnvelope value
           pure (value, stored)
         trusted :: forall a. ((Value, StoredEnvelope) -> a) -> a
@@ -203,7 +210,7 @@ loadTrustedRecord snapshot summaries path = do
     Right RecordEntry
       { entryPath = path
       , entryRevision = revision
-      , entryObject = summaryObject summary
+      , entryObject = object
       , entryEnvelope = envelope
       , entryCommitted = CommittedRecord
           { committedPath = path
@@ -231,7 +238,7 @@ loadVerifiedSnapshot snapshot = runExceptT $ do
     >>= except . mapIntegrity . parseArchiveManifest
   ExceptT (validateResources snapshot additions upgradeCommits (manifestSpec manifest))
   installed <- ExceptT (loadContracts snapshot)
-  ExceptT (mapIntegrity <$> validateInstalledCatalog additions
+  ExceptT (integrity <$> validateInstalledCatalog additions
     upgradeCommits (manifestSpec manifest) installed)
   entries <- ExceptT (loadRecords snapshot installed)
   -- Both histories are checked before either result is.
@@ -239,11 +246,11 @@ loadVerifiedSnapshot snapshot = runExceptT $ do
   upgrades <- lift (validateUpgradeHistory snapshot additions upgradeCommits
     manifest installed entries)
   except (immutable >> upgrades)
-  (store, heads) <- except (mapIntegrity (indexRecords entries))
+  (store, heads) <- except (integrity (indexRecords entries))
   history <- lift (Git.linearHistory snapshot)
   commits <- withExceptT AdmissionSnapshotGitError (except history)
-  batches <- except (mapIntegrity (loadIntroducers additions entries))
-  except (mapIntegrity (validateCitationOrder commits additions installed entries))
+  batches <- except (integrity (loadIntroducers additions entries))
+  except (integrity (validateCitationOrder commits additions installed entries))
   pure SnapshotData
     { snapshotCommitId = Git.snapshotCommit snapshot
     , snapshotManifestId = manifestArchiveId manifest
@@ -282,18 +289,16 @@ loadContractPath snapshot path = do
   bytesResult <- readBytes snapshot path
   pure $ do
     bytes <- bytesResult
-    digest <- mapIntegrity (contractDigestFromPath path)
-    value <- mapIntegrity (decodeBytes path bytes)
+    digest <- integrity (contractDigestFromPath path)
+    value <- integrity (decodeBytes path bytes)
     if encodeCanonical value /= bytes
-      then Left (AdmissionSnapshotIntegrityError
-        (Text.pack path <> " is not RFC 8785 canonical"))
+      then Left (AdmissionSnapshotIntegrityError (NotCanonical path))
       else do
         let actualDigest = "sha256:" <> hexText (SHA256.hashlazy bytes)
         if actualDigest /= digest
-          then Left (AdmissionSnapshotIntegrityError
-            (Text.pack path <> " does not match its digest path"))
+          then Left (AdmissionSnapshotIntegrityError (DigestPathMismatch path))
           else do
-            fields <- mapIntegrity (objectFields value)
+            fields <- integrity (objectFields value)
             identifier <- mapIntegrity (requiredNonEmptyText "id" fields)
             version <- mapIntegrity (requiredNonEmptyText "version" fields)
             bundle <- mapIntegrity (validateContractBundle identifier version digest value)
@@ -303,9 +308,9 @@ loadContractPath snapshot path = do
               , installedBundle = bundle
               }
 
-objectFields :: Value -> Either Text (KeyMap.KeyMap Value)
+objectFields :: Value -> Either SnapshotProblem (KeyMap.KeyMap Value)
 objectFields (Object fields) = Right fields
-objectFields _ = Left "contract bundle must be an object"
+objectFields _ = Left BundleNotObject
 
 loadRecords
   :: GitSnapshot
@@ -328,29 +333,26 @@ loadRecord snapshot installed path = do
   bytesResult <- readBytes snapshot path
   pure $ do
     bytes <- bytesResult
-    expected <- mapIntegrity (expectedRecordRevision path)
-    value <- mapIntegrity (decodeBytes path bytes)
+    expected <- integrity (expectedRecordRevision path)
+    value <- integrity (decodeBytes path bytes)
     if encodeCanonical value /= bytes
-      then Left (AdmissionSnapshotIntegrityError
-        (Text.pack path <> " is not RFC 8785 canonical"))
+      then Left (AdmissionSnapshotIntegrityError (NotCanonical path))
       else do
         envelope <- mapIntegrity (parseStoredEnvelope value)
-        let embedded = revisionText (storedRevision envelope)
+        let embedded = storedRevision envelope
         if embedded /= expected
-          then Left (AdmissionSnapshotIntegrityError
-            (Text.pack path <> " disagrees with embedded revision_id"))
+          then Left (AdmissionSnapshotIntegrityError (EmbeddedRevisionDisagrees path))
           else do
-            recomputed <- mapIntegrity (recomputeRevision value)
-            if recomputed /= embedded
-              then Left (AdmissionSnapshotIntegrityError
-                (Text.pack path <> " does not match its P-3 revision"))
+            recomputed <- integrity (recomputeRevision value)
+            if recomputed /= revisionIdText embedded
+              then Left (AdmissionSnapshotIntegrityError (RevisionMismatch path))
               else do
-                mapIntegrity (validateCitations installed value
-                  (envelopeContracts (storedDraft envelope)))
+                integrity (first CitationRefused (validateCitations installed value
+                  (envelopeContracts (storedDraft envelope))))
                 pure RecordEntry
                   { entryPath = path
                   , entryRevision = embedded
-                  , entryObject = objectText (envelopeObject (storedDraft envelope))
+                  , entryObject = envelopeObject (storedDraft envelope)
                   , entryEnvelope = envelope
                   , entryCommitted = CommittedRecord
                       { committedPath = path
@@ -361,24 +363,24 @@ loadRecord snapshot installed path = do
                       }
                   }
 
-recomputeRevision :: Value -> Either Text Text
+recomputeRevision :: Value -> Either SnapshotProblem Text
 recomputeRevision (Object fields) = do
-  (revision, _) <- canonicalizeDraftStrict
-    (Object (KeyMap.delete "at" (KeyMap.delete "revision_id" fields)))
+  (revision, _) <- snapshotCheck (canonicalizeDraftStrict
+    (Object (KeyMap.delete "at" (KeyMap.delete "revision_id" fields))))
   pure revision
-recomputeRevision _ = Left "stored record must be an object"
+recomputeRevision _ = Left StoredRecordNotObject
 
-contractDigestFromPath :: FilePath -> Either Text Text
+contractDigestFromPath :: FilePath -> Either SnapshotProblem Text
 contractDigestFromPath path = case splitDirectories path of
   ["contracts", name] -> do
     hex <- case Text.stripPrefix "sha256-" (Text.pack name)
       >>= Text.stripSuffix ".json" of
-      Nothing -> Left "contract path must be contracts/sha256-<digest>.json"
+      Nothing -> Left ContractPathShape
       Just value -> Right value
     if Text.length hex == 64 && Text.all isLowerHex hex
       then Right ("sha256:" <> hex)
-      else Left "contract path has an invalid digest"
-  _ -> Left "contract path must be contracts/sha256-<digest>.json"
+      else Left ContractPathDigest
+  _ -> Left ContractPathShape
   where
     isLowerHex character = ('0' <= character && character <= '9')
       || ('a' <= character && character <= 'f')

@@ -13,10 +13,10 @@ module Archive.Door.AdmissionPlan
   ) where
 
 import Archive.Door.Canonical (canonicalizeDraftStrict)
+import Archive.Door.Distinct (distinctOr)
 import Archive.Door.PlanProblem
   ( PlanProblem (..)
   , Planner (..)
-  , distinctOr
   , refuseProblem
   )
 import Archive.Door.Refusal (PlanRefusal, refuse)
@@ -53,9 +53,9 @@ import Data.Text (Text)
 
 data AdmissionSnapshot = AdmissionSnapshot
   { snapshotArchiveId :: Text
-  , snapshotHeads :: Map Text Text
-  , snapshotRevisions :: Set Text
-  , snapshotRevisionBatches :: Map Text Text
+  , snapshotHeads :: Map ObjectId RevisionId
+  , snapshotRevisions :: Set RevisionId
+  , snapshotRevisionBatches :: Map RevisionId Text
   , snapshotReferenceIndex :: StoreIndex
   , snapshotTransitionContracts :: Set (Text, Text, Text)
   }
@@ -101,8 +101,8 @@ planAdmission snapshot proposal = do
   pure AdmissionPlan
     { plannedAdmissionSnapshot = ""
     , plannedGitExecutableIdentity = ""
-    , plannedRevisions = revisions
-    , plannedRecords = [(preparedRevision item, preparedCanonical item) | item <- prepared]
+    , plannedRevisions = map revisionIdText revisions
+    , plannedRecords = [(revisionIdText (preparedRevision item), preparedCanonical item) | item <- prepared]
     , planIsRetry = completeRetry
     }
   where
@@ -124,19 +124,23 @@ rejectUnsupported snapshot record = case envelopeBody (proposalRecordDraft recor
       (contractId citation, contractVersion citation, contractDigest citation)
 
 data Prepared = Prepared
-  { preparedRevision :: Text
+  { preparedRevision :: RevisionId
   , preparedCanonical :: Value
-  , preparedObject :: Text
+  , preparedObject :: ObjectId
   , preparedDraft :: DraftEnvelope
   }
 
+-- | The canonicalizer writes a revision as @sha256:@ and 64 lowercase hex
+-- digits, which 'parseRevisionId' always accepts; the parse gives it its
+-- type and cannot refuse.
 prepareRecord :: ProposalRecord -> Either Text Prepared
 prepareRecord record = do
-  (revision, canonical) <- canonicalizeDraftStrict (proposalRecordValue record)
+  (digest, canonical) <- canonicalizeDraftStrict (proposalRecordValue record)
+  revision <- parseRevisionId digest
   pure Prepared
     { preparedRevision = revision
     , preparedCanonical = canonical
-    , preparedObject = objectText (envelopeObject draft)
+    , preparedObject = envelopeObject draft
     , preparedDraft = draft
     }
   where
@@ -150,10 +154,12 @@ validateAllocations snapshot proposal prepared completeRetry = do
       newObjects = draftObjects `Set.difference` existingObjects
       allocatedObjects = Set.fromList (map identityObjectId allocations)
   mapM_ (validateAllocation snapshot) allocations
+  -- A proposal's allocations are its own text; the objects are compared by
+  -- their spelling.
   if completeRetry
-    then if allocatedObjects `Set.isSubsetOf` draftObjects then pure ()
+    then if allocatedObjects `Set.isSubsetOf` Set.map objectIdText draftObjects then pure ()
       else Left (AllocationOutsideDrafts AdmissionPlanner)
-  else if allocatedObjects /= newObjects
+  else if allocatedObjects /= Set.map objectIdText newObjects
     then Left (AllocationsNotOnePerNewObject AdmissionPlanner)
     else pure ()
 
@@ -169,12 +175,15 @@ validateAllocation snapshot allocation = do
 validateExpectedHeads :: AdmissionSnapshot -> Proposal -> [Prepared] -> Either PlanRefusal ()
 validateExpectedHeads snapshot proposal _ = refuseProblem $ mapM_ check (manifestExpectedHeads (proposalManifest proposal))
   where
-    check expected = case Map.lookup (expectedObjectId expected) (snapshotHeads snapshot) of
+    -- Expected heads are the proposal's own text, so the heads are looked
+    -- up by their spelling; 'objectIdText' preserves the keys' order.
+    heads = Map.mapKeysMonotonic objectIdText (snapshotHeads snapshot)
+    check expected = case Map.lookup (expectedObjectId expected) heads of
       Nothing
         | expectedRevisionId expected == Nothing -> Right ()
         | otherwise -> Left ExpectedHeadMissingObject
       Just actual
-        | expectedRevisionId expected == Just actual -> Right ()
+        | expectedRevisionId expected == Just (revisionIdText actual) -> Right ()
         | otherwise -> Left (ExpectedHeadNotCurrent AdmissionPlanner)
 
 validateReferencesInOrder :: AdmissionSnapshot -> [Prepared] -> Either Text ()
@@ -182,7 +191,7 @@ validateReferencesInOrder snapshot = go (snapshotReferenceIndex snapshot)
   where
     go _ [] = Right ()
     go index (item : rest) = do
-      revision <- parseRevisionId (preparedRevision item)
+      let revision = preparedRevision item
       validateReferences index revision (preparedDraft item)
       go (insertRecord revision (preparedDraft item) index) rest
 
@@ -193,7 +202,7 @@ validateLinearHeads snapshot = go (snapshotHeads snapshot)
     go heads (item : rest) = do
       let objectId = preparedObject item
           superseded =
-            [ revisionText revision
+            [ revision
             | reference <- envelopeSupersedes (preparedDraft item)
             , Just revision <- [referenceRevision reference]
             ]
@@ -203,9 +212,3 @@ validateLinearHeads snapshot = go (snapshotHeads snapshot)
           | current == previous -> pure ()
         _ -> Left (NonLinearSupersession AdmissionPlanner)
       go (Map.insert objectId (preparedRevision item) heads) rest
-
-objectText :: ObjectId -> Text
-objectText = objectIdText
-
-revisionText :: RevisionId -> Text
-revisionText = revisionIdText

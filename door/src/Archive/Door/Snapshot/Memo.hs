@@ -14,12 +14,12 @@ import Archive.Door.Snapshot.Data
   , RecordEntry (..)
   , SnapshotData (..)
   )
+import Archive.Door.Snapshot.Problem (SnapshotProblem (..))
 import Archive.Door.Snapshot.Read
   ( decodeBytes
   , expectedRecordRevision
+  , integrity
   , mapIntegrity
-  , objectText
-  , revisionText
   )
 import Archive.Door.Types
   ( StoredEnvelope (..)
@@ -33,7 +33,6 @@ import Data.IORef (IORef, newIORef, writeIORef)
 import Data.List (sortOn)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
-import qualified Data.Text as Text
 import System.Directory (canonicalizePath)
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -93,15 +92,15 @@ extendSnapshot base commit chain records = do
     }
   where
     entryFor (path, bytes) = do
-      revision <- mapIntegrity (expectedRecordRevision path)
-      value <- mapIntegrity (decodeBytes path bytes)
+      revision <- integrity (expectedRecordRevision path)
+      value <- integrity (decodeBytes path bytes)
       envelope <- mapIntegrity (parseStoredEnvelope value)
-      if revisionText (storedRevision envelope) /= revision
-        then Left (AdmissionSnapshotIntegrityError (Text.pack path <> " disagrees with embedded revision_id"))
+      if storedRevision envelope /= revision
+        then Left (AdmissionSnapshotIntegrityError (EmbeddedRevisionDisagrees path))
         else Right RecordEntry
           { entryPath = path
           , entryRevision = revision
-          , entryObject = objectText (envelopeObject (storedDraft envelope))
+          , entryObject = envelopeObject (storedDraft envelope)
           , entryEnvelope = envelope
           , entryCommitted = CommittedRecord
               { committedPath = path

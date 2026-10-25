@@ -11,11 +11,11 @@ module Archive.Door.Snapshot.Read
   , readCanonicalJson
   , decodeBytes
   , mapIntegrity
+  , integrity
   , expectedRecordRevision
   , introducedAt
   , requireIntroducedAt
   , loadIntroducers
-  , requireDistinct
   , objectText
   , revisionText
   ) where
@@ -26,31 +26,30 @@ import Archive.Door.Snapshot.Data
   ( AdmissionSnapshotLoadError (..)
   , RecordEntry (..)
   )
-import Archive.Door.Types (ObjectId, RevisionId, objectIdText, revisionIdText)
+import Archive.Door.Snapshot.Problem (SnapshotProblem (..), snapshotCheck)
+import Archive.Door.Types (ObjectId, RevisionId, objectIdText, parseRevisionId, revisionIdText)
 import Archive.GitSnapshot (GitSnapshot)
 import qualified Archive.GitSnapshot as Git
 import Data.Aeson (Value)
 import Data.Aeson.RFC8785 (encodeCanonical)
 import qualified Data.ByteString.Lazy as LazyByteString
 import qualified Data.Map.Strict as Map
-import qualified Data.Set as Set
 import Data.Text (Text)
-import qualified Data.Text as Text
 
-introducedAt :: Map.Map FilePath Text -> FilePath -> Either Text Text
+introducedAt :: Map.Map FilePath Text -> FilePath -> Either SnapshotProblem Text
 introducedAt additions path = case Map.lookup path additions of
   Just commit -> Right commit
-  Nothing -> Left ("immutable history omitted " <> Text.pack path)
+  Nothing -> Left (HistoryOmitted path)
 
-requireIntroducedAt :: Map.Map FilePath Text -> Text -> FilePath -> Either Text ()
+requireIntroducedAt :: Map.Map FilePath Text -> Text -> FilePath -> Either SnapshotProblem ()
 requireIntroducedAt additions expected path = do
   actual <- introducedAt additions path
   if actual == expected
     then Right ()
-    else Left (Text.pack path <> " was not introduced with the archive specification")
+    else Left (NotIntroducedWithSpecification path)
 
 loadIntroducers :: Map.Map FilePath Text -> [RecordEntry]
-                -> Either Text (Map.Map Text Text)
+                -> Either SnapshotProblem (Map.Map RevisionId Text)
 loadIntroducers additions entries =
   Map.fromList <$> mapM one entries
   where
@@ -58,8 +57,14 @@ loadIntroducers additions entries =
       commit <- introducedAt additions (entryPath entry)
       pure (entryRevision entry, commit)
 
-expectedRecordRevision :: FilePath -> Either Text Text
-expectedRecordRevision path = digestText <$> parseRecordRelativePath path
+-- | The revision a record path names. Layout's digest parser and
+-- 'parseRevisionId' accept exactly the same spellings, so the second parse
+-- cannot fail once the first has succeeded; it only gives the digest its
+-- revision type.
+expectedRecordRevision :: FilePath -> Either SnapshotProblem RevisionId
+expectedRecordRevision path = snapshotCheck $ do
+  digest <- parseRecordRelativePath path
+  parseRevisionId (digestText digest)
 
 readCanonicalJson
   :: GitSnapshot
@@ -69,16 +74,15 @@ readCanonicalJson snapshot path = do
   bytes <- readBytes snapshot path
   pure $ do
     raw <- bytes
-    value <- mapIntegrity (decodeBytes path raw)
+    value <- integrity (decodeBytes path raw)
     if encodeCanonical value == raw
       then Right value
-      else Left (AdmissionSnapshotIntegrityError
-        (Text.pack path <> " is not RFC 8785 canonical"))
+      else Left (AdmissionSnapshotIntegrityError (NotCanonical path))
 
 readJson :: GitSnapshot -> FilePath -> IO (Either AdmissionSnapshotLoadError Value)
 readJson snapshot path = do
   bytes <- readBytes snapshot path
-  pure (bytes >>= mapIntegrity . decodeBytes path)
+  pure (bytes >>= integrity . decodeBytes path)
 
 readBytes
   :: GitSnapshot
@@ -90,18 +94,19 @@ readBytes snapshot path = do
     Left problem -> Left (AdmissionSnapshotGitError problem)
     Right bytes -> Right bytes
 
+-- | A snapshot problem, as an integrity failure of the snapshot.
+integrity :: Either SnapshotProblem a -> Either AdmissionSnapshotLoadError a
+integrity = either (Left . AdmissionSnapshotIntegrityError) Right
+
+-- | Another module's 'Text' failure, as an integrity failure of the
+-- snapshot with its message unchanged.
 mapIntegrity :: Either Text a -> Either AdmissionSnapshotLoadError a
-mapIntegrity = either (Left . AdmissionSnapshotIntegrityError) Right
+mapIntegrity = integrity . snapshotCheck
 
-decodeBytes :: FilePath -> LazyByteString.ByteString -> Either Text Value
+decodeBytes :: FilePath -> LazyByteString.ByteString -> Either SnapshotProblem Value
 decodeBytes path bytes = case decodeUnique bytes of
-  Left problem -> Left (Text.pack path <> ": invalid JSON: " <> Text.pack problem)
+  Left problem -> Left (InvalidJson path problem)
   Right value -> Right value
-
-requireDistinct :: Text -> [Text] -> Either Text ()
-requireDistinct label values
-  | Set.size (Set.fromList values) == length values = Right ()
-  | otherwise = Left (label <> " must be unique")
 
 objectText :: ObjectId -> Text
 objectText = objectIdText

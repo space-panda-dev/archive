@@ -34,7 +34,6 @@ import Archive.Door.Transition.Rules
   , objectText
   , oneReference
   , requirePerson
-  , revisionText
   , validateBatchContracts
   , validateOne
   )
@@ -42,9 +41,10 @@ import Archive.Door.Types
   ( DraftEnvelope (..)
   , RecordBody (..)
   , Reference (..)
+  , ObjectId
+  , RevisionId
   , StoredEnvelope (..)
   , agentIdText
-  , parseRevisionId
   )
 import Control.Monad (foldM)
 import Data.Aeson (Value (Null))
@@ -55,8 +55,8 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 
 data ReplayState = ReplayState
-  { replayHeads :: Map Text Text
-  , replaySeen :: Map Text RecordEntry
+  { replayHeads :: Map ObjectId RevisionId
+  , replaySeen :: Map RevisionId RecordEntry
   , replayActiveOperator :: Maybe Text
   , replayRetired :: Set Text
   , replayDestroyed :: Set Text
@@ -209,7 +209,7 @@ orderHistoricalTransitions installed entries = do
   pure ordered
   where
     prepareEntry entry = do
-      key <- outsideCheck (dispatch installed (storedDraft (entryEnvelope entry)))
+      key <- dispatch installed (storedDraft (entryEnvelope entry))
       let prepared = Prepared
             (entryRevision entry)
             Null
@@ -238,10 +238,8 @@ orderByPredecessor triples = do
 
     follows previous (_, item, _) = case predecessorReference item of
       Right (Just reference) ->
-        objectText (referenceObject reference)
-          == objectText (envelopeObject (preparedDraft previous))
-        && fmap revisionText (referenceRevision reference)
-          == Just (preparedRevision previous)
+        referenceObject reference == envelopeObject (preparedDraft previous)
+        && referenceRevision reference == Just (preparedRevision previous)
       _ -> False
 
 filterMNoPredecessor :: [(TransitionKey, Prepared, RecordEntry)]
@@ -297,7 +295,7 @@ applyEntry state entry = do
   let draft = storedDraft (entryEnvelope entry)
       objectId = entryObject entry
       supersedes =
-        [ revisionText revision
+        [ revision
         | reference <- envelopeSupersedes draft
         , Just revision <- [referenceRevision reference]
         ]
@@ -312,7 +310,7 @@ applyEntry state entry = do
     (Nothing, []) -> Right ()
     (Just current, [previous]) | current == previous -> Right ()
     _ -> Left HistoricalHeadNotExtended
-  revision <- outsideCheck (parseRevisionId (entryRevision entry))
+  let revision = entryRevision entry
   outsideCheck (validateReferences (replayStore state) revision draft)
   pure state
     { replayHeads = Map.insert objectId (entryRevision entry) (replayHeads state)
@@ -324,13 +322,13 @@ resolveReplayReference :: ReplayState -> Reference -> Either TransitionProblem R
 resolveReplayReference state reference = do
   revision <- maybe
     (Left ReferenceUnpinned)
-    (Right . revisionText)
+    Right
     (referenceRevision reference)
   entry <- maybe
     (Left ReplayReferenceNotEarlier)
     Right
     (Map.lookup revision (replaySeen state))
-  if entryObject entry == objectText (referenceObject reference)
+  if entryObject entry == referenceObject reference
     then Right entry
     else Left ReferenceOtherObject
 
@@ -338,9 +336,9 @@ requireReplayCurrent :: ReplayState -> Reference -> Either TransitionProblem ()
 requireReplayCurrent state reference = do
   revision <- maybe
     (Left ReferenceUnpinned)
-    (Right . revisionText)
+    Right
     (referenceRevision reference)
-  case Map.lookup (objectText (referenceObject reference)) (replayHeads state) of
+  case Map.lookup (referenceObject reference) (replayHeads state) of
     Just current | current == revision -> Right ()
     _ -> Left ReplayReferenceNotCurrent
 

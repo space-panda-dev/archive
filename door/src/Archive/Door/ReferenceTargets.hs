@@ -20,8 +20,12 @@ import Archive.Door.Contracts
   , ReferenceTargetRule (..)
   , contractReferenceTargets
   )
+import Archive.Door.ContractRuleProblem
+  ( ContractRuleProblem (..)
+  , outsideRule
+  , shapeArticle
+  )
 import Archive.Door.Snapshot.Data (RecordEntry (..))
-import Archive.Door.Snapshot.Read (revisionText)
 import Archive.Door.Types
   ( ContractCitation (..)
   , DraftEnvelope
@@ -31,7 +35,10 @@ import Archive.Door.Types
   , envelopeBody
   , envelopeContracts
   , envelopeReferences
+  , ObjectId
+  , RevisionId
   , objectIdText
+  , revisionIdText
   )
 import Data.Aeson (Value (Object, String))
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -42,8 +49,8 @@ import qualified Data.Text as Text
 -- | A record a contract reference may name: committed in the snapshot, or an
 -- earlier record of the proposed batch.
 data Target = Target
-  { targetObject :: Text
-  , targetRevision :: Text
+  { targetObject :: ObjectId
+  , targetRevision :: RevisionId
   , targetDraft :: DraftEnvelope
   }
 
@@ -51,9 +58,9 @@ entryTarget :: RecordEntry -> Target
 entryTarget entry = Target (entryObject entry) (entryRevision entry)
   (storedDraft (entryEnvelope entry))
 
-validateReferenceTargetRules :: [Target] -> DraftEnvelope -> [ContractBundle] -> Either Text ()
+validateReferenceTargetRules :: [Target] -> DraftEnvelope -> [ContractBundle] -> Either ContractRuleProblem ()
 validateReferenceTargetRules records draft bundles = do
-  rules <- concat <$> mapM (contractReferenceTargets . contractBundleSchema) bundles
+  rules <- concat <$> mapM (outsideRule . contractReferenceTargets . contractBundleSchema) bundles
   mapM_ validate rules
   where
     -- A target rule constrains the references present.  How many a role
@@ -62,7 +69,7 @@ validateReferenceTargetRules records draft bundles = do
     validate (role, rule) = do
       let references = filter ((== role) . referenceRole) (envelopeReferences draft)
       if not (referenceTargetMany rule) && length references > 1
-        then Left ("contract requires exactly one " <> role <> " reference")
+        then Left (NotExactlyOneReference role)
         else mapM_ (validateOne role rule) references
     -- A rule naming one shape refuses any other; a rule naming several
     -- accepts a revision of any of them, then applies that shape's checks.
@@ -72,24 +79,22 @@ validateReferenceTargetRules records draft bundles = do
         [] -> validateAgainst role rule target
         alternatives
           | any (\alternative -> isRight (validateAgainst role alternative target)) alternatives -> Right ()
-          | otherwise -> Left (role <> " reference must target " <> Text.intercalate ", or "
-              (map describe alternatives))
+          | otherwise -> Left (TargetNoneOf role (map describe alternatives))
     describe alternative = case (referenceTargetShapes alternative, referenceTargetKind alternative,
                                  referenceTargetKinds alternative, referenceTargetContract alternative) of
       (_, Just kind, _, _) -> "an Entity revision of kind " <> kind
       (_, _, kinds@(_ : _), _) -> "an Entity revision of kind " <> Text.intercalate " or " kinds
       (_, _, _, Just (identifier, version)) -> "a Claim citing " <> identifier <> " version " <> version
-      ([single], _, _, _) -> article single
+      ([single], _, _, _) -> shapeArticle single
       (shapes, _, _, _) -> "a revision of shape " <> Text.intercalate " or " shapes
     validateAgainst role rule target = do
       let body = envelopeBody (targetDraft target)
           shape = bodyShape body
       case referenceTargetShapes rule of
         [single]
-          | single /= shape -> Left (role <> " reference must target " <> article single)
+          | single /= shape -> Left (TargetWrongShape role single)
         shapes
-          | shape `notElem` shapes -> Left (role <> " reference must target a revision of shape "
-              <> Text.intercalate " or " shapes)
+          | shape `notElem` shapes -> Left (TargetNotOfShapes role shapes)
         _ -> validateShape role rule target body
     validateShape role rule target body = case bodyShape body of
         "claim" -> case body of
@@ -99,38 +104,31 @@ validateReferenceTargetRules records draft bundles = do
               if any (\citation -> contractId citation == identifier && contractVersion citation == version)
                   (envelopeContracts (targetDraft target))
                 then Right ()
-                else Left (role <> " reference must target a Claim citing " <> identifier <> " version " <> version)
-          _ -> Left (role <> " reference must target a Claim revision")
+                else Left (TargetNotCiting role identifier version)
+          _ -> Left (TargetWrongShape role "claim")
         "assessment" -> case body of
           AssessmentRecord _ -> Right ()
-          _ -> Left (role <> " reference must target an Assessment revision")
+          _ -> Left (TargetWrongShape role "assessment")
         "artifact" -> case body of
           ArtifactRecord _ -> Right ()
-          _ -> Left (role <> " reference must target an Artifact revision")
+          _ -> Left (TargetWrongShape role "artifact")
         "entity" -> case body of
           EntityRecord payload -> do
             kind <- case payload of
               Object fields -> case KeyMap.lookup "kind" fields of
                 Just (String value) -> Right value
-                _ -> Left (role <> " target Entity has no string kind")
-              _ -> Left (role <> " target Entity payload is not an object")
+                _ -> Left (TargetEntityNoKind role)
+              _ -> Left (TargetEntityNotObject role)
             case (referenceTargetKind rule, referenceTargetKinds rule) of
               (Just expected, _)
                 | kind == expected -> Right ()
-                | otherwise -> Left (role <> " reference must target an Entity revision of kind " <> expected)
+                | otherwise -> Left (TargetEntityKind role [expected])
               (Nothing, [])-> Right ()
               (Nothing, expected)
                 | kind `elem` expected -> Right ()
-                | otherwise -> Left (role <> " reference must target an Entity revision of kind "
-                    <> Text.intercalate " or " expected)
-          _ -> Left (role <> " reference must target an Entity revision")
-        _ -> Left "installed contract has an unsupported reference target shape"
-    article shape = case shape of
-      "claim" -> "a Claim revision"
-      "assessment" -> "an Assessment revision"
-      "artifact" -> "an Artifact revision"
-      "entity" -> "an Entity revision"
-      other -> "a " <> other <> " revision"
+                | otherwise -> Left (TargetEntityKind role expected)
+          _ -> Left (TargetWrongShape role "entity")
+        _ -> Left UnsupportedTargetShape
 
 bodyShape :: RecordBody -> Text
 bodyShape body = case body of
@@ -140,28 +138,28 @@ bodyShape body = case body of
   AssessmentRecord _ -> "assessment"
 
 -- | The one reference a rule reads in a role, or a refusal naming the role.
-singleReference :: DraftEnvelope -> Text -> Either Text Reference
+singleReference :: DraftEnvelope -> Text -> Either ContractRuleProblem Reference
 singleReference draft role =
   case filter ((== role) . referenceRole) (envelopeReferences draft) of
     [reference] -> Right reference
-    _ -> Left ("contract requires exactly one " <> role <> " reference")
+    _ -> Left (NotExactlyOneReference role)
 
 -- | A pinned Claim's payload as an object.
-targetClaimPayload :: [Target] -> Text -> Reference -> Either Text (KeyMap.KeyMap Value)
+targetClaimPayload :: [Target] -> Text -> Reference -> Either ContractRuleProblem (KeyMap.KeyMap Value)
 targetClaimPayload records role reference = do
   target <- referencedEntry records role reference
   case envelopeBody (targetDraft target) of
     ClaimRecord (Object payload) -> Right payload
-    _ -> Left (role <> " reference must target a Claim revision")
+    _ -> Left (TargetWrongShape role "claim")
 
-referencedEntry :: [Target] -> Text -> Reference -> Either Text Target
+referencedEntry :: [Target] -> Text -> Reference -> Either ContractRuleProblem Target
 referencedEntry records role reference = do
-  revision <- maybe (Left ("contract reference " <> role <> " must pin an exact revision")) Right
+  revision <- maybe (Left (ReferenceUnpinned role)) Right
     (referenceRevision reference)
   -- An exact retry finds its own records both committed and proposed; they
   -- are one revision, so the first match is the committed one.
   case filter
-      (\target -> targetObject target == objectIdText (referenceObject reference)
-        && targetRevision target == revisionText revision) records of
+      (\target -> targetObject target == referenceObject reference
+        && targetRevision target == revision) records of
     target : _ -> Right target
-    [] -> Left ("reference revision " <> revisionText revision <> " is not an admitted revision of " <> objectIdText (referenceObject reference))
+    [] -> Left (ReferenceNotAdmitted (revisionIdText revision) (objectIdText (referenceObject reference)))

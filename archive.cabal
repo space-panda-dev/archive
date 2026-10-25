@@ -58,6 +58,7 @@ library
     , Archive.Door.Canonical
     , Archive.Door.Catalog
     , Archive.Door.ContractCitations
+    , Archive.Door.ContractRuleProblem
     , Archive.Door.Bootstrap
     , Archive.Door.Bootstrap.Abort
     , Archive.Door.Bootstrap.Contents
@@ -85,6 +86,7 @@ library
     , Archive.Door.Contracts.Profile.Syntax
     , Archive.Door.Contracts.Schema
     , Archive.Door.Contracts.SchemaError
+    , Archive.Door.Distinct
     , Archive.Door.Hex
     , Archive.Door.IOFailure
     , Archive.Door.Identity
@@ -121,6 +123,7 @@ library
     , Archive.Door.Snapshot.History
     , Archive.Door.Snapshot.Load
     , Archive.Door.Snapshot.Memo
+    , Archive.Door.Snapshot.Problem
     , Archive.Door.Snapshot.Read
     , Archive.Door.Snapshot.Supersession
     , Archive.Door.References

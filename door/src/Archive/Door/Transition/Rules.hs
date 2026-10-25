@@ -47,7 +47,7 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 
 data Prepared = Prepared
-  { preparedRevision :: Text
+  { preparedRevision :: RevisionId
   , preparedValue :: Value
   , preparedDraft :: DraftEnvelope
   }
@@ -58,8 +58,8 @@ data TransitionState = TransitionState
   }
 
 data SnapshotFacts = SnapshotFacts
-  { factByRevision :: Map Text RecordEntry
-  , factHeads :: Map Text Text
+  { factByRevision :: Map RevisionId RecordEntry
+  , factHeads :: Map ObjectId RevisionId
   , factActiveOperator :: Text
   , factRetired :: Set Text
   , factDestroyed :: Set Text
@@ -86,10 +86,9 @@ validatePredecessorChain (first : rest) = do
         (envelopeReferences (preparedDraft item))
       revision <- maybe
         (Left PredecessorUnpinned)
-        (Right . revisionText)
+        Right
         (referenceRevision predecessor)
-      let expectedObject = objectText (envelopeObject (preparedDraft previous))
-      if objectText (referenceObject predecessor) == expectedObject
+      if referenceObject predecessor == envelopeObject (preparedDraft previous)
           && revision == preparedRevision previous
         then go item remaining
         else Left PredecessorNotPreceding
@@ -134,7 +133,7 @@ validateOne facts state (key, item) = do
       if any (\version -> citesContract "archive.transition/publication_approval" version (storedDraft (entryEnvelope approval))) ["1", "2"]
         then pure ()
         else Left WithdrawsNotApproval
-      revision <- maybe (Left WithdrawsUnpinned) (Right . revisionText)
+      revision <- maybe (Left WithdrawsUnpinned) Right
         (referenceRevision reference)
       if revision `elem` withdrawnApprovals facts
         then Left AlreadyWithdrawn
@@ -185,9 +184,9 @@ citesContract identifier version draft =
 -- | Approval revisions named by a committed withdrawal of either version,
 -- so no approval is withdrawn twice across them.  During replay the facts
 -- hold only earlier records, so this is the then-current set.
-withdrawnApprovals :: SnapshotFacts -> [Text]
+withdrawnApprovals :: SnapshotFacts -> [RevisionId]
 withdrawnApprovals facts =
-  [ revisionText revision
+  [ revision
   | entry <- Map.elems (factByRevision facts)
   , let draft = storedDraft (entryEnvelope entry)
   , any (\version -> citesContract "archive.transition/publication_withdrawal" version draft) ["1", "2"]
@@ -217,11 +216,10 @@ resolveReference :: SnapshotFacts -> Reference -> Either TransitionProblem Recor
 resolveReference facts reference = do
   revision <- maybe (Left ReferenceUnpinned) Right
     (referenceRevision reference)
-  entry <- case Map.lookup (revisionText revision) (factByRevision facts) of
+  entry <- case Map.lookup revision (factByRevision facts) of
     Nothing -> Left ReferenceUncommitted
     Just value -> Right value
-  if objectText (envelopeObject (storedDraft (entryEnvelope entry)))
-      == objectText (referenceObject reference)
+  if envelopeObject (storedDraft (entryEnvelope entry)) == referenceObject reference
     then Right entry
     else Left ReferenceOtherObject
 
@@ -229,8 +227,8 @@ requireCurrent :: SnapshotFacts -> Reference -> Either TransitionProblem ()
 requireCurrent facts reference = do
   revision <- maybe (Left ReferenceUnpinned) Right
     (referenceRevision reference)
-  case Map.lookup (objectText (referenceObject reference)) (factHeads facts) of
-    Just current | current == revisionText revision -> Right ()
+  case Map.lookup (referenceObject reference) (factHeads facts) of
+    Just current | current == revision -> Right ()
     _ -> Left ReferenceNotCurrent
 
 requirePerson :: RecordEntry -> Either TransitionProblem ()

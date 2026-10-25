@@ -12,6 +12,7 @@ module Archive.Door.ProposalProblem
   , proposalProblemMessage
   ) where
 
+import Archive.Door.Json.Access (FieldRefusal, fieldRefusalText)
 import Data.Text (Text)
 import qualified Data.Text as Text
 
@@ -64,11 +65,7 @@ data ProposalProblem
   | IdentityNameInvalid
   | UnknownOrMissingFields Text
     -- ^ the object's label, such as @proposal manifest@
-  | FieldEmpty Text
-  | FieldNotString Text
-  | FieldNotArray Text
-  | FieldNotNumber Text
-  | FieldRequired Text
+  | ProposalField FieldRefusal
   | ControlCharacters Text
   | NotUnique Text
   deriving (Eq, Show)
@@ -120,10 +117,6 @@ proposalProblemMessage problem = case problem of
   NamespaceInvalid -> "identity namespace has an invalid segment"
   IdentityNameInvalid -> "identity name has invalid characters"
   UnknownOrMissingFields label -> label <> " has unknown or missing fields"
-  FieldEmpty name -> name <> " must not be empty"
-  FieldNotString name -> name <> " must be a string"
-  FieldNotArray name -> name <> " must be an array"
-  FieldNotNumber name -> name <> " must be a number"
-  FieldRequired name -> name <> " is required"
+  ProposalField refusal -> fieldRefusalText refusal
   ControlCharacters field -> field <> " must not contain control characters"
   NotUnique label -> label <> " must be unique"

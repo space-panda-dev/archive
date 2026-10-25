@@ -16,27 +16,25 @@ import Archive.Door.Contracts
       ( contractBundleContext
       , contractBundleDigest
       , contractBundleId
-      , contractBundleSchema
       , contractBundleVersion
       )
-  , validateContractInstance
+  , validateBundleInstance
   )
+import Archive.Door.ContractRuleProblem (ContractRuleProblem (..), outsideRule)
+import Archive.Door.Distinct (distinctOr)
 import Archive.Door.Snapshot.Data (Installed (..))
-import Archive.Door.Snapshot.Read (requireDistinct)
 import Archive.Door.Types (ContractCitation (..))
 import Data.Aeson (Value (Object), object, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import Data.Text (Text)
-import qualified Data.Text as Text
 
 validateCitations
   :: [Installed]
   -> Value
   -> [ContractCitation]
-  -> Either Text ()
+  -> Either ContractRuleProblem ()
 validateCitations installed value citations = do
   instanceValue <- contractInstance value
   bundles <- mapM (resolveOne instanceValue) citations
@@ -46,14 +44,14 @@ validateCitations installed value citations = do
     resolveOne instanceValue citation = do
       let key = (contractId citation, contractVersion citation, contractDigest citation)
       bundle <- case Map.lookup key catalog of
-        Nothing -> Left ("contract is not installed at this snapshot: " <> contractId citation)
+        Nothing -> Left (CitedNotInstalled (contractId citation))
         Just value' -> Right value'
-      validateContractInstance (contractBundleSchema bundle) instanceValue
+      outsideRule (validateBundleInstance bundle instanceValue)
       pure bundle
 
-validateCitationContexts :: [ContractBundle] -> Either Text ()
+validateCitationContexts :: [ContractBundle] -> Either ContractRuleProblem ()
 validateCitationContexts bundles = do
-  requireDistinct "contract citation"
+  distinctOr DuplicateCitation
     [ contractBundleId bundle <> "\0" <> contractBundleVersion bundle <> "\0"
         <> contractBundleDigest bundle
     | bundle <- bundles
@@ -66,11 +64,11 @@ validateCitationContexts bundles = do
       collisions = [term | (term, values) <- Map.toList owners, Set.size values > 1]
   case collisions of
     [] -> Right ()
-    terms -> Left ("contract context term collision: " <> Text.intercalate ", " terms)
+    terms -> Left (ContextTermCollision terms)
 
-contractInstance :: Value -> Either Text Value
+contractInstance :: Value -> Either ContractRuleProblem Value
 contractInstance (Object fields) = do
-  payload <- maybe (Left "contract payload is missing") Right (KeyMap.lookup "payload" fields)
-  refs <- maybe (Left "contract refs are missing") Right (KeyMap.lookup "refs" fields)
+  payload <- maybe (Left PayloadMissing) Right (KeyMap.lookup "payload" fields)
+  refs <- maybe (Left RefsMissing) Right (KeyMap.lookup "refs" fields)
   pure (object ["payload" .= payload, "refs" .= refs])
-contractInstance _ = Left "record envelope must be an object"
+contractInstance _ = Left EnvelopeNotObject

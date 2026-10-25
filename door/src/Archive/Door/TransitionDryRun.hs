@@ -42,10 +42,10 @@ import Archive.Door.References
   , insertRecord
   , validateReferences
   )
+import Archive.Door.Distinct (distinctOr)
 import Archive.Door.PlanProblem
   ( PlanProblem (..)
   , Planner (..)
-  , distinctOr
   , refuseProblem
   )
 import Archive.Door.Refusal (PlanRefusal (..), refuse)
@@ -73,8 +73,6 @@ import Archive.Door.Transition.Rules
   ( Prepared (..)
   , SnapshotFacts (..)
   , TransitionState (..)
-  , objectText
-  , revisionText
   , validateBatchContracts
   , validateOne
   )
@@ -83,8 +81,12 @@ import Archive.Door.Types
   ( ContractCitation (..)
   , DraftEnvelope (..)
   , Reference (..)
+  , ObjectId
+  , RevisionId
   , StoredEnvelope (..)
+  , objectIdText
   , parseRevisionId
+  , revisionIdText
   )
 import qualified Archive.GitSnapshot as Git
 import Control.Monad (foldM)
@@ -152,7 +154,7 @@ planTransition today snapshot proposal = do
   refuse (validateProposal proposal)
   prepared <- refuse (mapM prepare (proposalRecords proposal))
   refuseProblem (distinctOr (DuplicateComputedRevision TransitionPlanner) (map preparedRevision prepared))
-  keys <- refuse (mapM (dispatch (snapshotTransitionKeys snapshot) . preparedDraft) prepared)
+  keys <- refuseTransition (mapM (dispatch (snapshotTransitionKeys snapshot) . preparedDraft) prepared)
   refuseTransition (validateBatchContracts keys prepared)
   facts <- refuseTransition (snapshotFacts snapshot)
   let revisions = map preparedRevision prepared
@@ -172,9 +174,9 @@ planTransition today snapshot proposal = do
   pure TransitionPlan
     { plannedTransitionSnapshot = ""
     , plannedGitExecutableIdentity = ""
-    , plannedTransitionRevisions = revisions
+    , plannedTransitionRevisions = map revisionIdText revisions
     , plannedTransitionRecords =
-        [(preparedRevision item, preparedValue item) | item <- prepared]
+        [(revisionIdText (preparedRevision item), preparedValue item) | item <- prepared]
     , transitionRetry = retry
     , resultingRetiredObjects = retiredObjects finalState
     , resultingDestroyedDigests = destroyedDigests finalState
@@ -189,23 +191,28 @@ validatePublicationReach today snapshot facts item =
   validateBeyondCircle today (factActiveOperator facts) held draft schemas
   where
     draft = preparedDraft item
-    held = [ Held (entryObject entry) (entryRevision entry) (storedAt (entryEnvelope entry)) (storedDraft (entryEnvelope entry))
+    held = [ Held (objectIdText (entryObject entry)) (revisionIdText (entryRevision entry))
+             (storedAt (entryEnvelope entry)) (storedDraft (entryEnvelope entry))
            | entry <- Map.elems (factByRevision facts) ]
     schemas = [ contractBundleSchema bundle
               | citation <- envelopeContracts draft
               , Just bundle <- [Map.lookup (contractId citation, contractVersion citation, contractDigest citation)
                                   (snapshotInstalled snapshot)] ]
 
+-- | The canonicalizer writes a revision as @sha256:@ and 64 lowercase hex
+-- digits, which 'parseRevisionId' always accepts; the parse gives it its
+-- type and cannot refuse.
 prepare :: ProposalRecord -> Either Text Prepared
 prepare record = do
-  (revision, _) <- canonicalizeDraftStrict (proposalRecordValue record)
+  (digest, _) <- canonicalizeDraftStrict (proposalRecordValue record)
+  revision <- parseRevisionId digest
   pure Prepared
     { preparedRevision = revision
     , preparedValue = proposalRecordValue record
     , preparedDraft = proposalRecordDraft record
     }
 
-completeRetry :: SnapshotData -> [Text] -> Bool
+completeRetry :: SnapshotData -> [RevisionId] -> Bool
 completeRetry snapshot revisions = case mapM lookupIntroducer revisions of
   Just (introducer : rest)
     | all (== introducer) rest ->
@@ -219,15 +226,17 @@ validateAllocations :: SnapshotData -> Proposal -> [Prepared] -> Bool -> Either 
 validateAllocations snapshot proposal prepared retry = do
   let allocations = manifestIdentities (proposalManifest proposal)
       heads = snapshotHeadsByObject snapshot
-      drafted = Set.fromList (map (objectText . envelopeObject . preparedDraft) prepared)
+      drafted = Set.fromList (map (envelopeObject . preparedDraft) prepared)
       newObjects = drafted `Set.difference` Map.keysSet heads
+      -- A proposal's allocations are its own text; the objects are compared
+      -- by their spelling.
       allocated = Set.fromList (map identityObjectId allocations)
   mapM_ (validateAllocation (snapshotManifestId snapshot)) allocations
   if retry
-    then if allocated `Set.isSubsetOf` drafted
+    then if allocated `Set.isSubsetOf` Set.map objectIdText drafted
       then Right ()
       else Left (AllocationOutsideDrafts TransitionPlanner)
-    else if allocated == newObjects
+    else if allocated == Set.map objectIdText newObjects
       then Right ()
       else Left (AllocationsNotOnePerNewObject TransitionPlanner)
 
@@ -242,9 +251,9 @@ validateAllocation archive allocation = do
 validateExpectedHeads :: SnapshotFacts -> Proposal -> [Prepared] -> Bool -> Either PlanRefusal ()
 validateExpectedHeads facts proposal prepared retry = refuseProblem $ do
   let drafts = Set.fromList
-        [ objectText (envelopeObject (preparedDraft item)) | item <- prepared ]
+        [ envelopeObject (preparedDraft item) | item <- prepared ]
       references = Set.fromList
-        [ objectText (referenceObject reference)
+        [ referenceObject reference
         | item <- prepared
         , reference <- envelopeReferences (preparedDraft item)
           <> envelopeSupersedes (preparedDraft item)
@@ -254,18 +263,18 @@ validateExpectedHeads facts proposal prepared retry = refuseProblem $ do
         [ (expectedObjectId expected, expectedRevisionId expected)
         | expected <- manifestExpectedHeads (proposalManifest proposal)
         ]
-  if Map.keysSet supplied /= required
+  if Map.keysSet supplied /= Set.map objectIdText required
     then Left ExpectedHeadsWrongCover
     else if retry
       then Right ()
       else mapM_ (check drafts supplied) (Set.toList required)
   where
     check drafts supplied objectId = do
-      expected <- case Map.lookup objectId supplied of
+      expected <- case Map.lookup (objectIdText objectId) supplied of
         Nothing -> Left ExpectedHeadOmitted
         Just value -> Right value
       actual <- case Map.lookup objectId (factHeads facts) of
-        Just value -> Right (Just value)
+        Just value -> Right (Just (revisionIdText value))
         Nothing
           | Set.member objectId drafts -> Right Nothing
           | otherwise -> Left ExpectedHeadMissingObject
@@ -273,14 +282,14 @@ validateExpectedHeads facts proposal prepared retry = refuseProblem $ do
         then Right ()
         else Left (ExpectedHeadNotCurrent TransitionPlanner)
 
-validateLineage :: Map Text Text -> [Prepared] -> Either PlanProblem ()
+validateLineage :: Map ObjectId RevisionId -> [Prepared] -> Either PlanProblem ()
 validateLineage initial = go initial
   where
     go _ [] = Right ()
     go heads (item : rest) = do
-      let objectId = objectText (envelopeObject (preparedDraft item))
+      let objectId = envelopeObject (preparedDraft item)
           supersedes =
-            [ revisionText revision
+            [ revision
             | reference <- envelopeSupersedes (preparedDraft item)
             , Just revision <- [referenceRevision reference]
             ]
@@ -296,7 +305,7 @@ validateReferencesInOrder = go
   where
     go _ [] = Right ()
     go index (item : rest) = do
-      revision <- parseRevisionId (preparedRevision item)
+      let revision = preparedRevision item
       validateReferences index revision (preparedDraft item)
       go (insertRecord revision (preparedDraft item) index) rest
 

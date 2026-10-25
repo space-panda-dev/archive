@@ -40,6 +40,7 @@ import Archive.Door.Snapshot.Data
   , snapshotVerification
   )
 import Archive.Door.Snapshot.Load (loadSnapshot)
+import Archive.Door.Snapshot.Problem (snapshotProblemMessage)
 import Archive.Door.Snapshot.Memo (forgetSnapshots, rememberCommitted)
 import Archive.GitSnapshot
   ( GitSnapshotError
@@ -145,7 +146,7 @@ recheckAdmissionForCommit root proposal expected = do
 planningSnapshotError :: AdmissionSnapshotLoadError -> AdmissionPlanningError
 planningSnapshotError problem = case problem of
   AdmissionSnapshotGitError issue -> AdmissionSnapshotFailure issue
-  AdmissionSnapshotIntegrityError message -> AdmissionSnapshotIntegrityFailure message
+  AdmissionSnapshotIntegrityError problem' -> AdmissionSnapshotIntegrityFailure (snapshotProblemMessage problem')
 
 snapshotError :: GitSnapshotError -> Text
 snapshotError = gitSnapshotErrorMessage
