@@ -302,6 +302,11 @@
       "digest": "sha256:c7b635bb3313a8281e89d5ba736f30e4ebf246850f290b58dccc9cf664a0edc5"
     },
     {
+      "id": "archive.migration/session_translation",
+      "version": "1",
+      "digest": "sha256:77491814827f8c96e57366bafd8ead16ee770b9da695ccccf80e5ad333acaa54"
+    },
+    {
       "id": "archive.migration/translation",
       "version": "1",
       "digest": "sha256:c4857f722d08d96db2429a93a34fbc92ac882a65c72cb05b18de9bee2086932f"

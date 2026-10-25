@@ -15,7 +15,7 @@
          "payload": {"kind": "musical_work", "label": "Fixture Work A"}},
         {"key": "work-b", "namespace": "archive.audio/song", "name": "song-00000000-0000-4000-8000-00000000000b", "shape": "entity",
          "payload": {"kind": "musical_work", "label": "Fixture Work B"}},
-        {"key": "session", "namespace": "archive.audio/session", "name": "session-0000000000000000000000000000000000000000000000000000000000000001", "shape": "entity",
+        {"key": "session", "namespace": "archive.audio/session", "name": "session-b6b4fca76cdc0db8191cb5316d5f1c8d8e8edbadf25158c77c55ebac701c3e6f", "shape": "entity",
          "payload": {"kind": "recording_session", "label": "Fixture Session"}}
       ]
     },
@@ -36,6 +36,7 @@
         {"key": "take-b", "namespace": "archive.core/artifact", "name": "fixture-take-b", "shape": "artifact", "content": "take-b.bin"},
         {"key": "take-c", "namespace": "archive.core/artifact", "name": "fixture-take-c", "shape": "artifact", "content": "take-c.bin"},
         {"key": "take-d", "namespace": "archive.core/artifact", "name": "fixture-take-d", "shape": "artifact", "content": "take-d.bin"},
+        {"key": "legacy-snapshot", "namespace": "archive.core/artifact", "name": "fixture-legacy-snapshot", "shape": "artifact", "content": "legacy-sessions.json"},
         {"key": "bundle", "namespace": "archive.core/artifact", "name": "fixture-migration-bundle", "shape": "artifact", "content": "bundle.bin"},
         {"key": "parameters", "namespace": "archive.core/artifact", "name": "fixture-match-parameters", "shape": "artifact", "content": "parameters.bin"}
       ]
@@ -121,6 +122,16 @@
         {"key": "parts", "namespace": "archive.claim/session_parts", "name": "fixture-parts", "shape": "claim",
          "contracts": [{"id": "archive.claim/session_parts", "version": "1"}],
          "payload": {}, "refs": [{"role": "session", "pin": "session"}, {"role": "part", "pin": "take-a"}, {"role": "part", "pin": "take-b"}]}
+      ]
+    },
+    {
+      "name": "legacy session provenance",
+      "command": "admit",
+      "records": [
+        {"key": "session-translation", "namespace": "archive.migration/session_translation", "name": "fixture-session-translation", "shape": "claim",
+         "contracts": [{"id": "archive.migration/session_translation", "version": "1"}],
+         "payload": {"rule": "legacy-session-grouping/1", "source_pointer": "/groups/0", "source_id": "fixture-group", "primary_source": "mix", "sources": [{"id": "mix", "parts_revision": "$revision:parts"}]},
+         "refs": [{"role": "migration_source", "pin": "legacy-snapshot"}, {"role": "translated_session", "pin": "session"}, {"role": "translated_parts", "pin": "parts"}]}
       ]
     },
     {

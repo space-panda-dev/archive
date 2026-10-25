@@ -30,7 +30,7 @@ class SessionEnsemble(unittest.TestCase):
 
     def test_operator_association_projects_exact_session_and_ensemble_pins(self):
         projection = build_projection(self.export)
-        answer = query(projection, f"SELECT ?session ?ensemble WHERE {{ GRAPH ?g {{ ?s <{ARCH}session> ?session ; <{ARCH}session_ensemble> ?ensemble }} }}")
+        answer = query(projection, f"SELECT DISTINCT ?session ?ensemble WHERE {{ GRAPH ?g {{ ?s <{ARCH}session> ?session ; <{ARCH}session_ensemble> ?ensemble }} }}")
         [row] = answer.data["results"]["bindings"]
         for role in ("session", "ensemble"):
             revision = self.manifest["objects"][role]["revision_id"]

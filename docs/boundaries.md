@@ -82,6 +82,8 @@ enrich/enrich.py probe           count an Artifact's audio streams and propose t
 enrich/enrich.py detect          suggest an audio stream's spans and propose them to Door
 enrich/enrich.py match           score a selection against each Work's linked occurrences and propose matches
 enrich/enrich.py propose         read a recording's feature bank entries as claims and propose them to Door
+python -m migration.legacy_sessions SNAPSHOT --archive ROOT --source-object ID --source-revision REV --operator ID --output DIR
+                                 inventory legacy grouping and prepare a Door proposal, without admission
 capture/capture.py import        admit a recorder card's new recordings as sessions, then enrich them
 documents/documents.py ireal     import an iReal Pro playlist's charts, list link candidates, propose the operator's links
 enrich/enrich.py align           place a chart's untimed claims on a recording's beats and chords

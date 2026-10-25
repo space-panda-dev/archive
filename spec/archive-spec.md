@@ -2823,3 +2823,29 @@ an empty list preserves no role of that kind. The session ensemble contract
 keeps its session object and agent, while allowing a corrected ensemble.
 A reader joins a renamed session by object identity while retaining the
 assertion's exact pins. The relay's member contracts are unchanged.
+
+### D-22. Legacy session provenance (ADR 0121)
+
+Specification 0.0.12 adds `archive.migration/session_translation` version 1.
+Its operator-asserted Claim pins one admitted source snapshot Artifact as
+`migration_source`, one `recording_session` Entity as `translated_session`,
+and one or more Claims citing `archive.claim/session_parts` version 1 as
+`translated_parts`. All references pin exact revisions. The closed payload
+identifies rule `legacy-session-grouping/1`, the snapshot JSON pointer
+`source_pointer` (`/groups/N`), its `source_id`, explicit `primary_source`,
+and the source-order list of `{id, parts_revision}` mappings. The snapshot
+retains the explicit per-source file order and content digests. This additive
+bundle does not change `archive.migration/translation` version 1.
+
+The explicit, read-only legacy planner consumes an admitted
+`archive.legacy-sessions/1` JSON snapshot: `groups` contain `id`, `label` and
+`sources`; each source contains `id`, `primary` (boolean) and ordered `files`
+with `path` and `digest`. It resolves content to exact current Artifact
+revisions and inventories existing parts before proposing missing sessions.
+Missing or ambiguous content, repeated membership, ambiguous primary source
+and conflicting existing grouping remain unresolved. Existing matching
+groupings are unchanged even when named differently. The primary source's
+first file establishes ADR 0048 identity. Labels never establish a date.
+Proposals use expected absent output heads and atomic referenced-head guards.
+The planner emits an operational inventory and proposal only; Door admission
+is a separate operator step. It copies no audio and makes no archive writes.

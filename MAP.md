@@ -163,7 +163,7 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 <!-- wf:gen lines spec/archive-spec.md -->
 | file | lines |
 |---|---|
-| `spec/archive-spec.md` | 2825 |
+| `spec/archive-spec.md` | 2851 |
 <!-- /wf:gen -->
 
 Rules: never delete a version or a bundle an archive may cite; supersede it
@@ -410,7 +410,7 @@ catalog except the specification upgrade, so a new contract needs a plan step.
 <!-- wf:gen lines fixture/plan.json -->
 | file | lines |
 |---|---|
-| `fixture/plan.json` | 729 |
+| `fixture/plan.json` | 740 |
 <!-- /wf:gen -->
 
 ## Do not read
@@ -469,3 +469,11 @@ cache.
 7. **Add a transition kind.** `transitionDispatchTable` in
    `Transition/Dispatch.hs`, its rules in `Transition/Rules.hs`, and
    `TransitionCommit.hs`. Governs: ADR 0028, 0030.
+
+## Legacy session backfill
+
+`migration/legacy_sessions.py` inventories an admitted explicit grouping
+snapshot and writes a reviewed Door proposal (ADR 0121).
+`migration/test_legacy_sessions.py` covers ambiguity, exact pins, ordering,
+existing groups, deterministic retry and real Door provenance targets; suite
+`migration`. No archive mutation occurs in the planner.
