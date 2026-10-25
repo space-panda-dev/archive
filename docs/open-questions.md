@@ -13,6 +13,16 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
 
 ## The archive contract
 
+- Which archival assertion associates a recording session with an ensemble,
+  and what should a recording-list view return for unknown or conflicting
+  associations? [Proposed ADR 0120](decisions/0120-session-ensemble-association.md)
+  separates this from performance billing and band membership.
+- How are missing session Entities and ordered parts reconstructed for content
+  already admitted through the legacy migration? `capture import` skips known
+  content, and ADR 0107's parts-only path requires an existing session. The
+  [review client prerequisite plan](proposals/review-client-prerequisites.md)
+  requires an explicit source inventory, primary source and conflict rule;
+  repeating an import or renaming a session must not invent that grouping.
 - Specification 0.0.5 installs the V2 migration route contracts after the
   World releases ([ADR 0046](decisions/0046-world-release-before-v2-migration.md)).
   Which release carries the ADR 0036 bundle amendment in its text? (The run
