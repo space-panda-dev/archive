@@ -3,7 +3,7 @@
 Status: proposed implementation and proof scope (2026-10-25). This document
 accepts no new meaning and authorizes no deployment or archive mutation.
 See [ADR 0120](../decisions/0120-session-ensemble-association.md) for the
-unsettled ensemble association and [ADR 0107](../decisions/0107-multi-device-and-live.md)
+accepted ensemble association and [ADR 0107](../decisions/0107-multi-device-and-live.md)
 for accepted capture semantics.
 
 ## Gate and dependency order
@@ -39,17 +39,16 @@ name must never regroup or reorder recordings.
    parts-only `capture parts --into` path from ADR 0107. Version 1 remains
    readable. These attach sources to an existing session on the operator's
    explicit instruction; capture clocks are hints, never automatic joins.
-5. **Settle missing-session backfill separately.** Known content is skipped
+5. **Implement accepted missing-session backfill separately.** Known content is skipped
    even if no session Entity exists. ADR 0107's parts-only path requires an
    existing session; it does not specify reconstructing absent Entities or
-   migrating unresolved legacy session records. Before proposing those
-   records, agree which source inventory establishes their parts and order,
-   how the primary source is selected, and how conflicting legacy groupings
-   are retained. Follow ADR 0048's first-part identity once the grouping is
+   migrating unresolved legacy session records. [ADR 0121](../decisions/0121-legacy-session-backfill.md) requires the
+   legacy grouping and file order, source provenance and explicit review of
+   ambiguous groups before proposing those records. Follow ADR 0048's first-part identity once the grouping is
    established. Do not make a changed label or a repeat import perform this
    migration implicitly. [Open questions](../open-questions.md) tracks this
    boundary.
-6. **Release the ensemble decision after acceptance.** Follow ADR 0120;
+6. **Release the accepted ensemble decision.** Follow ADR 0120;
    neither client config nor a membership-derived band satisfies the gate.
 
 The initial 0.0.11 code inspection found neither `capture_start` in its

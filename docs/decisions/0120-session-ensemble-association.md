@@ -1,8 +1,8 @@
 # 0120. A session's ensemble is an explicit assertion
 
-Status: proposed (2026-10-25). No contract, permission or view in this record
-is accepted. Blocks the review client's removal of its recording-list side
-table; the [prerequisite plan](../proposals/review-client-prerequisites.md)
+Status: accepted (operator, 2026-10-25). The operator approved explicit,
+operator-only session ensemble assertions separate from performance credits,
+with unknown and conflict preserved. The [prerequisite plan](../proposals/review-client-prerequisites.md)
 separates this choice from already accepted capture work.
 
 ## Context
@@ -27,32 +27,43 @@ None of the existing relations answers which ensemble a session is of:
 Date is a separate prerequisite: accepted ADR 0107 specifies `capture_start`
 and its session reader rule. This proposal does not replace that decision.
 
-## Proposed decision
+## Decision
 
-Record the operator's assertion that a session is of an ensemble as a Claim
-pinning one `recording_session` Entity revision and one `organisation` Entity
-revision. Preserve conflicting assertions and judgments under INV-7. Do not
-copy a relay setting or derive the assertion from membership, participation,
-a Work's origin or a performance credit.
+`archive.claim/session_ensemble` version 1 is an operator-asserted Claim
+with an empty payload, exactly one `session` reference to a
+`recording_session` Entity revision and exactly one `ensemble` reference to
+an `organisation` Entity revision. Each Claim asserts one pair. A session
+can have several such Claims, including several ensembles; no single-band
+restriction is imposed. The operator's person is the agent; the relay keeps
+the contract outside its member allowlist. Door checks the operator agent
+against its active operator, not a client-provided capacity string.
 
-The operator must settle these choices before a contract is drafted:
+Use `arch:session_ensemble` for the ensemble reference and the existing
+`arch:session` for the session reference. PROV association attributes an
+activity to an agent; this Entity-to-organisation assertion is not an
+activity association. A Music Ontology performance performer would change
+the subject to a performance, and `artist_credit` is selection billing.
+Those inherited meanings do not fit; ADR 0012 therefore permits a narrow
+local relation without changing their meaning.
 
-1. Is the relation a session fact, or are ensemble credits per selection the
-   only desired fact? For a mixed evening with two bands, can one session
-   have two ensemble assertions, or should its list show no single band?
-2. Is asserting it operator-only, or may a member assert their own claim
-   about a readable session? Permission is separate from the view choosing
-   what to display (ADR 0094).
-3. Should the recording-list view return every surviving assertion, or use
-   a named rule selecting the operator's? Unknown and unresolved conflict
-   must be explicit; it must not silently choose the first organisation.
-4. What inherited predicate and contract name express this relation? Confirm
-   its meaning under ADR 0012 before adding vocabulary or a bundle.
+The recording-list reader follows the recording's session parts and returns
+every head assertion of the active operator, with its exact session and
+organisation pins and judgments. Superseding an assertion keeps its session
+and agent; changing the ensemble is an explicit new assertion or revision,
+never a mutation of the organisation. A session rename does not drop an
+association: join by object identity while retaining the assertion's exact
+revision pin. Historical pins remain available as evidence (INV-7).
 
-An accepted version must answer all four and give exact cardinality,
-reference targets, supersession and reader rules. Until then the recording
-list reports that the association is unavailable. A presentation placeholder
-is not an assertion stored by World (INV-10).
+No association means unknown. Several surviving ensembles are all shown;
+no reader chooses one because it was returned first. Disputed assertions
+and competing revisions stay visible with their judgments. Participation,
+band membership, a relay's Circle band, a Work's origin and performance
+billing never supply a missing association. The named reader must make
+unknown and unresolved conflict explicit rather than choose a favourite.
+
+The same relation and reader apply to old and newly captured sessions.
+This decision adds no regrouping or reordering interface. Missing-session
+reconstruction follows [ADR 0121](0121-legacy-session-backfill.md).
 
 ## Consequences
 
@@ -61,7 +72,7 @@ identity and ordered sources remain independent. The same reader applies to
 old and newly captured sessions. No regrouping or reordering interface is
 introduced by this work.
 
-Implementation follows acceptance: an additive contract release and fixture,
+Implementation requires: an additive contract release and fixture,
 Door validation, World projection and a permission-aware named view. Tests
 must cover unknown, two bands, a guest in another band, a renamed session,
 and a member who may read the session but may not assert the relation.
