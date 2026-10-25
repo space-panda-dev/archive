@@ -138,7 +138,7 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 | `door/test/Support.hs` | 503 |
 | `door/test/AdmissionChecks.hs` | 1328 |
 | `door/test/ContractAdmissionChecks.hs` | 1035 |
-| `door/test/UpgradeChecks.hs` | 963 |
+| `door/test/UpgradeChecks.hs` | 965 |
 | `archive/test/Main.hs` | 32 |
 | `archive/test/ReaderChecks.hs` | 492 |
 <!-- /wf:gen -->

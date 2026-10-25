@@ -717,7 +717,7 @@ specificationUpgradeRuleChecks check = do
     (additiveUpgrade previous target { releaseContext = KeyMap.insert "extra_term" (Aeson.String "arch:extra") targetContext } == Right ())
     ExitSuccess "" ""
   check "each known release has its layout, and a later one is not guessed"
-    (map specificationLayout ["archive/0.0.5", "archive/0.0.6", "archive/0.0.7", "archive/0.0.8", "archive/0.0.9", "archive/0.0.10", "archive/0.0.12"] == [Right "archive/1", Right "archive/2", Right "archive/2", Right "archive/2", Right "archive/2", Right "archive/2", Right "archive/2"]
+    (map specificationLayout ["archive/0.0.5", "archive/0.0.6", "archive/0.0.7", "archive/0.0.8", "archive/0.0.9", "archive/0.0.10", "archive/0.0.11", "archive/0.0.12"] == [Right "archive/1", Right "archive/2", Right "archive/2", Right "archive/2", Right "archive/2", Right "archive/2", Right "archive/2", Right "archive/2"]
       && isLeft (specificationLayout "archive/0.0.13"))
     ExitSuccess "" ""
   check "specification versions order numerically, not as text"
@@ -737,7 +737,8 @@ specificationUpgradeRuleChecks check = do
 
 -- | A 0.0.10 archive adopts 0.0.12 by one `door transition` (ADR 0068): the
 -- release is additive (its core context is 0.0.10's), the commit installs the
--- six bundles of ADR 0113, export version 2 of ADR 0116, and the new version,
+-- six bundles of ADR 0113, export version 2 of ADR 0116, the three
+-- session evidence bundles of ADRs 0107, 0120, and 0121, and the new version,
 -- and they are installed only
 -- after it. After the upgrade a sketch is admitted under its rules, no longer
 -- refused as an uninstalled contract.
@@ -759,10 +760,11 @@ previousReleaseUpgradeChecks parent = do
     (additiveUpgrade previous target == Right () && not (Set.null previousCatalog)
       && previousCatalog `Set.isProperSubsetOf` targetCatalog && not (KeyMap.null previousContext))
     ExitSuccess (show (additiveUpgrade previous target)) ""
-  assert "0.0.12 adds exactly the contract versions of ADRs 0113 and 0116"
+  assert "0.0.12 adds exactly the contract versions of ADRs 0107, 0113, 0116, 0120, and 0121"
     (sort (map (\(identifier, version, _) -> (identifier, version)) added)
-      == [ ("archive.claim/export", "2"), ("archive.claim/form", "2"), ("archive.claim/form_spans", "2"), ("archive.claim/lead_sheet", "2")
-         , ("archive.claim/melody", "2"), ("archive.claim/meter_layers", "3"), ("archive.claim/underlay", "1") ])
+      == [ ("archive.claim/capture_start", "1"), ("archive.claim/export", "2"), ("archive.claim/form", "2"), ("archive.claim/form_spans", "2"), ("archive.claim/lead_sheet", "2")
+         , ("archive.claim/melody", "2"), ("archive.claim/meter_layers", "3"), ("archive.claim/session_ensemble", "1"), ("archive.claim/underlay", "1")
+         , ("archive.migration/session_translation", "1") ])
     ExitSuccess (show added) ""
   assert "0.0.12's core context is 0.0.10's"
     (targetContext == previousContext) ExitSuccess "" ""
@@ -805,7 +807,7 @@ previousReleaseUpgradeChecks parent = do
         ([ "M\tarchive.json", "A\tspec/0.0.12/VERSION", "A\tspec/0.0.12/archive-spec.md"
          , "A\tspec/0.0.12/context.jsonld", "A\t" <> recordRelative upgradeRevision ]
          <> [ "A\t" <> bundlePath entry | entry <- added ])
-  assert "the upgrade commit installs the seven bundles, the release's documents, the record, and the manifest"
+  assert "the upgrade commit installs the ten bundles, the release's documents, the record, and the manifest"
     (sort (lines changes) == expectedChanges && length added == 7) ExitSuccess changes (unlines expectedChanges)
   installedMatch <- mapM (\entry -> (==) <$> ByteString.readFile (root </> bundlePath entry)
     <*> ByteString.readFile ("spec" </> bundlePath entry)) added
