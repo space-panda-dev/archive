@@ -24,11 +24,12 @@ import qualified Archive.GitSnapshot as GitSnapshot
 import Archive.GitSnapshot (GitSnapshot)
 import Archive.GitSnapshot (snapshotCommit)
 import Archive.Door.Contracts
-  ( ContractBundle (contractBundleContext, contractBundleSchema)
+  ( ContractBundle (contractBundleContext)
+  , validateBundleInstance
   , validateContractBundle
   , validateCoreContext
-  , validateContractInstance
   )
+import Archive.Door.Hex (hexText)
 import Archive.Door.Json (decodeUnique)
 import Archive.Door.Layout
   ( ArchiveManifest
@@ -55,7 +56,6 @@ import Data.Aeson (Value (Object))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
-import qualified Data.ByteString as StrictByteString
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Aeson.RFC8785 (encodeCanonical)
 import qualified Data.Map.Strict as Map
@@ -339,7 +339,7 @@ readInstalledContractBundles snapshot = do
           Right content -> case decodeUnique content of
             Left problem -> Left (ParseFailure path (Text.pack problem))
             Right value@(Object fields)
-              | "sha256:" <> hex (SHA256.hashlazy content) /= digest ->
+              | "sha256:" <> hexText (SHA256.hashlazy content) /= digest ->
                   Left (ParseFailure path "contract bytes do not match their digest path")
               | encodeCanonical value /= content ->
                   Left (ParseFailure path "contract bytes are not RFC 8785 canonical")
@@ -512,7 +512,7 @@ validateCitedContracts root snapshot path rawValue envelope = collect [] [] cita
       loaded <- loadCommittedContract root snapshot identifier version digest
       let issue = case loaded of
             Left problem -> Just (classifyContractReadFailure path problem)
-            Right bundle -> case validateContractInstance (contractBundleSchema bundle) instanceValue of
+            Right bundle -> case validateBundleInstance bundle instanceValue of
               Left problem -> Just (ParseFailure path
                 ("contract " <> identifier <> " rejected payload: " <> problem))
               Right () -> Nothing
@@ -588,7 +588,7 @@ loadCommittedContractOnce _root snapshot expectedId expectedVersion expectedDige
         Right bytes -> case decodeUnique bytes of
           Left problem -> Left (ParseFailure path (Text.pack problem))
           Right value -> do
-            let actualDigest = "sha256:" <> hex (SHA256.hashlazy bytes)
+            let actualDigest = "sha256:" <> hexText (SHA256.hashlazy bytes)
             if actualDigest /= expectedDigestText
               then Left (ParseFailure path "contract bytes do not match cited digest")
               else if encodeCanonical value /= bytes
@@ -609,9 +609,3 @@ snapshotIssue issue = case issue of
   GitSnapshot.GitInvalidPath path detail -> ParseFailure path detail
   GitSnapshot.GitInvalidCommit detail -> GitFailure detail
   GitSnapshot.GitIntroducerError path detail -> UnsupportedFailure path detail
-
-hex :: StrictByteString.ByteString -> Text
-hex = Text.pack . concatMap byteHex . StrictByteString.unpack
-  where
-    byteHex byte = [digits !! fromIntegral (byte `div` 16), digits !! fromIntegral (byte `mod` 16)]
-    digits = "0123456789abcdef"

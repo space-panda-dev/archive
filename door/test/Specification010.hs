@@ -6,7 +6,7 @@
 -- release adds evaluate and are refused when malformed; and every profile rule
 -- the release adds is declared by some bundle and refused when malformed.
 --
--- Each check is a (label, passed, detail) row; Main asserts them.
+-- Each check is a (label, passed, detail) row; Main makes each a test case.
 module Specification010 (specification010Checks) where
 
 import Archive.Door.Catalog (loadContractCatalog)

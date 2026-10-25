@@ -1,0 +1,69 @@
+{-# LANGUAGE OverloadedStrings #-}
+
+-- | JSON Pointers: local @$ref@ targets inside a schema, and the place in an
+-- instance a refusal names.
+module Archive.Door.Contracts.Pointer
+  ( resolvePointer
+  , instancePointer
+  ) where
+
+import Data.Aeson (Value (..))
+import Data.Aeson.Key qualified as Key
+import Data.Aeson.KeyMap qualified as KeyMap
+import Data.Foldable (toList)
+import Data.Text (Text)
+import Data.Text qualified as Text
+
+-- | A JSON Pointer to a place in the instance, from its reversed path.
+instancePointer :: [Text] -> Text
+instancePointer [] = "the instance"
+instancePointer location =
+  "/" <> Text.intercalate "/" (map escape (reverse location))
+  where
+    escape = Text.replace "/" "~1" . Text.replace "~" "~0"
+
+resolvePointer :: Value -> Text -> Maybe Value
+resolvePointer root pointer
+  | pointer == "#" = Just root
+  | Just path <- Text.stripPrefix "#/" pointer =
+      resolveSegments root (map decodePointerSegment (Text.splitOn "/" path))
+  | otherwise = Nothing
+
+resolveSegments :: Value -> [Text] -> Maybe Value
+resolveSegments value [] = Just value
+resolveSegments (Object fields) (segment : rest) =
+  KeyMap.lookup (Key.fromText segment) fields >>= (`resolveSegments` rest)
+resolveSegments (Array values) (segment : rest) = do
+  index <- readNatural segment
+  value <- atMay (toList values) index
+  resolveSegments value rest
+resolveSegments _ _ = Nothing
+
+atMay :: [a] -> Int -> Maybe a
+atMay values index
+  | index < 0 = Nothing
+  | otherwise = case drop index values of
+      value : _ -> Just value
+      [] -> Nothing
+
+-- | One reference token unescaped in a single pass, as RFC 6901 §4 requires
+-- (JSON Schema 2020-12 resolves a @$ref@ fragment as a JSON Pointer): @~1@
+-- becomes @/@ and @~0@ becomes @~@, so @~01@ is the key @~1@ and never @/@.
+-- A @~@ followed by anything else is kept as it is.
+decodePointerSegment :: Text -> Text
+decodePointerSegment segment = case Text.breakOn "~" segment of
+  (before, rest)
+    | Text.null rest -> before
+    | Just after <- Text.stripPrefix "~1" rest -> before <> "/" <> decodePointerSegment after
+    | Just after <- Text.stripPrefix "~0" rest -> before <> "~" <> decodePointerSegment after
+    | otherwise -> before <> "~" <> decodePointerSegment (Text.drop 1 rest)
+
+readNatural :: Text -> Maybe Int
+readNatural value
+  | Text.null value = Nothing
+  | "0" `Text.isPrefixOf` value && Text.length value > 1 = Nothing
+  | Text.all (\character -> '0' <= character && character <= '9') value =
+      case reads (Text.unpack value) of
+        [(index, "")] -> Just index
+        _ -> Nothing
+  | otherwise = Nothing

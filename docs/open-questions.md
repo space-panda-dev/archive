@@ -197,6 +197,27 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
   meter, and a melody span inside its notes claim's range. Which of these,
   and the contribution a notes claim pins, should a later release make
   Door's?
+- Door's own schema evaluator and pattern engine
+  ([ADR 0119](decisions/0119-door-in-house-evaluators.md), proposed) are the
+  only full statement of parts of the specification. Three things are open:
+  - Why they are hand-written rather than a library's is reconstructed, not
+    recorded: the public history starts at one squashed commit. Is ADR
+    0119's reconstruction right?
+  - The specification names the keywords added in D-13, D-17 and D-18 but
+    never the base set the evaluator started with (`type`, `properties`,
+    `items`, `contains`, `format` with only `date-time`, and the rest
+    `schemaKeywords` lists). Should a release list it, and say what
+    `date-time` accepts?
+  - The pattern engine and D-14's words differ: it also accepts `{n,}`,
+    refuses `{0}` and `{0,0}`, accepts `\-` outside a class (an ECMA-262
+    syntax error under the `u` flag), and repeats a quantified literal
+    outside the Basic Multilingual Plane as one code point, where ECMA-262
+    without `u` repeats only its last UTF-16 unit. It also strips the outer
+    `^` and `$` and parses the body as one alternation, so it reads `^a|b$`
+    as `^(a|b)$`, where ECMA-262 reads `(^a)|(b$)` and matches `ax`; no
+    installed contract uses top-level alternation yet. Archives were written
+    under the code. Does a release adopt the code's reading, narrow it, or
+    leave these unsupported?
 - How is operator succession verified? (Author and authorizer are agents in
   PROV roles: [ADR 0012](decisions/0012-inherited-meaning.md).) ADR 0026 defines
   only initial bootstrap; this succession question remains open.

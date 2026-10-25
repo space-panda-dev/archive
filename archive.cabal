@@ -33,17 +33,65 @@ data-files:
 library
   c-sources: door/src/Archive/ProcessPinned.c
   autogen-modules: Paths_archive
-  other-modules: Paths_archive
+  -- The writer's parts stay private: RecordCommit exports ArchiveWriteLock
+  -- abstractly, and only these modules may see its constructor.
+  other-modules:
+      Paths_archive
+    , Archive.Door.RecordCommit.Descriptors
+    , Archive.Door.RecordCommit.Durability
+    , Archive.Door.RecordCommit.Failure
+    , Archive.Door.RecordCommit.Git
+    , Archive.Door.RecordCommit.IndexReservation
+    , Archive.Door.RecordCommit.Internal
+    , Archive.Door.RecordCommit.Journal
+    , Archive.Door.RecordCommit.Lock
+    , Archive.Door.RecordCommit.Maintenance
+    , Archive.Door.RecordCommit.ObjectName
+    , Archive.Door.RecordCommit.Paths
+    , Archive.Door.RecordCommit.Records
+    , Archive.Door.RecordCommit.Recovery
+    , Archive.Door.RecordCommit.Worktree
   exposed-modules:
       Archive.Door.AdmissionDryRun
     , Archive.Door.AdmissionCommit
     , Archive.Door.AdmissionPlan
     , Archive.Door.Canonical
     , Archive.Door.Catalog
+    , Archive.Door.ContractCitations
+    , Archive.Door.ContractRuleProblem
     , Archive.Door.Bootstrap
+    , Archive.Door.Bootstrap.Abort
+    , Archive.Door.Bootstrap.Contents
+    , Archive.Door.Bootstrap.Git
+    , Archive.Door.Bootstrap.Journal
+    , Archive.Door.Bootstrap.Pinned
+    , Archive.Door.Bootstrap.Tracked
+    , Archive.Door.Bootstrap.Verify
     , Archive.Door.Contracts
+    , Archive.Door.Contracts.Context
+    , Archive.Door.Contracts.Evaluate
+    , Archive.Door.Contracts.Fields
+    , Archive.Door.Contracts.Pattern
+    , Archive.Door.Contracts.Pointer
+    , Archive.Door.Contracts.Profile
+    , Archive.Door.Contracts.Profile.Arrays
+    , Archive.Door.Contracts.Profile.Error
+    , Archive.Door.Contracts.Profile.Music
+    , Archive.Door.Contracts.Profile.Paths
+    , Archive.Door.Contracts.Profile.Payload
+    , Archive.Door.Contracts.Profile.PinnedTargets
+    , Archive.Door.Contracts.Profile.ReferenceTargets
+    , Archive.Door.Contracts.Profile.Refs
+    , Archive.Door.Contracts.Profile.Spans
+    , Archive.Door.Contracts.Profile.Syntax
+    , Archive.Door.Contracts.Schema
+    , Archive.Door.Contracts.SchemaError
+    , Archive.Door.Distinct
+    , Archive.Door.Hex
+    , Archive.Door.IOFailure
     , Archive.Door.Identity
     , Archive.Door.Json
+    , Archive.Door.Json.Access
     , Archive.Door.Layout
     , Archive.Door.MutationError
     , Archive.Door.AgentRules
@@ -63,13 +111,34 @@ library
     , Archive.Door.WhenPinned
     , Archive.Door.WrittenBars
     , Archive.Door.Proposal
+    , Archive.Door.ProposalContracts
+    , Archive.Door.ProposalProblem
     , Archive.Door.RecordCommit
+    -- The journal's pure encoding is exposed for door-test's properties; it
+    -- builds and parses bytes only and carries no write capability.
+    , Archive.Door.RecordCommit.JournalFormat
     , Archive.Door.SchemaObjectKeywords
     , Archive.Door.SpecificationUpgrade
+    , Archive.Door.Snapshot.Data
+    , Archive.Door.Snapshot.History
+    , Archive.Door.Snapshot.Load
+    , Archive.Door.Snapshot.Memo
+    , Archive.Door.Snapshot.Problem
+    , Archive.Door.Snapshot.Read
+    , Archive.Door.Snapshot.Supersession
     , Archive.Door.References
+    , Archive.Door.ReferenceTargets
+    , Archive.Door.PlanProblem
     , Archive.Door.Refusal
     , Archive.Door.TransitionDryRun
     , Archive.Door.TransitionCommit
+    , Archive.Door.TargetMeasures
+    , Archive.Door.Transition.Dispatch
+    , Archive.Door.Transition.Plan
+    , Archive.Door.Transition.Problem
+    , Archive.Door.Transition.Replay
+    , Archive.Door.Transition.Rules
+    , Archive.Door.Transition.Upgrade
     , Archive.Door.Types
     , Archive.Door.VerifiedCheckpoint
     , Archive.Process
@@ -80,7 +149,7 @@ library
   hs-source-dirs: door/src
   build-depends:
       aeson >=2.2.1 && <2.4
-    , base >=4.18 && <5
+    , base >=4.19 && <5
     , bytestring
     , cryptohash-sha256
     , containers
@@ -90,6 +159,7 @@ library
     , scientific
     , text
     , time
+    , transformers
     , unix
     , vector
     , zlib
@@ -103,7 +173,7 @@ executable door
   build-depends:
       aeson >=2.2.1 && <2.4
     , archive
-    , base >=4.18 && <5
+    , base >=4.19 && <5
     , bytestring
     , directory
     , filepath
@@ -119,7 +189,7 @@ executable archive
   build-depends:
       aeson >=2.2.1 && <2.4
     , archive
-    , base >=4.18 && <5
+    , base >=4.19 && <5
     , bytestring
     , containers
     , text
@@ -129,7 +199,35 @@ executable archive
 test-suite door-test
   type: exitcode-stdio-1.0
   main-is: Main.hs
-  other-modules: BeyondCircle010, Rules010, Rules011, Specification010, Specification011
+  other-modules:
+      AdmissionChecks
+    , BeyondCircle010
+    , BootstrapChecks
+    , CanonicalProperties
+    , CheckpointChecks
+    , ContractAdmissionChecks
+    , ContractChecks
+    , EnvelopeChecks
+    , Fixtures
+    , GitSnapshotChecks
+    , GitStoreChecks
+    , HexProperties
+    , IdentityVectors
+    , JournalProperties
+    , JournalRecoveryChecks
+    , PatternProperties
+    , PointerProperties
+    , RecordCommitChecks
+    , Rfc8785Vectors
+    , Rules010
+    , Rules011
+    , ServiceChecks
+    , Specification010
+    , Specification011
+    , SubprocessChecks
+    , Support
+    , TransitionChecks
+    , UpgradeChecks
   hs-source-dirs: door/test
   build-tool-depends:
       archive:archive
@@ -137,13 +235,17 @@ test-suite door-test
   build-depends:
       aeson >=2.2.1 && <2.4
     , archive
-    , base >=4.18 && <5
+    , base >=4.19 && <5
     , bytestring
     , containers
     , cryptohash-sha256
     , directory
     , network
     , process
+    , QuickCheck
+    , tasty
+    , tasty-hunit
+    , tasty-quickcheck
     , text
     , time
     , unix
@@ -154,6 +256,12 @@ test-suite door-test
 test-suite archive-test
   type: exitcode-stdio-1.0
   main-is: Main.hs
+  other-modules:
+      ExportChecks
+    , IncompleteChecks
+    , MaintenanceChecks
+    , ReaderChecks
+    , Support
   hs-source-dirs: archive/test
   build-tool-depends:
       archive:archive
@@ -161,12 +269,14 @@ test-suite archive-test
   build-depends:
       aeson >=2.2.1 && <2.4
     , archive
-    , base >=4.18 && <5
+    , base >=4.19 && <5
     , bytestring
     , containers
     , directory
     , filepath
     , process
+    , tasty
+    , tasty-hunit
     , text
   default-language: GHC2021
   ghc-options: -Wall -Werror

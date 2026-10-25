@@ -42,7 +42,8 @@ module Archive.Door.Layout
   ) where
 
 import Archive.Door.Identity (parseArchiveId)
-import Data.Aeson (Value (Object, String), object, (.=))
+import Archive.Door.Json.Access (requiredText)
+import Data.Aeson (Value (Object), object, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.RFC8785 (encodeCanonical)
@@ -250,14 +251,6 @@ specVersion value = case Text.stripPrefix "archive/" value of
         && all (not . Text.null) components
         && Text.all (\character -> isDigit character || character == '.') version
         && all (Text.all isDigit) components
-
-requiredText :: Text -> KeyMap.KeyMap Value -> Either Text Text
-requiredText name fields = case KeyMap.lookup (Key.fromText name) fields of
-  Nothing -> Left (name <> " is required")
-  Just (String value)
-    | Text.null value -> Left (name <> " must not be empty")
-    | otherwise -> Right value
-  Just _ -> Left (name <> " must be a string")
 
 child :: ArchiveRoot -> FilePath -> FilePath
 child (ArchiveRoot root) segment = root </> segment

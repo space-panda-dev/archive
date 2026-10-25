@@ -14,6 +14,7 @@ module Archive.Door.RecordRules
   ) where
 
 import Archive.Door.FormStructure (validateFormStructure)
+import Archive.Door.Hex (hexText)
 import Archive.Door.PlacedItems (passListsRule, placedItemsRule, validatePassLists, validatePlacedItems)
 import Archive.Door.RuleJson
 import Archive.Door.RuleSyntax
@@ -24,7 +25,6 @@ import Data.Aeson (Value (..), object, (.=))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Aeson.RFC8785 (encodeCanonical)
-import Data.ByteString qualified as ByteString
 import Data.List (nub, sort)
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
@@ -208,8 +208,4 @@ exportKey payload rendered joined =
         , "rendered" .= [[identifier, revision] | (identifier, revision) <- rendered]
         , "joined" .= [[identifier, revision] | (identifier, revision) <- joined]
         ]
-  in "sha256:" <> hex (SHA256.hashlazy (encodeCanonical material))
-  where
-    hex = Text.pack . concatMap byte . ByteString.unpack
-    byte value = [digits !! fromIntegral (value `div` 16), digits !! fromIntegral (value `mod` 16)]
-    digits = "0123456789abcdef"
+  in "sha256:" <> hexText (SHA256.hashlazy (encodeCanonical material))

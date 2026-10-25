@@ -57,6 +57,7 @@ import Archive.Door.PlacedItems (passListsRule, placedItemsRule)
 import Data.Aeson (Value (..))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.Bifunctor (first)
 import Data.List (nub)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -115,27 +116,34 @@ parsers011 =
 -- | Parse every 0.0.10 and 0.0.11 rule at a schema's root. @nested@ checks
 -- the schema each of @x-archive-when-pinned@'s maps makes, the root without
 -- the rule and with the map's rules (the caller owns the earlier rules'
--- parsers).
-validateReleaseRules :: (KeyMap.KeyMap Value -> Either Text ()) -> KeyMap.KeyMap Value -> Either Text ()
-validateReleaseRules nested schema = do
-  mapM_ (\(name, parse) -> maybe (Right ()) parse (KeyMap.lookup (Key.fromText name) schema)) (parsers <> parsers011)
+-- parsers); its results for the two maps come back with the rule's role, so
+-- the caller keeps what it parsed for each form. @refuse@ carries this
+-- module's refusal text into the caller's error type, so @nested@'s own
+-- errors pass through unrendered.
+validateReleaseRules
+  :: (Text -> e) -> (KeyMap.KeyMap Value -> Either e a) -> KeyMap.KeyMap Value -> Either e (Maybe (Text, a, a))
+validateReleaseRules refuse nested schema = do
+  first refuse $ mapM_ (\(name, parse) -> maybe (Right ()) parse (KeyMap.lookup (Key.fromText name) schema))
+    (parsers <> parsers011)
   case KeyMap.lookup "x-archive-when-pinned" schema of
-    Nothing -> Right ()
+    Nothing -> Right Nothing
     Just value -> do
-      rule <- whenPinnedRule value
-      mapM_ (\rules -> do
-        let names = map Key.toText (KeyMap.keys rules)
-        if any (`KeyMap.member` schema) (map Key.fromText names)
-          then Left "a rule in when pinned rule must not also appear at the schema root"
-          else Right ()
-        if "x-archive-when-pinned" `elem` names
-          then Left "when pinned rules must not nest"
-          else Right ()
-        if all ("x-archive-" `Text.isPrefixOf`) names
-          then Right ()
-          else Left "when pinned rule maps may hold only profile rules"
-        nested (KeyMap.union rules (KeyMap.delete "x-archive-when-pinned" schema)))
-        [whenPinnedThen rule, whenPinnedElse rule]
+      rule <- first refuse (whenPinnedRule value)
+      let form rules = do
+            let names = map Key.toText (KeyMap.keys rules)
+            if any (`KeyMap.member` schema) (map Key.fromText names)
+              then Left (refuse "a rule in when pinned rule must not also appear at the schema root")
+              else Right ()
+            if "x-archive-when-pinned" `elem` names
+              then Left (refuse "when pinned rules must not nest")
+              else Right ()
+            if all ("x-archive-" `Text.isPrefixOf`) names
+              then Right ()
+              else Left (refuse "when pinned rule maps may hold only profile rules")
+            nested (KeyMap.union rules (KeyMap.delete "x-archive-when-pinned" schema))
+      pinned <- form (whenPinnedThen rule)
+      unpinned <- form (whenPinnedElse rule)
+      pure (Just (whenPinnedRole rule, pinned, unpinned))
 
 -- | A rule's value at the schema root, parsed.
 ruleAt :: Text -> (Value -> Either Text a) -> KeyMap.KeyMap Value -> Either Text (Maybe a)

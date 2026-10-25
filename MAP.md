@@ -45,7 +45,7 @@ module is `wf check enrich -- -p test_bank.py` and one test name is
 | docs | 1 | 60s | `wf vet --docs "$@"` |
 | build | 300 | 1800s | `cabal build -v0 lib:archive exe:door exe:archive "$@"` |
 | documents | 5 | 60s | `python3 -m unittest discover -s documents/ireal -p "test_*.py" "$@"` |
-| haskell | night | 3600s | `cabal test all "$@"` |
+| haskell | night | 3600s | `n=$#; for a do set -- "$@" "--test-option=$a"; done; shift $n; cabal test all --test-show-details=direct "$@"` |
 | world | night | 3600s | `$PYTHON -m unittest discover -s world/tests "$@"` |
 | relay | 300 | 1800s | `$PYTHON -m unittest discover -s relay/tests "$@"` |
 | enrich-tests | 30 | 1800s | `$PYTHON -m unittest discover -s enrich/tests "$@"` |
@@ -59,9 +59,10 @@ module is `wf check enrich -- -p test_bank.py` and one test name is
 | bench-horn | night | 3600s | `P="$HOME/archive-bench/envs/harness/bin/python"; test -x "$P" \|\| { echo "bench-horn: no $P; the bench runs on the x86-64 laptop (wf check --on laptop)"; exit 1; }; ARCHIVE_BENCH_ROOT="$HOME/archive-bench" "$P" -m enrich.bench check horn-v1 "$@"` |
 <!-- /wf:gen -->
 
-`haskell` is `door-test` and `archive-test`; `enrich` and `capture` run
-the Essentia interpreter; `bench` and `bench-horn` need the bench's private
-data on the x86-64 laptop. Python suites build `door`/`archive` first and set
+`haskell` is `door-test` and `archive-test`, tasty trees whose cases are the
+named checks (`wf check haskell -- -p proposalChecks` runs one); `enrich` and
+`capture` run the Essentia interpreter; `bench` and `bench-horn` need the
+bench's private data on the x86-64 laptop. Python suites build `door`/`archive` first and set
 `ARCHIVE_REQUIRE_INTEGRATION=1` (skips become failures).
 
 ## Door and archive (Haskell): the one writer, and the reader commands
@@ -73,29 +74,48 @@ Build: [archive.cabal](archive.cabal): library `door/src`, executables
 |---|---|
 | `door/app/Main.hs` | `main` dispatch: `admit`, `transition` (`--dry-run`), `serve --socket`, `verify`; `proposalDryRun`, `admissionCommit`, `transitionCommit`, `serve` |
 | `archive/app/Main.hs` | `main`: `init`, `maintenance repack/prune-packed`, `status`, `doctor`, `ls`, `show`, `export [--since]`; `current` is unsupported |
-| `door/src/Archive/Door/AdmissionDryRun.hs` | `dryRunAdmission`, `loadSnapshot`, `validateProposalContract` |
+| `door/src/Archive/Door/AdmissionDryRun.hs` | `dryRunAdmission`; re-exports the snapshot and proposal-contract APIs below |
+| `door/src/Archive/Door/Snapshot/` | `Load.loadSnapshot` (checkpointed or full read), `History` (immutable paths, upgrades, citation order), `Supersession` (heads, cycles), `Memo` (remembered snapshot, ADR 0054), `Data` (records typed by `RevisionId` and `ObjectId`), `Read`, `Problem` (`SnapshotProblem`, the integrity refusals) |
+| `door/src/Archive/Door/ProposalContracts.hs` | `validateProposalContracts` over `ContractCitations.hs`, `ReferenceTargets.hs` (what a reference must pin) and `TargetMeasures.hs` (payload bounded by the pinned Claim), whose refusals are `ContractRuleProblem.hs` |
 | `door/src/Archive/Door/AdmissionCommit.hs` | `commitAdmission`, `refreshVerificationCheckpoint` |
-| `door/src/Archive/Door/TransitionDryRun.hs` | `dryRunTransition`, `transitionDispatchTable` (contract id/version to kind) |
+| `door/src/Archive/Door/TransitionDryRun.hs` | `dryRunTransition`, `planTransition`; both planners' refusals are `PlanProblem.hs`, proposal-reading refusals `ProposalProblem.hs`; shared by both: `Distinct.hs` (repeated values) and `Json/Access.hs` (required fields, typed `FieldRefusal`) |
+| `door/src/Archive/Door/Transition/` | `Dispatch.transitionDispatchTable` (contract id/version to kind), `Rules` (per kind), `Replay` (facts from history), `Upgrade` (prospective snapshot), `Plan`, `Problem` (dispatch, upgrade request, rule and replay refusals) |
 | `door/src/Archive/Door/TransitionCommit.hs` | `commitTransition` |
-| `door/src/Archive/Door/Contracts.hs` | bundle loading; `validateSchema` parses the `x-archive-*` rule keywords; `validate*Rule` functions implement them |
+| `door/src/Archive/Door/Contracts.hs` | bundle loading; `validateSchema` checks a bundle's schema and its `x-archive-*` rule keywords; re-exports the parts below and renders their typed errors (`BundleError`) to the refusal text |
+| `door/src/Archive/Door/Contracts/` | `Schema.hs` keyword checks, `Evaluate.hs` evaluator and mismatch explanation, `SchemaError.hs` and `Profile/Error.hs` the typed refusals, `Pattern.hs` regex subset, `Pointer.hs`, `Context.hs` JSON-LD contexts, `Profile.hs` the `ProfileRule` type, parsed once per bundle, and `checkInstance`; `Profile/` each rule family's syntax and evaluator |
 | `door/src/Archive/Door/RecordCommit.hs` | `commitRecordBatch*`, write lock, git-annex content |
-| `door/src/Archive/Door/Bootstrap.hs` | `initArchive` |
+| `door/src/Archive/Door/RecordCommit/*.hs` | the writer's private parts: `Lock`, `Journal`, `JournalFormat` (its pure encoding, exposed for the properties) and `Recovery` (operation journal), `ObjectName` (journaled Git names), `Records`, `IndexReservation`, `Durability` (object store and ref sync), `Git`, `Descriptors` (fd primitives), `Paths`, `Worktree`, `Maintenance`, `Failure` (diagnostic text; an IO exception is caught and spelled by `Archive/Door/IOFailure.hs`, meant for bootstrap and proposal reading too) |
+| `door/src/Archive/Door/Bootstrap.hs` | `initArchive`, rollback; steps in `Bootstrap/`: `Pinned` (writes under the root descriptor), `Journal` (ownership journal), `Git`, `Contents` (release files, bootstrap records), `Verify` (existing archive), `Tracked` (`PathTracker`, rollback), `Abort` |
 | `door/src/Archive/Door/VerifiedCheckpoint.hs` | incremental verification checkpoint (ADR 0052) |
 | `door/src/Archive/Door/Refusal.hs` | `RefusalCode` (ADR 0058) |
 | `door/src/Archive/Read/Core.hs`, `Archive/Doctor/Checks.hs` | reading commands, `doctor` |
 | `door/src/Archive/GitSnapshot.hs`, `Process.hs`, `ProcessPinned.c` | Git snapshot reads, pinned process launch (ADR 0033) |
 | `door/service.schema.json` | published service and refusal codes |
 
-Tests: suite `haskell`. `door/test/Main.hs` and `archive/test/Main.hs`
-are single sequential programs of named `assert "..."` checks with no
-filter; find one with `rg -n 'assert "<words>' door/test/Main.hs`.
+Tests: suite `haskell`, two tasty trees. `door/test/Main.hs` and
+`archive/test/Main.hs` are only the tree: one list with one group per concept
+module (`door/test/*Checks.hs`: envelope, contracts, bootstrap, Git snapshot,
+admission, contract admission, upgrade, transitions, subprocess, checkpoint,
+service, record commit, journal recovery, Git store; `archive/test/*Checks.hs`:
+reader, incomplete, export, maintenance), each exporting `tests`. Shared helpers
+are `door/test/Support.hs` (`assert`, `withEnv`, scratch roots, `Recorder` and
+`rowGroup`) and `door/test/Fixtures.hs` (proposals, commands, commit fixtures);
+`archive/test/Support.hs` for the reader. Independent asserts are separate
+cases; checks that share inputs record their asserts through `Recorder` and
+`rowGroup`, so each still reports as its own case. Scratch directories are
+removed on failure unless `ARCHIVE_TEST_KEEP` is set, which prints the kept
+path. Filter with `wf check haskell -- -p PATTERN`; find a check with
+`rg -n '"<words>' door/test`.
+QuickCheck properties of the pure parts (pattern engine, JSON Pointer, RFC
+8785 canonicalisation, operation journal encoding, hex) sit one module per
+subject in `door/test/*Properties.hs`, under door-test's `properties` group.
 Rules: INV-1, INV-2, INV-5; record envelope ADR 0022; admission ADR 0023;
 transitions ADR 0028, 0030; power-loss durability is accepted but not yet met
 (ADR 0031, see README status); executables are configured, never taken from
 `PATH` (ADR 0033); refusal codes in `Refusal.hs` must equal
 `service.schema.json` (a `door-test` check).
 Find: per-contract payload rules are `x-archive-*` keys in the bundle JSON,
-implemented in `Contracts.hs` (`rg -n 'x-archive-' door/src`); transition
+implemented under `Contracts/Profile/` (`rg -n 'x-archive-' door/src`); transition
 kinds in `transitionDispatchTable`. The span rules' list and path forms are
 `SpanRules.hs`; the check beyond the circle (S-30) is `BeyondCircle.hs` over
 `Reach.hs` (sensitivity, rights) and `SharingGate.hs` (co-writers' consent),
@@ -103,24 +123,29 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 `door/test/BeyondCircle010.hs`, agreement with World in
 `world/tests/test_door_agreement_beyond_circle.py`.
 
-<!-- wf:gen lines door/src/Archive/Door/AdmissionDryRun.hs door/src/Archive/Door/TransitionDryRun.hs door/src/Archive/Door/Contracts.hs door/src/Archive/Door/RecordCommit.hs door/src/Archive/Door/Bootstrap.hs door/src/Archive/Read/Core.hs door/src/Archive/GitSnapshot.hs door/src/Archive/ProcessPinned.c door/test/Main.hs archive/test/Main.hs -->
+<!-- wf:gen lines door/src/Archive/Door/AdmissionDryRun.hs door/src/Archive/Door/TransitionDryRun.hs door/src/Archive/Door/Contracts.hs door/src/Archive/Door/RecordCommit.hs door/src/Archive/Door/Bootstrap.hs door/src/Archive/Read/Core.hs door/src/Archive/GitSnapshot.hs door/src/Archive/ProcessPinned.c door/test/Main.hs door/test/Support.hs door/test/AdmissionChecks.hs door/test/ContractAdmissionChecks.hs door/test/UpgradeChecks.hs archive/test/Main.hs archive/test/ReaderChecks.hs -->
 | file | lines |
 |---|---|
-| `door/src/Archive/Door/AdmissionDryRun.hs` | 1579 |
-| `door/src/Archive/Door/TransitionDryRun.hs` | 1119 |
-| `door/src/Archive/Door/Contracts.hs` | 2449 |
-| `door/src/Archive/Door/RecordCommit.hs` | 3015 |
-| `door/src/Archive/Door/Bootstrap.hs` | 1627 |
-| `door/src/Archive/Read/Core.hs` | 617 |
-| `door/src/Archive/GitSnapshot.hs` | 660 |
+| `door/src/Archive/Door/AdmissionDryRun.hs` | 152 |
+| `door/src/Archive/Door/TransitionDryRun.hs` | 321 |
+| `door/src/Archive/Door/Contracts.hs` | 332 |
+| `door/src/Archive/Door/RecordCommit.hs` | 583 |
+| `door/src/Archive/Door/Bootstrap.hs` | 471 |
+| `door/src/Archive/Read/Core.hs` | 611 |
+| `door/src/Archive/GitSnapshot.hs` | 657 |
 | `door/src/Archive/ProcessPinned.c` | 799 |
-| `door/test/Main.hs` | 7844 |
-| `archive/test/Main.hs` | 1001 |
+| `door/test/Main.hs` | 82 |
+| `door/test/Support.hs` | 503 |
+| `door/test/AdmissionChecks.hs` | 1252 |
+| `door/test/ContractAdmissionChecks.hs` | 1035 |
+| `door/test/UpgradeChecks.hs` | 963 |
+| `archive/test/Main.hs` | 32 |
+| `archive/test/ReaderChecks.hs` | 492 |
 <!-- /wf:gen -->
 
-<!-- wf:gen anchors door/src/Archive/Door/Contracts.hs#validateSchema door/src/Archive/Door/TransitionDryRun.hs#transitionDispatchTable -->
-- `door/src/Archive/Door/Contracts.hs#validateSchema`: line 286
-- `door/src/Archive/Door/TransitionDryRun.hs#transitionDispatchTable`: line 145
+<!-- wf:gen anchors door/src/Archive/Door/Contracts.hs#validateSchema door/src/Archive/Door/Transition/Dispatch.hs#transitionDispatchTable -->
+- `door/src/Archive/Door/Contracts.hs#validateSchema`: line 227
+- `door/src/Archive/Door/Transition/Dispatch.hs#transitionDispatchTable`: line 42
 <!-- /wf:gen -->
 
 ## Spec: what every archive must satisfy, copied into each
@@ -423,7 +448,7 @@ cache.
    `docs/proposals/<adr>-contracts/`), then `spec/contracts/sha256-*.json`,
    a new `spec/<v>/` (`VERSION`, `archive-spec.md`, `context.jsonld`,
    `contracts.json`), `spec/VERSION`, `spec/archive-spec.md`, `archive.cabal`
-   data-files; Door rules in `Contracts.hs`/`AdmissionDryRun.hs` with
+   data-files; Door rules in `Contracts.hs`/`TargetMeasures.hs` with
    `door/test/Main.hs`; a step in `fixture/plan.json`; World projection. Model:
    the commit that added `spec/0.0.9/VERSION` (spec 0.0.9). Governs: ADR 0057, 0068, 0027.
 4. **Add a World view of a claim.** `_project_*_claim` in `world/world.py`
@@ -437,8 +462,10 @@ cache.
    ADR 0060.
 6. **Change a Door rule.** A payload rule: the `x-archive-*` keyword in
    `Contracts.hs`, cited by a bundle (a changed bundle is a new contract
-   version, never an edit). Admission flow: `AdmissionDryRun.hs`. A new
+   version, never an edit). A rule reading a pinned record: `ReferenceTargets.hs`,
+   `TargetMeasures.hs`. Admission flow: `AdmissionDryRun.hs`. A new
    refusal: `Refusal.hs` and `door/service.schema.json`. Tests in
    `door/test/Main.hs`. Governs: docs/invariants.md, ADR 0023, 0058.
-7. **Add a transition kind.** `transitionDispatchTable` and the handler in
-   `TransitionDryRun.hs`/`TransitionCommit.hs`. Governs: ADR 0028, 0030.
+7. **Add a transition kind.** `transitionDispatchTable` in
+   `Transition/Dispatch.hs`, its rules in `Transition/Rules.hs`, and
+   `TransitionCommit.hs`. Governs: ADR 0028, 0030.

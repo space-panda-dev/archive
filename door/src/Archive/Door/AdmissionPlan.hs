@@ -13,7 +13,13 @@ module Archive.Door.AdmissionPlan
   ) where
 
 import Archive.Door.Canonical (canonicalizeDraftStrict)
-import Archive.Door.Refusal (PlanRefusal (..), refuse)
+import Archive.Door.Distinct (distinctOr)
+import Archive.Door.PlanProblem
+  ( PlanProblem (..)
+  , Planner (..)
+  , refuseProblem
+  )
+import Archive.Door.Refusal (PlanRefusal, refuse)
 import Archive.Door.Identity (allocateObjectId)
 import Archive.Door.Proposal
   ( ExpectedHead (..)
@@ -47,9 +53,9 @@ import Data.Text (Text)
 
 data AdmissionSnapshot = AdmissionSnapshot
   { snapshotArchiveId :: Text
-  , snapshotHeads :: Map Text Text
-  , snapshotRevisions :: Set Text
-  , snapshotRevisionBatches :: Map Text Text
+  , snapshotHeads :: Map ObjectId RevisionId
+  , snapshotRevisions :: Set RevisionId
+  , snapshotRevisionBatches :: Map RevisionId Text
   , snapshotReferenceIndex :: StoreIndex
   , snapshotTransitionContracts :: Set (Text, Text, Text)
   }
@@ -64,12 +70,12 @@ data AdmissionPlan = AdmissionPlan
 
 planAdmission :: AdmissionSnapshot -> Proposal -> Either PlanRefusal AdmissionPlan
 planAdmission snapshot proposal = do
-  refuse $ if proposalKind proposal /= AdmissionProposal
-    then Left "admission planning requires an admission proposal"
+  refuseProblem $ if proposalKind proposal /= AdmissionProposal
+    then Left (WrongProposalKind AdmissionPlanner)
     else pure ()
   refuse (validateProposal proposal)
   prepared <- refuse (mapM prepareRecord (proposalRecords proposal))
-  refuse (requireDistinct "computed revision_id" (map preparedRevision prepared))
+  refuseProblem (distinctOr (DuplicateComputedRevision AdmissionPlanner) (map preparedRevision prepared))
   let revisions = map preparedRevision prepared
       present = map (`Set.member` snapshotRevisions snapshot) revisions
       batchEvidence = map (\revision -> Map.lookup revision (snapshotRevisionBatches snapshot)) revisions
@@ -81,29 +87,29 @@ planAdmission snapshot proposal = do
               in committedBatch == Set.fromList revisions
         Nothing -> False
         _ -> False
-  refuse $ if any id present && not completeRetry
-    then Left "existing revisions are not evidenced as one committed admission batch"
+  refuseProblem $ if any id present && not completeRetry
+    then Left (ExistingRevisionsNotOneBatch AdmissionPlanner)
     else pure ()
-  refuse (mapM_ (rejectUnsupported snapshot) (proposalRecords proposal))
-  refuse (validateAllocations snapshot proposal prepared completeRetry)
+  refuseProblem (mapM_ (rejectUnsupported snapshot) (proposalRecords proposal))
+  refuseProblem (validateAllocations snapshot proposal prepared completeRetry)
   if completeRetry
     then pure ()
     else do
       validateExpectedHeads snapshot proposal prepared
-      refuse (validateLinearHeads snapshot prepared)
+      refuseProblem (validateLinearHeads snapshot prepared)
   refuse (validateReferencesInOrder snapshot prepared)
   pure AdmissionPlan
     { plannedAdmissionSnapshot = ""
     , plannedGitExecutableIdentity = ""
-    , plannedRevisions = revisions
-    , plannedRecords = [(preparedRevision item, preparedCanonical item) | item <- prepared]
+    , plannedRevisions = map revisionIdText revisions
+    , plannedRecords = [(revisionIdText (preparedRevision item), preparedCanonical item) | item <- prepared]
     , planIsRetry = completeRetry
     }
   where
     allEqual [] = True
     allEqual (value : values) = all (== value) values
 
-rejectUnsupported :: AdmissionSnapshot -> ProposalRecord -> Either Text ()
+rejectUnsupported :: AdmissionSnapshot -> ProposalRecord -> Either PlanProblem ()
 rejectUnsupported snapshot record = case envelopeBody (proposalRecordDraft record) of
   ClaimRecord _ -> rejectCitations
   AssessmentRecord _ -> rejectCitations
@@ -112,31 +118,35 @@ rejectUnsupported snapshot record = case envelopeBody (proposalRecordDraft recor
     rejectCitations =
       if any (\citation -> citationTuple citation `Set.member` snapshotTransitionContracts snapshot)
           (envelopeContracts (proposalRecordDraft record))
-        then Left "unsupported: transition contracts cannot be admitted generically"
+        then Left TransitionContractNotAdmissible
         else Right ()
     citationTuple citation =
       (contractId citation, contractVersion citation, contractDigest citation)
 
 data Prepared = Prepared
-  { preparedRevision :: Text
+  { preparedRevision :: RevisionId
   , preparedCanonical :: Value
-  , preparedObject :: Text
+  , preparedObject :: ObjectId
   , preparedDraft :: DraftEnvelope
   }
 
+-- | The canonicalizer writes a revision as @sha256:@ and 64 lowercase hex
+-- digits, which 'parseRevisionId' always accepts; the parse gives it its
+-- type and cannot refuse.
 prepareRecord :: ProposalRecord -> Either Text Prepared
 prepareRecord record = do
-  (revision, canonical) <- canonicalizeDraftStrict (proposalRecordValue record)
+  (digest, canonical) <- canonicalizeDraftStrict (proposalRecordValue record)
+  revision <- parseRevisionId digest
   pure Prepared
     { preparedRevision = revision
     , preparedCanonical = canonical
-    , preparedObject = objectText (envelopeObject draft)
+    , preparedObject = envelopeObject draft
     , preparedDraft = draft
     }
   where
     draft = proposalRecordDraft record
 
-validateAllocations :: AdmissionSnapshot -> Proposal -> [Prepared] -> Bool -> Either Text ()
+validateAllocations :: AdmissionSnapshot -> Proposal -> [Prepared] -> Bool -> Either PlanProblem ()
 validateAllocations snapshot proposal prepared completeRetry = do
   let allocations = manifestIdentities (proposalManifest proposal)
       draftObjects = Set.fromList (map preparedObject prepared)
@@ -144,49 +154,55 @@ validateAllocations snapshot proposal prepared completeRetry = do
       newObjects = draftObjects `Set.difference` existingObjects
       allocatedObjects = Set.fromList (map identityObjectId allocations)
   mapM_ (validateAllocation snapshot) allocations
+  -- A proposal's allocations are its own text; the objects are compared by
+  -- their spelling.
   if completeRetry
-    then if allocatedObjects `Set.isSubsetOf` draftObjects then pure ()
-      else Left "identities must refer to drafted objects"
-  else if allocatedObjects /= newObjects
-    then Left "identities must contain exactly one allocation for each new object"
+    then if allocatedObjects `Set.isSubsetOf` Set.map objectIdText draftObjects then pure ()
+      else Left (AllocationOutsideDrafts AdmissionPlanner)
+  else if allocatedObjects /= Set.map objectIdText newObjects
+    then Left (AllocationsNotOnePerNewObject AdmissionPlanner)
     else pure ()
 
-validateAllocation :: AdmissionSnapshot -> IdentityAllocation -> Either Text ()
+validateAllocation :: AdmissionSnapshot -> IdentityAllocation -> Either PlanProblem ()
 validateAllocation snapshot allocation = do
-  derived <- allocateObjectId (snapshotArchiveId snapshot)
-    (identityNamespace allocation) (identityName allocation)
+  derived <- either (Left . AllocationUnderivable) Right
+    (allocateObjectId (snapshotArchiveId snapshot)
+      (identityNamespace allocation) (identityName allocation))
   if derived == identityObjectId allocation
     then Right ()
-    else Left "identity allocation object_id does not match UUIDv5 allocation"
+    else Left AllocationIdMismatch
 
 validateExpectedHeads :: AdmissionSnapshot -> Proposal -> [Prepared] -> Either PlanRefusal ()
-validateExpectedHeads snapshot proposal _ = mapM_ check (manifestExpectedHeads (proposalManifest proposal))
+validateExpectedHeads snapshot proposal _ = refuseProblem $ mapM_ check (manifestExpectedHeads (proposalManifest proposal))
   where
-    check expected = case Map.lookup (expectedObjectId expected) (snapshotHeads snapshot) of
+    -- Expected heads are the proposal's own text, so the heads are looked
+    -- up by their spelling; 'objectIdText' preserves the keys' order.
+    heads = Map.mapKeysMonotonic objectIdText (snapshotHeads snapshot)
+    check expected = case Map.lookup (expectedObjectId expected) heads of
       Nothing
         | expectedRevisionId expected == Nothing -> Right ()
-        | otherwise -> Left (PlanRefused "expected head names a missing object")
+        | otherwise -> Left ExpectedHeadMissingObject
       Just actual
-        | expectedRevisionId expected == Just actual -> Right ()
-        | otherwise -> Left (PlanStale "expected head is stale")
+        | expectedRevisionId expected == Just (revisionIdText actual) -> Right ()
+        | otherwise -> Left (ExpectedHeadNotCurrent AdmissionPlanner)
 
 validateReferencesInOrder :: AdmissionSnapshot -> [Prepared] -> Either Text ()
 validateReferencesInOrder snapshot = go (snapshotReferenceIndex snapshot)
   where
     go _ [] = Right ()
     go index (item : rest) = do
-      revision <- parseRevisionId (preparedRevision item)
+      let revision = preparedRevision item
       validateReferences index revision (preparedDraft item)
       go (insertRecord revision (preparedDraft item) index) rest
 
-validateLinearHeads :: AdmissionSnapshot -> [Prepared] -> Either Text ()
+validateLinearHeads :: AdmissionSnapshot -> [Prepared] -> Either PlanProblem ()
 validateLinearHeads snapshot = go (snapshotHeads snapshot)
   where
     go _ [] = Right ()
     go heads (item : rest) = do
       let objectId = preparedObject item
           superseded =
-            [ revisionText revision
+            [ revision
             | reference <- envelopeSupersedes (preparedDraft item)
             , Just revision <- [referenceRevision reference]
             ]
@@ -194,16 +210,5 @@ validateLinearHeads snapshot = go (snapshotHeads snapshot)
         (Nothing, []) -> pure ()
         (Just current, [previous])
           | current == previous -> pure ()
-        _ -> Left "proposed revisions must extend one linear supersession head"
+        _ -> Left (NonLinearSupersession AdmissionPlanner)
       go (Map.insert objectId (preparedRevision item) heads) rest
-
-requireDistinct :: Text -> [Text] -> Either Text ()
-requireDistinct label values
-  | Set.size (Set.fromList values) == length values = Right ()
-  | otherwise = Left (label <> " must be unique")
-
-objectText :: ObjectId -> Text
-objectText = objectIdText
-
-revisionText :: RevisionId -> Text
-revisionText = revisionIdText

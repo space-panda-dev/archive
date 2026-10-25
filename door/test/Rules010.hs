@@ -7,7 +7,7 @@
 -- other rule through the real Door; these are the rules a new object, which
 -- that test proposes, never reaches.
 --
--- Each check is a (label, passed, detail) row; Main asserts them.
+-- Each check is a (label, passed, detail) row; Main makes each a test case.
 module Rules010 (rules010Checks) where
 
 import Archive.Door.Catalog (loadContractCatalog)

@@ -49,11 +49,15 @@ import Archive.Door.RecordCommit
   )
 import Archive.Executables (Executable, resolveAnnexExecutable)
 import qualified Control.Exception as Exception
+import Control.Monad (unless, when)
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, throwE, withExceptT)
 import Data.Aeson (Value (Object))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.RFC8785 (encodeCanonical)
 import qualified Data.ByteString.Lazy as LazyByteString
+import Data.List (unsnoc)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Time (defaultTimeLocale, formatTime, getCurrentTime)
@@ -74,56 +78,39 @@ import Text.Read (readMaybe)
 -- record a new base checkpoint for it, so the next admission does not pay for
 -- a full verification.
 refreshVerificationCheckpoint :: FilePath -> IO (Either MutationError ())
-refreshVerificationCheckpoint root = withArchiveWriteLock root $ \archiveLock -> do
-  forgetSnapshots
-  resolved <- Git.resolveSnapshot root
-  case resolved of
-    Left problem -> pure (Left (MutationSnapshotFailure problem))
-    Right snapshot -> do
-      loaded <- loadSnapshot snapshot
-      case loaded of
-        Left problem -> pure (Left (MutationIntegrityFailure (Text.pack (show problem))))
-        Right data' -> do
-          proven <- proveObjectBaseline archiveLock (Git.snapshotCommit snapshot)
-          case proven of
-            Left problem -> pure (Left (MutationIntegrityFailure problem))
-            Right () -> do
-              written <- writeBaseCheckpoint archiveLock (fst (snapshotVerification data'))
-              pure (either (Left . MutationOperationFailure) Right written)
+refreshVerificationCheckpoint root = withArchiveWriteLock root $ \archiveLock -> runExceptT $ do
+  lift forgetSnapshots
+  snapshot <- withExceptT MutationSnapshotFailure (ExceptT (Git.resolveSnapshot root))
+  data' <- withExceptT (MutationIntegrityFailure . Text.pack . show) (ExceptT (loadSnapshot snapshot))
+  withExceptT MutationIntegrityFailure
+    (ExceptT (proveObjectBaseline archiveLock (Git.snapshotCommit snapshot)))
+  withExceptT MutationOperationFailure
+    (ExceptT (writeBaseCheckpoint archiveLock (fst (snapshotVerification data'))))
 
 commitAdmission :: FilePath -> Proposal -> IO (Either MutationError AdmissionPlan)
-commitAdmission root proposal = withArchiveWriteLock root $ \archiveLock -> do
-  planned <- dryRunAdmissionVerified root proposal
-  case planned of
-    Left problem -> pure (Left (admissionMutationError problem))
-    Right (plan, snapshot)
-      | plannedGitExecutableIdentity plan /= archiveWriteLockGitExecutableIdentity archiveLock ->
-          pure (Left (MutationConfigurationFailure "configured Git executable changed before commit"))
-      | planIsRetry plan -> pure (Right plan)
-      | otherwise -> do
-          let verification = verificationOf snapshot
-          obtained <- obtainContents root archiveLock
-            (manifestContents (proposalManifest proposal))
-          case obtained of
-            Left (problem, transferred) -> pure (Left (unadmitted transferred problem))
-            Right (links, transferred) -> do
-              timestamp <- currentTimestamp
-              case finalizePlan root timestamp plan of
-                Left problem -> pure (Left (unadmitted transferred (MutationIntegrityFailure problem)))
-                Right records -> do
-                  committed <- commitRecordBatchWithContent archiveLock
-                    (plannedAdmissionSnapshot plan)
-                    (if null links then "Admit archive metadata" else "Admit archive records and content")
-                    records
-                    links
-                    (Just verification)
-                    (finalCheck root proposal plan)
-                  case committed of
-                    Left problem -> pure (Left (unadmitted transferred problem))
-                    Right commit -> do
-                      chain <- writeCommitCheckpoint archiveLock verification commit records
-                      rememberCommitted root snapshot commit chain records
-                      pure (Right plan)
+commitAdmission root proposal = withArchiveWriteLock root $ \archiveLock -> runExceptT $ do
+  (plan, snapshot) <- withExceptT admissionMutationError
+    (ExceptT (dryRunAdmissionVerified root proposal))
+  when (plannedGitExecutableIdentity plan /= archiveWriteLockGitExecutableIdentity archiveLock)
+    (throwE (MutationConfigurationFailure "configured Git executable changed before commit"))
+  unless (planIsRetry plan) $ do
+    let verification = verificationOf snapshot
+    (links, transferred) <- withExceptT (\(problem, transferred) -> unadmitted transferred problem)
+      (ExceptT (obtainContents root archiveLock (manifestContents (proposalManifest proposal))))
+    timestamp <- lift currentTimestamp
+    records <- withExceptT (unadmitted transferred . MutationIntegrityFailure)
+      (except (finalizePlan root timestamp plan))
+    commit <- withExceptT (unadmitted transferred) $ ExceptT $
+      commitRecordBatchWithContent archiveLock
+        (plannedAdmissionSnapshot plan)
+        (if null links then "Admit archive metadata" else "Admit archive records and content")
+        records
+        links
+        (Just verification)
+        (finalCheck root proposal plan)
+    chain <- lift (writeCommitCheckpoint archiveLock verification commit records)
+    lift (rememberCommitted root snapshot commit chain records)
+  pure plan
   where
     verificationOf snapshot =
       let (base, proven) = snapshotVerification snapshot
@@ -173,37 +160,32 @@ obtainOne
   -> Executable
   -> ContentDeclaration
   -> IO (Either (MutationError, [Text]) (ContentLink, [Text]))
-obtainOne root archiveLock annex declaration = do
-  before <- contentLocation archiveLock annex key
-  case before of
-    Left problem -> pure (Left (problem, []))
-    Right presentBefore -> do
-      fetched <- runAnnexLocked archiveLock annex
-        ["get", "--quiet", "--key", Text.unpack key, "--from", Text.unpack remote]
-      let transferred = [key | presentBefore == Nothing]
-      case fetched of
-        Left problem -> pure (Left (problem, []))
-        Right (ExitFailure code, _, errors) -> pure (Left (MutationSubprocessFailure
-          ("git-annex get failed (" <> Text.pack (show code) <> ") for " <> key
-            <> ": " <> Text.strip errors), []))
-        Right (ExitSuccess, _, _) -> do
-          -- git-annex get exits 0 when the remote lacks the key, so only local
-          -- presence after the call counts as obtaining it.
-          after <- contentLocation archiveLock annex key
-          case after of
-            Left problem -> pure (Left (problem, transferred))
-            Right Nothing -> pure (Left (MutationRejected
-              ("staging remote " <> remote <> " did not supply annex key " <> key), transferred))
-            Right (Just location) -> do
-              verified <- verifyContent root archiveLock annex declaration location
-              pure $ case verified of
-                Left problem -> Left (problem, transferred)
-                Right () -> case contentLinkFor root declaration location of
-                  Left problem -> Left (MutationIntegrityFailure problem, transferred)
-                  Right link -> Right (link, transferred)
+obtainOne root archiveLock annex declaration = runExceptT $ do
+  presentBefore <- withExceptT (withKeys []) (ExceptT (contentLocation archiveLock annex key))
+  fetched <- withExceptT (withKeys []) $ ExceptT $ runAnnexLocked archiveLock annex
+    ["get", "--quiet", "--key", Text.unpack key, "--from", Text.unpack remote]
+  let transferred = [key | presentBefore == Nothing]
+  case fetched of
+    (ExitFailure code, _, errors) -> throwE (MutationSubprocessFailure
+      ("git-annex get failed (" <> Text.pack (show code) <> ") for " <> key
+        <> ": " <> Text.strip errors), [])
+    (ExitSuccess, _, _) -> pure ()
+  -- git-annex get exits 0 when the remote lacks the key, so only local
+  -- presence after the call counts as obtaining it.
+  after <- withExceptT (withKeys transferred) (ExceptT (contentLocation archiveLock annex key))
+  location <- maybe
+    (throwE (MutationRejected
+      ("staging remote " <> remote <> " did not supply annex key " <> key), transferred))
+    pure after
+  withExceptT (withKeys transferred)
+    (ExceptT (verifyContent root archiveLock annex declaration location))
+  link <- withExceptT (withKeys transferred . MutationIntegrityFailure)
+    (except (contentLinkFor root declaration location))
+  pure (link, transferred)
   where
     key = contentAnnexKey declaration
     remote = contentStagingRemote declaration
+    withKeys keys problem = (problem, keys)
 
 -- | The local object path git-annex reports for a key, relative to the
 -- archive root, or Nothing when the content is not present here.
@@ -219,8 +201,8 @@ contentLocation archiveLock annex key = do
       let location = Text.unpack (Text.strip output)
       in case splitDirectories location of
         ".git" : "annex" : "objects" : rest
-          | not (null rest)
-          , last rest == Text.unpack key
+          | Just (_, final) <- unsnoc rest
+          , final == Text.unpack key
           , ".." `notElem` rest
           , "." `notElem` rest -> Right (Just location)
         _ -> Left (MutationIntegrityFailure
