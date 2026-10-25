@@ -196,18 +196,34 @@ test-suite door-test
   type: exitcode-stdio-1.0
   main-is: Main.hs
   other-modules:
-      BeyondCircle010
+      AdmissionChecks
+    , BeyondCircle010
+    , BootstrapChecks
     , CanonicalProperties
+    , CheckpointChecks
+    , ContractAdmissionChecks
+    , ContractChecks
+    , EnvelopeChecks
+    , Fixtures
+    , GitSnapshotChecks
+    , GitStoreChecks
     , HexProperties
     , IdentityVectors
     , JournalProperties
+    , JournalRecoveryChecks
     , PatternProperties
     , PointerProperties
+    , RecordCommitChecks
     , Rfc8785Vectors
     , Rules010
     , Rules011
+    , ServiceChecks
     , Specification010
     , Specification011
+    , SubprocessChecks
+    , Support
+    , TransitionChecks
+    , UpgradeChecks
   hs-source-dirs: door/test
   build-tool-depends:
       archive:archive
@@ -236,6 +252,12 @@ test-suite door-test
 test-suite archive-test
   type: exitcode-stdio-1.0
   main-is: Main.hs
+  other-modules:
+      ExportChecks
+    , IncompleteChecks
+    , MaintenanceChecks
+    , ReaderChecks
+    , Support
   hs-source-dirs: archive/test
   build-tool-depends:
       archive:archive
