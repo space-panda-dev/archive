@@ -92,9 +92,20 @@ Build: [archive.cabal](archive.cabal): library `door/src`, executables
 | `door/src/Archive/GitSnapshot.hs`, `Process.hs`, `ProcessPinned.c` | Git snapshot reads, pinned process launch (ADR 0033) |
 | `door/service.schema.json` | published service and refusal codes |
 
-Tests: suite `haskell`. `door/test/Main.hs` and `archive/test/Main.hs`
-are single sequential programs of named `assert "..."` checks with no
-filter; find one with `rg -n 'assert "<words>' door/test/Main.hs`.
+Tests: suite `haskell`, two tasty trees. `door/test/Main.hs` and
+`archive/test/Main.hs` are only the tree: one list with one group per concept
+module (`door/test/*Checks.hs`: envelope, contracts, bootstrap, Git snapshot,
+admission, contract admission, upgrade, transitions, subprocess, checkpoint,
+service, record commit, journal recovery, Git store; `archive/test/*Checks.hs`:
+reader, incomplete, export, maintenance), each exporting `tests`. Shared helpers
+are `door/test/Support.hs` (`assert`, `withEnv`, scratch roots, `Recorder` and
+`rowGroup`) and `door/test/Fixtures.hs` (proposals, commands, commit fixtures);
+`archive/test/Support.hs` for the reader. Independent asserts are separate
+cases; checks that share inputs record their asserts through `Recorder` and
+`rowGroup`, so each still reports as its own case. Scratch directories are
+removed on failure unless `ARCHIVE_TEST_KEEP` is set, which prints the kept
+path. Filter with `wf check haskell -- -p PATTERN`; find a check with
+`rg -n '"<words>' door/test`.
 QuickCheck properties of the pure parts (pattern engine, JSON Pointer, RFC
 8785 canonicalisation, operation journal encoding, hex) sit one module per
 subject in `door/test/*Properties.hs`, under door-test's `properties` group.
@@ -112,7 +123,7 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 `door/test/BeyondCircle010.hs`, agreement with World in
 `world/tests/test_door_agreement_beyond_circle.py`.
 
-<!-- wf:gen lines door/src/Archive/Door/AdmissionDryRun.hs door/src/Archive/Door/TransitionDryRun.hs door/src/Archive/Door/Contracts.hs door/src/Archive/Door/RecordCommit.hs door/src/Archive/Door/Bootstrap.hs door/src/Archive/Read/Core.hs door/src/Archive/GitSnapshot.hs door/src/Archive/ProcessPinned.c door/test/Main.hs archive/test/Main.hs -->
+<!-- wf:gen lines door/src/Archive/Door/AdmissionDryRun.hs door/src/Archive/Door/TransitionDryRun.hs door/src/Archive/Door/Contracts.hs door/src/Archive/Door/RecordCommit.hs door/src/Archive/Door/Bootstrap.hs door/src/Archive/Read/Core.hs door/src/Archive/GitSnapshot.hs door/src/Archive/ProcessPinned.c door/test/Main.hs door/test/Support.hs door/test/AdmissionChecks.hs door/test/ContractAdmissionChecks.hs door/test/UpgradeChecks.hs archive/test/Main.hs archive/test/ReaderChecks.hs -->
 | file | lines |
 |---|---|
 | `door/src/Archive/Door/AdmissionDryRun.hs` | 151 |
@@ -123,8 +134,13 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 | `door/src/Archive/Read/Core.hs` | 611 |
 | `door/src/Archive/GitSnapshot.hs` | 661 |
 | `door/src/Archive/ProcessPinned.c` | 799 |
-| `door/test/Main.hs` | 7869 |
-| `archive/test/Main.hs` | 1015 |
+| `door/test/Main.hs` | 82 |
+| `door/test/Support.hs` | 503 |
+| `door/test/AdmissionChecks.hs` | 1252 |
+| `door/test/ContractAdmissionChecks.hs` | 1035 |
+| `door/test/UpgradeChecks.hs` | 963 |
+| `archive/test/Main.hs` | 32 |
+| `archive/test/ReaderChecks.hs` | 492 |
 <!-- /wf:gen -->
 
 <!-- wf:gen anchors door/src/Archive/Door/Contracts.hs#validateSchema door/src/Archive/Door/Transition/Dispatch.hs#transitionDispatchTable -->
