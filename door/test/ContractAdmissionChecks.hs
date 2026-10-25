@@ -356,7 +356,8 @@ reviewChainAdmissions root archiveId audio work = do
   pure (map snd [ lineIn, alignment, selection, occurrence, link, kind, title, otherTitle, band, guest
                 , credit, judgment, session, parts ])
 
--- | One accepted proposal per contract, then one refusal for each new rule.
+-- | Review application contracts (ADR 0048, specification 0.0.5): one
+-- accepted proposal per contract, then one refusal for each new rule.
 -- Each refused fixture differs from its accepted twin only in the rule's field,
 -- and the test checks that difference so a refusal cannot pass for another
 -- reason hidden in an unrelated change.

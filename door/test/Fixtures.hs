@@ -474,8 +474,6 @@ commitDraftFixture root draft = do
     <> " -c user.email=archive-test@example.invalid commit -m fixture >/dev/null")
   pure (Text.unpack revision)
 
--- Review application contracts (ADR 0048, specification 0.0.5).
-
 -- | Admit one new record through `door admit`.  The draft is built from the
 -- allocated object ID, so the proposal's identity row always matches.
 admitNew :: FilePath -> String -> String -> String -> String

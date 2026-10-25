@@ -237,14 +237,6 @@ serviceChecks parent = do
   assert "without memory or a checkpoint the armed wrapper stops the service's full read (anchor)"
     (okResult coldAnswer == Nothing) ExitSuccess (show coldAnswer) ""
 
--- Publication transitions (ADR 0051), through the real `door transition`.
-
--- | The dispatch table and the installed transition contracts name the same
--- (identifier, version) set, so no transition contract ships without a
--- handler and no handler outlives its contract.
--- | Every specification version's catalog loads, lists only bundles whose
--- bytes carry the listed identity, and a missing or malformed catalog is a
--- refusal, never an empty set (ADR 0057).
 -- | The published service schema lists exactly Door's refusal codes, with
 -- the same descriptions (ADR 0058).
 refusalCodeSchemaChecks :: IO ()

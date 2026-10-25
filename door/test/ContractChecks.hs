@@ -190,6 +190,9 @@ migrationContractProfileChecks check = do
 isRightUnit :: Either Text.Text () -> Bool
 isRightUnit = (== Right ())
 
+-- | Every specification version's catalog loads, lists only bundles whose
+-- bytes carry the listed identity, and a missing or malformed catalog is a
+-- refusal, never an empty set (ADR 0057).
 contractCatalogChecks :: Recorder -> IO ()
 contractCatalogChecks check = do
   versions <- filter (all (`elem` ("0123456789." :: String))) <$> listDirectory "spec"

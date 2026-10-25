@@ -330,6 +330,9 @@ historicalReplayChecks parent = do
     "committed records cannot be replayed from their historical predecessors"
     root proposal
 
+-- | The dispatch table and the installed transition contracts name the same
+-- (identifier, version) set, so no transition contract ships without a
+-- handler and no handler outlives its contract.
 transitionDispatchCatalogChecks :: IO ()
 transitionDispatchCatalogChecks = do
   files <- listDirectory "spec/contracts"
@@ -355,6 +358,7 @@ transitionDispatchCatalogChecks = do
 publicationDraft :: (String, String, String) -> String -> [String] -> String -> String
 publicationDraft contract payload refs objectId = contractRecord "claim" contract payload refs objectId
 
+-- | Publication transitions (ADR 0051), through the real `door transition`.
 publicationTransitionChecks :: FilePath -> IO ()
 publicationTransitionChecks parent = do
   (root, archiveId, initOutput) <- newProposalArchive parent "publication-transitions"
