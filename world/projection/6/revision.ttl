@@ -963,3 +963,9 @@ wsh:CaptureStart a sh:NodeShape ;
   sh:property [ sh:path arch:capture_basis ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "grammar" "header" "client" "person" ) ] ;
   sh:property [ sh:path arch:capture_clock ; sh:maxCount 1 ; sh:in ( "local" "zoned" ) ] ;
   sh:property [ sh:path arch:capture_started ; sh:maxCount 1 ; sh:or ( [ sh:datatype xsd:string ] [ sh:datatype xsd:dateTime ] ) ] .
+
+wsh:SessionEnsemble a sh:NodeShape ;
+  sh:targetSubjectsOf arch:session_ensemble ;
+  sh:closed true ;
+  sh:property [ sh:path arch:session ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:session_ensemble ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .

@@ -2791,3 +2791,20 @@ The session-date reader uses the primary source's first part. With several
 starts, or none with `started`, it answers unavailable and gives a reason.
 The primary source and all joins retain ADR 0107's operator-established
 meaning; this release introduces no automatic session reconstruction.
+
+
+## D-21. Session ensembles (0.0.12)
+
+`archive.claim/session_ensemble` version 1 (ADR 0120) is an empty-payload
+Claim pinning exactly one `recording_session` Entity revision in role
+`session` and one `organisation` Entity revision in role `ensemble`.
+`x-archive-operator-agent`, the boolean `true`, requires that its agent is
+the archive's active operator. This is an assertion about the session,
+not billing credit for a selection. Multiple assertions coexist; unknown
+and disputed associations are never replaced by an inferred band. World
+projects `arch:session` and `arch:session_ensemble` inside each claim graph.
+The supersession rule may name an empty `objects` or `revisions` list;
+an empty list preserves no role of that kind. The session ensemble contract
+keeps its session object and agent, while allowing a corrected ensemble.
+A reader joins a renamed session by object identity while retaining the
+assertion's exact pins. The relay's member contracts are unchanged.

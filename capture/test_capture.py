@@ -497,6 +497,10 @@ class CaptureImport(unittest.TestCase):
                                                "revision_id": lr_artifact["revision_id"],
                                                "digest": lr_artifact["payload"]["content"]["digest"]}])
         self.assertEqual(session["artifacts"], [])
+        [start] = self.about(self.claims("archive.claim/capture_start"), "subject", lr_artifact["object_id"])
+        self.assertEqual(start["payload"], {"basis": "grammar", "clock": "local", "started": "2001-01-01T12:00:00"})
+        self.assertEqual(start["refs"][0]["revision_id"], lr_artifact["revision_id"])
+
         self.assertEqual(self.parts_of(self.session_id(lr), session), {"TrLR": [lr_artifact["object_id"]]})
         self.assertEqual([r for r in self.records() if r["shape"] == "artifact"], artifacts)
         self.assertEqual(answer["chain"], [])  # nothing new to enrich

@@ -163,7 +163,7 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 <!-- wf:gen lines spec/archive-spec.md -->
 | file | lines |
 |---|---|
-| `spec/archive-spec.md` | 2793 |
+| `spec/archive-spec.md` | 2810 |
 <!-- /wf:gen -->
 
 Rules: never delete a version or a bundle an archive may cite; supersede it
@@ -198,7 +198,7 @@ full rebuild (ADR 0055).
 <!-- wf:gen lines world/world.py world/harmony.py world/contributions.py world/documents.py world/notes.py world/circle.py world/tests/test_world.py -->
 | file | lines |
 |---|---|
-| `world/world.py` | 2158 |
+| `world/world.py` | 2177 |
 | `world/harmony.py` | 1061 |
 | `world/contributions.py` | 810 |
 | `world/documents.py` | 1287 |
@@ -208,12 +208,12 @@ full rebuild (ADR 0055).
 <!-- /wf:gen -->
 
 <!-- wf:gen anchors world/world.py#_main world/world.py#_project world/world.py#_project_review_claim world/world.py#_project_derivation_claim world/world.py#_project_music_claim world/world.py#refresh_store -->
-- `world/world.py#_main`: line 2047
+- `world/world.py#_main`: line 2066
 - `world/world.py#_project`: line 273
-- `world/world.py#_project_review_claim`: line 611
-- `world/world.py#_project_derivation_claim`: line 872
-- `world/world.py#_project_music_claim`: line 1117
-- `world/world.py#refresh_store`: line 1828
+- `world/world.py#_project_review_claim`: line 618
+- `world/world.py#_project_derivation_claim`: line 891
+- `world/world.py#_project_music_claim`: line 1136
+- `world/world.py#refresh_store`: line 1847
 <!-- /wf:gen -->
 
 ## Relay (Python): HTTP for the browser; no state; loopback only
@@ -347,8 +347,8 @@ Rules: ADR 0070; capture proposes, Door commits (INV-2).
 <!-- wf:gen lines capture/capture.py capture/test_capture.py -->
 | file | lines |
 |---|---|
-| `capture/capture.py` | 775 |
-| `capture/test_capture.py` | 970 |
+| `capture/capture.py` | 776 |
+| `capture/test_capture.py` | 974 |
 <!-- /wf:gen -->
 
 ## documents (Python)
@@ -410,7 +410,7 @@ catalog except the specification upgrade, so a new contract needs a plan step.
 <!-- wf:gen lines fixture/plan.json -->
 | file | lines |
 |---|---|
-| `fixture/plan.json` | 720 |
+| `fixture/plan.json` | 729 |
 <!-- /wf:gen -->
 
 ## Do not read

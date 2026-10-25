@@ -387,3 +387,5 @@ arch:capture_subject a rdf:Property ; rdfs:comment "capture_start 1: the Artifac
 arch:capture_started a rdf:Property ; rdfs:comment "capture_start 1: device wall time, typed dateTime only for a stated offset." .
 arch:capture_clock a rdf:Property ; rdfs:comment "capture_start 1: local or zoned, present exactly with a stated start." .
 arch:capture_basis a rdf:Property ; rdfs:comment "capture_start 1: grammar, header, client or person." .
+
+arch:session_ensemble a rdf:Property ; rdfs:comment "session_ensemble 1: one organisation asserted by the operator for a recording session." .

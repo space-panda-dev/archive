@@ -19,6 +19,7 @@ from typing import Any, Callable
 # one of these kinds.
 AGENT_KINDS: dict[tuple[str, str], frozenset[str]] = {
     ("archive.claim/capture_start", "1"): frozenset({"person", "software"}),
+    ("archive.claim/session_ensemble", "1"): frozenset({"person"}),
     ("archive.claim/lead_sheet", "1"): frozenset({"person", "organisation"}),
     ("archive.claim/lead_sheet", "2"): frozenset({"person", "organisation"}),
     ("archive.claim/sensitivity", "1"): frozenset({"person"}),

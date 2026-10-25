@@ -372,11 +372,12 @@ def plan(session: Session, reader: adapter.ArchiveReader) -> tuple[list[dict], l
             record = session.adopted[item.digest]
             pins[item.digest] = {"object_id": record["object_id"], "revision_id": record["revision_id"]}
             adopted.append({"file": item.relative, "digest": item.digest, **pins[item.digest]})
-            continue
-        pin = add(ARTIFACT_NAMESPACE, "capture-" + item.hex, "artifact",
-                  {"content": {"digest": item.digest, "size": item.size}}, [])
-        pins[item.digest] = pin
-        artifacts.append({"file": item.relative, "digest": item.digest, **pin})
+        else:
+            pin = add(ARTIFACT_NAMESPACE, "capture-" + item.hex, "artifact",
+                      {"content": {"digest": item.digest, "size": item.size}}, [])
+            pins[item.digest] = pin
+            artifacts.append({"file": item.relative, "digest": item.digest, **pin})
+        pin = pins[item.digest]
         if item.recognised is not None:
             instant = item.recognised.started
             start = {"basis": "grammar", "started": instant.isoformat(),

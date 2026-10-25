@@ -204,7 +204,7 @@ enrichment requirements, and are skipped without them unless
 ## Capture clocks (0.0.12)
 
 A recognised recorder filename proposes one `capture_start` claim per
-Artifact, pinning its exact revision with basis `grammar`. The local clock
+new or adopted Artifact, pinning its exact revision with basis `grammar`. The local clock
 has no invented timezone. Files without a source reader have no proposed
 start; their named session label is not parsed. The importer requires the
 0.0.12 capture-start contract before it stages any content. Reruns still

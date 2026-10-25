@@ -217,6 +217,11 @@
       "digest": "sha256:b2a30529535754f515f266adb1253e22aef37edccefc4062ca7c86bdbe50b816"
     },
     {
+      "id": "archive.claim/session_ensemble",
+      "version": "1",
+      "digest": "sha256:0816948bc2bb64ade2722259b0ba779491c248b777ba268527e491f90208289f"
+    },
+    {
       "id": "archive.claim/session_parts",
       "version": "1",
       "digest": "sha256:7983405e0e8ed403ec1299b8e3ca10c80397da9962303cc4816f0df41745842a"

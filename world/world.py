@@ -443,6 +443,13 @@ def _project(store: Store, data: ExportData, known_object: Any = None) -> None:
                 envelope_rules.check(claim, ("archive.claim/capture_start", "1"), lookups.entity_kind, records_by_revision)
             except envelope_rules.EnvelopeRuleError as exc:
                 raise ProjectionError(str(exc)) from exc
+        if ("archive.claim/session_ensemble", "1") in cited:
+            try:
+                envelope_rules.check(claim, ("archive.claim/session_ensemble", "1"), lookups.entity_kind, records_by_revision)
+            except envelope_rules.EnvelopeRuleError as exc:
+                raise ProjectionError(str(exc)) from exc
+            if claim.get("agent") != lookups.operator():
+                raise ProjectionError("a session ensemble must be asserted by the active operator")
         _project_review_claim(store, archive_id, core_terms, contract_contexts, claim, cited,
                               records_by_revision, domain_graph, kind_scheme)
         _project_derivation_claim(store, archive_id, core_terms, contract_contexts, claim, cited,
@@ -745,6 +752,18 @@ def _project_review_claim(store: Store, archive_id: str, core_terms: dict[str, A
             _add(store, claim_ref, selection, arch("credit"), credit)
             _add(store, claim_ref, credit, RDF + "value", Literal(index))
             _add(store, claim_ref, credit, term(contract, "artist"), _record_uri(archive_id, ref["revision_id"]))
+
+    if ("archive.claim/session_ensemble", "1") in cited:
+        contract = ("archive.claim/session_ensemble", "1")
+        by_role = _claim_refs_by_role(claim, {"session", "ensemble"})
+        if payload != {} or not _valid_pinned_entity(by_role["session"], records_by_revision, "recording_session") or not _valid_pinned_entity(by_role["ensemble"], records_by_revision, "organisation"):
+            raise ProjectionError(f"session ensemble {revision} requires a session and organisation and empty payload")
+        for previous in claim.get("supersedes", []):
+            target = records_by_revision.get(previous.get("revision_id"))
+            if target is None or target.get("agent") != claim.get("agent") or [r.get("id") for r in target.get("refs", []) if r.get("role") == "session"] != [by_role["session"]["id"]]:
+                raise ProjectionError("a session ensemble revision keeps its session and agent")
+        _add(store, claim_ref, claim_ref, term(contract, "session"), pin(by_role["session"], "entity"))
+        _add(store, claim_ref, claim_ref, term(contract, "ensemble"), pin(by_role["ensemble"], "entity"))
 
     if ("archive.claim/capture_start", "1") in cited:
         from world.capture_start import check as check_capture_start

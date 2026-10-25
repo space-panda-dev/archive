@@ -8,9 +8,10 @@ replace the per-run scratch and operator procedure.
 ## Context
 
 A recording already present as an Artifact may have no `recording_session`
-Entity or `session_parts`. `capture import` skips known content and must
-continue doing so. ADR 0107's parts-only path joins an existing session; it
-does not create an absent session. Renaming an Entity cannot supply missing
+Entity or `session_parts`. ADR 0070's amendment lets `capture import` adopt known content that belongs
+to no session, using its recorder grammar grouping. That is not a migration
+of the legacy session grouping. ADR 0107's parts-only path joins an existing
+session; it does not recover the legacy grouping either. Renaming an Entity cannot supply missing
 membership or ordering. The review client needs the same naming and metadata
 reader for legacy and native sessions, without a regrouping interface.
 

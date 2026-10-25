@@ -20,6 +20,15 @@
       ]
     },
     {
+      "name": "session ensemble",
+      "command": "admit",
+      "records": [
+        {"key": "session-ensemble", "namespace": "archive.claim/session_ensemble", "name": "fixture-session-ensemble", "shape": "claim",
+         "contracts": [{"id": "archive.claim/session_ensemble", "version": "1"}], "payload": {},
+         "refs": [{"role": "session", "pin": "session"}, {"role": "ensemble", "pin": "ensemble"}]}
+      ]
+    },
+    {
       "name": "content",
       "command": "admit",
       "records": [

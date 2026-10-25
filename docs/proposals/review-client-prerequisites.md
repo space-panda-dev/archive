@@ -39,10 +39,11 @@ name must never regroup or reorder recordings.
    parts-only `capture parts --into` path from ADR 0107. Version 1 remains
    readable. These attach sources to an existing session on the operator's
    explicit instruction; capture clocks are hints, never automatic joins.
-5. **Implement accepted missing-session backfill separately.** Known content is skipped
-   even if no session Entity exists. ADR 0107's parts-only path requires an
-   existing session; it does not specify reconstructing absent Entities or
-   migrating unresolved legacy session records. [ADR 0121](../decisions/0121-legacy-session-backfill.md) requires the
+5. **Implement accepted missing-session backfill separately.** ADR 0070's
+   amendment already adopts known-but-unparented Artifacts into sessions
+   using recorder grammar grouping. That does not preserve a distinct
+   legacy session grouping or its source provenance. ADR 0107's parts-only
+   path requires an existing session. [ADR 0121](../decisions/0121-legacy-session-backfill.md) requires the
    legacy grouping and file order, source provenance and explicit review of
    ambiguous groups before proposing those records. Follow ADR 0048's first-part identity once the grouping is
    established. Do not make a changed label or a repeat import perform this
@@ -73,8 +74,10 @@ capture import --archive "$SCRATCH/archive" --staging "$SCRATCH/capture-staging"
 
 Record the scratch archive HEAD before and after, both JSON answers, exit
 statuses, each session's status and any refused partially known group. Keep
-reports outside the archive. With all card content present, expect
-`unchanged`, `already_imported` groups and identical HEAD. This proves no-op
+reports outside the archive. With every card file already belonging to a session, expect
+`unchanged`, `already_imported` groups and identical HEAD. Known content with
+no session may instead produce a content-free adoption under ADR 0070; review
+the predicted grammar grouping before allowing that scratch run. This proves no-op
 retry; it does not prove a new session, missing-session backfill, date
 backfill or enrichment completion. An unchanged import does not resume a
 stopped enrichment chain (see the existing open question).

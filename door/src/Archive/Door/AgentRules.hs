@@ -28,6 +28,7 @@ validateAgentRules records draft schema = do
   let with name parse check = ruleAt name parse schema >>= maybe (Right ()) check
   with "x-archive-agent" agentRule (agentKind records draft)
   with "x-archive-capture-start" captureStartRule (const (captureAgent records draft))
+  with "x-archive-operator-agent" operatorAgentRule (const (operatorAgent records draft))
   with "x-archive-supersession" supersessionRule (supersession records draft)
   with "x-archive-asserter-only" asserterOnlyRule (asserterOnly records draft)
   with "x-archive-adoption" adoptionRule (adoption records draft)
@@ -176,3 +177,9 @@ captureAgent :: RuleRecords -> DraftEnvelope -> Either Text ()
 captureAgent records draft
   | textAt "basis" (draftPayload draft) `elem` [Just "person", Just "client"] = agentKind records draft ["person"]
   | otherwise = Right ()
+
+operatorAgent :: RuleRecords -> DraftEnvelope -> Either Text ()
+operatorAgent records draft = do
+  operator <- activeOperator records
+  if agentOf draft == operator then Right ()
+    else Left "this claim must be asserted by the active operator"
