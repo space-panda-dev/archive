@@ -99,7 +99,7 @@ def plan(raw: bytes, source: dict, reader: adapter.ArchiveReader, operator: str)
             sessions = [r['id'] for r in record.get('refs', []) if r['role'] == 'session']
             if len(sessions) != 1:
                 raise BackfillError('existing session_parts has no unique session')
-            existing[sessions[0]].append([r['id'] for r in record['refs'] if r['role'] == 'part'])
+            existing[sessions[0]].append([(r['id'], r['revision_id']) for r in record['refs'] if r['role'] == 'part'])
     drafts, identities, report = [], [], []
     guards = {source['object_id']: source['revision_id']}
 
@@ -140,13 +140,14 @@ def plan(raw: bytes, source: dict, reader: adapter.ArchiveReader, operator: str)
             row['status'] = 'unresolved'
             continue
         pins = {f['digest']: _pin(artifacts[f['digest']][0]) for f in files}
-        ordered = [[pins[f['digest']]['object_id'] for f in s['files']] for s in streams]
-        members = {item for stream in ordered for item in stream}
+        ordered = [[(pins[f['digest']]['object_id'], pins[f['digest']]['revision_id'])
+                    for f in s['files']] for s in streams]
+        members = {item[0] for stream in ordered for item in stream}
         primary = next(s for s in streams if s['primary'])
         name = 'session-' + primary['files'][0]['digest'].removeprefix('sha256:')
         session_id = adapter.object_id(reader.archive_id, 'archive.audio/session', name)
         overlaps = {session: parts for session, parts in existing.items()
-                    if members.intersection(item for stream in parts for item in stream)}
+                    if members.intersection(item[0] for stream in parts for item in stream)}
         row['sources'] = [{'id': s['id'], 'primary': s['primary'],
                            'files': [{**f, **pins[f['digest']]} for f in s['files']]} for s in streams]
         if overlaps:
@@ -183,7 +184,9 @@ def plan(raw: bytes, source: dict, reader: adapter.ArchiveReader, operator: str)
     return {'manifest': manifest, 'records': drafts, 'revision_ids': [adapter.revision_of(d) for d in drafts],
             'report': {'format': 'archive.legacy-session-inventory/1', 'source': source, 'groups': report,
                        'unresolved': sum(r['status'] == 'unresolved' for r in report),
-                       'existing_sessions': [{'session': _pin(reader.head(session)), 'sources': parts}
+                       'existing_sessions': [{'session': _pin(reader.head(session)),
+                                              'sources': [[{'object_id': oid, 'revision_id': rev}
+                                                           for oid, rev in stream] for stream in parts]}
                                              for session, parts in sorted(existing.items())]}}
 
 

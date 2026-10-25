@@ -97,6 +97,19 @@ class LegacyInventory(unittest.TestCase):
         self.assertEqual(result['records'], [])
         self.assertEqual(result['report']['groups'][0]['issues'], ['conflicting_existing_grouping'])
 
+    def test_existing_parts_with_different_revision_pins_require_review(self):
+        raw, source, reader = setup()
+        first = plan(raw, source, reader, OPERATOR)
+        for draft in first['records']:
+            record = {**draft, 'revision_id': adapter.revision_of(draft)}
+            reader.heads[record['object_id']] = record
+        parts = next(r for r in reader.heads.values() if any(c['id'] == PARTS[0] for c in r.get('contracts', [])))
+        parts['refs'][1]['revision_id'] = 'sha256:'+'f'*64
+        result = plan(raw, source, reader, OPERATOR)
+        self.assertEqual(result['records'], [])
+        self.assertIn('conflicting_existing_grouping', result['report']['groups'][0]['issues'])
+        self.assertEqual(result['report']['existing_sessions'][0]['sources'][0][0]['revision_id'], 'sha256:'+'f'*64)
+
     def test_source_bytes_mismatch_and_duplicate_json_keys_refuse(self):
         raw, source, reader = setup()
         with self.assertRaises(BackfillError): plan(raw+b' ', source, reader, OPERATOR)
