@@ -808,7 +808,7 @@ previousReleaseUpgradeChecks parent = do
          , "A\tspec/0.0.12/context.jsonld", "A\t" <> recordRelative upgradeRevision ]
          <> [ "A\t" <> bundlePath entry | entry <- added ])
   assert "the upgrade commit installs the ten bundles, the release's documents, the record, and the manifest"
-    (sort (lines changes) == expectedChanges && length added == 7) ExitSuccess changes (unlines expectedChanges)
+    (sort (lines changes) == expectedChanges && length added == 10) ExitSuccess changes (unlines expectedChanges)
   installedMatch <- mapM (\entry -> (==) <$> ByteString.readFile (root </> bundlePath entry)
     <*> ByteString.readFile ("spec" </> bundlePath entry)) added
   (statusCode, statusOut, statusErr) <- readCreateProcessWithExitCode
