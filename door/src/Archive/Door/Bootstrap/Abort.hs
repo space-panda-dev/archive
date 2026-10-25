@@ -14,10 +14,10 @@ module Archive.Door.Bootstrap.Abort
   , withCleanupFailure
   ) where
 
+import Archive.Door.IOFailure (ioFailureText)
 import Archive.Door.MutationError (MutationError (..))
 import qualified Control.Exception as Exception
 import Data.Text (Text)
-import qualified Data.Text as Text
 import System.IO (Handle, hClose)
 
 ioEither :: Either Text a -> IO a
@@ -29,7 +29,7 @@ tryIO action =
   (Right <$> action)
     `Exception.catch` (\(MutationAbort failure) -> pure (Left failure))
     `Exception.catch` (\(problem :: Exception.IOException) ->
-      pure (Left (MutationIoFailure (Text.pack (show problem)))))
+      pure (Left (MutationIoFailure (ioFailureText problem))))
 
 safeClose :: Handle -> IO ()
 safeClose = hClose

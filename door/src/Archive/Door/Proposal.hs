@@ -24,6 +24,7 @@ module Archive.Door.Proposal
   ) where
 
 import Archive.Door.Distinct (distinctOr)
+import Archive.Door.IOFailure (ioFailureText, tryIOException)
 import Archive.Door.Json (decodeUnique)
 import Archive.Door.Json.Access (arrayField, hasExactKeys, numberField, textField)
 import Archive.Door.ProposalProblem (ProposalProblem (..), proposalProblemMessage)
@@ -34,7 +35,6 @@ import Archive.Door.Types
   , RecordBody (..)
   , parseDraftEnvelope
   )
-import Control.Exception (IOException, try)
 import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT)
 import Data.Aeson (Value (..))
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -554,9 +554,5 @@ finallyIO fd action = do
     Left problem -> pure (Left (DescriptorCloseFailed problem))
     Right () -> pure (either Left id result)
 
-tryIO :: forall a. IO a -> IO (Either ProposalProblem a)
-tryIO action = do
-  result <- try action :: IO (Either IOException a)
-  pure $ case result of
-    Left problem -> Left (ProposalIoFailure (Text.pack (show problem)))
-    Right value -> Right value
+tryIO :: IO a -> IO (Either ProposalProblem a)
+tryIO action = first (ProposalIoFailure . ioFailureText) <$> tryIOException action
