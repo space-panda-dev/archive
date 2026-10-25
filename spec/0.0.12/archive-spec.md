@@ -380,6 +380,21 @@ declaration MUST be referenced. `expected_heads` MUST contain exactly one row
 for every object created or revised; its expected revision is null for a new
 object and an exact pin for an existing object.
 
+An admission MAY also supply `expected_reference_heads`, defaulting to an empty
+array when absent. Each row MUST name a distinct existing object with a non-null
+exact revision, MUST refer to an explicitly referenced object not drafted in the
+batch, and MUST agree with every explicit pin to that object. The ordinary
+`expected_heads` array MUST still contain exactly the drafted objects. Before
+admitting new revisions Door MUST compare these reference expectations with
+its authoritative heads under the archive write lock and recheck them with the
+retained proposal before commit. A changed or missing guarded head MUST refuse
+the whole batch as `expected_head_stale`, without a record, commit, or
+content-location write. Unguarded historical references remain permitted.
+Guard structure is validated before complete-batch retry recognition; a complete
+previously committed batch MUST return its existing revisions without checking
+reference expectations against later heads and without writing anything.
+These optional preconditions are operational, not admitted records (ADR 0122).
+
 Door MUST validate the complete proposal under one archive lock before writing
 a record. It MUST use git-annex to obtain each key from the configured staging
 remote, require the key to be present locally, verify local fixity, and compare

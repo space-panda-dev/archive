@@ -33,6 +33,7 @@ data PlanProblem
   | NonLinearSupersession Planner
   | ExpectedHeadsWrongCover
   | ExpectedHeadOmitted
+  | ExpectedReferenceHeadNotCurrent
   | ExpectedHeadMissingObject
   | ExpectedHeadNotCurrent Planner
   deriving (Eq, Show)
@@ -65,6 +66,7 @@ planProblemRefusal problem = case problem of
     PlanRefused "proposed transitions must extend one linear supersession head"
   ExpectedHeadsWrongCover -> PlanRefused "expected_heads must cover exactly drafted and referenced objects"
   ExpectedHeadOmitted -> PlanRefused "expected_heads omitted a required object"
+  ExpectedReferenceHeadNotCurrent -> PlanStale "expected reference head is stale"
   ExpectedHeadMissingObject -> PlanRefused "expected head names a missing object"
   ExpectedHeadNotCurrent AdmissionPlanner -> PlanStale "expected head is stale"
   ExpectedHeadNotCurrent TransitionPlanner ->

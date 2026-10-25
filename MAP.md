@@ -136,7 +136,7 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 | `door/src/Archive/ProcessPinned.c` | 799 |
 | `door/test/Main.hs` | 82 |
 | `door/test/Support.hs` | 503 |
-| `door/test/AdmissionChecks.hs` | 1252 |
+| `door/test/AdmissionChecks.hs` | 1328 |
 | `door/test/ContractAdmissionChecks.hs` | 1035 |
 | `door/test/UpgradeChecks.hs` | 963 |
 | `archive/test/Main.hs` | 32 |
@@ -163,7 +163,7 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 <!-- wf:gen lines spec/archive-spec.md -->
 | file | lines |
 |---|---|
-| `spec/archive-spec.md` | 2810 |
+| `spec/archive-spec.md` | 2825 |
 <!-- /wf:gen -->
 
 Rules: never delete a version or a bundle an archive may cite; supersede it
@@ -233,7 +233,7 @@ speed), 0069 (media by digest), 0114 (local health), 0118 (metrics).
 |---|---|
 | `relay/relay.py` | 1292 |
 | `relay/openapi.json` | 4779 |
-| `relay/tests/test_relay.py` | 1194 |
+| `relay/tests/test_relay.py` | 1249 |
 <!-- /wf:gen -->
 
 <!-- wf:gen anchors relay/relay.py#DOOR_ROUTES relay/relay.py#MEDIA_ROUTES relay/relay.py#ROUTES relay/relay.py#Relay relay/relay.py#make_handler relay/relay.py#main -->

@@ -136,3 +136,4 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0119](0119-door-in-house-evaluators.md) | Door evaluates contract schemas, patterns and canonical numbers with its own code, so its behaviour is part of the specification |
 | [0120](0120-session-ensemble-association.md) | A session's ensemble is an explicit operator assertion, separate from selection billing |
 | [0121](0121-legacy-session-backfill.md) | Backfill missing sessions from legacy grouping and file order, preserving source provenance and reviewing ambiguity |
+| [0122](0122-admission-reference-heads.md) | An admission can require referenced objects’ heads to stay unchanged |

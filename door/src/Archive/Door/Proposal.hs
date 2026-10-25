@@ -31,6 +31,8 @@ import Archive.Door.ProposalProblem (ProposalProblem (..), proposalProblemMessag
 import Archive.Door.Types
   ( DraftEnvelope (..)
   , ObjectId
+  , Reference (..)
+  , revisionIdText
   , objectIdText
   , RecordBody (..)
   , parseDraftEnvelope
@@ -98,6 +100,7 @@ data ProposalManifest = ProposalManifest
   , manifestIdentities :: [IdentityAllocation]
   , manifestContents :: [ContentDeclaration]
   , manifestExpectedHeads :: [ExpectedHead]
+  , manifestExpectedReferenceHeads :: [ExpectedHead]
   } deriving (Eq, Show)
 
 data ProposalRecord = ProposalRecord
@@ -182,6 +185,7 @@ validateManifestLists kind manifest = do
   requireDistinct "manifest records path" (map pathText (manifestRecords manifest))
   requireDistinct "identity object_id" (map identityObjectId (manifestIdentities manifest))
   requireDistinct "expected_heads object_id" (map expectedObjectId (manifestExpectedHeads manifest))
+  requireDistinct "expected_reference_heads object_id" (map expectedObjectId (manifestExpectedReferenceHeads manifest))
   case kind of
     TransitionProposal
       | null (manifestRecords manifest)
@@ -301,6 +305,7 @@ validateDraftRelationships kind manifest records = do
       headObjects = map expectedObjectId (manifestExpectedHeads manifest)
       headSet = Set.fromList headObjects
       draftSet = Set.fromList draftObjects
+  validateReferenceHeadGuards manifest drafts
   if not (all (\object -> Set.member object headSet) draftObjects)
     then Left HeadsOmitDraft
     else if kind == AdmissionProposal && headSet /= draftSet
@@ -316,6 +321,22 @@ validateDraftRelationships kind manifest records = do
       else case kind of
         AdmissionProposal -> validateAdmissionContent manifest drafts
         TransitionProposal -> pure ()
+
+-- Guard only existing explicit references; ordinary historical pins stay valid.
+validateReferenceHeadGuards :: ProposalManifest -> [DraftEnvelope] -> Either ProposalProblem ()
+validateReferenceHeadGuards manifest drafts = mapM_ check (manifestExpectedReferenceHeads manifest)
+  where
+    drafted = Set.fromList (map (objectText . envelopeObject) drafts)
+    references = concatMap envelopeReferences drafts
+    check guard
+      | expectedRevisionId guard == Nothing = Left ReferenceHeadNull
+      | Set.member (expectedObjectId guard) drafted = Left ReferenceHeadDrafted
+      | null pins = Left ReferenceHeadNotReferenced
+      | any (/= expectedRevisionId guard) pins = Left ReferenceHeadPinDisagrees
+      | otherwise = Right ()
+      where
+        pins = [ revisionIdText <$> referenceRevision ref
+               | ref <- references, objectText (referenceObject ref) == expectedObjectId guard ]
 
 validateAdmissionContent :: ProposalManifest -> [DraftEnvelope] -> Either ProposalProblem ()
 validateAdmissionContent manifest drafts = do
@@ -362,6 +383,7 @@ parseManifest :: ProposalKind -> Value -> Either ProposalProblem ProposalManifes
 parseManifest kind (Object fields) = do
   let expected = case kind of
         AdmissionProposal -> ["protocol", "records", "identities", "contents", "expected_heads"]
+          <> ["expected_reference_heads" | KeyMap.member "expected_reference_heads" fields]
         TransitionProposal -> ["protocol", "records", "identities", "expected_heads"]
   requireExactKeys "proposal manifest" expected fields
   protocol <- requiredText "protocol" fields
@@ -372,6 +394,9 @@ parseManifest kind (Object fields) = do
     AdmissionProposal -> requiredArray "contents" fields >>= mapM parseContentDeclaration
     TransitionProposal -> pure []
   expectedHeads <- requiredArray "expected_heads" fields >>= mapM parseExpectedHead
+  referenceHeads <- if KeyMap.member "expected_reference_heads" fields
+    then requiredArray "expected_reference_heads" fields >>= mapM parseExpectedHead
+    else pure []
   if kind == TransitionProposal
     && (null recordValues || null identities || null expectedHeads)
     then Left TransitionArraysEmpty
@@ -381,6 +406,7 @@ parseManifest kind (Object fields) = do
       , manifestIdentities = identities
       , manifestContents = contents
       , manifestExpectedHeads = expectedHeads
+      , manifestExpectedReferenceHeads = referenceHeads
       }
 parseManifest _ _ = Left ManifestNotObject
 

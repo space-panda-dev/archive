@@ -145,6 +145,13 @@ staged for the same caller through `/documents/stage`, and each Artifact
 carrying them is described in the same batch by a document source claim of
 the staged type; anything else is `content_not_relayed` or
 `content_not_described`. Every draft's `agent` must be the caller's.
+An admission manifest may include `expected_reference_heads` (ADR 0122):
+non-null exact head pins for existing explicitly referenced objects. Door checks
+them under its write lock; a moved reference refuses a new batch with
+`expected_head_stale`. Complete identical retries still write nothing even if
+the referenced head later changes. The relay forwards these guards unchanged;
+clients must not remove them to work around an older Door's refusal.
+
 
 ### Members
 
