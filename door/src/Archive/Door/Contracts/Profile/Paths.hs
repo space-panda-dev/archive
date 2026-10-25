@@ -17,6 +17,7 @@ import Data.Aeson (Value (..))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Foldable (toList)
+import Data.List (unsnoc)
 import Data.Scientific (floatingOrInteger)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -64,7 +65,7 @@ descend (name : rest) values = descend rest (concatMap step values)
 -- | The objects that hold a path's last field (or would): every object
 -- reached by the path without its last name, entering arrays.
 pathHolders :: [Text] -> KeyMap.KeyMap Value -> Either RuleViolation [KeyMap.KeyMap Value]
-pathHolders path payload = mapM holder (enter (descend (take (length path - 1) path) [Object payload]))
+pathHolders path payload = mapM holder (enter (descend (maybe [] fst (unsnoc path)) [Object payload]))
   where
     enter = concatMap (\value -> case value of
       Array items -> toList items
@@ -75,9 +76,9 @@ pathHolders path payload = mapM holder (enter (descend (take (length path - 1) p
 -- | What a path's last field holds on each object that holds it (or
 -- would). A path is nonempty once parsed; an empty one reaches nothing.
 pathValues :: [Text] -> KeyMap.KeyMap Value -> Either RuleViolation [Maybe Value]
-pathValues path payload = case reverse path of
-  [] -> Right []
-  final : _ -> map (KeyMap.lookup (Key.fromText final)) <$> pathHolders path payload
+pathValues path payload = case unsnoc path of
+  Nothing -> Right []
+  Just (_, final) -> map (KeyMap.lookup (Key.fromText final)) <$> pathHolders path payload
 
 -- | The integers a path's last field holds, on every object it reaches: the
 -- field's value, or each item of it when it is an array.

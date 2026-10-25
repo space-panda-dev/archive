@@ -33,11 +33,11 @@ import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Char (isAlphaNum, isDigit)
 import Data.Foldable (toList)
-import Data.List (sort)
+import Data.List (sort, unsnoc)
 import Data.Maybe (isNothing)
+import Data.Scientific (floatingOrInteger)
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Data.Scientific (floatingOrInteger)
 
 newtype ObjectId = ObjectId Text
   deriving (Eq, Ord, Show)
@@ -412,8 +412,8 @@ validateTimestamp value
 validRfc3339Utc :: Text -> Bool
 validRfc3339Utc value =
   let chars = Text.unpack value
-      (base, suffix) = case reverse chars of
-        ('Z':rest) -> (reverse rest, True)
+      (base, suffix) = case unsnoc chars of
+        Just (rest, 'Z') -> (rest, True)
         _ -> (chars, False)
       (datePart, timeWithSeparator) = break (== 'T') base
       timePart = case timeWithSeparator of
@@ -575,8 +575,8 @@ containsHostname value =
   "://" `Text.isInfixOf` value || any isDomainName candidates
   where
     candidates = value : suffixes "@" value <> suffixes ":" value
-    suffixes separator text = case reverse (Text.splitOn separator text) of
-      final : _ : _ -> [final]
+    suffixes separator text = case unsnoc (Text.splitOn separator text) of
+      Just (_ : _, final) -> [final]
       _ -> []
     isDomainName candidate = case Text.splitOn "." candidate of
       [_] -> False

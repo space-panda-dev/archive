@@ -13,8 +13,8 @@ module Archive.Door.RecordRules
   , soundsClass
   ) where
 
-import Archive.Door.Hex (hexText)
 import Archive.Door.FormStructure (validateFormStructure)
+import Archive.Door.Hex (hexText)
 import Archive.Door.PlacedItems (passListsRule, placedItemsRule, validatePassLists, validatePlacedItems)
 import Archive.Door.RuleJson
 import Archive.Door.RuleSyntax

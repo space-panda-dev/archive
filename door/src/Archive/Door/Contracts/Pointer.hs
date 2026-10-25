@@ -46,16 +46,17 @@ atMay values index
       value : _ -> Just value
       [] -> Nothing
 
+-- | One reference token unescaped in a single pass, as RFC 6901 §4 requires
+-- (JSON Schema 2020-12 resolves a @$ref@ fragment as a JSON Pointer): @~1@
+-- becomes @/@ and @~0@ becomes @~@, so @~01@ is the key @~1@ and never @/@.
+-- A @~@ followed by anything else is kept as it is.
 decodePointerSegment :: Text -> Text
-decodePointerSegment = replace "~1" "/" . replace "~0" "~"
-
-replace :: Text -> Text -> Text -> Text
-replace needle replacement input
-  | Text.null needle = input
-  | otherwise = case Text.breakOn needle input of
-      (before, after)
-        | Text.null after -> input
-        | otherwise -> before <> replacement <> replace needle replacement (Text.drop (Text.length needle) after)
+decodePointerSegment segment = case Text.breakOn "~" segment of
+  (before, rest)
+    | Text.null rest -> before
+    | Just after <- Text.stripPrefix "~1" rest -> before <> "/" <> decodePointerSegment after
+    | Just after <- Text.stripPrefix "~0" rest -> before <> "~" <> decodePointerSegment after
+    | otherwise -> before <> "~" <> decodePointerSegment (Text.drop 1 rest)
 
 readNatural :: Text -> Maybe Int
 readNatural value

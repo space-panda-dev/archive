@@ -40,7 +40,7 @@ import Archive.Door.Types
   )
 import Data.Aeson (Value (..))
 import Data.Aeson.KeyMap qualified as KeyMap
-import Data.List (elemIndex)
+import Data.List (elemIndex, unsnoc)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Set qualified as Set
@@ -171,8 +171,8 @@ reachBlockers index operator today wanted object = labelled <> righted
       , let limit = labelClass (label held), classIndex limit < want ]
     claims = [held | held <- indexHeads index, heldCites rights held]
     about subject = [held | held <- claims, subject `elem` heldRefIds "subject" held]
-    needsRights subject = case reverse <$> Map.lookup subject (indexObjectRecords index) of
-      Just (held : _) ->
+    needsRights subject = case Map.lookup subject (indexObjectRecords index) >>= unsnoc of
+      Just (_, held) ->
         isArtifact held || heldKind held `elem` map Just ["musical_work", "recording", "release"]
       _ -> False
     righted = concat
