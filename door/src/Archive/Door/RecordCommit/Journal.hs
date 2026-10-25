@@ -2,13 +2,14 @@
 
 -- | Door's operation journal: the one durable note of an unfinished write.
 --
--- A batch publishes the journal before it creates any staging file and
--- replaces it, by a synchronized rename, at each phase change, so a killed
--- process leaves enough to prove what it owned. The encoding is canonical:
--- a journal that does not re-encode to its exact bytes is refused for
--- operator inspection instead of guessed at. That encoding lives in
--- "Archive.Door.RecordCommit.JournalFormat"; this module does the descriptor
--- work around it.
+-- A batch publishes the journal, by linking synchronized bytes to its name,
+-- before it creates any staging file and replaces it, by a synchronized
+-- rename, at each phase change, so a killed process leaves enough to prove
+-- what it owned and the journal's name never holds a partial journal. The
+-- encoding is canonical: a journal that does not re-encode to its exact
+-- bytes is refused for operator inspection instead of guessed at. That
+-- encoding lives in "Archive.Door.RecordCommit.JournalFormat"; this module
+-- does the descriptor work around it.
 module Archive.Door.RecordCommit.Journal
   ( JournalEntry
   , JournalEntryOf (..)
@@ -27,7 +28,8 @@ module Archive.Door.RecordCommit.Journal
   ) where
 
 import Archive.Door.RecordCommit.Descriptors
-  ( ownerFileModes
+  ( linkAt
+  , ownerFileModes
   , renameAt
   , syncDirectoryFdOrFail
   , syncFd
@@ -45,8 +47,7 @@ import Archive.Door.RecordCommit.JournalFormat
   , OperationJournalOf (..)
   , PendingEntry
   , PendingJournal
-  , encodeOperationJournal
-  , gitObjectNameText
+  , encodeCheckedJournal
   , operationJournalByteLimit
   , parseOperationJournal
   )
@@ -76,26 +77,57 @@ data JournalIdentity = JournalIdentity DeviceID FileID deriving (Eq, Show)
 operationJournalName :: FilePath
 operationJournalName = "archive-door-operation"
 
-createOperationJournal :: Fd -> PendingJournal -> IO (Either Text ())
-createOperationJournal gitFd journal = runExceptT $ do
-  bytes <- except (encodeOperationJournal journal)
+-- | Publish a new journal under its name only once its bytes are durable.
+--
+-- The bytes are written and synchronized under a fresh temporary name, then
+-- hard-linked to the journal's name, the temporary name removed and the
+-- directory synchronized. The format has no trailer, so a journal cut short
+-- at a line boundary would still parse as a shorter journal; writing the
+-- journal's own name before its bytes were synchronized, as creation once
+-- did, let a kill or power loss leave exactly that. Now the name only ever
+-- names complete, synchronized bytes: a crash before the link leaves no
+-- journal and no staging file (staging starts after this returns), so the
+-- next Door has nothing to recover, and a crash after it leaves the whole
+-- journal. A link, unlike the rename 'replaceOperationJournal' uses, fails
+-- when the name already exists, so creation still never replaces a journal,
+-- as its exclusive open did. A crash can leave the temporary name behind,
+-- as it can for a replacement; nothing reads those names.
+--
+-- Returns the typed journal encoding validated, which the writer carries
+-- from here on.
+createOperationJournal :: Fd -> PendingJournal -> IO (Either Text OperationJournal)
+createOperationJournal gitFd pending = runExceptT $ do
+  (journal, bytes) <- except (encodeCheckedJournal pending)
+  temporary <- lift freshJournalTemporaryName
   fd <- orFail ("could not reserve Door operation journal: " <>) $ tryIO $
-    openFdAt (Just gitFd) operationJournalName WriteOnly
+    openFdAt (Just gitFd) temporary WriteOnly
       defaultFileFlags { creat = Just ownerFileModes, exclusive = True, nofollow = True, cloexec = True }
-  ExceptT $ Exception.bracket (pure fd) closeFd $ \journalFd ->
-    tryIO (writeAll journalFd bytes >> syncStrongFdOrFail journalFd >> syncDirectoryFdOrFail gitFd)
+  linked <- lift $ runExceptT $ do
+    ExceptT $ Exception.bracket (pure fd) closeFd $ \temporaryFd ->
+      tryIO (writeAll temporaryFd bytes >> syncStrongFdOrFail temporaryFd)
+    orFail ("could not reserve Door operation journal: " <>)
+      (tryIO (linkAt gitFd temporary gitFd operationJournalName))
+  case linked of
+    Left problem -> do
+      -- No journal was published, so the temporary is this call's alone.
+      _ <- lift (tryIO (unlinkAt gitFd temporary))
+      throwE problem
+    Right () -> pure ()
+  ExceptT (tryIO (unlinkAt gitFd temporary >> syncDirectoryFdOrFail gitFd))
+  pure journal
 
 -- | Replace the journal only while it still holds what this operation last
 -- wrote: the replacement is written and synchronized under a fresh name,
--- renamed over the journal, and the rename synchronized.
-replaceOperationJournal :: Fd -> PendingJournal -> PendingJournal -> IO (Either Text ())
+-- renamed over the journal, and the rename synchronized. Returns the typed
+-- replacement encoding validated.
+replaceOperationJournal :: Fd -> OperationJournal -> PendingJournal -> IO (Either Text OperationJournal)
 replaceOperationJournal gitFd expected replacement = runExceptT $ do
   current <- ExceptT (readOperationJournal gitFd)
   case current of
     Nothing -> throwE "Door operation journal disappeared during mutation"
-    Just (journal, _) -> require (fmap gitObjectNameText journal == expected)
+    Just (journal, _) -> require (journal == expected)
       "Door operation journal changed during mutation"
-  bytes <- except (encodeOperationJournal replacement)
+  (checked, bytes) <- except (encodeCheckedJournal replacement)
   temporary <- lift freshJournalTemporaryName
   fd <- orFail ("could not create replacement operation journal: " <>) $ tryIO $
     openFdAt (Just gitFd) temporary WriteOnly
@@ -104,6 +136,7 @@ replaceOperationJournal gitFd expected replacement = runExceptT $ do
     ExceptT (tryIO (writeAll temporaryFd bytes >> syncStrongFdOrFail temporaryFd))
     ExceptT (tryIO (renameAt gitFd temporary operationJournalName))
     orFail ("could not sync operation journal directory: " <>) (syncFd gitFd)
+  pure checked
 
 -- | Remove the journal only while its contents and inode are still the ones
 -- recovery reconciled, re-proving the inode immediately before the unlink.

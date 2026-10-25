@@ -9,6 +9,13 @@
 -- was being written. The format has no trailer, so a cut at a line boundary
 -- after the header can still parse, as a journal with fewer lines; what it
 -- cannot do is parse as the original.
+--
+-- A cut journal cannot arise from Door's own writes: creation links the
+-- journal's name to bytes already written and synchronized under a
+-- temporary name, and replacement renames such bytes over it, so the name
+-- never holds a partial journal (door-test's kill-recovery check confirms a
+-- killed Door's journal parses and no temporary remains). These properties
+-- pin down what a journal cut by anything else reads as.
 module JournalProperties (journalProperties) where
 
 import Archive.Door.Hex (hexText)
@@ -51,6 +58,7 @@ journalProperties = testGroup "journalProperties"
   , testProperty "a truncated journal never parses as the original" truncationNotOriginal
   , testProperty "a journal cut inside a line is refused" truncationInsideLine
   , testProperty "a journal cut inside its header is refused" truncationInsideHeader
+  , testProperty "every proper prefix is refused unless it ends a line after a record entry" everyPrefix
   ]
 
 -- | A Git object name in either format, as the parser requires.
@@ -154,3 +162,19 @@ truncationInsideHeader = withEncoded $ \_ bytes ->
 
 isLeft :: Either a b -> Bool
 isLeft = either (const True) (const False)
+
+-- | Every proper prefix, at every byte rather than a sampled one, is refused
+-- unless it ends exactly at a line boundary after the first record entry,
+-- and one that parses is a journal of fewer lines than the original.
+everyPrefix :: Property
+everyPrefix = withEncoded $ \_ bytes ->
+  let lineCount = ByteStringChar8.count '\n' bytes
+      verdict cut = case parsedPending prefix of
+          Left _ -> True
+          Right _ -> ByteStringChar8.last prefix == '\n'
+            && ByteStringChar8.count '\n' prefix >= 7
+            && ByteStringChar8.count '\n' prefix < lineCount
+        where
+          prefix = ByteString.take cut bytes
+      failures = filter (not . verdict) [0 .. ByteString.length bytes - 1]
+  in counterexample (show failures) (null failures)

@@ -7,9 +7,12 @@ module JournalRecoveryChecks
   ) where
 
 import Archive.Door.Json (decodeUnique)
+import Archive.Door.RecordCommit.JournalFormat (parseOperationJournal)
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
+import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy.Char8 as LazyByteString
+import Data.List (isPrefixOf)
 import qualified Data.Text as Text
 import Fixtures
 import Support
@@ -18,6 +21,7 @@ import System.Directory
   , doesPathExist
   , findExecutable
   , getPermissions
+  , listDirectory
   , removeFile
   , renameFile
   , setOwnerExecutable
@@ -79,6 +83,15 @@ operationJournalKillRecoveryCheck parent = do
     (killedAfterLink && partialRecord && journalPresent
       && headAfterKill == headBefore && commitsAfterKill == commitsBefore)
     ExitSuccess (show (killedAfterLink, partialRecord, journalPresent, headAfterKill, commitsAfterKill)) ""
+  -- Creation publishes the journal by linking synchronized bytes to its
+  -- name and removing the temporary name, so the killed Door's journal is
+  -- whole and no temporary of its creation remains.
+  killedJournal <- ByteString.readFile journal
+  journalTemporariesAfterKill <- journalTemporaries root
+  assert "the killed Door's journal parses and its creation left no temporary"
+    (either (const False) (const True) (parseOperationJournal killedJournal)
+      && null journalTemporariesAfterKill)
+    ExitSuccess (show journalTemporariesAfterKill) ""
   let preserved = record <> ".owned-inode"
   renameFile record preserved
   writeFile record "foreign operator data"
@@ -111,6 +124,15 @@ operationJournalKillRecoveryCheck parent = do
       && headAfterRetry /= headBefore && commitsAfterRetry == commitsBefore + 1
       && recordsAfterRetry == recordsBefore + 1 && not journalAfterRetry)
     retryCode retryOutput retryErrors
+  journalTemporariesAfterRetry <- journalTemporaries root
+  assert "the retried batch's journal creation and replacements left no temporary"
+    (null journalTemporariesAfterRetry) ExitSuccess (show journalTemporariesAfterRetry) ""
+
+-- | Names under @.git@ that Door's journal creation and replacement write
+-- before they link or rename the journal into place.
+journalTemporaries :: FilePath -> IO [FilePath]
+journalTemporaries root =
+  filter (".archive-door-journal-" `isPrefixOf`) <$> listDirectory (root </> ".git")
 
 -- | A Git wrapper under which the step fails and everything else runs.
 failingAt :: GitStep -> FilePath -> String

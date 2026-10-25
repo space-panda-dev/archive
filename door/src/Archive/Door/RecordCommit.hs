@@ -62,7 +62,6 @@ import Archive.Door.RecordCommit.Git
 import Archive.Door.RecordCommit.IndexReservation
   ( IndexReservation
   , attachJournal
-  , detachJournal
   , reservedIndex
   , runIndexGit
   , withNewIndexReservation
@@ -79,6 +78,7 @@ import Archive.Door.RecordCommit.Journal
   , replaceOperationJournal
   )
 import Archive.Door.RecordCommit.Lock (withArchiveWriteLock, withArchiveWriteLockAtPinned)
+import Archive.Door.RecordCommit.ObjectName (GitObjectName, gitObjectNameText)
 import Archive.Door.RecordCommit.Maintenance
   ( proveObjectBaseline
   , prunePackedGitObjects
@@ -297,37 +297,40 @@ commitRecordBatchWithFiles (ArchiveWriteLock rootPath rootFd gitFd executable) e
                   records temporaryNames)
                 newLinks
                 newFiles
-          journalState <- lift (newIORef preparing)
+          -- From here the head, content and file blob names are the typed
+          -- ones encoding checked; before it they are the caller's and Git's
+          -- text, which the steps above compared with Git's own output.
+          published <- ExceptT (createOperationJournal gitFd preparing)
+          -- Only a published journal records index changes, and no Git
+          -- child runs on the reserved index before this point.
+          journalState <- lift (newIORef published)
           lift (attachJournal reservation journalState)
-          reserved <- lift (createOperationJournal gitFd preparing)
-          case reserved of
-            Left problem -> do
-              lift (detachJournal reservation)
-              throwE problem
-            Right () -> pure ()
           preparedRecords <- ExceptT $ prepareAll executable rootPath rootFd gitFd
             (zip temporaryNames records)
           ExceptT $ Exception.bracket_ (pure ()) (closePrepared preparedRecords) $ runExceptT $ do
-            let installing = preparing
+            let installing = (fmap gitObjectNameText published)
                   { journalPhase = "installing"
                   , journalEntries = map preparedToJournal preparedRecords
                   }
-            journaled <- lift (replaceOperationJournal gitFd preparing installing)
-            case journaled of
+            journaled <- lift (replaceOperationJournal gitFd published installing)
+            installed <- case journaled of
               Left problem -> do
                 cleaned <- lift (cleanupPrepared gitFd preparedRecords)
                 throwE $ case cleaned of
                   Left cleanupProblem ->
                     problem <> "; staged source cleanup also failed: " <> cleanupProblem
                   Right () -> problem
-              Right () -> pure ()
-            lift (writeIORef journalState installing)
+              Right written -> pure written
+            lift (writeIORef journalState installed)
+            -- The installing journal's entries follow the prepared records
+            -- one for one, each with the blob name its encoding checked.
+            blobs <- except (traverse installingBlob (journalEntries installed))
             ownedRecords <- ExceptT $ installPreparedAll executable rootPath rootFd gitFd
-              recordsFd preparedRecords
+              recordsFd (zip preparedRecords blobs)
             journal <- lift (readIORef journalState)
             ExceptT (syncRecordDirectoryAndBarrier recordsFd (journalEntries journal))
             commit <- ExceptT $ buildAndAdvance recordsFd branch reservation
-              ownedRecords newLinks newFiles journalState scope
+              ownedRecords installed journalState scope
             orFail ("archive commit succeeded; operation journal retained because staged source cleanup failed: " <>)
               (cleanupPrepared gitFd preparedRecords)
             -- The ordinary index follows the commit when the journal is
@@ -430,16 +433,19 @@ commitRecordBatchWithFiles (ArchiveWriteLock rootPath rootFd gitFd executable) e
     -- Build the batch's tree in the reserved index, commit it, make the new
     -- objects and records durable, journal the proposed commit, and only
     -- then advance the branch with an expected-parent compare-and-swap.
-    buildAndAdvance recordsFd branch reservation hashed newLinks newFiles journalState scope = runExceptT $ do
+    buildAndAdvance recordsFd branch reservation hashed installed journalState scope = runExceptT $ do
+      let oldHead = gitObjectNameText (journalOldHead installed)
+          newLinks = journalContent installed
+          newFiles = journalFiles installed
       _ <- ExceptT $ runIndexGit executable rootPath rootFd gitFd reservation
-        ["-c", "core.hooksPath=/dev/null", "read-tree", Text.unpack expectedHead]
+        ["-c", "core.hooksPath=/dev/null", "read-tree", Text.unpack oldHead]
       let paths = map installedRecordPath hashed <> map fst newLinks <> map fst newFiles
       _ <- ExceptT $ updateIndexEntries executable rootPath rootFd gitFd reservation
         ([("100644", installedRecordBlob record, installedRecordPath record) | record <- hashed]
           <> [("120000", blob, path) | (path, blob) <- newLinks]
           <> [("100644", blob, path) | (path, blob) <- newFiles])
       names <- ExceptT $ runIndexGit executable rootPath rootFd gitFd reservation
-        (["diff", "--cached", "--name-only", Text.unpack expectedHead, "--"] <> paths)
+        (["diff", "--cached", "--name-only", Text.unpack oldHead, "--"] <> paths)
       require (sort (filter (not . Text.null) (Text.lines names)) == sort (map Text.pack paths))
         "temporary Git index does not contain exactly the record, content, and specification batch"
       treeId <- ExceptT $ runIndexGit executable rootPath rootFd gitFd reservation ["write-tree"]
@@ -448,7 +454,7 @@ commitRecordBatchWithFiles (ArchiveWriteLock rootPath rootFd gitFd executable) e
         [ "-c", "user.name=Archive"
         , "-c", "user.email=archive@localhost"
         , "commit-tree", Text.unpack treeObject
-        , "-p", Text.unpack expectedHead
+        , "-p", Text.unpack oldHead
         , "-m", Text.unpack message
         ]
       let newCommit = Text.strip commitId
@@ -456,14 +462,14 @@ commitRecordBatchWithFiles (ArchiveWriteLock rootPath rootFd gitFd executable) e
       journal <- lift (readIORef journalState)
       ExceptT (syncRecordDirectoryAndBarrier recordsFd (journalEntries journal))
       ExceptT (verifyRecordsDirectory rootFd recordsFd)
-      let withTarget = journal { journalTargetCommit = Just newCommit }
-      orFail ("could not durably record proposed commit before ref update: " <>)
-        (replaceOperationJournal gitFd journal withTarget)
+      withTarget <- orFail ("could not durably record proposed commit before ref update: " <>)
+        (replaceOperationJournal gitFd journal
+          ((fmap gitObjectNameText journal) { journalTargetCommit = Just newCommit }))
       lift (writeIORef journalState withTarget)
       advanced <- lift $ runGitTyped executable rootPath rootFd gitFd Nothing
         [ "-c", "core.hooksPath=/dev/null"
         , "update-ref", "--create-reflog", Text.unpack branch
-        , Text.unpack newCommit, Text.unpack expectedHead
+        , Text.unpack newCommit, Text.unpack oldHead
         ]
       case advanced of
         Right _ -> do
@@ -478,7 +484,7 @@ commitRecordBatchWithFiles (ArchiveWriteLock rootPath rootFd gitFd executable) e
             else runGitTyped executable rootPath rootFd gitFd Nothing
               ["rev-parse", "--verify", Text.unpack branch]
           case observed of
-            Right current | Text.strip current == expectedHead ->
+            Right current | Text.strip current == oldHead ->
               throwE (gitFailureMessage problem)
             _ -> uncertain (gitFailureMessage problem)
       where
@@ -500,12 +506,17 @@ data CommitScope = CommitScope
 -- | Add every record and content link of a batch to the temporary index in
 -- one Git process: one @--cacheinfo mode,blob,path@ per entry.
 updateIndexEntries :: Executable -> FilePath -> Fd -> Fd -> IndexReservation
-                   -> [(String, Text, FilePath)] -> IO (Either Text Text)
+                   -> [(String, GitObjectName, FilePath)] -> IO (Either Text Text)
 updateIndexEntries executable rootPath rootFd gitFd reservation entries =
   runIndexGit executable rootPath rootFd gitFd reservation
     ([ "-c", "core.hooksPath=/dev/null", "update-index", "--add" ]
-      <> concat [ ["--cacheinfo", mode <> "," <> Text.unpack blob <> "," <> path]
+      <> concat [ ["--cacheinfo", mode <> "," <> Text.unpack (gitObjectNameText blob) <> "," <> path]
                 | (mode, blob, path) <- entries ])
+
+-- | The blob an installing journal's entry names. Validation gave every
+-- such entry one; an entry without is refused in the validator's words.
+installingBlob :: JournalEntryOf name -> Either Text name
+installingBlob = maybe (Left "journal phase and record ownership fields disagree") Right . journalBlob
 
 uncertainRefOutcomeMessage :: Text
 uncertainRefOutcomeMessage = "Git ref outcome is uncertain; installed record files were retained"
