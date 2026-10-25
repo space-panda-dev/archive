@@ -57,6 +57,7 @@ import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.RFC8785 (encodeCanonical)
 import qualified Data.ByteString.Lazy as LazyByteString
+import Data.List (unsnoc)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Time (defaultTimeLocale, formatTime, getCurrentTime)
@@ -200,7 +201,7 @@ contentLocation archiveLock annex key = do
       let location = Text.unpack (Text.strip output)
       in case splitDirectories location of
         ".git" : "annex" : "objects" : rest
-          | final : _ <- reverse rest
+          | Just (_, final) <- unsnoc rest
           , final == Text.unpack key
           , ".." `notElem` rest
           , "." `notElem` rest -> Right (Just location)
