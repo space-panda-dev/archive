@@ -81,7 +81,7 @@ refuse = Left . fieldError
 
 requireExactKeys :: FromFieldError e => Text -> [Text] -> KeyMap.KeyMap Value -> Either e ()
 requireExactKeys label expected fields
-  | sort (map (Key.toText . fst) (KeyMap.toList fields)) == sort expected = Right ()
+  | Access.hasExactKeys expected fields = Right ()
   | otherwise = refuse (NotExactKeys label expected)
 
 objectValue :: FromFieldError e => Text -> Value -> Either e (KeyMap.KeyMap Value)
