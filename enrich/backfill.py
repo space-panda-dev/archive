@@ -112,7 +112,7 @@ import sys
 import tempfile
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -121,6 +121,8 @@ sys.path.insert(0, str(HERE))
 import adapter  # noqa: E402
 import bank  # noqa: E402
 import extract  # noqa: E402
+import composition  # noqa: E402
+import proposers  # noqa: E402
 import regions  # noqa: E402
 import remote  # noqa: E402
 from backfill_proposals import Follow, Proposals, Steps  # noqa: E402,F401
@@ -412,6 +414,9 @@ class Recording:
     span_source: str = "none"  # which source its song spans came from
     length: int | None = None  # samples of its first audio stream at the regions' rate
     at: str | None = None  # when it was first admitted (its record's `at`)
+    sample_rate: int = 1
+    sample_count: int = 0
+    evidence: dict[str, Any] = field(default_factory=dict)
     priority: int = 0  # its place in the background queue (`prioritise`)
 
 
@@ -434,12 +439,15 @@ def recordings_of(records: list[dict[str, Any]], archive: Path, unprobed: set[st
     as unprobed: as the 0.0.10 backfill found them."""
     current = heads(records)
     seconds: dict[str, float | None] = {}
+    streams: dict[str, tuple[int, int]] = {}
     for record in current.values():
         if record["shape"] == "claim" and cites(record, STREAM):
             payload = record.get("payload", {})
             for ref in record.get("refs", []):
                 if ref.get("role") == "artifact" and ref["id"] not in seconds:
                     rate, count = payload.get("sample_rate"), payload.get("sample_count")
+                    if isinstance(rate, int) and rate > 0 and isinstance(count, int):
+                        streams[ref["id"]] = (rate, count)
                     seconds[ref["id"]] = count / rate if isinstance(rate, int) and isinstance(count, int) \
                         and rate > 0 else None
     first: dict[str, str] = {}
@@ -453,7 +461,9 @@ def recordings_of(records: list[dict[str, Any]], archive: Path, unprobed: set[st
             continue
         digest = record["payload"]["content"]["digest"]
         found.append(Recording(record["object_id"], digest, content_path(archive, digest),
-                               seconds.get(record["object_id"]), False, at=first.get(record["object_id"])))
+                               seconds.get(record["object_id"]), False, at=first.get(record["object_id"]),
+                               sample_rate=streams.get(record["object_id"], (1, 0))[0],
+                               sample_count=streams.get(record["object_id"], (1, 0))[1]))
     return found
 
 
@@ -490,6 +500,14 @@ def find_regions(recordings: list[Recording], export: dict[str, Any], archive: P
     records = adapter.ArchiveReader.from_export(archive, export)
     for recording in recordings:
         artifact = records.heads.get(recording.object_id)
+        pin = lambda record: {"id": record["object_id"], "revision_id": record["revision_id"]}
+        recording.evidence = {"snapshot": records.snapshot, "artifact": pin(artifact) if artifact else None,
+                              "streams": [pin(r) for r in records.heads.values() if cites(r, STREAM)
+                                          and any(ref.get("role") == "artifact" and ref.get("id") == recording.object_id
+                                                  for ref in r.get("refs", []))],
+                              "selection_candidates": [{**pin(r), "refs": r.get("refs", [])} for r in records.heads.values()
+                                  if any(cites(r, contract) for contract in
+                                         (regions.OCCURRENCE, regions.SELECTION, regions.SUGGESTIONS[0]))]}
         try:
             playing = None
             structure = reader.entry(recording.digest, "structure") if "structure" in reader.catalog.extractors \
@@ -503,6 +521,9 @@ def find_regions(recordings: list[Recording], export: dict[str, Any], archive: P
         recording.regions, recording.span_source = found["regions"], found["source"]
         recording.length = found["length"]
         recording.songs = bool(found["regions"])
+        recording.evidence["region_source"] = found["source"]
+        if structure is not None:
+            recording.evidence["structure_key"] = structure.manifest["key"]
 
 
 # -- what a unit still needs ---------------------------------------------------------
@@ -626,12 +647,16 @@ class Planning:
     recordings that arrive while it runs, each planned once."""
 
     def __init__(self, schedule: Schedule, planner: Planner, mode: str, shape: dict[str, dict[str, Any]],
-                 spool: bool):
+                 spool: bool, chosen: composition.Selection | None = None):
         if mode not in MODES:
             raise BackfillError(f"mode is one of {', '.join(MODES)}, not {mode!r}")
         self.schedule, self.planner, self.mode, self.shape, self.spool = schedule, planner, mode, shape, spool
+        self.chosen = chosen
+        self.diagnostics: dict[str, list[dict[str, Any]]] = {}
+        self.explanations: dict[str, list[dict[str, Any]]] = {}
         self.units = unit_order(schedule.units, planner.catalog)
-        self.known = {u.extractor for u in self.units} | {u.producer for u in self.units if u.producer}
+        candidates = candidate_units(chosen, planner.catalog) if chosen is not None else self.units
+        self.known = {u.extractor for u in candidates} | {u.producer for u in candidates if u.producer}
         self.result = Plan([], [], {}, [], planning=self)
         self.planned: dict[tuple[str, Unit, Region | None], Job] = {}
         self.seen: set[tuple[str, Unit, Region | None]] = set()
@@ -741,16 +766,55 @@ class Planning:
             job.requests.append(key)
         return plan_.jobs[before:]
 
-    def recording(self, recording: Recording) -> list[Job]:
+    def targets(self, recording: Recording, region: Region | None = None) -> list[Unit]:
+        if self.chosen is None:
+            return self.units
+        reader = self.planner.reader
+        over = region.as_json() if region else None
+        if over is not None:
+            reader = bank.RegionView(reader, recording.digest, over)
+        context = proposers.Context(reader, recording.digest, recording.sample_rate, recording.sample_count, over)
+        expanded = composition.expand(self.chosen, context, self.planner.catalog, self.planner.parameters,
+                                      composition.configured(self.planner.catalog, self.planner.programs))
+        previous = self.diagnostics.get(recording.object_id, [])
+        self.diagnostics[recording.object_id] = ([d for d in previous if d.get("region") != over]
+            + [{**d.as_json(), "region": over} for d in expanded.diagnostics])
+        explanation = composition.explain(
+            expanded, self.chosen, context, self.planner.catalog, self.planner.parameters,
+            evidence=recording.evidence, config_identity=getattr(self.planner, "config_identity", None),
+            routes={name: {"configured": self.schedule.setting(name)["route"] or "local",
+                           "transport_available": self.spool, "source": "backfill schedule"}
+                    for name in self.planner.catalog.extractors},
+            costs={name: {"value": self.schedule.setting(name)["cost"],
+                          "remote_value": self.schedule.setting(name)["remote_cost"],
+                          "units": "cpu-seconds/audio-second", "source": "backfill schedule recorded cost or override"}
+                   for name in self.planner.catalog.extractors})
+        for target, explained in zip(expanded.targets, explanation["targets"]):
+            status, detail = self.planner.state(recording, Unit(target.extractor, target.source), region)
+            explained["dispatch_observation"] = {"status": status, "reason": detail}
+        previous_explanations = self.explanations.get(recording.object_id, [])
+        self.explanations[recording.object_id] = ([e for e in previous_explanations if e["region"] != over]
+                                                + [explanation])
+        return unit_order([Unit(t.extractor, t.source) for t in expanded.targets], self.planner.catalog)
+
+    def refresh(self, recording: Recording) -> list[Job]:
+        """Reconcile newly selected inputs through the existing planner only."""
+        if self.chosen is None or not self.chosen.produce:
+            return []
+        return self.recording(recording, refresh=True)
+
+    def recording(self, recording: Recording, refresh: bool = False) -> list[Job]:
         """Plan what the mode asks for of one recording; the jobs it added."""
-        if recording.object_id in self.recordings:
+        if recording.object_id in self.recordings and not refresh:
             return []
         self.recordings.add(recording.object_id)
         plan_, planner, schedule = self.result, self.planner, self.schedule
         before = len(plan_.jobs)
-        choice = regions.plan(self.mode, self.known, recording.regions, schedule.costs(), schedule.expensive_above,
+        units = self.targets(recording)
+        known = self.known | {u.extractor for u in units} | {u.producer for u in units if u.producer}
+        choice = regions.plan(self.mode, known, recording.regions, schedule.costs(), schedule.expensive_above,
                               recording.length)
-        for unit in self.units:
+        for unit in units:
             whole = planner.state(recording, unit)
             if whole[0] in (DONE, SKIPPED, UNCONFIGURED, DAMAGED):
                 self.want(recording, unit, None, state=whole)
@@ -770,13 +834,27 @@ class Planning:
                 self.want(recording, unit, None, state=whole)
             else:
                 for region in over:
-                    self.want(recording, unit, region)
+                    # A cached whole path and a region path can select different
+                    # sources. Let the same resolver bind each actual scope.
+                    scoped = self.targets(recording, region)
+                    for candidate in scoped:
+                        placement = choice[candidate.extractor]
+                        candidate_whole = planner.state(recording, candidate)
+                        if candidate.producer is not None and placement is not None:
+                            # A cheap measurement follows the selected file feature's
+                            # placement, just as in the whole-scope pass above.
+                            placement = "whole" if candidate_whole[0] != WAITING else choice[candidate.producer]
+                        if placement is None:
+                            continue
+                        self.want(recording, candidate, None if placement == "whole" else region,
+                                  state=candidate_whole if placement == "whole" else None)
         return plan_.jobs[before:]
 
 
 def plan(recordings: list[Recording], schedule: Schedule, planner: Planner, mode: str,
          shape: dict[str, dict[str, Any]], spool: bool,
-         asked: list[dict[str, Any]] | None = None) -> Plan:
+         asked: list[dict[str, Any]] | None = None,
+         chosen: composition.Selection | None = None) -> Plan:
     """The jobs the mode asks for that the bank lacks, and the bank requests
     (`asked`) in every mode, first; then song recordings first in `songs`
     mode. What each extractor is made over is `regions.plan`'s: whole, a
@@ -786,7 +864,7 @@ def plan(recordings: list[Recording], schedule: Schedule, planner: Planner, mode
     feature it measures, the feature it would prefer, or the measure its
     preference probes, over the same region. Each job has its tier (fast or
     background, `Schedule.tier`); the runner orders by `Job.priority`."""
-    planning = Planning(schedule, planner, mode, shape, spool)
+    planning = Planning(schedule, planner, mode, shape, spool, chosen)
     by_digest = {r.digest: r for r in recordings}
     for request in asked or []:
         planning.request(request, by_digest)
@@ -958,7 +1036,7 @@ def add_arguments(command: argparse.ArgumentParser) -> None:
     command.add_argument("--spool", help="the command that reaches a spool, for units routed to it")
     command.add_argument("--commit", action="store_true", help="probe, run, and propose (default: a dry run)")
     command.add_argument("--retry-failed", action="store_true", help="run again what failed before")
-    command.add_argument("--proposers", default=PROPOSERS, help="for propose --all; empty proposes nothing")
+    command.add_argument("--proposers", default=None, help="for propose --all; empty proposes nothing")
     command.add_argument("--world-store", help="refresh this World store and check its conformance at the end")
     command.add_argument("--world-python", default=sys.executable)
     command.add_argument("--conformance-python")
@@ -1058,8 +1136,51 @@ def report(planned: Plan, root: Path, note: Callable[..., None], reported: set[s
             note(step="request already made" + ("; removed" if commit else ""), key=key)
 
 
+def selection_of(config: dict[str, Any], catalog: bank.Catalog, schedule: Schedule,
+                 override: str | None) -> composition.Selection:
+    try:
+        chosen = composition.selection(config, "backfill", composition.Selection(
+            attempt=tuple(PROPOSERS.split(",")),
+            features=tuple(composition.FeatureTarget(u.extractor, u.source) for u in schedule.units)), override)
+        composition.validate(chosen, catalog)
+        return chosen
+    except composition.CompositionError as exc:
+        raise BackfillError(str(exc)) from exc
+
+
+def candidate_units(chosen: composition.Selection, catalog: bank.Catalog) -> list[Unit]:
+    """Reserve resources for finite recipes without scheduling their alternatives."""
+    targets = list(chosen.features)
+    for result in chosen.produce:
+        for method in result.methods:
+            for path in proposers.PROPOSERS[method].requirement.paths:
+                targets.extend(path.production or ())
+    units = [Unit(t.extractor, t.source) for t in targets]
+    for target in targets:
+        for name in catalog.upstream(target.extractor):
+            units.append(Unit(name, target.source))
+        if target.source:
+            units.append(Unit(target.source.split("/", 1)[0]))
+        for preferred in catalog[target.extractor].prefers:
+            units.append(Unit(target.extractor, preferred["input"]))
+            units.extend(probe_units(catalog, Unit(target.extractor)))
+    return list(dict.fromkeys(units))
+
+
 def main(args: argparse.Namespace, env: dict[str, str] | None = None,
          run_unit: Callable[[Job], tuple[dict[str, Any], float]] | None = None) -> int:
+    original_proposers = args.proposers
+    try:
+        with extract.frozen_config(args, "config"):
+            return _main(args, env, run_unit)
+    except extract.RunError as exc:
+        raise BackfillError(str(exc)) from exc
+    finally:
+        args.proposers = original_proposers
+
+
+def _main(args: argparse.Namespace, env: dict[str, str] | None = None,
+          run_unit: Callable[[Job], tuple[dict[str, Any], float]] | None = None) -> int:
     """The command; `env` is Door's environment (`enrich.environment`), and
     `run_unit` replaces `extract.py run` (tests)."""
     if args.commit and args.dry_run:
@@ -1075,10 +1196,17 @@ def main(args: argparse.Namespace, env: dict[str, str] | None = None,
     catalog = extract.catalog_of(argparse.Namespace(extractors=None), config)
     parameters = config.get("parameters", {})
     catalog.check_overrides(parameters, f"configuration {args.config}")
+    for name in catalog.extractors:
+        catalog.parameters(name, parameters)
     schedule = schedule_of(config, catalog)
+    chosen = selection_of(config, catalog, schedule, args.proposers)
+    schedule.units = [Unit(t.extractor, t.source) for t in chosen.features]
+    resources = replace(schedule, units=candidate_units(chosen, catalog))
+    args.proposers = ",".join(dict.fromkeys(
+        [m for result in chosen.produce for m in result.methods] + list(chosen.attempt)))
     root = Path(args.bank).resolve()
     if args.spool:
-        check_remote(catalog, root, parameters, schedule)
+        check_remote(catalog, root, parameters, resources)
     programs = {"python": sys.executable, "sh": "/bin/sh", **config.get("programs", {})}
     cores = args.cores or os.cpu_count() or 1
     memory_gb = args.memory_gb or max(1.0, machine_memory_gb() - schedule.memory_reserve_gb)
@@ -1093,17 +1221,20 @@ def main(args: argparse.Namespace, env: dict[str, str] | None = None,
     names = args.proposers.strip()
     root.mkdir(parents=True, exist_ok=True)  # an empty bank is a bank; propose refuses a missing one
     planner = Planner(catalog, root, parameters, programs, args.retry_failed)
+    planner.config_identity = getattr(args, "_enrichment_config_snapshot", {}).get("identity")
     recordings, present = discover(args, env, steps, planner, note, commit)
-    shape = layout(catalog, schedule, parameters, cores, memory_gb)
+    shape = layout(catalog, resources, parameters, cores, memory_gb)
     # Requests are read in every mode; a damaged one stops the backfill (bank.requests refuses it).
     asked = bank.requests(root)
-    planned = plan(present, schedule, planner, args.mode, shape, spool is not None, asked)
+    planned = plan(present, schedule, planner, args.mode, shape, spool is not None, asked, chosen)
     assert planned.planning is not None
     sources: dict[str, int] = {}
     for recording in present:
         sources[recording.span_source] = sources.get(recording.span_source, 0) + 1
     note(step="recordings", count=len(recordings), here=len(present),
          with_songs=sum(1 for r in present if r.songs), song_spans_from=sources, requests=len(asked))
+    note(step="composition", recordings=planned.planning.diagnostics,
+         explanations=planned.planning.explanations)
     note(step="layout", extractors=shape)
     by_unit: dict[str, int] = {}
     by_tier: dict[str, int] = {}
@@ -1150,6 +1281,10 @@ def main(args: argparse.Namespace, env: dict[str, str] | None = None,
                     pass
 
         def settled(job: Job) -> None:
+            if job.status == "done":
+                # Planning.result.jobs is the runner's list; append through want,
+                # retaining tiers, priorities and predecessor failure semantics.
+                planned.planning.refresh(job.recording)
             proposals.settled(job)
             if job.status == "done":
                 for key in job.requests:

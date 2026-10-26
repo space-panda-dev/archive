@@ -296,6 +296,13 @@ class Plans(unittest.TestCase):
         self.assertEqual(jobs[(other.object_id, STRUCTURE)].after, [jobs[(other.object_id, RHYTHM)]])
         self.assertEqual(stems.dependents, 3)
 
+    def test_explicit_feature_only_units_do_not_expand_to_default_proposer_needs(self) -> None:
+        sched = backfill.schedule_of({"backfill": {"units": [["tonal"]]}}, CATALOG)
+        planned = self.plan([recording("a")], "eager", sched=sched)
+        self.assertEqual([job.unit for job in planned.jobs], [Unit("tonal")])
+        self.assertEqual(planned.jobs[0].after, [])
+        self.assertNotIn(Unit("stems"), [job.unit for job in planned.jobs])
+
     def test_a_copy_that_grows_with_its_audio_reserves_memory_by_the_hour(self) -> None:
         jiang = Unit("chords-jiang")
         self.assertEqual(backfill.SETTINGS["chords-jiang"]["memory_gb_per_hour"], 0.8)
@@ -1251,6 +1258,23 @@ class EndToEnd(unittest.TestCase):
 
     def step(self, events: list[dict], name: str) -> dict:
         return [e for e in events if e["step"] == name][-1]
+
+    def test_selected_bass_result_reaches_extraction_and_door_without_unused_alternatives(self) -> None:
+        config = json.loads(self.config.read_text())
+        config["composition"] = {"backfill": {"features": [], "attempt": [], "produce": [
+            {"contract": ["archive.claim/chord_stacks", "2"], "methods": ["bass"]}]}}
+        self.config.write_text(json.dumps(config))
+        code, events = self.backfill("--commit")
+        self.assertEqual(code, 0, [e for e in events if e.get("ok") is False])
+        made = {p.parent.name for p in entries(self.bank)}
+        self.assertTrue({"stems", "tonal", "rhythm"} <= made)
+        self.assertFalse({"f0-pesto", "notes-basic-pitch", "melody"} & made)
+        self.assertEqual(self.step(events, "propose --all (commit)")["exit"], 0)
+        def bomb(job):
+            raise AssertionError("unchanged result reran extraction")
+        code, rerun = self.backfill("--commit", run_unit=bomb)
+        self.assertEqual(code, 0, rerun)
+        self.assertEqual(self.step(rerun, "plan")["jobs"], 0)
 
     def test_an_export_that_fails_stops_the_backfill_rather_than_finding_nothing_unprobed(self) -> None:
         import enrich

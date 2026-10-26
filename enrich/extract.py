@@ -89,6 +89,7 @@ import tempfile
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Any
@@ -925,19 +926,53 @@ def main_region_equivalence(arguments: argparse.Namespace) -> int:
     return 0 if record["pass"] else 1
 
 
+@contextmanager
+def frozen_config(args: argparse.Namespace, attribute: str):
+    """Bind one private, canonical config snapshot for a caller and its children.
+
+    Nested adapters reuse it. The snapshot is operational scratch, never bank
+    evidence; its identity identifies effective configuration for diagnostics.
+    """
+    marker = "_enrichment_config_snapshot"
+    present = getattr(args, marker, None)
+    if present is not None and present["attribute"] == attribute:
+        yield present
+        return
+    original = getattr(args, attribute, None)
+    config = load_config(original)
+    encoded = bank.canonical(config)
+    with tempfile.TemporaryDirectory(prefix="enrichment-config-") as directory:
+        snapshot = Path(directory) / "config.json"
+        snapshot.write_bytes(encoded)
+        record = {"attribute": attribute, "original": str(original) if original else None,
+                  "identity": bank.digest_of(encoded), "config": config, "path": str(snapshot)}
+        setattr(args, attribute, str(snapshot))
+        setattr(args, marker, record)
+        try:
+            yield record
+        finally:
+            setattr(args, attribute, original)
+            if present is None:
+                delattr(args, marker)
+            else:
+                setattr(args, marker, present)
+
+
 def load_config(path: str | None) -> dict[str, Any]:
     """Configuration: `{"programs": {name: path}, "parameters": {extractor:
     {field: value}}, "extractors": [directory, ...], "backfill": {...}}`, all
-    optional; `backfill` is `enrich backfill`'s (backfill.py) and the runner
-    ignores it."""
+    optional; `backfill` and `composition` belong to callers and the runner
+    ignores their meaning."""
     if path is None:
         return {}
     try:
         config = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise RunError(f"configuration {path} is unreadable: {exc}") from exc
-    if not isinstance(config, dict) or set(config) - {"programs", "parameters", "extractors", "backfill"}:
+    if not isinstance(config, dict) or set(config) - {"programs", "parameters", "extractors", "backfill", "composition"}:
         raise RunError(f"configuration {path} must be an object of programs, parameters, and extractors")
+    if "composition" in config and not isinstance(config["composition"], dict):
+        raise RunError(f"configuration {path}: composition must be an object")
     if not all(isinstance(v, str) for v in config.get("programs", {}).values()):
         raise RunError(f"configuration {path}: each program is a path")
     if not all(isinstance(v, dict) for v in config.get("parameters", {}).values()):

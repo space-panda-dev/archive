@@ -273,6 +273,11 @@ bank. Doc: [enrich/README.md](enrich/README.md) (one section per command,
 | `enrich/support.py` | test support: synthetic audio, scratch archives |
 | `enrich/extractors/<id>/` | `extractor.json` + program; the longest are below |
 
+Proposed internal separation and workflow gates:
+[enrichment separation plan](docs/proposals/enrichment-separation-plan.md).
+For adding proposers or selecting methods, read the
+[composition guide](docs/enrichment-composition.md).
+
 Tests: suite `enrich`, `enrich/test_<topic>.py` by command or extractor
 family (`git ls-files 'enrich/test_*'`; `test_bank` is the longest, `test_extractors`
 runs all extractors together); suite `enrich-tests` is
@@ -294,9 +299,9 @@ Stand-in stems by a measured tolerance (ADR 0090's amendment) are built:
 ([format](docs/feature-bank.md#interchangeable-entries)). Bulk import (ADR
 0112) is built: `enrich backfill` with its modes, region entries, bank
 requests and song regions, the fast tier first (every recording usable)
-and the background by priority, and `--follow`; what is left (readers of
-region entries, the region stems mismatch) is step 0 of
-[docs/backlog.md](docs/backlog.md).
+and the background by priority, and `--follow`. Proposal fallback reads region
+entries through `RegionView`; relay practice serves region file features.
+See [docs/backlog.md](docs/backlog.md) for remaining region work.
 Pitfall: the backfill's job events are `ran`/`failed`; `done` is only its
 last line.
 Find: extractors in `enrich/extractors/<id>/extractor.json`; SHIPPED digest
@@ -307,16 +312,16 @@ shipped extractors").
 <!-- wf:gen lines enrich/README.md enrich/enrich.py enrich/adapter.py enrich/proposers.py enrich/detector.py enrich/cover.py enrich/extract.py enrich/bank.py enrich/remote.py enrich/backfill.py enrich/backfill_queue.py enrich/extractors/stems/stems.py enrich/extractors/quality/quality.py enrich/extractors/tonal/tonal.py enrich/extractors/structure/structure.py enrich/extractors/rhythm/meter.py enrich/test_bank.py docs/feature-bank.md -->
 | file | lines |
 |---|---|
-| `enrich/README.md` | 1228 |
+| `enrich/README.md` | 1233 |
 | `enrich/enrich.py` | 738 |
 | `enrich/adapter.py` | 609 |
-| `enrich/proposers.py` | 1059 |
+| `enrich/proposers.py` | 1208 |
 | `enrich/detector.py` | 674 |
 | `enrich/cover.py` | 1073 |
-| `enrich/extract.py` | 1060 |
+| `enrich/extract.py` | 1095 |
 | `enrich/bank.py` | 1498 |
 | `enrich/remote.py` | 720 |
-| `enrich/backfill.py` | 1223 |
+| `enrich/backfill.py` | 1358 |
 | `enrich/backfill_queue.py` | 613 |
 | `enrich/extractors/stems/stems.py` | 755 |
 | `enrich/extractors/quality/quality.py` | 1317 |
@@ -347,7 +352,7 @@ Rules: ADR 0070; capture proposes, Door commits (INV-2).
 <!-- wf:gen lines capture/capture.py capture/test_capture.py -->
 | file | lines |
 |---|---|
-| `capture/capture.py` | 767 |
+| `capture/capture.py` | 798 |
 | `capture/test_capture.py` | 943 |
 <!-- /wf:gen -->
 

@@ -4,9 +4,11 @@ An extractor writes features into the feature bank
 ([ADR 0073](decisions/0073-feature-bank.md)) under the extractor
 contract ([ADR 0074](decisions/0074-extractor-contract.md)). It is a
 directory with a manifest and a program in any language. Adding one changes
-no other file: the runner finds it, orders it after what it needs, runs it
+no runner dispatch code: the runner finds it, orders it after what it needs, runs it
 only when its entry is missing, and checks what it writes before filing it.
 The byte-level format is in [the feature bank format](feature-bank.md).
+For selecting its work or proposing claims, use
+[composing enrichment](enrichment-composition.md).
 
 ## The steps
 

@@ -34,7 +34,7 @@ from __future__ import annotations
 import json
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_EVEN, Decimal
 from pathlib import Path
 from typing import Any, Callable
@@ -91,6 +91,7 @@ class Context:
     # The region a region pass reads (ADR 0112, `bank.RegionView`), or None
     # for the whole recording; reported in the run's settings.
     region: dict[str, int] | None = None
+    inputs: ResolvedInputs | None = field(default=None, compare=False, repr=False)
 
     @property
     def bounds(self) -> tuple[int, int]:
@@ -145,10 +146,164 @@ class Lacking:
 
 
 @dataclass(frozen=True)
+class FeatureTarget:
+    extractor: str
+    source: str | None = None
+
+
+@dataclass(frozen=True)
+class FeatureRead:
+    extractor: str
+    outputs: tuple[str, ...]
+    source: str | None = None
+
+
+@dataclass(frozen=True)
+class InputPath:
+    id: str
+    required: tuple[FeatureRead, ...]
+    production: tuple[FeatureTarget, ...] | None
+
+
+@dataclass(frozen=True)
+class Requirement:
+    contracts: tuple[tuple[str, str], ...]
+    scopes: tuple[str, ...]
+    paths: tuple[InputPath, ...]
+    optional: tuple[FeatureRead, ...]
+    resolver: str
+
+
+class _OptionalEntries(dict[str, bank.Entry | None]):
+    """Resolve optional mix inputs only when execution actually reads them.
+
+    An unrelated broken optional cache must not break a path that never reads
+    it (for example basic-pitch bass notes do not read recording tuning).
+    """
+    def __init__(self, context: Context, reads: tuple[FeatureRead, ...]):
+        super().__init__()
+        self.context = context
+        self.allowed = {r.extractor for r in reads if r.source is None}
+
+    def get(self, key: str, default: Any = None) -> bank.Entry | None:
+        if key not in self.allowed:
+            return default
+        if key not in self:
+            self[key] = self.context.bank.entry(self.context.content, key)
+        return self[key]
+
+
+@dataclass(frozen=True)
+class ResolvedInputs:
+    """Bank-selected inputs, and ordered recipes only when inputs are missing.
+
+    Entries retain Bank's identity and placement. Optional entries are available
+    context, not a claim that a proposer consumed them; read() records consumption.
+    Failed jobs remain the runner's responsibility, never an alternative selector.
+    """
+    path: str | None
+    entries: dict[str, bank.Entry | None]
+    source: str | None = None
+    missing: tuple[str, ...] = ()
+    production: tuple[InputPath, ...] = ()
+    optional: dict[str, bank.Entry | None] = field(default_factory=dict)
+
+    @property
+    def ready(self) -> bool:
+        return not self.missing
+
+
+@dataclass(frozen=True)
 class Proposer:
     id: str
     version: str
     propose: Callable[[Context], Proposal | Lacking]
+    requirement: Requirement
+
+
+def _path(name: str, reads: tuple[FeatureRead, ...]) -> InputPath:
+    return InputPath(name, reads, tuple(dict.fromkeys(FeatureTarget(r.extractor, r.source) for r in reads)))
+
+
+def _missing(read: FeatureRead) -> list[str]:
+    suffix = f" from {read.source}" if read.source else ""
+    return [f"{read.extractor}/{output}{suffix}" for output in read.outputs]
+
+
+def resolve_inputs(proposer_id: str, context: Context) -> ResolvedInputs:
+    """The sole choice of entries for preflight and actual proposer execution."""
+    requirement = PROPOSERS[proposer_id].requirement
+    kind = requirement.resolver
+    b, content = context.bank, context.content
+    if kind == "unsupported":
+        return ResolvedInputs(None, {}, missing=ALIGNMENT_NEEDS)
+    if kind == "direct":
+        path = requirement.paths[0]
+        entries = {r.extractor: b.entry(content, r.extractor) for r in path.required}
+        missing = tuple(item for r in path.required if entries[r.extractor] is None for item in _missing(r))
+        return ResolvedInputs(path.id, entries, missing=missing, production=(path,) if missing else ())
+    if kind in ("bass", "bass-line"):
+        measures = tuple(dict.fromkeys(read.extractor for path in requirement.paths
+                         for read in path.required if read.source == "stems/bass"))
+        over = b.measured_over(content, "stems/bass", list(measures))
+        def complete(pair: tuple[Any, dict[str, Any]]) -> bool:
+            m = pair[1]
+            return m["tonal"] is not None and (kind == "bass" or
+                    m["f0-pesto"] is not None or m["notes-basic-pitch"] is not None)
+        stems, found = next((pair for pair in over if complete(pair)), over[0] if over else (None, {}))
+        entries = {"stems": stems, **{name: found.get(name) for name in measures}}
+        missing = []
+        if stems is None:
+            missing.append("stems/bass")
+        if kind == "bass-line" and not (entries["f0-pesto"] or entries["notes-basic-pitch"]):
+            missing.append("f0-pesto/f0 or notes-basic-pitch/notes from stems/bass")
+        if entries["tonal"] is None:
+            missing += ["tonal/bass_chroma from stems/bass", "tonal/pitched from stems/bass"]
+        if kind == "bass":
+            entries["rhythm"] = b.entry(content, "rhythm")
+            if entries["rhythm"] is None:
+                missing.append("rhythm/pulse")
+        path = requirement.paths[0] if kind == "bass" or entries.get("f0-pesto") is not None else requirement.paths[1]
+        optional = _OptionalEntries(context, requirement.optional)
+        production = tuple(replace(p, production=tuple(t for t in p.production or ()
+                           if entries.get(t.extractor) is None)) for p in requirement.paths) if missing else ()
+        return ResolvedInputs(path.id, entries, "stems/bass", tuple(missing), production, optional)
+    if kind == "notes":
+        entry, source = b.default_entry(content, "melody")
+        pesto = b.entry_from(content, source, "f0-pesto") if source and source.endswith("/vocals") else None
+        entries = {"melody": entry, "f0-pesto": pesto}
+        if source:
+            stems_id, output = source.split("/", 1)
+            measured = pesto if pesto is not None else entry
+            entries["stems"] = next((s for s in b.candidates(content, stems_id)
+                                      if measured is None or s.output(output)["sha256"] ==
+                                      measured.manifest["content"]), None)
+            if measured is not None and entries["stems"] is None:
+                raise ProposerError(f"{source} was measured but its entry is gone")
+        missing = () if pesto is not None or entry is not None else (
+            (f"f0-pesto/f0 from {source}", f"melody/notes from {source}") if source else ("melody/notes",))
+        # Bind the declared melody-source paths to Bank's current preferred
+        # input. Quality probes and equivalence remain entirely Bank decisions.
+        paths = []
+        for path in requirement.paths:
+            if path.id == "vocal-pesto" and not (source and source.endswith("/vocals")):
+                continue
+            reads = []
+            for r in path.required:
+                if r.extractor == "stems":
+                    if source:
+                        producer, output = source.split("/", 1)
+                        reads.append(FeatureRead(producer, (output,)))
+                else:
+                    reads.append(FeatureRead(r.extractor, r.outputs, source))
+            bound = _path(path.id, tuple(reads))
+            paths.append(replace(bound, production=tuple(t for t in bound.production or ()
+                              if entries.get(t.extractor) is None and not (source and
+                                  t.extractor == source.split("/", 1)[0] and entries.get("stems") is not None))))
+        optional = _OptionalEntries(context, requirement.optional)
+        selected = "vocal-pesto" if pesto is not None else "melody"
+        return ResolvedInputs(selected, entries, source, missing, tuple(paths) if missing else (), optional)
+    raise ProposerError(f"unknown input resolver {kind!r}")
 
 
 # -- shared ----------------------------------------------------------------
@@ -254,7 +409,7 @@ def readings_of(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def propose_jiang(context: Context) -> Proposal | Lacking:
-    entry = context.bank.entry(context.content, "chords-jiang")
+    entry = resolve_inputs("chords-jiang", context).entries["chords-jiang"]
     if entry is None:
         return Lacking(("chords-jiang/chords", "chords-jiang/readings"))
     labelled = entry.items("chords")
@@ -293,7 +448,7 @@ def propose_jiang(context: Context) -> Proposal | Lacking:
 
 
 def propose_chordino(context: Context) -> Proposal | Lacking:
-    entry = context.bank.entry(context.content, "chords-chordino")
+    entry = resolve_inputs("chords-chordino", context).entries["chords-chordino"]
     if entry is None:
         return Lacking(("chords-chordino/chords",))
     proposal = Proposal([], {"readings": "one a span, read from Chordino's label; N is no chord; an unread label "
@@ -356,7 +511,7 @@ def bars_of(pulse: list[dict[str, Any]], downbeats: list[dict[str, Any]], contex
 
 
 def propose_beats(context: Context) -> Proposal | Lacking:
-    entry = context.bank.entry(context.content, "rhythm")
+    entry = resolve_inputs("beats", context).entries["rhythm"]
     if entry is None:
         return Lacking(("rhythm/pulse", "rhythm/downbeats"))
     pulse, downbeats = entry.items("pulse"), entry.items("downbeats")
@@ -444,21 +599,10 @@ def bass_spans(chroma: Any, pitched: Any, grid: dict[str, int], pulse_times: lis
 
 
 def propose_bass(context: Context) -> Proposal | Lacking:
-    # The stems entry and its bass stem's measure, over one entry: the first
-    # that answers (ADR 0090's amendment) whose stem is measured, else the first.
-    over = context.bank.measured_over(context.content, "stems/bass", ["tonal"])
-    stems, found = next(((s, m) for s, m in over if m["tonal"] is not None), over[0] if over else (None, {}))
-    measured = found.get("tonal")
-    rhythm = context.bank.entry(context.content, "rhythm")
-    missing = []
-    if stems is None:
-        missing.append("stems/bass")
-    if measured is None:
-        missing += ["tonal/bass_chroma from stems/bass", "tonal/pitched from stems/bass"]
-    if rhythm is None:
-        missing.append("rhythm/pulse")
-    if missing:
-        return Lacking(tuple(missing))
+    resolved = resolve_inputs("bass", context)
+    stems, measured, rhythm = (resolved.entries[name] for name in ("stems", "tonal", "rhythm"))
+    if resolved.missing:
+        return Lacking(resolved.missing)
     assert stems is not None and measured is not None and rhythm is not None
     proposal = Proposal([], {**BASS_SETTINGS, "times": TIMES})
     read(proposal, context, stems, "bass")
@@ -564,24 +708,8 @@ def keep_line(candidates: list[dict[str, int]], chroma: Any, pitched: Any, grid:
 def bass_line_entries(context: Context) -> tuple[dict[str, bank.Entry | None], list[str]]:
     """The stems entry, f0-pesto, notes-basic-pitch and tonal from stems/bass,
     and what is missing: the stem, tonal, and one of the two note sources."""
-    # Every measure over one stems entry, so the stem cited is the stem read:
-    # the first that answers (ADR 0090's amendment) holding what the line
-    # needs, else the first.
-    over = context.bank.measured_over(context.content, "stems/bass", ["f0-pesto", "notes-basic-pitch", "tonal"])
-    stems, measures = next(((s, m) for s, m in over if m["tonal"] is not None
-                            and (m["f0-pesto"] is not None or m["notes-basic-pitch"] is not None)),
-                           over[0] if over else (None, {}))
-    found: dict[str, bank.Entry | None] = {"stems": stems, "f0-pesto": measures.get("f0-pesto"),
-                                           "notes-basic-pitch": measures.get("notes-basic-pitch"),
-                                           "tonal": measures.get("tonal")}
-    missing = []
-    if stems is None:
-        missing.append("stems/bass")
-    if found["f0-pesto"] is None and found["notes-basic-pitch"] is None:
-        missing.append("f0-pesto/f0 or notes-basic-pitch/notes from stems/bass")
-    if found["tonal"] is None:
-        missing += ["tonal/bass_chroma from stems/bass", "tonal/pitched from stems/bass"]
-    return found, missing
+    resolved = resolve_inputs("bass-line", context)
+    return resolved.entries, list(resolved.missing)
 
 
 def read_bass_line(proposal: Proposal, context: Context,
@@ -612,7 +740,9 @@ def read_bass_line(proposal: Proposal, context: Context,
 
 
 def propose_bass_line(context: Context) -> Proposal | Lacking:
-    entries, missing = bass_line_entries(context)
+    resolved = resolve_inputs("bass-line", context)
+    context = replace(context, inputs=resolved)
+    entries, missing = resolved.entries, resolved.missing
     if missing:
         return Lacking(tuple(missing))
     stems = entries["stems"]
@@ -644,7 +774,8 @@ def row_sample(row: int, grid: dict[str, int], context: Context, shift: int = 0)
 
 def tuning_of(proposal: Proposal, context: Context) -> tuple[Decimal, str]:
     """The recording's tuning in cents, by tonal, and where it came from."""
-    entry = context.bank.entry(context.content, "tonal")
+    entry = (context.inputs.optional.get("tonal") if context.inputs is not None else
+             context.bank.entry(context.content, "tonal"))
     if entry is None:
         return Decimal(0), "0: tonal of the recording is not in the bank"
     read(proposal, context, entry, "tuning_confidence")
@@ -658,7 +789,8 @@ def tuning_of(proposal: Proposal, context: Context) -> tuple[Decimal, str]:
 
 def eighth_of(proposal: Proposal, context: Context) -> Decimal | None:
     """Half the median interval of rhythm/pulse, when the bank holds it."""
-    entry = context.bank.entry(context.content, "rhythm")
+    entry = (context.inputs.optional.get("rhythm") if context.inputs is not None else
+             context.bank.entry(context.content, "rhythm"))
     if entry is None:
         return None
     times = sorted(Decimal(repr(e["time"])) for e in entry.items("pulse")
@@ -799,7 +931,7 @@ def key_reading(label: str) -> dict[str, Any]:
 
 
 def propose_key(context: Context) -> Proposal | Lacking:
-    entry = context.bank.entry(context.content, "tonal")
+    entry = resolve_inputs("key", context).entries["tonal"]
     if entry is None:
         return Lacking(("tonal/key_regions",))
     proposal = Proposal([], {"regions": "a region per tonal/key_regions span: its label's note collection (tonal 6 "
@@ -841,7 +973,7 @@ def folded_cents(value: Decimal) -> Decimal:
 
 
 def propose_tuning(context: Context) -> Proposal | Lacking:
-    entry = context.bank.entry(context.content, "tonal")
+    entry = resolve_inputs("tuning", context).entries["tonal"]
     if entry is None:
         return Lacking(("tonal/tuning_cents", "tonal/tuning_confidence", "tonal/tuning_drift"))
     proposal = Proposal([], {**TUNING_SETTINGS, "times": TIMES})
@@ -911,26 +1043,17 @@ def propose_notes(context: Context) -> Proposal | Lacking:
     """The vocal line (or the mix's melody): built from f0-pesto of the vocal
     stem where the bank holds it, else melody/notes; a vocal line without
     separation bleed."""
-    entry, feature = context.bank.default_entry(context.content, "melody")
-    # PESTO reads one line, so only a vocal stem's track is built; melody
-    # never prefers the bass.
-    pesto = None if feature is None or not feature.endswith("/vocals") else \
-        context.bank.entry_from(context.content, feature, "f0-pesto")
-    if pesto is None and entry is None:
-        if feature is None:
-            return Lacking(("melody/notes",))
-        return Lacking((f"f0-pesto/f0 from {feature}", f"melody/notes from {feature}"))
+    resolved = resolve_inputs("notes", context)
+    context = replace(context, inputs=resolved)
+    entry, pesto, feature = resolved.entries["melody"], resolved.entries["f0-pesto"], resolved.source
+    if resolved.missing:
+        return Lacking(resolved.missing)
     proposal = Proposal([], {"part": "the stem's output, or mix", "times": TIMES})
     payload: dict[str, Any] = {"sample_rate": context.sample_rate, "part": "mix"}
     if feature is not None:
-        stems_id, output = feature.split("/", 1)
-        # The stems entry whose stem was read: another device's may stand in
-        # (ADR 0090's amendment), and the claim cites the one measured.
-        read_from = (pesto if pesto is not None else entry).manifest["content"]  # type: ignore[union-attr]
-        stems = next((s for s in context.bank.candidates(context.content, stems_id)
-                      if s.output(output)["sha256"] == read_from), None)
-        if stems is None:
-            raise ProposerError(f"{feature} was measured but its entry is gone")
+        _, output = feature.split("/", 1)
+        stems = resolved.entries["stems"]
+        assert stems is not None
         read(proposal, context, stems, output)
         payload.update(part=output, stem=stem_citation(stems, output))
     if pesto is not None:
@@ -990,7 +1113,7 @@ def propose_notes(context: Context) -> Proposal | Lacking:
 
 
 def propose_sections(context: Context) -> Proposal | Lacking:
-    entry = context.bank.entry(context.content, "structure")
+    entry = resolve_inputs("sections", context).entries["structure"]
     if entry is None:
         return Lacking(("structure/sections",))
     proposal = Proposal([], {"spans": "structure/sections with the extractor's labels", "times": TIMES})
@@ -1043,17 +1166,43 @@ def propose_timed_lyrics(context: Context) -> Proposal | Lacking:
                    detail="forced alignment of a lyric document to the vocal stem is not built yet")
 
 
+_TUNING_READ = FeatureRead("tonal", ("tuning_confidence", "tuning_cents"))
+_BASS_READS = (FeatureRead("stems", ("bass",)),
+               FeatureRead("tonal", ("bass_chroma", "pitched"), "stems/bass"))
+_BASS_PATHS = tuple(_path(name, _BASS_READS + (read,)) for name, read in (
+    ("bass-pesto", FeatureRead("f0-pesto", ("f0", "level_db"), "stems/bass")),
+    ("bass-basic-pitch", FeatureRead("notes-basic-pitch", ("notes",), "stems/bass"))))
+
+
+def _direct(contract: tuple[str, str], extractor: str, outputs: tuple[str, ...]) -> Requirement:
+    return Requirement((contract,), ("whole", "region"),
+                       (_path("direct", (FeatureRead(extractor, outputs),)),), (), "direct")
+
+
 PROPOSERS: dict[str, Proposer] = {proposer.id: proposer for proposer in (
-    Proposer("chords-jiang", "1", propose_jiang),
-    Proposer("chords-chordino", "1", propose_chordino),
-    Proposer("beats", "1", propose_beats),
-    Proposer("bass", "1", propose_bass),
-    Proposer("key", "2", propose_key),
-    Proposer("tuning", "1", propose_tuning),
-    Proposer("notes", "3", propose_notes),
-    Proposer("bass-line", "2", propose_bass_line),
-    Proposer("sections", "1", propose_sections),
-    Proposer("timed-lyrics", "0", propose_timed_lyrics),
+    Proposer("chords-jiang", "1", propose_jiang, _direct(CHORD_STACKS, "chords-jiang", ("chords", "readings"))),
+    Proposer("chords-chordino", "1", propose_chordino, _direct(CHORD_STACKS, "chords-chordino", ("chords",))),
+    Proposer("beats", "1", propose_beats, _direct(METER_LAYERS, "rhythm", ("pulse", "downbeats"))),
+    Proposer("bass", "1", propose_bass, Requirement((CHORD_STACKS,), ("whole", "region"),
+        (_path("bass", _BASS_READS + (FeatureRead("rhythm", ("pulse",)),)),), (), "bass")),
+    Proposer("key", "2", propose_key, _direct(KEY_REGIONS, "tonal", ("key_regions",))),
+    Proposer("tuning", "1", propose_tuning, _direct(TUNING, "tonal",
+        ("tuning_cents", "tuning_confidence", "tuning_drift", "tuning_windows"))),
+    Proposer("notes", "3", propose_notes, Requirement((NOTES,), ("whole", "region"),
+        (_path("vocal-pesto", (FeatureRead("stems", ("vocals",)),
+                               FeatureRead("f0-pesto", ("f0", "level_db"), "stems/vocals"))),
+         _path("melody", (FeatureRead("stems", ("vocals",)),
+                          FeatureRead("melody", ("notes",), "stems/vocals")))),
+        (_TUNING_READ, FeatureRead("rhythm", ("pulse",)), *_BASS_READS,
+         FeatureRead("f0-pesto", ("f0", "level_db"), "stems/bass"),
+         FeatureRead("notes-basic-pitch", ("notes",), "stems/bass"),
+         FeatureRead("melody", ("level_db", "loud_db"), "stems/vocals"),
+         FeatureRead("f0-pesto", ("loud_db",), "stems/vocals")), "notes")),
+    Proposer("bass-line", "2", propose_bass_line, Requirement((NOTES,), ("whole", "region"),
+        _BASS_PATHS, (_TUNING_READ,), "bass-line")),
+    Proposer("sections", "1", propose_sections, _direct(FORM_SPANS, "structure", ("sections",))),
+    Proposer("timed-lyrics", "0", propose_timed_lyrics, Requirement(
+        (), (), (), (), "unsupported")),
 )}
 # The import proposes these; the others run only when named.
 DEFAULT = ("chords-jiang", "chords-chordino", "beats", "bass")

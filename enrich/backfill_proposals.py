@@ -98,7 +98,7 @@ class Steps:
 
     def propose_words(self, target: list[str], extra: tuple[str, ...], proposers: str | None) -> list[str]:
         a = self.args
-        return ["propose", *target, "--proposers", proposers or a.proposers, "--bank", a.bank,
+        return ["propose", *target, "--proposers", a.proposers if proposers is None else proposers, "--bank", a.bank,
                 *(["--config", a.config] if a.config else []), *extra]
 
     def propose(self, label: str, *extra: str, proposers: str | None = None) -> Any:
