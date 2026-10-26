@@ -134,3 +134,4 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0117](0117-ci-builds-haskell-once-and-runs-suites-side-by-side.md) | CI builds the Haskell package once, caches it, and runs the suites side by side |
 | [0118](0118-relay-metrics.md) | The relay answers aggregate metrics to a local probe |
 | [0119](0119-door-in-house-evaluators.md) | Door evaluates contract schemas, patterns and canonical numbers with its own code, so its behaviour is part of the specification |
+| [0120](0120-internal-enrichment-composition.md) | Enrichment composes inside Archive through declared proposer inputs |

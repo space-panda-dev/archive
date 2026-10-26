@@ -364,6 +364,89 @@ class TimedLyrics(unittest.TestCase):
         self.assertTrue(found.missing)
 
 
+def declared_reads(test: unittest.TestCase, context: proposers.Context, name: str) -> Any:
+    """Dispatch the real method, then check actual entry/output consumption.
+
+    The registry and its selected path drive the assertions: a new proposer,
+    an added read, an incorrect stem binding, or bypassed resolution must fail.
+    Bank provenance is checked rather than merely comparing feature names.
+    """
+    method = proposers.PROPOSERS[name]
+    chosen, consumed = [], []
+    resolve, read = proposers.resolve_inputs, proposers.read
+
+    def resolving(proposer_id: str, at: proposers.Context):
+        found = resolve(proposer_id, at)
+        chosen.append((proposer_id, at, found))
+        return found
+
+    def reading(proposal, at, entry, output):
+        consumed.append((entry, output))
+        return read(proposal, at, entry, output)
+
+    with patch.object(proposers, "resolve_inputs", side_effect=resolving), \
+            patch.object(proposers, "read", side_effect=reading):
+        proposal = method.propose(context)
+    requirement = method.requirement
+    if requirement.resolver == "unsupported":
+        test.assertIsInstance(proposal, proposers.Lacking)
+        test.assertEqual(proposal.code, "not_yet")
+        test.assertFalse(consumed)
+        return proposal
+    selected = [found for proposer_id, at, found in chosen if proposer_id == name and at.bank is context.bank]
+    test.assertTrue(selected, f"{name} bypassed shared input resolution")
+    resolved = selected[0]
+    test.assertTrue(resolved.ready, (name, resolved.missing))
+    path = next(path for path in requirement.paths if path.id == resolved.path)
+    reads = []
+    for feature in (*path.required, *requirement.optional):
+        # Notes declares its finite vocal path; Bank selects the concrete
+        # preferred source or mix. Bass-bleed references retain stems/bass.
+        if name == "notes" and feature in path.required:
+            if feature.extractor == "stems":
+                if resolved.source:
+                    producer, output = resolved.source.split("/", 1)
+                    reads.append(proposers.FeatureRead(producer, (output,)))
+            else:
+                reads.append(proposers.FeatureRead(feature.extractor, feature.outputs, resolved.source))
+        elif name == "notes" and feature.source == "stems/vocals":
+            reads.append(proposers.FeatureRead(feature.extractor, feature.outputs, resolved.source))
+        else:
+            reads.append(feature)
+
+    def matches(feature, entry, output):
+        if feature.extractor != entry.manifest["extractor"]["id"] or output not in feature.outputs:
+            return False
+        if feature.source is None:
+            return entry.manifest["content"] == context.content
+        producer, stem_output = feature.source.split("/", 1)
+        return any(stem.output(stem_output)["sha256"] == entry.manifest["content"]
+                   for stem in context.bank.candidates(context.content, producer))
+
+    test.assertTrue(consumed, f"{name} did not consume populated inputs")
+    selected_entries = {id(entry) for _, _, found in chosen
+                        for entry in (*found.entries.values(), *found.optional.values()) if entry is not None}
+    for entry, output in consumed:
+        test.assertIn(id(entry), selected_entries, (name, "read bypassed resolved entry", output))
+        test.assertTrue(any(matches(feature, entry, output) for feature in reads),
+                        (name, resolved.path, entry.manifest["extractor"]["id"], output,
+                         entry.manifest["content"]))
+    if isinstance(proposal, proposers.Lacking) and context.region is not None:
+        # A whole fallback can have observations only outside this region
+        # (the Chordino stand-in has chords solely before the region begins).
+        # Inputs were consumed and checked above; empty observations are valid.
+        test.assertFalse(proposal.missing, (name, proposal))
+        test.assertTrue(proposal.detail, name)
+        return proposal
+    test.assertIsInstance(proposal, proposers.Proposal, (name, proposal))
+    test.assertTrue(proposal.outputs, name)
+    for planned in proposal.outputs:
+        test.assertIn(planned.contract, requirement.contracts)
+        check(planned, context.sample_count)
+    test.assertEqual(len(proposal.features), len(consumed), name)
+    return proposal
+
+
 @needs_essentia
 @support.needs_ffmpeg
 class FromTheBank(unittest.TestCase):
@@ -390,6 +473,32 @@ class FromTheBank(unittest.TestCase):
         for planned in found.outputs:
             check(planned, self.count)
         return found
+
+    def test_every_registered_method_reads_its_selected_declared_inputs(self) -> None:
+        self.assertTrue(proposers.PROPOSERS)
+        for name in proposers.PROPOSERS:
+            with self.subTest(method=name):
+                declared_reads(self, self.context, name)
+
+    def test_basic_pitch_bass_line_does_not_read_corrupt_recording_tuning(self) -> None:
+        original = self.bank.measured_over
+        original_entry = self.bank.entry
+
+        def basic_only(content, source, extractors):
+            return [(stem, {**measures, "f0-pesto": None})
+                    for stem, measures in original(content, source, extractors)]
+
+        def no_tuning(content, extractor, *args, **kwargs):
+            if content == self.digest and extractor == "tonal":
+                raise bank.BankError("irrelevant recording tuning is corrupt")
+            return original_entry(content, extractor, *args, **kwargs)
+
+        with patch.object(self.bank, "measured_over", side_effect=basic_only), \
+                patch.object(self.bank, "entry", side_effect=no_tuning):
+            proposal = declared_reads(self, self.context, "bass-line")
+        self.assertTrue(any(f["feature"] == "notes-basic-pitch/notes" for f in proposal.features))
+        self.assertFalse(any(f["feature"].startswith("f0-pesto/") for f in proposal.features))
+        self.assertFalse(any(f["feature"].startswith("tonal/tuning") for f in proposal.features))
 
     def test_jiang_proposes_its_weighted_candidates_in_its_order(self) -> None:
         found = self.propose("chords-jiang")
@@ -641,6 +750,12 @@ class FromRegions(unittest.TestCase):
         items = planned.payload[field]
         self.assertTrue(items)
         self.assertTrue(all(self.START <= item[start] and item[end] <= self.END for item in items), items[:3])
+
+    def test_registered_methods_read_declared_region_or_whole_fallback_inputs(self) -> None:
+        self.assertTrue(proposers.PROPOSERS)
+        for name in proposers.PROPOSERS:
+            with self.subTest(method=name):
+                declared_reads(self, self.over, name)
 
     def test_the_region_is_found_and_a_whole_read_lacks_what_was_made_over_it(self) -> None:
         self.assertEqual(bank.regions(self.songs, self.digest), [self.region])

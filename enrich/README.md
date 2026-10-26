@@ -710,6 +710,9 @@ Each states `alignment.method`; World's checks run before Door sees them.
 The answer adds `transposition`, `placed_bars`, `placed_beats`, `passes`,
 `mean_cost` and `margin`. A rerun on the same inputs is `unchanged`.
 
+For selecting features, opportunistic methods or result production, see
+[composing enrichment](../docs/enrichment-composition.md).
+
 ## `enrich backfill`
 
 ```sh
@@ -785,8 +788,10 @@ read from the bank), one `extract.py run --region` job per region, filing
 region entries; one region that is the whole recording (a recording
 selected end to end) is made whole instead, so readers of whole entries
 find it and a routed unit may go to its worker; a recording with no song
-regions leaves it for on demand. No reader takes a region entry yet
-(`enrich propose` and the relay read whole entries).
+regions leaves it for on demand. `enrich propose` tries whole entries first
+and uses `RegionView` for region fallback where a whole read lacks features.
+The relay serves region file features through `Practice.regional` and keyed
+lookup; other reads retain their own whole-entry behavior.
 A unit on a file feature goes where that feature is made: whole once the
 stems are made whole, else over the regions they are made over. A region,
 or any span inside one already made, counts as made (`bank.covering`).
