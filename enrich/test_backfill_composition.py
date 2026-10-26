@@ -1,6 +1,10 @@
 """Composition through backfill's existing placement and scheduling adapter."""
 import argparse
 import json
+import gc
+import io
+import warnings
+from contextlib import redirect_stderr, redirect_stdout
 import tempfile
 import unittest
 from pathlib import Path
@@ -150,3 +154,42 @@ class CompositionCaller(unittest.TestCase):
         self.assertEqual(args.config, path)
         self.assertFalse(snapshot.exists())
         self.assertFalse(hasattr(args, "_enrichment_config_snapshot"))
+
+
+class LogLifetime(unittest.TestCase):
+    def test_backfill_closes_log_on_success_and_failure(self):
+        with tempfile.TemporaryDirectory() as root:
+            parser = argparse.ArgumentParser()
+            backfill.add_arguments(parser)
+            for cores in (1, -1):
+                with self.subTest(cores=cores):
+                    args = parser.parse_args([
+                        "--bank", root + "/bank", "--log", root + "/events.jsonl",
+                        "--cores", str(cores), "--proposers", "",
+                    ])
+                    handles = []
+                    real_log = backfill.Log
+
+                    def log(path):
+                        result = real_log(path)
+                        handles.append(result.handle)
+                        return result
+
+                    with patch.object(backfill, "Log", side_effect=log), \
+                            patch.object(backfill, "discover", return_value=([], [])), \
+                            redirect_stdout(io.StringIO()):
+                        if cores < 0:
+                            with self.assertRaises(backfill.BackfillError):
+                                backfill.main(args)
+                        else:
+                            self.assertEqual(backfill.main(args), 0)
+                    # A leaked file can warn during a later command's JSON stderr.
+                    closed = [handle.closed for handle in handles]
+                    errors = io.StringIO()
+                    with warnings.catch_warnings(), redirect_stderr(errors):
+                        warnings.simplefilter("always", ResourceWarning)
+                        handles.clear()
+                        gc.collect()
+                        errors.write(json.dumps({"detail": "door admit failed"}))
+                    self.assertEqual(json.loads(errors.getvalue()), {"detail": "door admit failed"})
+                    self.assertEqual(closed, [True])
