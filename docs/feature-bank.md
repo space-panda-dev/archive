@@ -530,6 +530,7 @@ parameters are in the manifest's descriptions and in the
 | `stems-6s` | 1 | none | series `levels`; scalars `vocals_rms_db`, `vocals_peak_db`, `vocals_clamped`, `drums_rms_db`, `drums_peak_db`, `drums_clamped`, `bass_rms_db`, `bass_peak_db`, `bass_clamped`, `guitar_rms_db`, `guitar_peak_db`, `guitar_clamped`, `piano_rms_db`, `piano_peak_db`, `piano_clamped`, `other_rms_db`, `other_peak_db`, `other_clamped`, `mix_rms_db`, `samples`, `seconds`; files `vocals`, `drums`, `bass`, `guitar`, `piano`, `other` |
 | `structure` | 2 | `frames`: hpcp, rms_db, mfcc, seconds; `rhythm`: onsets, beats | series `novelty`; scalars `floor_db`, `floor`, `reference_db`, `threshold_db`; spans `playing`, `tuning`, `count_ins`, `false_starts`, `endings`, `sections`, `loops` |
 | `tonal` | 6 | `frames`: rms_db | series `pitched`, `tuning_windows`, `chroma`, `bass_chroma`, `dissonance`; scalars `tuning_frequency`, `tuning_cents`, `tuning_confidence`, `tuning_window_count`, `drift_spread_cents`, `detuned`, `key`, `scale`, `mode`, `scale_notes`, `key_strength`, `collection`, `collection_margin`, `tonic_margin`, `tonic_confidence`, `tonic_named`; spans `tuning_drift`, `detuned_spans`, `keys`, `key_regions` |
+| `vocal-contour` | 1 | none | series `pitch`, `confidence`, `voiced`, `held`; scalars `voiced_fraction`; events `attacks`; spans `notes`; files `provenance` |
 
 Eight of them run a model in an environment of the operator's, never the
 archive's, each under a program name the operator configures, so `run all`

@@ -113,6 +113,9 @@ SPOOL_CAPABILITY = r"[A-Za-z0-9._-]+@[A-Za-z0-9.]+"
 # (a new key; old entries are never read again), or else record the new
 # digest here. Nothing else catches an edit that keeps the key.
 SHIPPED = {
+    "vocal-contour": {"version": "1",
+                      "code": "sha256:ac9d5cac873ede610691c541bd9da86b88c3f7b5aa565ddb16fff9aff7fbcb2e",
+                      "outside": {"vocal_contour.py": "sha256:0b178399254c7f0a41c0fedc3804e557e63f9b3848f026fb31eea957e7331cbf"}},
     "frames": {"version": "1",
                "code": "sha256:8d05ebb444442eb4b08a516df7f2d03f403c4ab56aef7a74aff16446592a3282",
                "outside": {"cover.py": "sha256:1d3d8e48959d97ec6d633ab683eebea5bcb75616a1d29e218c25da30a7a4884c"}},
