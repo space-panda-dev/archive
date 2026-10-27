@@ -103,7 +103,6 @@ the last is `done`. It exits 0 when nothing failed, 1 otherwise.
 from __future__ import annotations
 
 import argparse
-from contextlib import closing
 import json
 import math
 import os
@@ -1008,20 +1007,21 @@ def check_remote(catalog: bank.Catalog, root: Path, parameters: dict[str, Any], 
 
 class Log:
     def __init__(self, path: str | None):
-        self.handle = open(path, "a", encoding="utf-8") if path else None
+        self.path = path
+        if path:
+            # Validate the destination and create an empty log even before an event.
+            with open(path, "a", encoding="utf-8"):
+                pass
         self.lock = threading.Lock()
-
-    def close(self) -> None:
-        if self.handle:
-            self.handle.close()
 
     def __call__(self, **entry: Any) -> None:
         entry = {"at": time.strftime("%H:%M:%S"), **{k: v for k, v in entry.items() if v is not None}}
         line = json.dumps(entry, sort_keys=False)
         with self.lock:
-            if self.handle:
-                self.handle.write(line + "\n")
-                self.handle.flush()
+            if self.path:
+                # Callbacks may outlive the scheduler; no file lives with them.
+                with open(self.path, "a", encoding="utf-8") as handle:
+                    handle.write(line + "\n")
             if len(line) > 1000:  # standard output stays one JSON object a line; --log has it whole
                 line = json.dumps({k: entry[k] for k in ("at", "step", "recording", "unit", "jobs", "status")
                                    if k in entry} | {"cut": True})
@@ -1177,22 +1177,22 @@ def main(args: argparse.Namespace, env: dict[str, str] | None = None,
     original_proposers = args.proposers
     try:
         with extract.frozen_config(args, "config"):
-            if args.commit and args.dry_run:
-                raise BackfillError("--commit and --dry-run cannot go together; a backfill is a dry run by default")
-            if args.follow and not args.commit:
-                raise BackfillError("--follow makes what arrives, so it needs --commit")
-            with closing(Log(args.log)) as note:
-                return _main(args, note, env, run_unit)
+            return _main(args, env, run_unit)
     except extract.RunError as exc:
         raise BackfillError(str(exc)) from exc
     finally:
         args.proposers = original_proposers
 
 
-def _main(args: argparse.Namespace, note: Log, env: dict[str, str] | None = None,
+def _main(args: argparse.Namespace, env: dict[str, str] | None = None,
           run_unit: Callable[[Job], tuple[dict[str, Any], float]] | None = None) -> int:
     """The command; `env` is Door's environment (`enrich.environment`), and
     `run_unit` replaces `extract.py run` (tests)."""
+    if args.commit and args.dry_run:
+        raise BackfillError("--commit and --dry-run cannot go together; a backfill is a dry run by default")
+    if args.follow and not args.commit:
+        raise BackfillError("--follow makes what arrives, so it needs --commit")
+    note = Log(args.log)
     started = time.monotonic()
     try:
         config = extract.load_config(args.config)

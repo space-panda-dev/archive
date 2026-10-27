@@ -168,14 +168,22 @@ class LogLifetime(unittest.TestCase):
                         "--cores", str(cores), "--proposers", "",
                     ])
                     handles = []
+                    logs = []
                     real_log = backfill.Log
+                    real_open = open
+
+                    def open_log(*args, **kwargs):
+                        handle = real_open(*args, **kwargs)
+                        handles.append(handle)
+                        return handle
 
                     def log(path):
                         result = real_log(path)
-                        handles.append(result.handle)
+                        logs.append(result)
                         return result
 
                     with patch.object(backfill, "Log", side_effect=log), \
+                            patch.object(backfill, "open", side_effect=open_log, create=True), \
                             patch.object(backfill, "discover", return_value=([], [])), \
                             redirect_stdout(io.StringIO()):
                         if cores < 0:
@@ -183,13 +191,19 @@ class LogLifetime(unittest.TestCase):
                                 backfill.main(args)
                         else:
                             self.assertEqual(backfill.main(args), 0)
+                        # A spool put can log after the scheduler has returned.
+                        logs[0](step="late callback")
+                    self.assertEqual(json.loads(Path(args.log).read_text().splitlines()[-1])["step"],
+                                     "late callback")
                     # A leaked file can warn during a later command's JSON stderr.
                     closed = [handle.closed for handle in handles]
                     errors = io.StringIO()
                     with warnings.catch_warnings(), redirect_stderr(errors):
                         warnings.simplefilter("always", ResourceWarning)
                         handles.clear()
+                        logs.clear()
                         gc.collect()
                         errors.write(json.dumps({"detail": "door admit failed"}))
                     self.assertEqual(json.loads(errors.getvalue()), {"detail": "door admit failed"})
-                    self.assertEqual(closed, [True])
+                    self.assertTrue(closed)
+                    self.assertTrue(all(closed))
