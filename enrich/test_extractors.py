@@ -43,6 +43,7 @@ from support import needs_ffmpeg
 from test_cover import needs_essentia
 from test_beats_chords import stand_in_programs
 from test_f0 import fake_python as fake_f0_python
+from test_vocal_extractor import fake_python as fake_vocal_python
 from test_notes import fake_python as fake_notes_python
 from test_stems import fake_python
 
@@ -148,7 +149,7 @@ class EveryExtractor(unittest.TestCase):
         argv = ["run", "all", "--content", str(audio), "--bank", str(root),
                 "--program", f"demucs-python={demucs}", "--program", f"stems-6s-python={demucs}",
                 "--program", f"basic-pitch-python={fake_notes_python(directory)}",
-                "--program", f"f0-python={fake_f0_python(directory)}", *stand_in_programs(directory)]
+                "--program", f"f0-python={fake_vocal_python(directory, fake_f0_python(directory))}", *stand_in_programs(directory)]
 
         code, answer = run(argv)
         self.assertEqual(code, 0, answer)

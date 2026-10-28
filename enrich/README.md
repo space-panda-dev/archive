@@ -21,7 +21,7 @@ here writes a record: Door decides every revision.
 | [`enrich.py`](enrich.py) | The `enrich` command that runs a tool against an archive's records |
 | [`propose.py`](propose.py), [`proposers.py`](proposers.py), [`chord_labels.py`](chord_labels.py) | `enrich propose`: the proposers, which read the feature bank's entries of one recording as claims, and the chord labels they read ([ADR 0079](../docs/decisions/0079-machine-harmony-claims.md)) |
 | [`align.py`](align.py), [`align_command.py`](align_command.py) | `enrich align`: a chart's untimed claims placed on a recording's machine beats and chords ([ADR 0116](../docs/decisions/0116-ireal-charts.md) section 6, proposed) |
-| [`bank.py`](bank.py), [`extract.py`](extract.py), [`remote.py`](remote.py), [`extractors/`](extractors/frames/extractor.json) | The feature bank's format and reader, the runner that fills it, the same run through Spool on another machine ([ADR 0090](../docs/decisions/0090-extractor-runs-travel-through-spool.md)), and the extractors (one table under [`extract.py`: the feature bank](#extractpy-the-feature-bank) says what each writes): `frames`, `loudness-r128`, `rhythm`, `tonal`, `melody`, `structure`, `quality`, `colour`, `stems`, `stems-6s`, `beats-beatthis`, `chords-jiang`, `chords-chordino`, `notes-basic-pitch`, `f0-pesto`, and `f0-torchcrepe` ([ADR 0073](../docs/decisions/0073-feature-bank.md), [ADR 0074](../docs/decisions/0074-extractor-contract.md), [ADR 0075](../docs/decisions/0075-stems-as-content.md)) |
+| [`bank.py`](bank.py), [`extract.py`](extract.py), [`remote.py`](remote.py), [`extractors/`](extractors/frames/extractor.json) | The feature bank's format and reader, the runner that fills it, the same run through Spool on another machine ([ADR 0090](../docs/decisions/0090-extractor-runs-travel-through-spool.md)), and the extractors (one table under [`extract.py`: the feature bank](#extractpy-the-feature-bank) says what each writes): `frames`, `loudness-r128`, `rhythm`, `tonal`, `melody`, `structure`, `quality`, `colour`, `stems`, `stems-6s`, `beats-beatthis`, `chords-jiang`, `chords-chordino`, `notes-basic-pitch`, `f0-pesto`, `f0-torchcrepe`, and `vocal-contour` ([ADR 0073](../docs/decisions/0073-feature-bank.md), [ADR 0074](../docs/decisions/0074-extractor-contract.md), [ADR 0075](../docs/decisions/0075-stems-as-content.md)) |
 | [`hue_range.py`](hue_range.py) | The `colour` extractor's centroid hue limits taken from a set of recordings' `frames` entries, printed as a `--config` ([its README](extractors/colour/README.md#the-hue-range)) |
 | [`media.py`](media.py), [`waveform.py`](waveform.py), [`derived.py`](derived.py) | Derived media, a standalone tool that never touches an archive; the waveform peaks' format and decode; and the layout ([ADR 0069](../docs/decisions/0069-derived-media.md)) |
 | [`requirements.txt`](requirements.txt) | The libraries: numpy (detector, matchers, derived media) and scipy (numpy matcher) |
@@ -658,6 +658,75 @@ proposer fails the command once the proposers before it have finished: what
 they made is kept, and stderr's `{"status": "failed", "detail", ...}` lists
 them.
 
+### Provisional vocal contour and note candidates
+
+`vocal-contour` version 1 is an audio-only alternative for a separated vocal
+line. It retains PESTO's stable landing targets and voicing, reads RMVPE on
+moving regions, and uses automatic RWBD boundary proposals for repeated-pitch
+articulations. It takes no chart, MIDI, supplied lyric text, key, or beat grid.
+The same mechanism therefore works on an original or improvised recording
+without a reference document. A vocal stem can still contain harmony and
+instrument bleed; neither its label nor a boundary proposal proves lead-voice
+identity or a correct note.
+
+The extractor runs fixed 20-second targets, pitch context from each target's
+start for up to 30 seconds, and separate 30-second boundary context beginning
+five seconds earlier (clamped at the recording start). Tail model contexts are zero-padded to 30 seconds; their decoded and padded
+lengths and PCM digests are both recorded. Only actual target audio contributes
+notes. Region windows start relative to the supplied region, so a
+region is not declared equivalent to a whole-recording run. Window edges and
+short runs remain limitations, recorded in `provenance`. The continuous
+fractional pitch, held mask, voicing and articulation proposals remain in the
+bank beside the lossy note reading. Unresolved moving regions receive an
+explicitly uncertain note interpretation rather than disappearing as silence.
+
+For this method, notes proposer version 5 rounds measured A440 pitch to the
+nearest MIDI step, half to even, and records a zero-adjustment tuning policy.
+It does not select or subtract a `tonal` estimate. No cents are emitted without
+a selected tuning claim (ADR 0086); the stored contour and its practice audio
+remain unchanged. Selecting another tuning grid is a separate, explicit reading.
+
+The operator provisions the existing `${f0-python}` runtime and model sources;
+this program installs and downloads nothing. Set the `vocal-contour`
+parameters in the usual extractor configuration: `rmvpe_source`,
+`rosvot_source`, `rmvpe_weights`, `rwbd_weights`, and the two source-tree
+`*_code_sha256` digests (the extractor's `code_digest` defines them). Weight
+pins are declared in its manifest; changed sources or weights are refused.
+Missing configuration fails explicitly. Code and weight provenance are
+separate; this repository distributes neither external model source nor
+weights and makes no claim that a code licence licenses its checkpoint.
+
+With that configuration and an existing vocal stem:
+
+```sh
+python3 enrich/extract.py run vocal-contour --content /path/to/recording \
+  --bank /path/to/bank --from stems/vocals --config /path/to/models.json
+python3 enrich/enrich.py propose --archive /path/to/archive \
+  --artifact urn:uuid:RECORDING --bank /path/to/bank \
+  --config /path/to/models.json --proposers notes
+```
+
+The registered `notes` proposer version 4 selects this reading when its entry
+has explicitly been measured on `stems/vocals`; otherwise its existing
+PESTO/MELODIA path remains available. It records the stem, feature entry,
+provenance file, software and tuning inputs. It preserves repeated pitches
+and performed onset/offset samples, without running the legacy octave-fold,
+bleed-deletion or same-pitch-bridge rules afterward. This is a choice of
+analysis mechanism, not a ranking or adoption of archived claims.
+
+For unattended capture or backfill, include
+`["vocal-contour", "stems/vocals"]` in that flow's
+`composition.features` and `notes` in its `attempt` list, with the same
+model parameters and configured interpreter. External models are not added
+to an unconfigured installation's default job set.
+
+Door admits timed note candidates. World's existing `written_rhythm` view
+then derives written durations against an explicitly selected audio-derived
+meter reading; it does not move the sounded note times. A viewer may select
+that exact reading for a provisional lead sheet while retaining alternatives.
+No Work-level composition, lyric underlay, adopted lead sheet or transcription
+accuracy is implied by successful extraction or engraving.
+
 ## `enrich align`
 
 ```sh
@@ -1039,6 +1108,7 @@ Versions, needs, and outputs by kind are listed together in
 | `chords-chordino` | Python under `${chordino-python}` (the vamp host, chord-extractor 0.1.3's Chordino build, librosa) | from its own 44,100 Hz mono decode: spans `chords` (Chordino's simple chord labels in its own spelling, such as `Am7` or `F/A`, `N` for none, tiling the decoded length); scalars `chord_count`, `seconds`. Not learned: a second opinion beside `chords-jiang`. On the same album, 0.042 CPU-seconds a second and 0.56 GB at most |
 | `stems-6s` | Python under `${stems-6s-python}` (Demucs 4.1.0, PyTorch), ffmpeg | the `stems` program with pinned htdemucs_6s weights: `vocals`, `drums`, `bass`, `guitar`, `piano`, `other` as 44.1 kHz stereo 16-bit FLAC, `levels` (six columns), each stem's `_rms_db`, `_peak_db`, `_clamped`; `mix_rms_db`, `samples`, `seconds`. A second separator: its stems are other content than `stems`', so their measures sit beside each other. The names are the model's sources, not instruments: on dense neo-soul a Rhodes came out in `guitar` and `piano` was near silent |
 | `notes-basic-pitch` | Python under `${basic-pitch-python}` (Basic Pitch 0.4.0 by ONNX Runtime, librosa; no TensorFlow), ffmpeg | file `notes` (JSON): every note's `onset_s`, `offset_s`, `midi`, `amplitude`, `cents` (its median distance from the equal-tempered note, read from the model's pitch contour one bin above Basic Pitch's own mapping, where the pinned model puts a note; within 10 cents of the truth on synthetic tones, where Basic Pitch's own mapping read 31 cents sharp), and `bends` (per model frame, in thirds of a semitone); scalars `note_count`, `seconds`. Of the mix or, better, a stem: `--from stems/bass` gives the bass line |
+| `vocal-contour` | Python under `${f0-python}` with pinned PESTO, RVC-RMVPE and RWBD models | 10 ms fractional `pitch`, `confidence`, `voiced`, `held`; `attacks` events, provisional `notes` spans, `provenance` JSON and `voiced_fraction`. No charts, lyrics, key or rhythmic grid; see [provisional vocal contour](#provisional-vocal-contour-and-note-candidates) |
 | `f0-pesto` | Python under `${f0-python}` (PESTO 2.0.1, PyTorch), ffmpeg | series `f0` on grid `f0` (16 kHz, a row every 160 samples, 10 ms): the pitch in Hz (0 where none) and PESTO's confidence; scalar `rows_from_tracker`; since version 2 series `level_db` on the same grid (the RMS of the 20 ms centred on each row) and scalar `loud_db` (its 99th percentile), which the note builder reads. One line: `--from stems/vocals` or `--from stems/bass` |
 | `f0-torchcrepe` | Python under `${f0-python}` (torchcrepe 0.0.24 tiny model, PyTorch), ffmpeg | as `f0-pesto`, with the model's periodicity as the confidence: a second opinion. The pitch is decoded here (Viterbi path, then CREPE's local average) because torchcrepe's own decoders add random noise of up to 20 cents |
 

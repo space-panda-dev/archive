@@ -1,0 +1,109 @@
+{
+ "contract": "archive-extractor/1",
+ "id": "vocal-contour",
+ "version": "1",
+ "description": "Monophonic vocal gesture contour: PESTO held landings, RMVPE moving pitch, automatic RWBD same-pitch articulation proposals. Fixed 20s targets with independent bounded 30s contexts. Decodes waveform again because frames does not retain model-rate audio. Operator-provisioned model sources and pinned weights are required; no download or fallback. Region window origin is relative to supplied input, not whole-run equivalent. Tail model contexts are zero padded to30s, with decoded and padded PCM digests recorded; target output covers actual audio only.",
+ "command": [
+  "${f0-python}",
+  "extract_contour.py"
+ ],
+ "accepts": [
+  "audio/*",
+  "video/*"
+ ],
+ "requires": [
+  "ffmpeg",
+  "python==3.12.15",
+  "pesto-pitch==2.0.1",
+  "torch==2.14.1+cpu",
+  "numpy==2.5.4",
+  "scipy==1.18.1",
+  "librosa==1.0.0",
+  "PyYAML==6.0.3",
+  "operator-provisioned RVC-RMVPE and ROSVOT/RWBD sources"
+ ],
+ "needs": [],
+ "prefers": [
+  {
+   "input": "stems/vocals"
+  },
+  {
+   "input": "stems-6s/vocals"
+  }
+ ],
+ "parameters": {
+  "recipe": "gesture-rmvpe-moving-rwbd-1",
+  "step_ms": 10,
+  "target_seconds": 20,
+  "pitch_context_seconds": 30,
+  "boundary_context_seconds": 30,
+  "boundary_preroll_seconds": 5,
+  "head_context": "clamp",
+  "tail_context": "zero-pad-to-context",
+  "region_windows": "relative-to-input",
+  "rmvpe_source": "",
+  "rosvot_source": "",
+  "rmvpe_code_sha256": "",
+  "rosvot_code_sha256": "",
+  "rmvpe_weights": "",
+  "rwbd_weights": "",
+  "rmvpe_weights_sha256": "6d62215f4306e3ca278246188607209f09af3dc77ed4232efdd069798c4ec193",
+  "rwbd_weights_sha256": "0bc2d42a6d4b7a05436deb937e2deda1c12de49e5687cfda0bdf6a430120dcd2",
+  "pesto_weights_sha256": "16c32e06ddd950e3e4866dfa3c7f8a87c4988f8adf43e57977b189f031f26f3e"
+ },
+ "outputs": {
+  "pitch": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "contour",
+   "unit": "MIDI",
+   "description": "Fractional MIDI contour; consult voiced mask, unvoiced values are not pitches."
+  },
+  "confidence": {
+   "kind": "series",
+   "dtype": "f32",
+   "columns": 1,
+   "grid": "contour",
+   "unit": "0-1",
+   "description": "PESTO confidence, not calibrated confidence in final pitch or articulation."
+  },
+  "voiced": {
+   "kind": "series",
+   "dtype": "u8",
+   "columns": 1,
+   "grid": "contour",
+   "unit": "1",
+   "description": "Frozen gesture voicing mask; 0 or1."
+  },
+  "held": {
+   "kind": "series",
+   "dtype": "u8",
+   "columns": 1,
+   "grid": "contour",
+   "unit": "1",
+   "description": "Held landing rows, 0 or1; RMVPE never replaces their pitch."
+  },
+  "attacks": {
+   "kind": "events",
+   "unit": "s",
+   "description": "Automatic same-pitch articulation proposals passing the frozen qualifier; no new pitch implied."
+  },
+  "notes": {
+   "kind": "spans",
+   "unit": "MIDI",
+   "description": "Lossy projected spans with fractional MIDI value. Unlanded runs receive median-pitch spans explicitly flagged in provenance note_reading.uncertain_regions; use pitch for retained motion."
+  },
+  "provenance": {
+   "kind": "file",
+   "media_type": "application/json",
+   "suffix": ".json",
+   "description": "Model source/weight pins, context PCM digests, gesture uncertainty, all attack proposals and detailed note projection."
+  },
+  "voiced_fraction": {
+   "kind": "scalar",
+   "unit": "1",
+   "description": "Fraction of contour rows marked voiced."
+  }
+ }
+}
