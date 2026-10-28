@@ -229,7 +229,9 @@ The Nix flake pins the Nixpkgs release used to build and test the Haskell
 package. Run `nix develop` for its compiler and command-line tools, `nix build`
 to build Archive and run its Cabal test suites, or `nix flake check` to run the
 same build as a flake check. `make check` remains a separate repository
-structure check.
+structure check. `nix build .#upgrade` builds the self-contained
+[`archive-upgrade` command](docs/archive-upgrade.md); fleet pins that package
+for an explicitly approved specification upgrade.
 
 ## Licence
 

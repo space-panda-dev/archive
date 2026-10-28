@@ -52,6 +52,28 @@ module is `wf check enrich -- -p test_bank.py` and one test name is
 | shadow | 300 | 1800s | `$PYTHON -m unittest discover -s shadow -p "test_*.py" "$@"` |
 | documents-door | 30 | 1800s | `$PYTHON -m unittest discover -s documents/tests "$@"` |
 | migration | 30 | 1800s | `$PYTHON -m unittest discover -s migration -p "test_*.py" "$@"` |
+| upgrade-package | 300 | 1800s | `set -e
+# wf slots have an empty Git index and preserved build trees. Give Nix a
+# filtered filesystem source, so it sees the snapshot without importing caches.
+ARCHIVE_UPGRADE_TEST_PACKAGE="$(nix build --impure --no-link --print-out-paths --expr '
+  let
+    source = builtins.path {
+      path = ./.;
+      name = "archive-package-proof-source";
+      filter = path: type:
+        !(builtins.elem (builtins.baseNameOf path)
+          [ ".git" ".wf" ".claude" ".direnv" "result" "dist-newstyle"
+            "__pycache__" ".venv" ".store" "cabal.project.local" ])
+        && !(builtins.match ".*\\.pyc" (builtins.baseNameOf path) != null);
+    };
+  in (builtins.getFlake ("path:" + toString source)).packages.${builtins.currentSystem}.deployment
+')"
+test -n "$ARCHIVE_UPGRADE_TEST_PACKAGE"
+for binary in archive door relay archive-upgrade archive-legacy-backfill; do test -x "$ARCHIVE_UPGRADE_TEST_PACKAGE/bin/$binary"; done
+"$ARCHIVE_UPGRADE_TEST_PACKAGE/bin/archive-legacy-backfill" --help >/dev/null
+export ARCHIVE_UPGRADE_TEST_PACKAGE
+"$PYTHON" -m unittest discover -s migration -p "test_upgrade.py" -k packaged_release "$@"
+` |
 | fixture | 300 | 1800s | `$PYTHON -m unittest discover -s fixture -p "test_*.py" "$@"` |
 | enrich | night | 3600s | `$ENRICH_PYTHON -m unittest discover -s enrich -p "test_*.py" "$@"` |
 | capture | 300 | 1800s | `$ENRICH_PYTHON -m unittest discover -s capture -p "test_*.py" "$@"` |
@@ -499,3 +521,12 @@ bytes and reports missing/conflicting coverage. Its tests are in
 
 `world/legacy_translation.py` re-checks the closed legacy translation payload,
 operator and exact provenance target types before World projects its records.
+
+## Pinned specification upgrade command
+
+`migration/upgrade.py` exposes `archive-upgrade plan|apply` (ADR 0126), packaged
+by `flake.nix` as `.#upgrade` and linked from `.#tools`. It binds exact release
+bytes, source HEAD and operator, validates through Door and returns operational
+receipts. `migration/test_upgrade.py` exercises the detached package command
+against synthetic real-Door archives; suite `migration`. Fleet owns services;
+this command never deploys or controls them. See [interface](docs/archive-upgrade.md).

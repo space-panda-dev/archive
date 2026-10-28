@@ -72,6 +72,7 @@ python -m enrich.bench validate | run | check <set>
                                  score note transcribers against a private evaluation set
 door verify                      full verification of HEAD and a fresh checkpoint
 archive init | status | doctor   setup, state, whole-archive check
+archive-upgrade plan | apply       pinned operational specification plan and Door receipt (ADR 0126)
 archive maintenance repack       coordinated packing of loose Git objects
 archive maintenance prune-packed  coordinated Git loose-object cleanup
 archive export [--since <commit>] the committed snapshot, or what was added after a commit

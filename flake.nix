@@ -9,6 +9,7 @@
       linuxSystems = [ "aarch64-linux" "x86_64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
       forLinux = nixpkgs.lib.genAttrs linuxSystems;
+      fleetArchive = builtins.fromJSON (builtins.readFile ./deployment/release.json) // { source = self.outPath; };
 
       gitIdentity = ''
         export GIT_AUTHOR_NAME="Archive tests"
@@ -145,6 +146,27 @@
       enrichPythonFor = pkgs:
         if hasMatcher pkgs.stdenv.hostPlatform.system then matchPythonFor pkgs else pythonFor pkgs;
 
+      # The bounded specification upgrade command needs only stdlib Python.
+      # It is independently pinnable by fleet; no private configuration is copied.
+      upgradeFor = pkgs:
+        let archive = archiveFor pkgs;
+        in pkgs.runCommand "archive-upgrade" {
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+          passthru.fleetArchive = fleetArchive;
+        } ''
+          mkdir -p $out/share/archive/migration $out/share/archive/enrich $out/bin
+          cp ${self}/migration/upgrade.py $out/share/archive/migration/
+          cp ${self}/enrich/adapter.py $out/share/archive/enrich/
+          cp -r ${self}/spec ${self}/LICENSES $out/share/archive/
+          makeWrapper ${pkgs.python3}/bin/python3 $out/bin/archive-upgrade \
+            --add-flags $out/share/archive/migration/upgrade.py \
+            --prefix PATH : ${pkgs.lib.makeBinPath [ archive pkgs.git pkgs.git-annex ]} \
+            --set ARCHIVE_UPGRADE_ARCHIVE ${archive}/bin/archive \
+            --set ARCHIVE_UPGRADE_DOOR ${archive}/bin/door \
+            --set ARCHIVE_GIT_EXECUTABLE ${pkgs.git}/bin/git \
+            --set ARCHIVE_GIT_ANNEX_EXECUTABLE ${pkgs.git-annex}/bin/git-annex
+        '';
+
       # The Python parts and commands for World, the relay, enrichment, and
       # the fixture. The relay reads enrich/derived.py, the derived-media layout,
       # and reports ARCHIVE_COMMIT and ARCHIVE_BUILD on /health (ADR 0114).
@@ -155,10 +177,10 @@
           enrichPython = enrichPythonFor pkgs;
         in pkgs.runCommand "archive-tools" { nativeBuildInputs = [ pkgs.makeWrapper ]; } ''
           mkdir -p $out/share/archive $out/bin
-          cp -r ${self}/world ${self}/relay ${self}/fixture ${self}/enrich ${self}/capture ${self}/spec ${self}/LICENSES $out/share/archive/
+          cp -r ${self}/world ${self}/relay ${self}/fixture ${self}/enrich ${self}/capture ${self}/migration ${self}/spec ${self}/LICENSES $out/share/archive/
           chmod -R u+w $out/share/archive
           rm -f $out/share/archive/fixture/test_*.py $out/share/archive/enrich/test_*.py $out/share/archive/enrich/support.py \
-            $out/share/archive/capture/test_*.py
+            $out/share/archive/capture/test_*.py $out/share/archive/migration/test_*.py
           rm -rf $out/share/archive/world/tests $out/share/archive/relay/tests $out/share/archive/enrich/tests
           wrap() {
             makeWrapper $1/bin/python3 $out/bin/$2 \
@@ -174,6 +196,13 @@
           wrap ${python} relay relay/relay.py
           wrap ${python} archive-fixture fixture/build.py
           wrap ${python} archive-fixture-serve fixture/serve.py
+          makeWrapper ${python}/bin/python3 $out/bin/archive-legacy-backfill \
+            --add-flags "-m migration.legacy_backfill" \
+            --prefix PYTHONPATH : $out/share/archive \
+            --prefix PATH : ${pkgs.lib.makeBinPath [ archive pkgs.git pkgs.git-annex ]} \
+            --set-default ARCHIVE_GIT_EXECUTABLE ${pkgs.git}/bin/git \
+            --set-default ARCHIVE_GIT_ANNEX_EXECUTABLE ${pkgs.git-annex}/bin/git-annex
+          ln -s ${upgradeFor pkgs}/bin/archive-upgrade $out/bin/archive-upgrade
           # The capture import runs enrich and media with its own interpreter.
           wrap ${enrichPython} enrich-media enrich/media.py
           wrap ${enrichPython} enrich enrich/enrich.py
@@ -191,6 +220,12 @@
         {
           default = archive;
           inherit archive tools;
+          upgrade = upgradeFor pkgs;
+          deployment = pkgs.symlinkJoin {
+            name = "archive-deployment";
+            paths = [ archive tools ];
+            passthru.fleetArchive = fleetArchive;
+          };
           # The interpreter enrich and capture run on (matchPythonFor where
           # an Essentia wheel exists).
           enrich-python = enrichPythonFor pkgs;
