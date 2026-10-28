@@ -14,6 +14,32 @@ the bank was deleted.
 All JSON is UTF-8. All binary numbers are little-endian. Digests are written
 `sha256:` followed by 64 lower-case hexadecimal digits.
 
+## Explicit proposal regions
+
+`enrich propose --artifact <id> --region <start>:<end>:<rate> --proposers notes`
+reads only the selected region's entries, using the same extractor configuration
+as the extraction command. Bounds are samples at the selected stream's sample
+rate and must lie inside that stream. It selects the region's own stem entry
+and its placed measurements even when whole-recording entries already exist;
+note samples in the proposal are absolute stream samples. A missing region
+entry is reported, without falling back to a whole entry. The request does not
+extract audio or change admission, tuning or source precedence.
+
+For example, after measuring a region with `extract.py run stems --region
+32000:96000:16000` and `extract.py run vocal-contour --from stems/vocals --region
+32000:96000:16000` (each also given the content, bank and configured model
+parameters), use the same region, bank and config with `enrich propose`. Repeating
+the proposal on unchanged features returns `unchanged`.
+
+This explicit request is separate from automatic proposal fallback under
+[ADR 0112](decisions/0112-bulk-import-at-scale.md): ordinary proposals and backfill
+still prefer a successful whole-recording result. Backfill's composition selects
+methods and feature targets, but does not declare a proposal-region preference;
+its proposal rounds carry Artifact identifiers, not explicit regions. Merely
+adding a regional contour therefore does not replace a whole-recording result.
+Use the explicit command for that region; no implicit regional scheduling or
+ranking policy is added here. `--region` cannot be combined with `--all`.
+
 ## Canonical JSON
 
 Keys and parameter digests are computed over **canonical JSON**, which is
