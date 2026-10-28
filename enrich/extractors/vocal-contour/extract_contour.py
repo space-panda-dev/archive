@@ -19,9 +19,6 @@ import subprocess
 import sys
 from typing import Any
 
-for _key in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'NUMBA_NUM_THREADS'):
-    os.environ[_key] = '2'
-import numpy as np
 
 ENRICH = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ENRICH))
@@ -33,6 +30,12 @@ RWBD_SHA = '0bc2d42a6d4b7a05436deb937e2deda1c12de49e5687cfda0bdf6a430120dcd2'
 RUNTIME = {'pesto-pitch': '2.0.1', 'torch': '2.14.1+cpu', 'numpy': '2.5.4',
            'scipy': '1.18.1', 'librosa': '1.0.0', 'PyYAML': '6.0.3'}
 PYTHON = '3.12.15'
+
+
+def _load_numpy() -> None:
+    """Numerical dependencies are lazy: importing the adapter is inert."""
+    global np
+    import numpy as np
 
 
 def parameters() -> dict[str, Any]:
@@ -79,6 +82,7 @@ def settings(given: dict[str, Any]) -> dict[str, Any]:
 
 
 def decode(path: str, start: float, duration: float, rate: int) -> np.ndarray:
+    _load_numpy()
     args = ['ffmpeg', '-nostdin', '-hide_banner', '-nostats', '-loglevel', 'error', '-threads', '1',
             '-ss', str(start), '-t', str(duration), '-i', path, '-map', '0:a:0', '-ac', '1',
             '-ar', str(rate), '-f', 'f32le', '-']
@@ -90,6 +94,7 @@ def decode(path: str, start: float, duration: float, rate: int) -> np.ndarray:
 
 class Models:
     def __init__(self, config: dict[str, Any]):
+        _load_numpy()
         import importlib.metadata
         import types
         import torch
@@ -165,6 +170,7 @@ class Models:
 
 
 def levels(audio: np.ndarray, rows: int) -> np.ndarray:
+    _load_numpy()
     cumulative = np.r_[0., np.cumsum(audio.astype(np.float64) ** 2)]
     centres = np.arange(rows) * 160
     lo, hi = np.clip(centres - 160, 0, len(audio)), np.clip(centres + 160, 0, len(audio))
@@ -172,6 +178,7 @@ def levels(audio: np.ndarray, rows: int) -> np.ndarray:
 
 
 def aligned(x: np.ndarray, n: int) -> np.ndarray:
+    _load_numpy()
     out = np.zeros(n, dtype=x.dtype)
     out[:min(n, len(x))] = x[:n]
     return out
@@ -179,6 +186,7 @@ def aligned(x: np.ndarray, n: int) -> np.ndarray:
 
 def measure(path: str, models: Models) -> dict[str, Any]:
     """No whole-recording tensor: contexts bounded at30s, outputs at10ms."""
+    _load_numpy()
     frame_parts, attacks, notes, windows = [], [], [], []
     start = 0
     while True:
@@ -225,6 +233,7 @@ def measure(path: str, models: Models) -> dict[str, Any]:
 
 def json_values(value: Any) -> Any:
     """NaN denotes missing raw tracker pitch, never a JSON pitch event."""
+    _load_numpy()
     if isinstance(value, np.ndarray):
         return json_values(value.tolist())
     if isinstance(value, np.generic):
@@ -239,6 +248,7 @@ def json_values(value: Any) -> Any:
 
 
 def write(output: Path, measured: dict[str, Any], config: dict[str, Any], software: list[dict[str, str]]) -> None:
+    _load_numpy()
     f = measured['frames']
     columns = {'pitch': ('new_render_midi', '<f4'), 'voiced': ('voiced', 'u1'),
                'held': ('held', 'u1'), 'confidence': ('confidence', '<f4')}
@@ -277,4 +287,8 @@ def main(argv: list[str]) -> int:
     return 0
 
 if __name__ == '__main__':
+    # The two-thread model policy belongs to this executable process only.
+    # Pin before main loads NumPy; library imports preserve their caller's policy.
+    for key in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'NUMBA_NUM_THREADS'):
+        os.environ[key] = '2'
     raise SystemExit(main(sys.argv[1:]))

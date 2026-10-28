@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
+import subprocess
 from pathlib import Path
 import shutil
 import sys
@@ -82,6 +84,50 @@ class VocalExtractor(unittest.TestCase):
             with redirect_stdout(out):
                 self.assertEqual(extract.main(argv), 0)
             self.assertEqual(json.loads(out.getvalue())['extractors']['vocal-contour']['status'], 'hit')
+
+    def test_import_preserves_matcher_thread_policy_and_does_not_load_numpy(self):
+        # Start without NumPy or cover imported: adapter discovery must not
+        # choose a numerical runtime for unrelated commands in the process.
+        script = """
+import importlib.util, os, sys
+from pathlib import Path
+path = Path('extractors/vocal-contour/extract_contour.py')
+spec = importlib.util.spec_from_file_location('extract_contour', path)
+program = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(program)
+assert 'numpy' not in sys.modules, 'adapter import eagerly loaded NumPy'
+for key in ('OPENBLAS_NUM_THREADS', 'VECLIB_MAXIMUM_THREADS', 'OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'NUMBA_NUM_THREADS'):
+    assert os.environ[key] == '1', (key, os.environ[key])
+import cover
+assert cover.blas_runtime().endswith(', 1 thread'), cover.blas_runtime()
+assert cover.software()
+print('one-thread matcher preserved')
+"""
+        env = dict(os.environ)
+        for key in ('OPENBLAS_NUM_THREADS', 'VECLIB_MAXIMUM_THREADS', 'OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'NUMBA_NUM_THREADS'):
+            env[key] = '1'
+        completed = subprocess.run([sys.executable, '-c', script], cwd=DIRECTORY.parents[1],
+                                   env=env, text=True, capture_output=True)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.strip(), 'one-thread matcher preserved')
+
+    def test_cli_selects_two_threads_without_import_time_model_loading(self):
+        script = """
+import os, runpy, sys
+sys.argv = ['extract_contour.py']
+try:
+    runpy.run_path('extractors/vocal-contour/extract_contour.py', run_name='__main__')
+except SystemExit as exc:
+    assert exc.code == 1  # No request: usage fails before model loading.
+for key in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'NUMBA_NUM_THREADS'):
+    assert os.environ[key] == '2', (key, os.environ[key])
+assert 'numpy' not in sys.modules
+print('two-thread CLI policy preserved')
+"""
+        completed = subprocess.run([sys.executable, '-c', script], cwd=DIRECTORY.parents[1],
+                                   text=True, capture_output=True)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.strip(), 'two-thread CLI policy preserved')
 
     def test_operator_model_configuration_fails_closed(self):
         with self.assertRaisesRegex(ValueError, 'configure'):
