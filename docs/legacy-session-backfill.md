@@ -1,6 +1,6 @@
 # Legacy session backfill
 
-ADR [0121](decisions/0121-legacy-session-backfill.md) governs this explicit
+ADR [0124](decisions/0124-legacy-session-backfill.md) governs this explicit
 operator procedure. The planner reads the archive through `archive export`;
 its output is operational and regenerable. The admitted source snapshot and
 translation Claims are durable evidence. Rehearse on scratch and review the

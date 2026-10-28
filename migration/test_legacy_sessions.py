@@ -1,4 +1,4 @@
-"""Legacy grouping, ambiguity and real Door provenance proof (ADR 0121)."""
+"""Legacy grouping, ambiguity and real Door provenance proof (ADR 0124)."""
 import copy
 import json
 import os

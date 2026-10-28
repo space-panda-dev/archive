@@ -169,7 +169,9 @@ extractor run to a Spool worker and files what comes back the same way
 It needs only the standard library; each extractor brings its own
 environment, named by configuration. Its graph is the few extractors one
 content needs, run in order on one machine; handing a run to another machine
-is Spool's job and is not wired. A claim made from features goes through the
+is Spool's job. Internal [composition](enrichment-composition.md) selects features and methods
+through shared proposer input resolution (ADR 0120); callers and runners retain
+execution. A claim made from features goes through the
 adapter and Door like any enrichment result: `enrich propose`'s proposers
 read the bank, never audio, and propose each one's claims with a derivation
 run ([ADR 0079](decisions/0079-machine-harmony-claims.md)); they check each

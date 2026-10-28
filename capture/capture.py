@@ -59,8 +59,6 @@ PARTS_CONTRACT = ("archive.claim/session_parts", "1")
 START_CONTRACT = ("archive.claim/capture_start", "1")
 SPANS_CONTRACT = ("archive.claim/span_suggestions", "1")
 WINDOW_MATCH_CONTRACT = ("archive.claim/work_match", "3")
-# What the default proposers make (ADR 0079), needed only with a bank.
-PROPOSED_CONTRACTS = (("archive.claim/chord_stacks", "2"), ("archive.claim/meter_layers", "2"))
 # The span detector's presets (enrich/detector.py), named here so a wrong one
 # is refused before anything is staged.
 DETECTOR_PRESETS = ("jam", "show", "studio")
@@ -452,7 +450,7 @@ def run(arguments: list[str], cwd: Path, what: str, env: dict[str, str]) -> str:
 
 
 def enrich(command: str, artifact: str, args: argparse.Namespace, env: dict[str, str],
-           export: Path | None = None, bank: Path | None = None) -> tuple[int, dict]:
+           export: Path | None = None, bank: Path | None = None, proposers: str | None = None) -> tuple[int, dict]:
     """Run one `enrich` command on an Artifact (on a span suggestions claim
     for `match-windows`); 0 and 3 are answers, anything else fails. With
     ``export``, the command reads that export of the archive's current
@@ -472,6 +470,8 @@ def enrich(command: str, artifact: str, args: argparse.Namespace, env: dict[str,
             arguments += ["--profile-cache", str(args.profile_cache)]
     if command == "propose":
         arguments += ["--bank", str(bank)]
+        if proposers is not None:
+            arguments += ["--proposers", proposers]
         if getattr(args, "extract_config", None):
             arguments += ["--config", str(args.extract_config)]
     if export is not None:
@@ -576,8 +576,24 @@ def chain(sessions: list[Session], args: argparse.Namespace, env: dict[str, str]
                 return enrich(*arguments, **options)
             except CaptureError as exc:
                 raise propose_step.StepError(str(exc)) from exc
+        def selection_evidence(artifact: dict[str, Any]) -> dict[str, Any]:
+            # Explain the same refreshed ArchiveReader the proposal stage uses.
+            reader.refresh(args.archive_command, env)
+            selected = reader.heads.get(artifact["object_id"])
+            pin = lambda record: {"id": record["object_id"], "revision_id": record["revision_id"]}
+            streams = [record for record in reader.heads.values()
+                       if any(c.get("id") == "archive.claim/audio_stream" for c in record.get("contracts", []))
+                       and selected is not None and any(
+                           r.get("role") == "artifact" and r.get("id") == selected["object_id"]
+                           and r.get("revision_id") == selected["revision_id"] for r in record.get("refs", []))]
+            return {"snapshot": reader.snapshot, "artifact": pin(selected) if selected else None,
+                    "streams": [{**pin(record), "sample_rate": record["payload"].get("sample_rate"),
+                                 "sample_count": record["payload"].get("sample_count"),
+                                 "stream_index": record["payload"].get("stream_index")} for record in streams]}
+
         try:
-            propose_step.propose_all(primary, args, env, propose, content_path, refreshed_export)
+            propose_step.propose_all(primary, args, env, propose, content_path, refreshed_export,
+                                     selection_evidence)
         except propose_step.StepError as exc:
             raise CaptureError(str(exc)) from exc
 
@@ -683,15 +699,30 @@ def describe(session: Session) -> dict[str, Any]:
 
 
 def import_directory(args: argparse.Namespace, grammars: Sequence[Any]) -> dict[str, Any]:
+    try:
+        with propose_step.extract.frozen_config(args, "extract_config"):
+            return _import_directory(args, grammars)
+    except propose_step.extract.RunError as exc:
+        raise CaptureError(str(exc)) from exc
+
+
+def _import_directory(args: argparse.Namespace, grammars: Sequence[Any]) -> dict[str, Any]:
     for name in ("archive", "staging", "derived_media", "directory", "bank", "extract_config"):
         if getattr(args, name, None) is not None:
             setattr(args, name, Path(os.path.realpath(getattr(args, name))))
     check_places(args)
     env = environment()
+    selected_contracts = ()
+    if propose_step.bank_root(args, env) is not None:
+        try:
+            _, _, chosen = propose_step.configured_selection(args)
+            selected_contracts = propose_step.contracts(chosen)
+        except propose_step.StepError as exc:
+            raise CaptureError(str(exc)) from exc
     reader = adapter.ArchiveReader(args.archive, args.archive_command, env)
     # Refuse an archive the chain cannot finish in before anything is staged:
     # an import whose sessions are committed is not rerun.
-    proposing = PROPOSED_CONTRACTS if propose_step.bank_root(args, env) is not None else ()
+    proposing = selected_contracts
     for contract in (PARTS_CONTRACT, START_CONTRACT, SPANS_CONTRACT, WINDOW_MATCH_CONTRACT, *proposing):
         reader.citation(contract)
     files, ignored = read_directory(args.directory)

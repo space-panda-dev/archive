@@ -2,7 +2,7 @@
 
 Status: proposed implementation and proof scope (2026-10-25). This document
 accepts no new meaning and authorizes no deployment or archive mutation.
-See [ADR 0120](../decisions/0120-session-ensemble-association.md) for the
+See [ADR 0123](../decisions/0123-session-ensemble-association.md) for the
 accepted ensemble association and [ADR 0107](../decisions/0107-multi-device-and-live.md)
 for accepted capture semantics.
 
@@ -43,13 +43,13 @@ name must never regroup or reorder recordings.
    amendment already adopts known-but-unparented Artifacts into sessions
    using recorder grammar grouping. That does not preserve a distinct
    legacy session grouping or its source provenance. ADR 0107's parts-only
-   path requires an existing session. [ADR 0121](../decisions/0121-legacy-session-backfill.md) requires the
+   path requires an existing session. [ADR 0124](../decisions/0124-legacy-session-backfill.md) requires the
    legacy grouping and file order, source provenance and explicit review of
    ambiguous groups before proposing those records. Follow ADR 0048's first-part identity once the grouping is
    established. Do not make a changed label or a repeat import perform this
    migration implicitly. [Open questions](../open-questions.md) tracks this
    boundary.
-6. **Release the accepted ensemble decision.** Follow ADR 0120;
+6. **Release the accepted ensemble decision.** Follow ADR 0123;
    neither client config nor a membership-derived band satisfies the gate.
 
 The initial 0.0.11 code inspection found neither `capture_start` in its

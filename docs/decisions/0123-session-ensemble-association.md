@@ -1,4 +1,8 @@
-# 0120. A session's ensemble is an explicit assertion
+# 0123. A session's ensemble is an explicit assertion
+
+Numbering note: accepted as ADR 0120 on 2026-10-25; mechanically renumbered
+to ADR 0123 when integrating main, preserving its published ADR 0120.
+The accepted decision and operator approval are unchanged.
 
 Status: accepted (operator, 2026-10-25). The operator approved explicit,
 operator-only session ensemble assertions separate from performance credits,
@@ -63,7 +67,7 @@ unknown and unresolved conflict explicit rather than choose a favourite.
 
 The same relation and reader apply to old and newly captured sessions.
 This decision adds no regrouping or reordering interface. Missing-session
-reconstruction follows [ADR 0121](0121-legacy-session-backfill.md).
+reconstruction follows [ADR 0124](0124-legacy-session-backfill.md).
 
 ## Consequences
 

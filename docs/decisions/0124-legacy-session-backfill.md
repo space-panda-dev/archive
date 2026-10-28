@@ -1,4 +1,8 @@
-# 0121. Backfill missing sessions from the legacy grouping and file order
+# 0124. Backfill missing sessions from the legacy grouping and file order
+
+Numbering note: accepted as ADR 0121 on 2026-10-25; mechanically renumbered
+to ADR 0124 when integrating main, preserving its published ADR 0120.
+The accepted decision and operator approval are unchanged.
 
 Status: accepted (operator, 2026-10-25). The operator approved reconstruction
 from the legacy grouping and file order, with source provenance and explicit
@@ -46,7 +50,7 @@ Capture-start claims are separate evidence under ADR 0107. A date already
 asserted by a legacy source can be translated with its source provenance;
 parsing a display label or substituting Door's admission time is forbidden.
 A missing date remains unknown. Session ensemble associations follow
-[ADR 0120](0120-session-ensemble-association.md); no band is inferred from
+[ADR 0123](0123-session-ensemble-association.md); no band is inferred from
 membership or from which relay served the proposal.
 
 The backfill is an explicit operator command and reviewed proposal batch,

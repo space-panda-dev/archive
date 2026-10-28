@@ -1,4 +1,4 @@
-"""Read-only legacy session inventory and Door proposal planner (ADR 0121).
+"""Read-only legacy session inventory and Door proposal planner (ADR 0124).
 
 The source is an admitted JSON snapshot with explicit groups and file order;
 no recorder grammar, timestamps, directory order, or display-label parsing.

@@ -1,4 +1,4 @@
-"""World re-check of ADR 0121's source-to-session provenance contract."""
+"""World re-check of ADR 0124's source-to-session provenance contract."""
 from __future__ import annotations
 import re
 

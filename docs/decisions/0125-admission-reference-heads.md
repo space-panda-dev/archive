@@ -1,4 +1,8 @@
-# 0122. An admission can require its referenced objects' heads to stay unchanged
+# 0125. An admission can require its referenced objects' heads to stay unchanged
+
+Numbering note: accepted as ADR 0122 on 2026-10-25; mechanically renumbered
+to ADR 0125 when integrating main, preserving its published ADR 0120.
+The accepted decision and operator approval are unchanged.
 
 Status: accepted (operator, 2026-10-25). Amends
 [ADR 0023](0023-admission-and-staging.md) and specification D-4.

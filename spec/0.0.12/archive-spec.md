@@ -393,7 +393,7 @@ content-location write. Unguarded historical references remain permitted.
 Guard structure is validated before complete-batch retry recognition; a complete
 previously committed batch MUST return its existing revisions without checking
 reference expectations against later heads and without writing anything.
-These optional preconditions are operational, not admitted records (ADR 0122).
+These optional preconditions are operational, not admitted records (ADR 0125).
 
 Door MUST validate the complete proposal under one archive lock before writing
 a record. It MUST use git-annex to obtain each key from the configured staging
@@ -2810,7 +2810,7 @@ meaning; this release introduces no automatic session reconstruction.
 
 ## D-21. Session ensembles (0.0.12)
 
-`archive.claim/session_ensemble` version 1 (ADR 0120) is an empty-payload
+`archive.claim/session_ensemble` version 1 (ADR 0123) is an empty-payload
 Claim pinning exactly one `recording_session` Entity revision in role
 `session` and one `organisation` Entity revision in role `ensemble`.
 `x-archive-operator-agent`, the boolean `true`, requires that its agent is
@@ -2824,7 +2824,7 @@ keeps its session object and agent, while allowing a corrected ensemble.
 A reader joins a renamed session by object identity while retaining the
 assertion's exact pins. The relay's member contracts are unchanged.
 
-### D-22. Legacy session provenance (ADR 0121)
+### D-22. Legacy session provenance (ADR 0124)
 
 Specification 0.0.12 adds `archive.migration/session_translation` version 1.
 Its operator-asserted Claim pins one admitted source snapshot Artifact as
