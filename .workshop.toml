@@ -144,7 +144,7 @@ ARCHIVE_UPGRADE_TEST_PACKAGE="$(nix build --impure --no-link --print-out-paths -
             "__pycache__" ".venv" ".store" "cabal.project.local" ])
         && !(builtins.match ".*\\\\.pyc" (builtins.baseNameOf path) != null);
     };
-  in (builtins.getFlake ("path:" + toString source)).packages.${builtins.currentSystem}.deployment
+  in (builtins.getFlake (builtins.unsafeDiscardStringContext ("path:" + toString source))).packages.${builtins.currentSystem}.deployment
 ')"
 test -n "$ARCHIVE_UPGRADE_TEST_PACKAGE"
 for binary in archive door relay archive-upgrade archive-legacy-backfill; do test -x "$ARCHIVE_UPGRADE_TEST_PACKAGE/bin/$binary"; done
