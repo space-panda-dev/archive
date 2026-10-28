@@ -114,7 +114,7 @@ SPOOL_CAPABILITY = r"[A-Za-z0-9._-]+@[A-Za-z0-9.]+"
 # digest here. Nothing else catches an edit that keeps the key.
 SHIPPED = {
     "vocal-contour": {"version": "1",
-                      "code": "sha256:ac9d5cac873ede610691c541bd9da86b88c3f7b5aa565ddb16fff9aff7fbcb2e",
+                      "code": "sha256:26545fd5151a85ab4a7a33c8104481c7fcef087897b9c6af162ad2cbcab89364",
                       "outside": {"vocal_contour.py": "sha256:0b178399254c7f0a41c0fedc3804e557e63f9b3848f026fb31eea957e7331cbf"}},
     "frames": {"version": "1",
                "code": "sha256:8d05ebb444442eb4b08a516df7f2d03f403c4ab56aef7a74aff16446592a3282",
