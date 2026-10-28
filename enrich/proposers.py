@@ -1075,11 +1075,13 @@ def propose_notes(context: Context) -> Proposal | Lacking:
     if contour is not None:
         read(proposal, context, contour, "notes")
         read(proposal, context, contour, "provenance")
-        tuning, tuning_from = tuning_of(proposal, context)
+        # This method reads measured A440 pitches, not a selected tuning claim.
+        # A tonal estimate is neither an operator-selected grid nor permission
+        # to retune the result. Keep that estimate out of this derivation.
         found = []
         for onset, offset, item in timed_spans(contour.items("notes"), context,
                                               "vocal-contour/notes", shift_of(contour, context)):
-            value = Decimal(decimal_text(item["value"])) - tuning / 100
+            value = Decimal(decimal_text(item["value"]))
             pitch = int(value.quantize(Decimal(1), ROUND_HALF_EVEN))
             if not 0 <= pitch <= 127:
                 raise ProposerError("vocal-contour/notes has a pitch outside MIDI 0..127")
@@ -1088,7 +1090,12 @@ def propose_notes(context: Context) -> Proposal | Lacking:
             return Lacking(detail="vocal-contour of the vocal stem holds no note inside the stream")
         proposal.settings.update(notes="vocal-contour/notes: landing targets, moving pitch and audio-predicted "
                                  "articulations; no charts, lyrics, key or beat-grid conditioning",
-                                 tuning_cents=format(tuning, "f"), tuning_from=tuning_from,
+                                 tuning_policy={"grid": "12-TET, A4 = 440 Hz",
+                                                "adjustment_cents": "0",
+                                                "selection": "fixed uncorrected measured-pitch reading",
+                                                "rounding": "nearest MIDI step, half to even",
+                                                "cents": "not emitted; no tuning claim selected",
+                                                "contour": "bank pitch and note features remain unchanged"},
                                  bleed="The contour's declared voicing is preserved; no legacy octave folding, "
                                        "bass-match deletion or same-pitch bridging is applied afterward.")
         levels_from = contour
@@ -1224,7 +1231,7 @@ PROPOSERS: dict[str, Proposer] = {proposer.id: proposer for proposer in (
     Proposer("key", "2", propose_key, _direct(KEY_REGIONS, "tonal", ("key_regions",))),
     Proposer("tuning", "1", propose_tuning, _direct(TUNING, "tonal",
         ("tuning_cents", "tuning_confidence", "tuning_drift", "tuning_windows"))),
-    Proposer("notes", "4", propose_notes, Requirement((NOTES,), ("whole", "region"),
+    Proposer("notes", "5", propose_notes, Requirement((NOTES,), ("whole", "region"),
         (_path("vocal-contour", (FeatureRead("stems", ("vocals",)),
                                 FeatureRead("vocal-contour", ("notes", "provenance"), "stems/vocals"))),
          _path("vocal-pesto", (FeatureRead("stems", ("vocals",)),

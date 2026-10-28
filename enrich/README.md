@@ -680,6 +680,12 @@ fractional pitch, held mask, voicing and articulation proposals remain in the
 bank beside the lossy note reading. Unresolved moving regions receive an
 explicitly uncertain note interpretation rather than disappearing as silence.
 
+For this method, notes proposer version 5 rounds measured A440 pitch to the
+nearest MIDI step, half to even, and records a zero-adjustment tuning policy.
+It does not select or subtract a `tonal` estimate. No cents are emitted without
+a selected tuning claim (ADR 0086); the stored contour and its practice audio
+remain unchanged. Selecting another tuning grid is a separate, explicit reading.
+
 The operator provisions the existing `${f0-python}` runtime and model sources;
 this program installs and downloads nothing. Set the `vocal-contour`
 parameters in the usual extractor configuration: `rmvpe_source`,
