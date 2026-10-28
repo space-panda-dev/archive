@@ -100,6 +100,7 @@ data ProposalManifest = ProposalManifest
   , manifestIdentities :: [IdentityAllocation]
   , manifestContents :: [ContentDeclaration]
   , manifestExpectedHeads :: [ExpectedHead]
+  , manifestExpectedSnapshot :: Maybe Text
   , manifestExpectedReferenceHeads :: [ExpectedHead]
   } deriving (Eq, Show)
 
@@ -385,6 +386,7 @@ parseManifest kind (Object fields) = do
         AdmissionProposal -> ["protocol", "records", "identities", "contents", "expected_heads"]
           <> ["expected_reference_heads" | KeyMap.member "expected_reference_heads" fields]
         TransitionProposal -> ["protocol", "records", "identities", "expected_heads"]
+          <> ["expected_snapshot" | KeyMap.member "expected_snapshot" fields]
   requireExactKeys "proposal manifest" expected fields
   protocol <- requiredText "protocol" fields
   validateProtocol kind protocol
@@ -397,6 +399,11 @@ parseManifest kind (Object fields) = do
   referenceHeads <- if KeyMap.member "expected_reference_heads" fields
     then requiredArray "expected_reference_heads" fields >>= mapM parseExpectedHead
     else pure []
+  expectedSnapshot <- case KeyMap.lookup "expected_snapshot" fields of
+    Nothing -> pure Nothing
+    Just (String value) | Text.length value == 40
+      && Text.all (`elem` ("0123456789abcdef" :: String)) value -> pure (Just value)
+    _ -> Left ExpectedSnapshotInvalid
   if kind == TransitionProposal
     && (null recordValues || null identities || null expectedHeads)
     then Left TransitionArraysEmpty
@@ -405,6 +412,7 @@ parseManifest kind (Object fields) = do
       , manifestRecords = recordValues
       , manifestIdentities = identities
       , manifestContents = contents
+      , manifestExpectedSnapshot = expectedSnapshot
       , manifestExpectedHeads = expectedHeads
       , manifestExpectedReferenceHeads = referenceHeads
       }

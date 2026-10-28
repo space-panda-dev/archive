@@ -127,7 +127,7 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 | file | lines |
 |---|---|
 | `door/src/Archive/Door/AdmissionDryRun.hs` | 152 |
-| `door/src/Archive/Door/TransitionDryRun.hs` | 321 |
+| `door/src/Archive/Door/TransitionDryRun.hs` | 327 |
 | `door/src/Archive/Door/Contracts.hs` | 332 |
 | `door/src/Archive/Door/RecordCommit.hs` | 583 |
 | `door/src/Archive/Door/Bootstrap.hs` | 471 |
