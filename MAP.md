@@ -477,6 +477,15 @@ cache.
 
 ## Legacy session backfill
 
+`migration/legacy_backfill.py` is the retained dry-run/apply CLI. It checks
+published 0.0.12 pins, reuses or drafts source evidence and plans one atomic
+source-and-grouping admission. Default dry-run writes only its operational
+output package; explicit apply validates that same package before staging.
+`migration/test_legacy_backfill.py` proves the CLI through real Door with
+synthetic evidence: no dry-run archive/staging writes, partial missing-record
+results, stale guards, exact revisions and quiet retries; suite `migration`.
+The operator procedure is [docs/legacy-session-backfill.md](docs/legacy-session-backfill.md).
+
 `migration/legacy_sessions.py` inventories an admitted explicit grouping
 snapshot and writes a reviewed Door proposal (ADR 0124).
 `migration/test_legacy_sessions.py` covers ambiguity, exact pins, ordering,
