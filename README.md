@@ -22,6 +22,9 @@ elsewhere and is governed by the specification kept here.
 > explicitly implemented, the material below describes commitments rather
 > than running software.
 
+The [fleet package contract](fleet.toml) describes the immutable tools package;
+host placement and private operational configuration remain fleet policy.
+
 ## Executable configuration
 
 Before running Archive or Door commands that use Git, set

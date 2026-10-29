@@ -39,6 +39,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "world"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "enrich"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import bank  # noqa: E402
+import extract  # noqa: E402
+import enrichment_requests  # noqa: E402
+import composition  # noqa: E402
+import propose  # noqa: E402
+import proposers  # noqa: E402
 import derived  # noqa: E402
 import world  # noqa: E402
 from world import documents as document_rules  # noqa: E402
@@ -78,7 +84,7 @@ TEMPLATE_ROUTES = {
     "/exports/{key}": "GET",
 }
 ROUTES = {"/health": "GET", "/metrics": "GET", "/world/query": "POST", **{path: "POST" for path in DOOR_ROUTES},
-          "/world/views": "GET", "/world/view": "POST", "/documents/stage": "POST", "/exports": "POST",
+          "/world/views": "GET", "/world/view": "POST", "/enrich/request": "POST", "/documents/stage": "POST", "/exports": "POST",
           **TEMPLATE_ROUTES}
 TEMPLATES = [(template, re.compile(re.sub(r"\\\{([a-z]+)\\\}", "([^/?#]*)", re.escape(template))),
               re.findall(r"\{([a-z]+)\}", template)) for template in TEMPLATE_ROUTES]
@@ -142,7 +148,7 @@ CONFIG_FIELDS = {
     "writes", "role", "origins", "callers", "query_timeout_seconds", "max_rows",
     "query_workers", "cache_bytes", "media_root", "circle", "bank_root", "bank_parameters",
     "practice_features", "renderers", "exporters", "render_timeout_seconds", "export_timeout_seconds",
-    "bank_scheduler",
+    "bank_scheduler", "enrichment_config",
 }
 # Answers smaller than this go out uncompressed: gzip would not pay for itself.
 GZIP_MIN_BYTES = 1024
@@ -182,6 +188,8 @@ class Config:
     # requests (ADR 0112): a feature not made is then asked for and answered
     # as queued; without one it stays not made.
     bank_scheduler: bool = False
+    # Canonical operator enrichment policy; the relay only files priority requests.
+    enrichment_config: Path | None = None
     renderers: dict[str, Any] = field(default_factory=dict)
     exporters: dict[str, Any] = field(default_factory=dict)
     render_timeout_seconds: float = 3600.0
@@ -213,7 +221,7 @@ def load_config(path: Path) -> Config:
     for field in ("archive_root", "door_socket", "world_store", "staging"):
         if not isinstance(data.get(field), str):
             raise ValueError(f"{field} must be a path")
-    for optional in ("media_root", "bank_root"):
+    for optional in ("media_root", "bank_root", "enrichment_config"):
         if optional in data and not isinstance(data[optional], str):
             raise ValueError(f"{optional} must be a path")
     access.check_config(callers, data.get("circle"))
@@ -226,6 +234,9 @@ def load_config(path: Path) -> Config:
         raise ValueError("bank_scheduler must be true or false")
     if data.get("bank_scheduler") and "bank_root" not in data:
         raise ValueError("bank_scheduler needs a bank_root whose requests it makes")
+    if "enrichment_config" in data:
+        if "bank_root" not in data or not Path(data["enrichment_config"]).is_absolute():
+            raise ValueError("enrichment_config needs a bank_root and an absolute policy path")
     practice.Features(Path(data["bank_root"]) if "bank_root" in data else None, tuple(features),
                       data.get("bank_parameters"))
     renderers = practice.check_renderers(data.get("renderers"), "renderers")
@@ -252,6 +263,7 @@ def load_config(path: Path) -> Config:
         bank_parameters=data.get("bank_parameters"),
         practice_features=tuple(features),
         bank_scheduler=data.get("bank_scheduler", False),
+        enrichment_config=Path(data["enrichment_config"]) if "enrichment_config" in data else None,
         renderers=renderers,
         exporters=exporters,
         render_timeout_seconds=_seconds(data, "render_timeout_seconds", 3600.0),
@@ -399,6 +411,12 @@ def _query_worker(store_root: str, max_rows: int, requests: Any) -> None:
             if message[0] == VIEW:
                 requests.send(_view_answer(projection, selected, held, *message[2:]))
                 continue
+            if message[0] == RECORDS:
+                if selected not in held:
+                    held.clear()
+                    held[selected] = view_records.records(projection)
+                requests.send(("ok", selected, projection.snapshot, held[selected]))
+                continue
             if message[0] == METRICS:
                 if selected not in counted:
                     if selected not in held:
@@ -431,6 +449,7 @@ def _query_worker(store_root: str, max_rows: int, requests: Any) -> None:
 
 VIEW = "\0view"
 METRICS = "\0metrics"
+RECORDS = "\0records"
 
 
 def _view_answer(projection: Any, selected: str, held: dict[str, list[dict[str, Any]]], request: Any,
@@ -527,6 +546,14 @@ class QueryPool:
         worker = self.idle.get()
         try:
             return worker.ask((VIEW, version, request, caller, readable), "view")
+        finally:
+            self.idle.put(worker)
+
+    def records(self, version: int) -> tuple[str, str, list[dict[str, Any]]]:
+        """Complete records from one selected generation, for operator requests."""
+        worker = self.idle.get()
+        try:
+            return worker.ask((RECORDS, version), "enrichment status")
         finally:
             self.idle.put(worker)
 
@@ -767,6 +794,24 @@ class Relay(Served):
     def __init__(self, config: Config):
         private_directory(config.staging)
         self.config = config
+        self.enrichment_policy = None
+        self.enrichment_bank = None
+        if config.enrichment_config is not None:
+            try:
+                policy = extract.load_config(str(config.enrichment_config))
+                catalog = extract.catalog_of(argparse.Namespace(extractors=None), policy)
+                parameters = policy.get("parameters", {})
+                catalog.check_overrides(parameters)
+                for flow in ("capture", "backfill"):
+                    composition.validate(composition.selection(policy, flow, composition.Selection()), catalog)
+            except (extract.RunError, bank.BankError, composition.CompositionError) as exc:
+                raise ValueError(f"invalid enrichment_config: {exc}") from exc
+            if config.bank_root is None:
+                raise ValueError("enrichment_config needs a bank_root")
+            if config.bank_parameters is not None and config.bank_parameters != parameters:
+                raise ValueError("bank_parameters and enrichment_config parameters differ")
+            self.enrichment_policy = policy
+            self.enrichment_bank = bank.Bank(config.bank_root, catalog, parameters)
         self.archive_id, _ = read_archive_manifest(config.archive_root)
         self.commit, self.build = served_build()
         # The operator is the one caller who is not a member (ADR 0088).
@@ -812,6 +857,51 @@ class Relay(Served):
             block["circle"] = {"destination": self.circle.destination,
                                **({"band": self.circle.band} if self.circle.band else {})}
         return block
+
+    def enrichment_request(self, body: Any, caller: Caller) -> dict[str, Any]:
+        """Ask the existing backfill for configured notes; never run a model here."""
+        if caller.capacity != "operator":
+            raise Refused("operator_only", "enrichment requests answer the operator only")
+        if not isinstance(body, dict) or set(body) != {"source", "stream", "region"}:
+            raise Refused("request_malformed", "enrichment request is {source, stream, region}")
+        for name in ("source", "stream"):
+            pin = body[name]
+            if (not isinstance(pin, dict) or set(pin) != {"id", "revision_id"}
+                    or not isinstance(pin["id"], str) or not pin["id"]
+                    or not derived.is_digest(pin["revision_id"])):
+                raise Refused("request_malformed", f"{name} must be an exact revision pin")
+        try:
+            region = None if body["region"] is None else bank.check_region(body["region"])
+        except (bank.BankError, ValueError, TypeError) as exc:
+            raise Refused("request_malformed", str(exc)) from None
+        _, snapshot, records = self.queries.records(world.PROJECTION_VERSION)
+        selected = {}
+        for name in ("source", "stream"):
+            pin = body[name]
+            selected[name] = next((r for r in records if r["object_id"] == pin["id"]
+                                  and r["revision_id"] == pin["revision_id"] and r.get("head", True)), None)
+            if selected[name] is None:
+                raise Refused("request_malformed", f"{name} is not a current revision in World")
+        source, stream = selected["source"], selected["stream"]
+        if source["shape"] != "artifact" or not any(
+                c.get("id") == "archive.claim/audio_stream" and c.get("version") == "1"
+                for c in stream.get("contracts", [])):
+            raise Refused("request_malformed", "source must be an Artifact and stream an audio_stream claim")
+        try:
+            region = enrichment_requests.validate_scope(source, stream, region)
+        except (ValueError, bank.BankError, KeyError, TypeError) as exc:
+            raise Refused("request_malformed", str(exc)) from None
+        if self.enrichment_policy is None:
+            return dict(status="not_configured", source=body["source"], stream=body["stream"],
+                        region=region, inference_region=region, requests=[], diagnostics=[])
+        try:
+            return enrichment_requests.request(self.enrichment_bank, self.enrichment_policy, source, stream,
+                                               region, records, scheduler=self.config.bank_scheduler,
+                                               asked_by=caller.agent)
+        except (bank.BankError, propose.ProposeError, proposers.ProposerError, composition.CompositionError, OSError) as exc:
+            raise Refused("internal_error", f"enrichment request could not be read or filed: {exc}") from None
+        except ValueError as exc:
+            raise Refused("request_malformed", str(exc)) from None
 
     def health(self) -> tuple[HTTPStatus, dict[str, Any]]:
         door = "reachable"
@@ -1095,6 +1185,8 @@ def make_handler(relay: Relay) -> type[BaseHTTPRequestHandler]:
                 elif route == "/world/view":
                     self._send_answer(*relay.view(self._body(), caller), caller)
                     return
+                elif route == "/enrich/request":
+                    result = relay.enrichment_request(self._body(), caller)
                 elif route == "/world/views":
                     result = {"views": view_rules.catalogue()}
                 elif route in MEDIA_ROUTES:

@@ -223,6 +223,52 @@ class UsableProposal(unittest.TestCase):
         self.assertIsNotNone(proposals.usable_s)
         self.assertFalse(proposals.hold_background())
 
+    def test_requested_recordings_never_expand_to_all_and_refresh_before_bulk_settles(self) -> None:
+        steps, notes = FakeSteps(), []
+        steps.refresh_world = lambda: steps.calls.append(("world", None)) or True
+        proposals = self.proposals(steps, notes)
+        proposals.args.world_store = "configured"
+        bulk = recording("bulk")
+        proposals.runner = pool_of([self.fast(bulk)])
+        for name in "abcd":
+            proposals.request_ready(recording(name))
+        proposals.finish()
+        self.assertEqual([a for label, a in steps.calls if label == "propose (requested recording)"],
+                         [[recording(name).object_id] for name in "abcd"])
+        self.assertEqual(sum(label == "world" for label, _ in steps.calls), 4)
+        self.assertFalse(any(label == "propose --all (background batch)" for label, _ in steps.calls))
+        self.assertTrue(proposals.outstanding)  # bulk fast pass remains unsettled
+
+    def test_follow_cached_request_wakes_one_proposal_and_is_reaskable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            rec = recording("a")
+            reader = bank.Bank(root)
+            _, key, _ = bank.ask(reader, rec.digest, "rhythm", "relay")
+            result = argparse.Namespace(answered=[], unplaced=[])
+            planning = argparse.Namespace(asked=set(), result=result,
+                                          schedule=argparse.Namespace(rescan_seconds=3600))
+            def planned(request, by_digest):
+                planning.asked.add(request["key"])
+                result.answered.append(request["key"])
+                return []  # already cached; no extraction job
+            planning.request = planned
+            ready = []
+            follow = backfill.Follow(planning, argparse.Namespace(follow_seconds=None), {}, None,
+                                     lambda **_: None, root, {rec.digest: rec}, [rec],
+                                     lambda *_: ([], []), lambda *_: None, backfill.report,
+                                     request_ready=lambda r: ready.append(r.object_id))
+            self.assertEqual(follow.intake(), [])
+            self.assertEqual(ready, [rec.object_id])
+            self.assertFalse(bank.request_path(root, key).exists())
+            self.assertNotIn(key, planning.asked)
+            follow.intake()
+            self.assertEqual(len(ready), 1)
+            bank.ask(reader, rec.digest, "rhythm", "relay")
+            follow.intake()
+            self.assertEqual(ready, [rec.object_id, rec.object_id])
+            self.assertFalse(bank.request_path(root, key).exists())
+
     def test_many_recordings_waiting_are_proposed_with_one_all(self) -> None:
         recs = [recording(n) for n in "abc"]
         notes, steps = [], FakeSteps()
@@ -1453,3 +1499,56 @@ class EndToEnd(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StepsEnvironment(unittest.TestCase):
+    def test_world_children_receive_explicit_environment(self):
+        import backfill_proposals
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "enrich").mkdir()
+            (root / "world").mkdir()
+            probe = "import os,json; print(json.dumps({k:os.environ.get(k) for k in ['ARCHIVE_GIT_EXECUTABLE','ARCHIVE_GIT_ANNEX_EXECUTABLE']}))"
+            for name in ("world.py", "conformance.py"):
+                (root / "world" / name).write_text(probe)
+            args = argparse.Namespace(world_python=sys.executable, conformance_python=sys.executable,
+                                      archive=tmp, world_store=tmp, archive_command="/absolute/archive")
+            environment = {"ARCHIVE_GIT_EXECUTABLE": "/absolute/git",
+                           "ARCHIVE_GIT_ANNEX_EXECUTABLE": "/absolute/git-annex"}
+            expected = dict(environment)
+            events = []
+            with patch.dict(os.environ, {}, clear=True), patch.object(backfill_proposals, "HERE", root / "enrich"):
+                steps = backfill_proposals.Steps(args, lambda **event: events.append(event), environment)
+                environment.clear()  # The runner owns a snapshot, not a caller's mutable mapping.
+                self.assertTrue(steps.world())
+            self.assertEqual([event["step"] for event in events], ["World refresh", "conformance"])
+            self.assertEqual([event["answer"] for event in events], [expected, expected])
+
+    def test_progress_refresh_skips_conformance_but_final_world_checks_it(self):
+        import backfill_proposals
+        args = argparse.Namespace(world_python="world-python", conformance_python="conformance-python",
+                                  archive="archive", world_store="store", archive_command="archive-command")
+        events = []
+        steps = backfill_proposals.Steps(args, lambda **event: events.append(event), {})
+        proposals = backfill_proposals.Proposals(steps, args, lambda **event: None, time.monotonic(), 1, True)
+        calls = []
+
+        def dispatch(command, **kwargs):
+            if Path(command[1]).name == "conformance.py":
+                raise AssertionError("full conformance must not run during recording progress")
+            calls.append(command)
+            return subprocess.CompletedProcess(command, 0, "{}", "")
+
+        # Keep the real Proposals -> Steps -> subprocess dispatch; only admission
+        # is outside this test's scope. A conformance call fails the progress gate.
+        with patch.object(steps, "proposed", return_value=True), patch.object(backfill_proposals.subprocess, "run", dispatch):
+            proposals.propose("requested", ["recording"])
+            self.assertEqual(steps.failures, 0)
+            proposals.propose("settle", None)
+            self.assertEqual(steps.failures, 0)
+            self.assertIsNotNone(proposals.usable_s)
+        self.assertEqual([Path(command[1]).name for command in calls], ["world.py", "world.py"])
+        events.clear()
+        with patch.object(backfill_proposals.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "{}", "")):
+            self.assertTrue(steps.world())
+        self.assertEqual([event["step"] for event in events], ["World refresh", "conformance"])

@@ -1219,7 +1219,7 @@ def _main(args: argparse.Namespace, env: dict[str, str] | None = None,
         raise BackfillError("--cores and --memory-gb must be positive")
     spool = remote.Spool(args.spool) if args.spool else None
     commit = args.commit
-    steps = Steps(args, note)
+    steps = Steps(args, note, dict(os.environ if env is None else env))
     note(step="start", mode=args.mode, commit=commit, follow=args.follow or None, cores=cores,
          memory_gb=round(memory_gb, 1), bank=str(root))
 
@@ -1272,7 +1272,7 @@ def _main(args: argparse.Namespace, env: dict[str, str] | None = None,
     handlers: dict[int, Any] = {}
     if commit and (planned.jobs or args.follow):
         follow = Follow(planned.planning, args, env, steps, note, root, {r.digest: r for r in present}, present,
-                        discover, prioritise, report) if args.follow else None
+                        discover, prioritise, report, request_ready=proposals.request_ready) if args.follow else None
         if follow is not None:
             follow.reported = reported
 

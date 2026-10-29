@@ -124,9 +124,13 @@ def strongest(statuses: list[str]) -> str:
     return max(statuses, key=STRENGTH.index, default="nothing_proposed")
 
 
-def propose_one(proposer: proposers.Proposer, context: proposers.Context, reader: adapter.ArchiveReader,
-                artifact: dict[str, Any], stream: dict[str, Any], args: argparse.Namespace,
-                staging: adapter.Staging | None, env: dict[str, str]) -> dict[str, Any]:
+def run_result(proposer: proposers.Proposer, context: proposers.Context,
+               artifact: dict[str, Any], stream: dict[str, Any]) -> adapter.RunResult | proposers.Lacking:
+    """Build and validate the exact derivation identity, without reading or writing an archive.
+
+    Admission and readiness use this same calculation. Started/ended timestamps
+    are deliberately outside equivalent-run identity (INV-5).
+    """
     started = adapter.now()
     try:
         found = proposer.propose(context)
@@ -134,7 +138,7 @@ def propose_one(proposer: proposers.Proposer, context: proposers.Context, reader
         raise ProposeError(f"{proposer.id}: {exc}") from exc
     region = {} if context.region is None else {"region": dict(context.region)}
     if isinstance(found, proposers.Lacking):
-        return {"name": proposer.id, **region, "status": "nothing_proposed", **found.as_json()}
+        return found
     if context.region is not None:
         found.settings["region"] = {**context.region, "times": "region entries' times plus the region's start, "
                                                                "clamped to the region"}
@@ -144,7 +148,6 @@ def propose_one(proposer: proposers.Proposer, context: proposers.Context, reader
     stream_claim = {"payload": stream["payload"], "refs": stream["refs"], "revision_id": stream["revision_id"]}
     outputs = []
     for planned in found.outputs:
-        reader.citation(planned.contract)  # refuse an archive that cannot hold it before anything else
         claim = {"payload": planned.payload, "refs": [ref.ref() for ref in refs]}
         try:
             world_check(planned.contract)(claim, stream_claim)
@@ -162,6 +165,18 @@ def propose_one(proposer: proposers.Proposer, context: proposers.Context, reader
     run = adapter.RunResult(agent=AGENT, method_id=proposer.id, method_version=proposer.version, software=software,
                             started_at=started, ended_at=ended, used=used, outputs=tuple(outputs),
                             parameters=parameters)
+    return run
+
+
+def propose_one(proposer: proposers.Proposer, context: proposers.Context, reader: adapter.ArchiveReader,
+                artifact: dict[str, Any], stream: dict[str, Any], args: argparse.Namespace,
+                staging: adapter.Staging | None, env: dict[str, str]) -> dict[str, Any]:
+    run = run_result(proposer, context, artifact, stream)
+    region = {} if context.region is None else {"region": dict(context.region)}
+    if isinstance(run, proposers.Lacking):
+        return {"name": proposer.id, **region, "status": "nothing_proposed", **run.as_json()}
+    for output in run.outputs:
+        reader.citation(output.contract)
     previous = reader.equivalent_run(run)
     if previous is not None:
         return {"name": proposer.id, **region, "status": "unchanged", "run": pin(previous)}

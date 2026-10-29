@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: The Archive contributors
+# SPDX-License-Identifier: CC0-1.0
+# Fleet schema 1 describes host requirements, not archive evidence policy.
+schemaVersion = 1
+
+[project]
+name = "archive"
+description = "Evidence-preserving archives with Door, regenerable World views and a relay"
+
+[package]
+flake = "git+ssh://git@github.com/space-panda-dev/archive.git"
+attribute = "tools"
+executables = ["relay", "world"]
+
+# Archive placement and its retained evidence/configuration paths are selected
+# by the host role. No universal home-relative state path is imposed here.
+# Relay endpoints and health config are private operator settings: schema 1
+# cannot express a loopback-only listener or a config-dependent health command.
+# Journal logs need no declaration; Prometheus metrics are not OTLP.

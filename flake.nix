@@ -177,9 +177,13 @@
           archive = archiveFor pkgs;
           python = pythonFor pkgs;
           enrichPython = enrichPythonFor pkgs;
-        in pkgs.runCommand "archive-tools" { nativeBuildInputs = [ pkgs.makeWrapper ]; } ''
+        in pkgs.runCommand "archive-tools" {
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+          passthru.runtimePython = python;
+        } ''
           mkdir -p $out/share/archive $out/bin
           cp -r ${self}/world ${self}/relay ${self}/fixture ${self}/enrich ${self}/capture ${self}/migration ${self}/spec ${self}/LICENSES $out/share/archive/
+          cp ${self}/fleet.toml $out/share/archive/fleet.toml
           chmod -R u+w $out/share/archive
           rm -f $out/share/archive/fixture/test_*.py $out/share/archive/enrich/test_*.py $out/share/archive/enrich/support.py \
             $out/share/archive/capture/test_*.py $out/share/archive/migration/test_*.py

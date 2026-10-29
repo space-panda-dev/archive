@@ -84,6 +84,38 @@ melody without making stems; cached vocal melody can satisfy the path without
 producing PESTO. Optional tuning, rhythm and bleed inputs remain read-only.
 Timed lyrics remains unsupported; composition supplies no missing prerequisites.
 
+### Configured vocal-note production
+
+`vocal-notes` produces the same notes contract through the shared notes reading,
+but requires `vocal-contour`; a cached legacy melody does not satisfy it. Select
+it explicitly in `produce`, with the existing provisioned model parameters and
+programs. Remove the generic `notes` method from `attempt` when replacing that
+method: otherwise both named methods remain requested, as composition normally
+specifies. For a notes-only production selection:
+
+```json
+{"composition": {"backfill": {
+  "produce": [{"contract": ["archive.claim/notes", "1"], "methods": ["vocal-notes"]}],
+  "attempt": [], "features": []
+}}}
+```
+
+This does not change unconfigured installations or the ordinary notes method.
+A complete cached contour keeps its exact stem entry. Missing measurements use
+an existing preferred four- or six-stem provider before requesting separation.
+The contour, provisional note reading and zero-adjustment A440 policy remain
+separate; charts, lyrics, keys and beat grids are not inference inputs.
+
+`enrichment_requests.request` reads that same frozen backfill configuration and
+uses `expand` plus ordinary idempotent Bank requests. A requested display region
+is retained separately from the inference region: an existing whole-recording
+stem selects whole-recording inference, rather than cutting or separating it
+again. The existing backfill publishes and refreshes World per requested
+recording, including when a feature was already cached. It does not expand that
+request into a catalog-wide proposal round. Readiness requires a current notes
+revision with the exact normal derivation identity and payload; ambiguous or
+unindexed alternatives never become a guessed preferred revision.
+
 ## Read explanations
 
 `selection(config, flow, defaults, proposers_override)` merges selections.

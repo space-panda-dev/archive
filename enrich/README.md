@@ -706,13 +706,19 @@ python3 enrich/enrich.py propose --archive /path/to/archive \
   --config /path/to/models.json --proposers notes
 ```
 
-The registered `notes` proposer version 4 selects this reading when its entry
+The registered `notes` proposer version 5 selects this reading when its entry
 has explicitly been measured on `stems/vocals`; otherwise its existing
 PESTO/MELODIA path remains available. It records the stem, feature entry,
 provenance file, software and tuning inputs. It preserves repeated pitches
 and performed onset/offset samples, without running the legacy octave-fold,
 bleed-deletion or same-pitch-bridge rules afterward. This is a choice of
 analysis mechanism, not a ranking or adoption of archived claims.
+
+For a configured preferred vocal method, declare `vocal-notes` production
+in the normal capture/backfill composition. It uses this same notes builder
+and refuses the legacy melody fallback; cached stems are reused. The complete
+policy example is in [enrichment composition](../docs/enrichment-composition.md#configured-vocal-note-production).
+The existing `notes` method remains available to unconfigured installations.
 
 For unattended capture or backfill, include
 `["vocal-contour", "stems/vocals"]` in that flow's
