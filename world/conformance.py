@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from pyoxigraph import RdfFormat
+from pyoxigraph import BlankNode, DefaultGraph, Literal, NamedNode
 
 import rdflib
 from pyshacl import validate
@@ -106,6 +106,40 @@ def unclosed_shapes(version: int) -> list[str]:
     return problems
 
 
+def _rdflib_term(term: Any) -> Any:
+    """Transfer RDF terms without serializing and reparsing their lexical forms.
+
+    Oxigraph represents plain strings as xsd:string; its N-Quads serializer
+    omits that datatype, as RDFLib's parser expects for SHACL value equality.
+    Keep all other datatypes and language tags, including ill-typed literals.
+    """
+    if isinstance(term, NamedNode):
+        return rdflib.URIRef(term.value)
+    if isinstance(term, BlankNode):
+        return rdflib.BNode(term.value)
+    if isinstance(term, Literal):
+        if term.direction is not None:
+            raise ValueError("RDFLib conformance does not support directional literals")
+        datatype = None if term.language or term.datatype.value == str(rdflib.XSD.string) else rdflib.URIRef(term.datatype.value)
+        return rdflib.Literal(term.value, lang=term.language, datatype=datatype)
+    raise ValueError(f"RDFLib conformance does not support RDF term {type(term).__name__}")
+
+
+def _dataset(store: Any) -> rdflib.Dataset:
+    """Copy every quad directly; large escaped payloads need no N-Quads parser.
+
+    The parser's repeated line matching is quadratic for long JSON literals.
+    This is only a representation transfer: graph isolation and every SHACL
+    validation below stay the same. No validation results are cached.
+    """
+    dataset = rdflib.Dataset()
+    for quad in store:
+        graph = dataset.graph(rdflib.graph.DATASET_DEFAULT_GRAPH_ID if isinstance(quad.graph_name, DefaultGraph)
+                              else _rdflib_term(quad.graph_name))
+        graph.add(tuple(_rdflib_term(term) for term in (quad.subject, quad.predicate, quad.object)))
+    return dataset
+
+
 def check_store(store: Any, archive_id: str, version: int) -> Report:
     """Check every quad of a pyoxigraph store holding one projection."""
     report = Report()
@@ -114,9 +148,7 @@ def check_store(store: Any, archive_id: str, version: int) -> Report:
     entries = description(version)["graphs"]
     patterns = [(entry["kind"], re.compile(entry["pattern"].replace("{archive}", re.escape(archive_id))))
                 for entry in entries]
-    data = store.dump(format=RdfFormat.N_QUADS)
-    dataset = rdflib.Dataset()
-    dataset.parse(data=data, format="nquads")
+    dataset = _dataset(store)
     for context in dataset.graphs():
         name = str(context.identifier)
         if len(context) == 0:
