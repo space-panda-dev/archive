@@ -46,8 +46,9 @@ class Steps:
     own as the 0.0.10 backfill ran them. `failures` counts every step that
     failed, for the exit status; `call` says whether this one did."""
 
-    def __init__(self, args: argparse.Namespace, note: Callable[..., None]):
+    def __init__(self, args: argparse.Namespace, note: Callable[..., None], env: dict[str, str]):
         self.args, self.note, self.failures = args, note, 0
+        self.env = dict(env)
         self.lock = threading.Lock()
 
     def failed(self) -> None:
@@ -62,7 +63,7 @@ class Steps:
     def call(self, label: str, command: list[str], ok: tuple[int, ...] = (0,)) -> tuple[Any, bool]:
         """Run one step: its answer, and whether it succeeded."""
         started = time.monotonic()
-        done = subprocess.run(command, capture_output=True, text=True)
+        done = subprocess.run(command, capture_output=True, text=True, env=self.env)
         try:
             answer = json.loads(done.stdout) if done.stdout.strip() else None
         except ValueError:
@@ -85,12 +86,17 @@ class Steps:
     def enrich(self, label: str, *words: str, ok: tuple[int, ...] = (0,)) -> Any:
         return self.run(label, self.enrich_command(*words), ok)
 
-    def world(self) -> bool:
-        """World refresh and conformance; whether both succeeded."""
+    def refresh_world(self) -> bool:
+        """Refresh the disposable projection for recording-by-recording progress."""
         a = self.args
-        refreshed = self.call("World refresh", [a.world_python, str(HERE.parent / "world" / "world.py"), "refresh",
+        return self.call("World refresh", [a.world_python, str(HERE.parent / "world" / "world.py"), "refresh",
                                                 a.archive, "--store", a.world_store, "--archive-command",
                                                 a.archive_command])[1]
+
+    def world(self) -> bool:
+        """Final World refresh and full conformance; whether both succeeded."""
+        a = self.args
+        refreshed = self.refresh_world()
         conforms = self.call("conformance", [a.conformance_python or a.world_python,
                                              str(HERE.parent / "world" / "conformance.py"), "--store",
                                              a.world_store])[1]
@@ -225,14 +231,14 @@ class Proposals:
             if kind == "settle":
                 good = not self.round_failed
                 if good and self.enabled and self.args.world_store:
-                    good = self.steps.world()
+                    good = self.steps.refresh_world()
             elif self.enabled:
                 label = {"usable": "propose (usable" + (", all" if artifacts is None else "") + ")",
                          "background": "propose --all (background batch)",
                          "requested": "propose (requested recording)"}[kind]
                 good = self.steps.proposed(label, artifacts)
                 if kind == "requested" and good and self.args.world_store:
-                    good = self.steps.world()
+                    good = self.steps.refresh_world()
         except Exception as exc:  # noqa: BLE001  (a proposal that could not run is not usable; the pool goes on)
             good = False
             self.steps.failed()

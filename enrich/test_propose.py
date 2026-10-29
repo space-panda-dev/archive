@@ -19,7 +19,7 @@ import shutil
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -36,6 +36,7 @@ from test_cover import needs_essentia
 from test_f0 import fake_python as f0_python
 from test_notes import fake_python as basic_pitch_python
 from test_stems import fake_python
+from test_vocal_extractor import fake_python as vocal_python
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from world import form, harmony, notes, tonality  # noqa: E402
@@ -115,6 +116,27 @@ def fill_bank(directory: Path, content: Path) -> Path:
         run_extract("f0-pesto", *common, "--from", stem, *stems, "--program", f"f0-python={f0_python(directory)}")
     run_extract("melody", *common, *stems)
     return root
+
+
+@contextmanager
+def populated_vocal_context(test, context):
+    """The strict method needs its own populated path, without changing the
+    legacy fixture's preferred input for unrelated notes assertions."""
+    with tempfile.TemporaryDirectory(prefix="propose-vocal-") as temporary:
+        directory = Path(temporary)
+        root = directory / "bank"
+        programs = ["--program", f"demucs-python={fake_python(directory)}",
+                    "--program", f"f0-python={vocal_python(directory)}"]
+        common = ["--content", str(test.wav), "--bank", str(root), *programs]
+        if context.region is not None:
+            region = context.region
+            common += ["--region", f"{region['start']}:{region['end']}:{region['rate']}"]
+        run_extract("stems", *common)
+        run_extract("vocal-contour", *common, "--from", "stems/vocals")
+        store = bank.Bank(root)
+        if context.region is not None:
+            store = bank.RegionView(store, context.content, context.region)
+        yield proposers.Context(store, context.content, context.sample_rate, context.sample_count, context.region)
 
 
 class Labels(unittest.TestCase):
@@ -477,9 +499,10 @@ class FromTheBank(unittest.TestCase):
 
     def test_every_registered_method_reads_its_selected_declared_inputs(self) -> None:
         self.assertTrue(proposers.PROPOSERS)
-        for name in proposers.PROPOSERS:
-            with self.subTest(method=name):
-                declared_reads(self, self.context, name)
+        with populated_vocal_context(self, self.context) as vocal:
+            for name in proposers.PROPOSERS:
+                with self.subTest(method=name):
+                    declared_reads(self, vocal if name == "vocal-notes" else self.context, name)
 
     def test_basic_pitch_bass_line_does_not_read_corrupt_recording_tuning(self) -> None:
         original = self.bank.measured_over
@@ -754,9 +777,10 @@ class FromRegions(unittest.TestCase):
 
     def test_registered_methods_read_declared_region_or_whole_fallback_inputs(self) -> None:
         self.assertTrue(proposers.PROPOSERS)
-        for name in proposers.PROPOSERS:
-            with self.subTest(method=name):
-                declared_reads(self, self.over, name)
+        with populated_vocal_context(self, self.over) as vocal:
+            for name in proposers.PROPOSERS:
+                with self.subTest(method=name):
+                    declared_reads(self, vocal if name == "vocal-notes" else self.over, name)
 
     def test_the_region_is_found_and_a_whole_read_lacks_what_was_made_over_it(self) -> None:
         self.assertEqual(bank.regions(self.songs, self.digest), [self.region])

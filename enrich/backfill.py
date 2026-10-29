@@ -1219,7 +1219,7 @@ def _main(args: argparse.Namespace, env: dict[str, str] | None = None,
         raise BackfillError("--cores and --memory-gb must be positive")
     spool = remote.Spool(args.spool) if args.spool else None
     commit = args.commit
-    steps = Steps(args, note)
+    steps = Steps(args, note, dict(os.environ if env is None else env))
     note(step="start", mode=args.mode, commit=commit, follow=args.follow or None, cores=cores,
          memory_gb=round(memory_gb, 1), bank=str(root))
 
