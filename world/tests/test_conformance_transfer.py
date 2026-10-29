@@ -23,6 +23,18 @@ def serialized_dataset(store):
     return dataset
 
 
+def serialized_graphs(store):
+    return serialized_dataset(store).graphs()
+
+
+def transferred_dataset(store):
+    dataset = rdflib.Dataset()
+    for graph in conformance._graphs(store):
+        for triple in graph:
+            dataset.graph(graph.identifier).add(triple)
+    return dataset
+
+
 class DirectTermTransferTests(unittest.TestCase):
     def test_terms_match_the_previous_parser(self):
         store = Store()
@@ -38,7 +50,7 @@ class DirectTermTransferTests(unittest.TestCase):
             for term in terms:
                 store.add(Quad(subject, predicate, term, graph))
             store.add(Quad(BlankNode("shared"), predicate, subject, graph))
-        actual, reference = conformance._dataset(store), serialized_dataset(store)
+        actual, reference = transferred_dataset(store), serialized_dataset(store)
         default = rdflib.graph.DATASET_DEFAULT_GRAPH_ID
         self.assertTrue(isomorphic(actual.graph(default), reference.graph(default)))
         self.assertTrue(isomorphic(actual.graph(rdflib.URIRef("urn:example:graph")),
@@ -60,7 +72,13 @@ class DirectTermTransferTests(unittest.TestCase):
 
         class NoSerialization:
             def __iter__(self):
-                return iter(projection.store)
+                raise AssertionError("must stream individual graphs, not materialize the whole store")
+
+            def named_graphs(self):
+                return projection.store.named_graphs()
+
+            def quads_for_pattern(self, *args):
+                return projection.store.quads_for_pattern(*args)
 
             def dump(self, **kwargs):
                 raise AssertionError("large payload must not cross the quadratic N-Quads parser")
@@ -75,9 +93,41 @@ class DirectTermTransferTests(unittest.TestCase):
             with self.subTest(version=version):
                 projection = build_projection(exported, version)
                 actual = conformance.check_store(projection.store, projection.archive_id, version)
-                with patch.object(conformance, "_dataset", serialized_dataset):
+                with patch.object(conformance, "_graphs", serialized_graphs):
                     reference = conformance.check_store(projection.store, projection.archive_id, version)
                 self.assertEqual(actual, reference)
+
+    def test_validates_each_graph_before_reading_the_next(self):
+        projection = build_projection(json.loads(FIXTURE.read_text()))
+        read_graphs, validated_graphs = set(), []
+        original = conformance.validate
+
+        class SequentialStore:
+            def __iter__(self):
+                for quad in projection.store:
+                    if not isinstance(quad.graph_name, DefaultGraph):
+                        read_graphs.add(quad.graph_name.value)
+                    yield quad
+
+            def named_graphs(self):
+                return projection.store.named_graphs()
+
+            def quads_for_pattern(self, *args):
+                name = args[-1]
+                if not isinstance(name, DefaultGraph):
+                    read_graphs.add(str(name.value))
+                return projection.store.quads_for_pattern(*args)
+
+        def validate(graph, **kwargs):
+            validated_graphs.append(str(graph.identifier))
+            self.assertEqual(len(read_graphs), len(validated_graphs),
+                             "a later graph was materialized before this graph was validated")
+            return original(graph, **kwargs)
+
+        with patch.object(conformance, "validate", validate):
+            report = conformance.check_store(SequentialStore(), projection.archive_id, PROJECTION_VERSION)
+        self.assertTrue(report.conforms, report.problems)
+        self.assertEqual(len(validated_graphs), 18)
 
     def test_invalid_history_is_still_rejected(self):
         exported = json.loads(FIXTURE.read_text())
@@ -97,7 +147,7 @@ class DirectTermTransferTests(unittest.TestCase):
         quad = next(projection.store.quads_for_pattern(None, None, None, graph))
         projection.store.add(Quad(quad.subject, NamedNode(ARCH + "undeclared"), Literal("bad"), graph))
         actual = conformance.check_store(projection.store, projection.archive_id, PROJECTION_VERSION)
-        with patch.object(conformance, "_dataset", serialized_dataset):
+        with patch.object(conformance, "_graphs", serialized_graphs):
             reference = conformance.check_store(projection.store, projection.archive_id, PROJECTION_VERSION)
         self.assertFalse(actual.conforms)
         self.assertFalse(reference.conforms)

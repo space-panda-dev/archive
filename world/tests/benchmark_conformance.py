@@ -17,7 +17,7 @@ import rdflib
 from pyoxigraph import Literal, NamedNode, Quad
 
 from world import conformance
-from world.tests.test_conformance_transfer import ARCH, FIXTURE, serialized_dataset
+from world.tests.test_conformance_transfer import ARCH, FIXTURE, serialized_graphs
 from world.world import PROJECTION_VERSION, build_projection
 
 
@@ -36,13 +36,13 @@ def main():
     projection.store.remove(quad)
     projection.store.add(Quad(quad.subject, payload,
         Literal(text, datatype=NamedNode(str(rdflib.RDF.JSON))), records))
-    direct = conformance._dataset
+    direct = conformance._graphs
     times = {"serialized": [], "direct": []}
     reference = None
     for _ in range(args.repeat):
-        for name, transfer in (("serialized", serialized_dataset), ("direct", direct)):
+        for name, transfer in (("serialized", serialized_graphs), ("direct", direct)):
             start = time.perf_counter()
-            with patch.object(conformance, "_dataset", transfer):
+            with patch.object(conformance, "_graphs", transfer):
                 report = conformance.check_store(projection.store, projection.archive_id, PROJECTION_VERSION)
             times[name].append(time.perf_counter() - start)
             if reference is None:
