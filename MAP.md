@@ -79,6 +79,7 @@ export ARCHIVE_UPGRADE_TEST_PACKAGE
 | capture | 300 | 1800s | `$ENRICH_PYTHON -m unittest discover -s capture -p "test_*.py" "$@"` |
 | bench | 30 | 300s | `P="$HOME/archive-bench/envs/harness/bin/python"; test -x "$P" \|\| { echo "bench: no $P; the bench runs on the x86-64 laptop (wf check --on laptop)"; exit 1; }; "$P" -m unittest discover -s enrich/bench -p "test_*.py" "$@"` |
 | bench-horn | night | 3600s | `P="$HOME/archive-bench/envs/harness/bin/python"; test -x "$P" \|\| { echo "bench-horn: no $P; the bench runs on the x86-64 laptop (wf check --on laptop)"; exit 1; }; ARCHIVE_BENCH_ROOT="$HOME/archive-bench" "$P" -m enrich.bench check horn-v1 "$@"` |
+| package-evaluation | 5 | 180s | `bash deployment/check-package-evaluation.sh` |
 <!-- /wf:gen -->
 
 `haskell` is `door-test` and `archive-test`, tasty trees whose cases are the

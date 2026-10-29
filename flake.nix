@@ -29,9 +29,11 @@
       };
 
       # Door and the archive command. Building runs `cabal test all`.
+      # Keep Cabal conversion checked in: fleet evaluates Linux packages on
+      # Darwin, where a target-native callCabal2nix import cannot be built.
       archiveFor = pkgs: pkgs.haskell.lib.overrideCabal
         (pkgs.haskell.lib.addBuildTools
-          (pkgs.haskellPackages.callCabal2nix "archive" haskellSource { })
+          (pkgs.haskellPackages.callPackage ./deployment/archive.nix { src = haskellSource; })
           [ pkgs.git pkgs.git-annex pkgs.python3 pkgs.perl pkgs.which ])
         (old: {
           preCheck = ''

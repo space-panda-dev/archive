@@ -270,3 +270,11 @@ timeout = 600
 # shows commit and build once they run a relay with ADR 0114.
 [observe]
 services = ["archive-relay", "archive-door", "archive-scratch-trial-relay"]
+
+# Cross-platform consumers must evaluate target packages without native IFD.
+[suites.package-evaluation]
+run = 'bash deployment/check-package-evaluation.sh'
+where = "local"
+timeout_seconds = 180
+tier = 5
+paths = ["flake.nix", "flake.lock", "deployment/**", "archive.cabal"]
