@@ -23,7 +23,9 @@ one exists, else the region's. Each region is its own run, its settings
 naming the region; region times are placed on the stream by the region's
 start, so its claims say the same samples a whole run would over that span.
 Whole entries are preferred: a proposer that finds what it needs whole is
-never run per region.
+never run per region. An explicit --region request instead selects only keys
+made for that exact region (including its own stem placement); it neither
+falls back to a whole entry nor changes automatic backfill precedence.
 
 A run equivalent to a recorded one (same method, parameters, and inputs)
 proposes nothing and answers `unchanged`: history stays quiet. A new
@@ -181,12 +183,23 @@ def propose_artifact(reader: adapter.ArchiveReader, artifact: dict[str, Any], st
     payload = stream["payload"]
     context = proposers.Context(store, artifact["payload"]["content"]["digest"], payload["sample_rate"],
                                 payload["sample_count"])
+    requested = getattr(args, "region", None)
+    if requested is not None:
+        try:
+            region = extract.parse_region(requested)
+        except (extract.RunError, bank.BankError) as exc:
+            raise ProposeError(str(exc)) from exc
+        if region["rate"] != context.sample_rate or region["end"] > context.sample_count:
+            raise ProposeError("--region must lie within the selected stream at its sample rate")
+        selected = bank.Bank(store.root, store.catalog.within(context.content, region), store.parameters,
+                             exact=store.exact)
+        context = proposers.Context(selected, context.content, context.sample_rate, context.sample_count, region)
     regions: list[dict[str, int]] | None = None
     for name in names:
         try:
             whole = propose_one(proposers.PROPOSERS[name], context, reader, artifact, stream, args, staging, env)
             answer["proposers"].append(whole)
-            if whole["status"] == "nothing_proposed" and whole.get("missing"):
+            if requested is None and whole["status"] == "nothing_proposed" and whole.get("missing"):
                 if regions is None:
                     regions = bank.regions(store, context.content)
                 for region in regions:
@@ -207,6 +220,8 @@ def run(args: argparse.Namespace, env: dict[str, str], reader: adapter.ArchiveRe
         choose_stream: Callable[[adapter.ArchiveReader, dict[str, Any], str | None], dict[str, Any]]
         ) -> tuple[int, dict[str, Any]]:
     names = proposer_names(args.proposers)
+    if getattr(args, "region", None) is not None and args.all:
+        raise ProposeError("--region requires one --artifact, not --all")
     store = bank_of(args)
     reader.citation(adapter.RUN_CONTRACT)
     if not args.all:
@@ -285,6 +300,8 @@ def add_arguments(command: argparse.ArgumentParser) -> None:
     target = command.add_mutually_exclusive_group(required=True)
     target.add_argument("--artifact", help="the mix Artifact's object identifier")
     target.add_argument("--all", action="store_true", help="every Artifact with an audio stream claim: the backfill")
+    command.add_argument("--region", help="explicit <start>:<end>:<rate> in stream samples; read only exact "
+                                          "region entries and their stems, without whole-entry fallback")
     command.add_argument("--stream", help="the audio_stream claim, when the Artifact has several")
     command.add_argument("--proposers", default=",".join(proposers.DEFAULT),
                          help=f"comma-separated, in order (default {','.join(proposers.DEFAULT)}; also "

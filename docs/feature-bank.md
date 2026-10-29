@@ -14,6 +14,32 @@ the bank was deleted.
 All JSON is UTF-8. All binary numbers are little-endian. Digests are written
 `sha256:` followed by 64 lower-case hexadecimal digits.
 
+## Explicit proposal regions
+
+`enrich propose --artifact <id> --region <start>:<end>:<rate> --proposers notes`
+reads only the selected region's entries, using the same extractor configuration
+as the extraction command. Bounds are samples at the selected stream's sample
+rate and must lie inside that stream. It selects the region's own stem entry
+and its placed measurements even when whole-recording entries already exist;
+note samples in the proposal are absolute stream samples. A missing region
+entry is reported, without falling back to a whole entry. The request does not
+extract audio or change admission, tuning or source precedence.
+
+For example, after measuring a region with `extract.py run stems --region
+32000:96000:16000` and `extract.py run vocal-contour --from stems/vocals --region
+32000:96000:16000` (each also given the content, bank and configured model
+parameters), use the same region, bank and config with `enrich propose`. Repeating
+the proposal on unchanged features returns `unchanged`.
+
+This explicit request is separate from automatic proposal fallback under
+[ADR 0112](decisions/0112-bulk-import-at-scale.md): ordinary proposals and backfill
+still prefer a successful whole-recording result. Backfill's composition selects
+methods and feature targets, but does not declare a proposal-region preference;
+its proposal rounds carry Artifact identifiers, not explicit regions. Merely
+adding a regional contour therefore does not replace a whole-recording result.
+Use the explicit command for that region; no implicit regional scheduling or
+ranking policy is added here. `--region` cannot be combined with `--all`.
+
 ## Canonical JSON
 
 Keys and parameter digests are computed over **canonical JSON**, which is
@@ -530,6 +556,7 @@ parameters are in the manifest's descriptions and in the
 | `stems-6s` | 1 | none | series `levels`; scalars `vocals_rms_db`, `vocals_peak_db`, `vocals_clamped`, `drums_rms_db`, `drums_peak_db`, `drums_clamped`, `bass_rms_db`, `bass_peak_db`, `bass_clamped`, `guitar_rms_db`, `guitar_peak_db`, `guitar_clamped`, `piano_rms_db`, `piano_peak_db`, `piano_clamped`, `other_rms_db`, `other_peak_db`, `other_clamped`, `mix_rms_db`, `samples`, `seconds`; files `vocals`, `drums`, `bass`, `guitar`, `piano`, `other` |
 | `structure` | 2 | `frames`: hpcp, rms_db, mfcc, seconds; `rhythm`: onsets, beats | series `novelty`; scalars `floor_db`, `floor`, `reference_db`, `threshold_db`; spans `playing`, `tuning`, `count_ins`, `false_starts`, `endings`, `sections`, `loops` |
 | `tonal` | 6 | `frames`: rms_db | series `pitched`, `tuning_windows`, `chroma`, `bass_chroma`, `dissonance`; scalars `tuning_frequency`, `tuning_cents`, `tuning_confidence`, `tuning_window_count`, `drift_spread_cents`, `detuned`, `key`, `scale`, `mode`, `scale_notes`, `key_strength`, `collection`, `collection_margin`, `tonic_margin`, `tonic_confidence`, `tonic_named`; spans `tuning_drift`, `detuned_spans`, `keys`, `key_regions` |
+| `vocal-contour` | 1 | none | series `pitch`, `confidence`, `voiced`, `held`; scalars `voiced_fraction`; events `attacks`; spans `notes`; files `provenance` |
 
 Eight of them run a model in an environment of the operator's, never the
 archive's, each under a program name the operator configures, so `run all`
