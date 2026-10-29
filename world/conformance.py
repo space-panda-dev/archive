@@ -125,60 +125,55 @@ def _rdflib_term(term: Any) -> Any:
     raise ValueError(f"RDFLib conformance does not support RDF term {type(term).__name__}")
 
 
-def _dataset(store: Any) -> rdflib.Dataset:
-    """Copy every quad directly; large escaped payloads need no N-Quads parser.
+def _graphs(store: Any):
+    """Transfer one isolated graph at a time, including the default graph.
 
-    The parser's repeated line matching is quadratic for long JSON literals.
-    This is only a representation transfer: graph isolation and every SHACL
-    validation below stay the same. No validation results are cached.
+    Nothing is retained across graph validation. This avoids both a whole
+    RDFLib dataset and its second per-graph copy. Every quad is still visited;
+    no validation results are cached and no historical graph is skipped.
     """
-    dataset = rdflib.Dataset()
-    for quad in store:
-        graph = dataset.graph(rdflib.graph.DATASET_DEFAULT_GRAPH_ID if isinstance(quad.graph_name, DefaultGraph)
-                              else _rdflib_term(quad.graph_name))
-        graph.add(tuple(_rdflib_term(term) for term in (quad.subject, quad.predicate, quad.object)))
-    return dataset
+    from itertools import chain
+
+    for name in chain((DefaultGraph(),), store.named_graphs()):
+        identifier = rdflib.graph.DATASET_DEFAULT_GRAPH_ID if isinstance(name, DefaultGraph) else _rdflib_term(name)
+        graph = rdflib.Graph(identifier=identifier)
+        for quad in store.quads_for_pattern(None, None, None, name):
+            graph.add(tuple(_rdflib_term(term) for term in (quad.subject, quad.predicate, quad.object)))
+        if graph:
+            yield graph
 
 
 def check_store(store: Any, archive_id: str, version: int) -> Report:
     """Check every quad of a pyoxigraph store holding one projection."""
     report = Report()
-    graphs: dict[str, rdflib.Graph] = {}
-    kinds: dict[str, str] = {}
     entries = description(version)["graphs"]
     patterns = [(entry["kind"], re.compile(entry["pattern"].replace("{archive}", re.escape(archive_id))))
                 for entry in entries]
-    dataset = _dataset(store)
-    for context in dataset.graphs():
-        name = str(context.identifier)
-        if len(context) == 0:
+    shapes_by_kind = {entry["kind"]: shapes(version, entry["kind"]) for entry in entries}
+    for graph in _graphs(store):
+        if not graph:
             continue
-        if context.identifier == rdflib.graph.DATASET_DEFAULT_GRAPH_ID:
-            report.problems.append(f"the default graph holds {len(context)} triples; it must be empty")
+        name = str(graph.identifier)
+        if graph.identifier == rdflib.graph.DATASET_DEFAULT_GRAPH_ID:
+            report.problems.append(f"the default graph holds {len(graph)} triples; it must be empty")
             continue
         matched = [kind for kind, pattern in patterns if pattern.fullmatch(name)]
         if len(matched) != 1:
             report.problems.append(f"graph {name} matches {len(matched)} declared graph patterns")
             continue
-        graphs[name], kinds[name] = context, matched[0]
-    if not graphs:
-        report.problems.append("the projection holds no named graphs")
-    shapes_by_kind = {entry["kind"]: shapes(version, entry["kind"]) for entry in entries}
-    for name, graph in graphs.items():
-        kind = kinds[name]
+        kind = matched[0]
         report.graphs[kind] = report.graphs.get(kind, 0) + 1
         report.predicates.setdefault(kind, set()).update(str(p) for p in graph.predicates())
         report.classes.setdefault(kind, set()).update(str(o) for o in graph.objects(None, RDF.type))
-        plain = rdflib.Graph()
-        for triple in graph:
-            plain.add(triple)
-        conforms, _, text = validate(plain, shacl_graph=shapes_by_kind[kind], advanced=False,
+        conforms, _, text = validate(graph, shacl_graph=shapes_by_kind[kind], advanced=False,
                                      inference="none", allow_warnings=False)
         if not conforms:
             report.problems.append(f"graph {name} ({kind}) does not conform:\n{text}")
-        outside = set(plain.subjects()) - focus_nodes(shapes_by_kind[kind], plain)
+        outside = set(graph.subjects()) - focus_nodes(shapes_by_kind[kind], graph)
         for subject in sorted(outside, key=str)[:5]:
             report.problems.append(f"graph {name} ({kind}): {subject} is not declared by any shape")
+    if not report.graphs:
+        report.problems.append("the projection holds no named graphs")
     return report
 
 

@@ -381,7 +381,9 @@ states the projection's version and the archive's specification:
 
 The checker transfers every quad directly from Oxigraph to RDFLib, then runs
 all of the same SHACL shapes and undeclared-subject checks on every graph,
-including historical revisions. It does not cache results or check only current
+including historical revisions. It materializes and validates one isolated
+graph before reading the next, avoiding a whole RDFLib dataset and its second
+per-graph copy. It does not cache results or check only current
 records. Plain strings, datatypes, language tags and blank-node identity are
 preserved; unsupported RDF terms fail rather than disappearing.
 
