@@ -251,6 +251,7 @@ class Missing(unittest.TestCase):
             "key": {"missing": ["tonal/key_regions"]},
             "tuning": {"missing": ["tonal/tuning_cents", "tonal/tuning_confidence", "tonal/tuning_drift"]},
             "notes": {"missing": ["melody/notes"]},
+            "vocal-notes": {"missing": ["stems/vocals", "vocal-contour/notes from stems/vocals"]},
             "bass-line": {"missing": ["stems/bass", "f0-pesto/f0 or notes-basic-pitch/notes from stems/bass",
                                       "tonal/bass_chroma from stems/bass", "tonal/pitched from stems/bass"]},
             "sections": {"missing": ["structure/sections"]},

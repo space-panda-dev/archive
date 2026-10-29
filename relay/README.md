@@ -85,6 +85,22 @@ queued (`feature_queued`, 202, for its file; `queued` in the listing and in
 a practice answer), never as an empty result; without it the answers are
 `feature_not_made` and `stems_not_made`. The request is all the relay
 writes in the bank.
+
+`enrichment_config` is an absolute path to the same extractor/composition
+configuration the normal backfill uses. The relay reads one policy snapshot at
+startup; when `bank_parameters` is also given it must match that policy.
+Configured notes production through `vocal-notes` is requested with the
+operator-only `POST /enrich/request`: exact current source and stream pins,
+and a display region or null. This files ordinary idempotent priority bank
+requests; it does not run a model or call Door. An existing whole vocal stem
+keeps inference whole while the requested display scope remains explicit.
+The backfill admits notes and refreshes World. Only then can the response name
+an exact ready notes pin. `queued` is an outstanding request, not proof that a
+worker is running. Missing policy or scheduler stays explicit.
+
+A viewer may ask automatically when one concrete recording opens and poll
+that scope while it remains open. It must retain the existing chart and
+manual reading choices until the exact prepared revision is indexed.
 `renderers` and `exporters` name programs installed on the relay's own host
 by an absolute path, each with the version that stands for its code. One
 exporter is built: `lead-sheet-ireal` version 1 (`documents/ireal/export.py`,
@@ -112,6 +128,7 @@ versions served.
 
 | Route | Body | Result |
 | --- | --- | --- |
+| `POST /enrich/request` | Exact `{source, stream, region}` | Configured melody preparation status and, when ready, an exact notes pin; operator only |
 | `GET /health` | | `{healthy, writes, door, world, commit, build}`; 503 unless Door and World both answer |
 | `GET /metrics` | | the Prometheus text format, operator or local probe only ([ADR 0118](../docs/decisions/0118-relay-metrics.md)) |
 | `POST /world/query` | `{"query": sparql, "projection": n}` | `{snapshot, projection, media_type, data}`: SPARQL Results JSON or N-Triples |

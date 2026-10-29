@@ -51,6 +51,12 @@ class Reader:
 @support.needs_ffmpeg
 class ExplicitRegion(unittest.TestCase):
     def test_dispatch_selects_region_stem_despite_existing_whole_success_and_reruns_quietly(self):
+        self.dispatch_case("notes")
+
+    def test_strict_vocal_method_preserves_whole_and_region_identity_and_quiet_rerun(self):
+        self.dispatch_case("vocal-notes")
+
+    def dispatch_case(self, method):
         directory = Path(tempfile.mkdtemp(prefix="explicit-region-"))
         self.addCleanup(shutil.rmtree, directory, True)
         content = support.sine_wav(directory / "tone.wav", 16000, "8")
@@ -71,7 +77,7 @@ class ExplicitRegion(unittest.TestCase):
                   "revision_id": "sha256:" + "2" * 64,
                   "refs": [{"role": "artifact", "id": artifact["object_id"], "revision_id": artifact["revision_id"]}],
                   "payload": {"stream_index": 0, "sample_rate": 16000, "sample_count": 128000}}
-        args = argparse.Namespace(all=False, artifact=artifact["object_id"], stream=None, proposers="notes",
+        args = argparse.Namespace(all=False, artifact=artifact["object_id"], stream=None, proposers=method,
                                   bank=str(root), config=None, region=None, dry_run=False, door="unused",
                                   archive_command="unused")
         reader = Reader(artifact)

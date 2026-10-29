@@ -1272,7 +1272,7 @@ def _main(args: argparse.Namespace, env: dict[str, str] | None = None,
     handlers: dict[int, Any] = {}
     if commit and (planned.jobs or args.follow):
         follow = Follow(planned.planning, args, env, steps, note, root, {r.digest: r for r in present}, present,
-                        discover, prioritise, report) if args.follow else None
+                        discover, prioritise, report, request_ready=proposals.request_ready) if args.follow else None
         if follow is not None:
             follow.reported = reported
 

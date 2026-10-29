@@ -24,7 +24,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 BY = "pkg:generic/archive-enrich@0.1.0"
 RUN_CONTRACT = ("archive.claim/derivation_run", "1")
@@ -311,34 +311,44 @@ class ArchiveReader:
                    for c in record.get("contracts", []))
 
     def equivalent_run(self, result: RunResult) -> dict[str, Any] | None:
-        """A recorded run of the same agent, method, software, used revisions,
-        and parameter bytes that kept at least one output. Rerunning it would
-        write nothing new (INV-5), so a caller may skip the work."""
-        parameters = result.parameter_bytes()
-        wanted_parameters = None if parameters is None else digest_of(parameters)
-        wanted_used = sorted((pin.object_id, pin.revision_id) for pin in result.used)
-        method = {"id": result.method_id, "version": result.method_version}
-        software = [{"name": name, "version": version} for name, version in result.software]
-        generated = {ref["revision_id"] for record in self.records for ref in record.get("refs", [])
-                     if ref.get("role") == "run" and ref.get("revision_id")}
-        for record in self.records:
-            if record["shape"] != "claim" or not self.cites(record, RUN_CONTRACT):
-                continue
-            payload = record["payload"]
-            if record["agent"] != result.agent or payload.get("method") != method \
-                    or payload.get("software") != software or record["revision_id"] not in generated:
-                continue
-            refs = record.get("refs", [])
-            used = sorted((ref["id"], ref.get("revision_id")) for ref in refs if ref["role"] == "used")
-            pinned = [ref.get("revision_id") for ref in refs if ref["role"] == "parameters"]
-            digest = None
-            if pinned:
-                artifact = self.by_revision.get(pinned[0])
-                digest = artifact["payload"]["content"]["digest"] if artifact else None
-            if used == wanted_used and digest == wanted_parameters:
-                return record
-        return None
+        """A run with identical semantic inputs that kept an output (INV-5)."""
+        return next(iter(equivalent_runs(self.records, result)), None)
 
+
+def equivalent_runs(records: Iterable[dict[str, Any]], result: RunResult) -> list[dict[str, Any]]:
+    """All matching recorded derivations, using the admission identity rule.
+
+    Accepts complete export or World record rows. Callers selecting a visible
+    output must separately require that output to be current and readable.
+    """
+    records = list(records)
+    by_revision = {record["revision_id"]: record for record in records}
+    found = []
+    parameters = result.parameter_bytes()
+    wanted_parameters = None if parameters is None else digest_of(parameters)
+    wanted_used = sorted((pin.object_id, pin.revision_id) for pin in result.used)
+    method = {"id": result.method_id, "version": result.method_version}
+    software = [{"name": name, "version": version} for name, version in result.software]
+    generated = {ref["revision_id"] for record in records for ref in record.get("refs", [])
+                 if ref.get("role") == "run" and ref.get("revision_id")}
+    for record in records:
+        if record["shape"] != "claim" or not any(c.get("id") == RUN_CONTRACT[0] and c.get("version") == RUN_CONTRACT[1]
+                    for c in record.get("contracts", [])):
+            continue
+        payload = record["payload"]
+        if record["agent"] != result.agent or payload.get("method") != method \
+                or payload.get("software") != software or record["revision_id"] not in generated:
+            continue
+        refs = record.get("refs", [])
+        used = sorted((ref["id"], ref.get("revision_id")) for ref in refs if ref["role"] == "used")
+        pinned = [ref.get("revision_id") for ref in refs if ref["role"] == "parameters"]
+        digest = None
+        if pinned:
+            artifact = by_revision.get(pinned[0])
+            digest = artifact["payload"]["content"]["digest"] if artifact else None
+        if used == wanted_used and digest == wanted_parameters:
+            found.append(record)
+    return found
 
 # -- staging content ---------------------------------------------------------
 

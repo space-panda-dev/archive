@@ -278,10 +278,28 @@ def resolve_inputs(proposer_id: str, context: Context) -> ResolvedInputs:
                                  if pair[1]["vocal-contour"] is not None), None)
             if contour_pair is not None:
                 stems, measures = contour_pair
-                return ResolvedInputs("vocal-contour", {"stems": stems,
+                contour_path = ("vocal-contour-6s" if proposer_id == "vocal-notes"
+                                and contour_source == "stems-6s/vocals" else "vocal-contour")
+                return ResolvedInputs(contour_path, {"stems": stems,
                                       "vocal-contour": measures["vocal-contour"],
                                       "melody": None, "f0-pesto": None}, contour_source,
                                       optional=_OptionalEntries(context, requirement.optional))
+        if proposer_id == "vocal-notes":
+            # A configured production method is strict: existing legacy notes
+            # do not satisfy it, and no second note builder is introduced.
+            source = b.default_input(content, "vocal-contour") or "stems/vocals"
+            stem_id, output = source.split("/", 1)
+            stems = b.entry(content, stem_id)
+            reads = (FeatureRead(stem_id, (output,)),
+                     FeatureRead("vocal-contour", ("notes", "provenance"), source))
+            path = _path("vocal-contour-6s" if source == "stems-6s/vocals" else "vocal-contour", reads)
+            production = tuple(t for t in path.production or ()
+                               if not (t.extractor == stem_id and stems is not None))
+            path = replace(path, production=production)
+            missing = ((f"{source}",) if stems is None else ()) + (f"vocal-contour/notes from {source}",)
+            return ResolvedInputs(path.id, {"stems": stems, "vocal-contour": None,
+                                  "melody": None, "f0-pesto": None}, source, missing, (path,),
+                                  _OptionalEntries(context, requirement.optional))
         entry, source = b.default_entry(content, "melody")
         pesto = b.entry_from(content, source, "f0-pesto") if source and source.endswith("/vocals") else None
         entries = {"melody": entry, "f0-pesto": pesto}
@@ -1055,10 +1073,19 @@ NOTES_FROM_MELODY = "melody/notes spans, each its value rounded half to even to 
 
 
 def propose_notes(context: Context) -> Proposal | Lacking:
+    return _propose_notes(context, "notes")
+
+
+def propose_vocal_notes(context: Context) -> Proposal | Lacking:
+    """Configured contour-only reading; shares the ordinary notes mechanism."""
+    return _propose_notes(context, "vocal-notes")
+
+
+def _propose_notes(context: Context, method: str) -> Proposal | Lacking:
     """The vocal line (or the mix's melody): built from f0-pesto of the vocal
     stem where the bank holds it, else melody/notes; a vocal line without
     separation bleed."""
-    resolved = resolve_inputs("notes", context)
+    resolved = resolve_inputs(method, context)
     context = replace(context, inputs=resolved)
     entry, pesto, feature = resolved.entries["melody"], resolved.entries["f0-pesto"], resolved.source
     contour = resolved.entries.get("vocal-contour")
@@ -1231,6 +1258,12 @@ PROPOSERS: dict[str, Proposer] = {proposer.id: proposer for proposer in (
     Proposer("key", "2", propose_key, _direct(KEY_REGIONS, "tonal", ("key_regions",))),
     Proposer("tuning", "1", propose_tuning, _direct(TUNING, "tonal",
         ("tuning_cents", "tuning_confidence", "tuning_drift", "tuning_windows"))),
+    Proposer("vocal-notes", "1", propose_vocal_notes, Requirement((NOTES,), ("whole", "region"),
+        (_path("vocal-contour", (FeatureRead("stems", ("vocals",)),
+                                FeatureRead("vocal-contour", ("notes", "provenance"), "stems/vocals"))),
+         _path("vocal-contour-6s", (FeatureRead("stems-6s", ("vocals",)),
+                                   FeatureRead("vocal-contour", ("notes", "provenance"), "stems-6s/vocals")))),
+        (), "notes")),
     Proposer("notes", "5", propose_notes, Requirement((NOTES,), ("whole", "region"),
         (_path("vocal-contour", (FeatureRead("stems", ("vocals",)),
                                 FeatureRead("vocal-contour", ("notes", "provenance"), "stems/vocals"))),

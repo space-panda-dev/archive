@@ -130,6 +130,7 @@ class Proposals:
         self.thread: threading.Thread | None = None
         self.kind: str | None = None
         self.waiting: dict[str, "Recording"] = {}  # settled fast tier, not yet proposed, in arrival order
+        self.requested_waiting: dict[str, "Recording"] = {}
         self.outstanding = True  # a usable event is still to come
         self.round_failed = False  # a usable proposal of this round failed
         self.background_made = False
@@ -154,10 +155,17 @@ class Proposals:
     def counts(job: Job) -> bool:
         return job.tier == "fast" and not job.requested and job.status in OPEN
 
+    def request_ready(self, recording: "Recording") -> None:
+        """An on-demand recording is ready for its own proposal/index round."""
+        with self.lock:
+            self.requested_waiting[recording.object_id] = recording
+
     def settled(self, job: Job) -> None:
         """Inside the pool's lock: a job ended. A recording whose fast tier
         has settled (made, failed or blocked) waits for its proposal."""
-        if job.tier == "fast" and not job.requested:
+        if job.requested and job.status == "done":
+            self.request_ready(job.recording)
+        elif job.tier == "fast" and not job.requested:
             assert self.runner is not None
             if not any(self.counts(j) for j in self.runner.jobs if j.recording is job.recording):
                 with self.lock:
@@ -186,9 +194,15 @@ class Proposals:
         if self.busy():
             return
         with self.lock:
-            waiting = list(self.waiting.values())
-            self.waiting.clear()
-        if waiting:
+            requested = next(iter(self.requested_waiting.values()), None)
+            if requested is not None:
+                del self.requested_waiting[requested.object_id]
+            waiting = list(self.waiting.values()) if requested is None else []
+            if requested is None:
+                self.waiting.clear()
+        if requested is not None:
+            self.begin("requested", [requested.object_id])
+        elif waiting:
             artifacts = None if len(waiting) > BATCH_ABOVE else [r.object_id for r in waiting]
             self.begin("usable", artifacts)
         elif self.outstanding and not self.fast_left():
@@ -214,8 +228,11 @@ class Proposals:
                     good = self.steps.world()
             elif self.enabled:
                 label = {"usable": "propose (usable" + (", all" if artifacts is None else "") + ")",
-                         "background": "propose --all (background batch)"}[kind]
+                         "background": "propose --all (background batch)",
+                         "requested": "propose (requested recording)"}[kind]
                 good = self.steps.proposed(label, artifacts)
+                if kind == "requested" and good and self.args.world_store:
+                    good = self.steps.world()
         except Exception as exc:  # noqa: BLE001  (a proposal that could not run is not usable; the pool goes on)
             good = False
             self.steps.failed()
@@ -229,7 +246,7 @@ class Proposals:
                     self.round_failed = self.round_failed or not good
                 elif kind == "settle":
                     self.declare(good)
-                elif self.usable_pending and good:
+                elif kind == "background" and self.usable_pending and good:
                     self.declare(True)
             if self.runner is not None:
                 with self.runner.changed:
@@ -255,7 +272,7 @@ class Proposals:
         when the pool has stopped first (a plan with no background)."""
         if self.thread is not None:
             self.thread.join()
-        while self.runner is not None and (self.waiting or self.outstanding):
+        while self.runner is not None and (self.waiting or self.requested_waiting or self.outstanding):
             before = self.thread
             self.tick()
             if self.thread is before:  # nothing began (a fast job is still open): no round to end
@@ -273,11 +290,13 @@ class Follow:
     def __init__(self, planning: "Planning", args: argparse.Namespace, env: dict[str, str] | None, steps: Steps,
                  note: Callable[..., None], root: Path, by_digest: dict[str, "Recording"],
                  present: list["Recording"], discover: Callable[..., tuple[list, list]],
-                 prioritise: Callable[[list], None], report: Callable[..., None]):
+                 prioritise: Callable[[list], None], report: Callable[..., None],
+                 request_ready: Callable[["Recording"], None] | None = None):
         self.planning, self.args, self.env, self.steps, self.note = planning, args, env, steps, note
         self.root, self.by_digest, self.present = root, by_digest, present
         self.discover, self.prioritise, self.report = discover, prioritise, report
         self.until = time.monotonic() + args.follow_seconds if args.follow_seconds is not None else None
+        self.request_ready = request_ready
         self.stopped = False
         self.last_scan = time.monotonic()
         self.reported: set[str] = set()
@@ -311,9 +330,19 @@ class Follow:
         for request in asked:
             if request["key"] in self.planning.asked:
                 continue
+            self.planning.result.answered[:] = [key for key in self.planning.result.answered
+                                                 if key != request["key"]]
+            self.reported.discard(request["key"])
             jobs = self.planning.request(request, self.by_digest)
             added += jobs
+            if not jobs and request["key"] in self.planning.result.answered and self.request_ready is not None:
+                recording = self.by_digest.get(request["content"])
+                if recording is not None:
+                    self.request_ready(recording)
             if jobs:
                 self.note(step="request planned", key=request["key"], jobs=[j.unit.name for j in jobs])
         self.report(self.planning.result, self.root, self.note, self.reported, True)
+        for key in self.planning.result.answered:
+            if not bank.request_path(self.root, key).exists():
+                self.planning.asked.discard(key)
         return added

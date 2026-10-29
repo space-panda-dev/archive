@@ -472,6 +472,100 @@ class DoorAnswerChecks(Fixture):
         self.assertEqual((status, answer["error"]), (500, {"code": "io_failure", "message": "disk", "unadmitted_keys": ["K"]}))
 
 
+class EnrichmentRouteChecks(Fixture):
+    """Real HTTP dispatch and exact scope checks; the shared producer is tested in enrich."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.source = {"object_id": "urn:uuid:00000000-0000-4000-8000-000000000011",
+                       "revision_id": "sha256:" + "1" * 64, "shape": "artifact", "head": True,
+                       "payload": {"content": {"digest": "sha256:" + "3" * 64}}}
+        self.stream = {"object_id": "urn:uuid:00000000-0000-4000-8000-000000000012",
+                       "revision_id": "sha256:" + "2" * 64, "shape": "claim", "head": True,
+                       "contracts": [{"id": "archive.claim/audio_stream", "version": "1"}],
+                       "refs": [{"role": "artifact", "id": self.source["object_id"],
+                                 "revision_id": self.source["revision_id"]}],
+                       "payload": {"sample_rate": 48000, "sample_count": 480000}}
+        self.body = {"source": {"id": self.source["object_id"], "revision_id": self.source["revision_id"]},
+                     "stream": {"id": self.stream["object_id"], "revision_id": self.stream["revision_id"]},
+                     "region": {"start": 4800, "end": 19200, "rate": 48000}}
+
+    def configured(self, **options) -> RelayHarness:
+        policy = self.tmp / "enrichment.json"
+        policy.write_text(json.dumps({"composition": {"backfill": {"produce": [
+            {"contract": ["archive.claim/notes", "1"], "methods": ["vocal-notes"]}]}}}))
+        return self.harness(bank_root=self.tmp / "bank", bank_scheduler=True,
+                            enrichment_config=policy, **options)
+
+    def test_post_reaches_canonical_policy_with_exact_pins_and_never_runs_a_model(self) -> None:
+        harness = self.configured()
+        result = {"status": "queued", **self.body, "inference_region": None,
+                  "requests": ["sha256:" + "4" * 64], "diagnostics": []}
+        with patch.object(harness.relay.queries, "records", return_value=("generation", "snapshot", [self.source, self.stream])), \
+             patch.object(relay.enrichment_requests, "request", return_value=result) as requested:
+            for _ in range(2):
+                status, _, answer = harness.call("POST", "/enrich/request", self.body)
+                self.assertEqual(status, 200)
+                self.assertEqual(answer["result"], result)
+            args, kwargs = requested.call_args
+            self.assertEqual(args[0].root, self.tmp / "bank")
+            self.assertEqual(args[1], harness.relay.enrichment_policy)
+            self.assertEqual(args[2:5], (self.source, self.stream, self.body["region"]))
+            self.assertEqual(kwargs, {"scheduler": True, "asked_by": AGENT})
+
+    def test_bad_shape_is_refused_before_world_and_a_stale_pin_cannot_queue(self) -> None:
+        harness = self.configured()
+        with patch.object(harness.relay.queries, "records", side_effect=AssertionError("malformed input reached World")):
+            status, _, _ = harness.call("POST", "/enrich/request", {**self.body, "method": "arbitrary"})
+            self.assertEqual(status, 400)
+        with patch.object(harness.relay.queries, "records", return_value=("generation", "snapshot", [self.source, self.stream])), \
+             patch.object(relay.enrichment_requests, "request", side_effect=AssertionError("stale input queued")):
+            status, _, answer = harness.call("POST", "/enrich/request", {**self.body, "source": {
+                **self.body["source"], "revision_id": "sha256:" + "9" * 64}})
+            self.assertEqual((status, answer["error"]["code"]), (400, "request_malformed"))
+
+    def test_a_member_cannot_queue_and_unconfigured_installations_stay_explicit(self) -> None:
+        harness = self.harness()
+        with patch.object(harness.relay.queries, "records", side_effect=AssertionError("member reached records")):
+            with self.assertRaises(relay.Refused) as refused:
+                harness.relay.enrichment_request(self.body, relay.Caller(OTHER, "member"))
+            self.assertEqual(refused.exception.code, "operator_only")
+        with patch.object(harness.relay.queries, "records", return_value=("generation", "snapshot", [self.source, self.stream])):
+            status, _, answer = harness.call("POST", "/enrich/request", self.body)
+            self.assertEqual((status, answer["result"]["status"]), (200, "not_configured"))
+
+    def test_damaged_bank_is_a_failure_not_an_absent_or_queued_result(self) -> None:
+        harness = self.configured()
+        with patch.object(harness.relay.queries, "records", return_value=("generation", "snapshot", [self.source, self.stream])), \
+             patch.object(relay.enrichment_requests, "request", side_effect=relay.bank.BankError("damaged entry")):
+            status, _, answer = harness.call("POST", "/enrich/request", self.body)
+            self.assertEqual((status, answer["error"]["code"]), (500, "internal_error"))
+
+
+    def test_unconfigured_status_still_validates_source_stream_and_bounds(self) -> None:
+        harness = self.harness()
+        unrelated = {**self.stream, "refs": []}
+        with patch.object(harness.relay.queries, "records", return_value=("generation", "snapshot", [self.source, unrelated])):
+            status, _, answer = harness.call("POST", "/enrich/request", self.body)
+            self.assertEqual((status, answer["error"]["code"]), (400, "request_malformed"))
+        with patch.object(harness.relay.queries, "records", return_value=("generation", "snapshot", [self.source, self.stream])):
+            status, _, answer = harness.call("POST", "/enrich/request", {**self.body, "region": {
+                **self.body["region"], "end": 480001}})
+            self.assertEqual((status, answer["error"]["code"]), (400, "request_malformed"))
+
+    def test_invalid_operator_policy_fails_startup_and_proposer_damage_is_structured(self) -> None:
+        policy = self.tmp / "bad-policy.json"
+        policy.write_text(json.dumps({"composition": {"backfill": {"produce": [
+            {"contract": ["archive.claim/notes", "1"], "methods": ["missing-method"]}]}}}))
+        with self.assertRaisesRegex(ValueError, "invalid enrichment_config"):
+            self.harness(bank_root=self.tmp / "bank", enrichment_config=policy)
+        harness = self.configured()
+        with patch.object(harness.relay.queries, "records", return_value=("generation", "snapshot", [self.source, self.stream])), \
+             patch.object(relay.enrichment_requests, "request", side_effect=relay.proposers.ProposerError("bad contour")):
+            status, _, answer = harness.call("POST", "/enrich/request", self.body)
+            self.assertEqual((status, answer["error"]["code"]), (500, "internal_error"))
+
+
 class ConfigChecks(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="relay-config-"))
@@ -492,6 +586,14 @@ class ConfigChecks(unittest.TestCase):
         self.assertEqual(self.load(role="scratch", writes="commit").writes, "commit")
         self.assertFalse(self.load().bank_scheduler)
         self.assertTrue(self.load(bank_root="/b", bank_scheduler=True).bank_scheduler)
+
+    def test_enrichment_policy_needs_a_bank_and_an_absolute_operator_path(self) -> None:
+        with self.assertRaisesRegex(ValueError, "bank_root"):
+            self.load(enrichment_config="/policy.json")
+        with self.assertRaisesRegex(ValueError, "absolute"):
+            self.load(bank_root="/b", enrichment_config="relative.json")
+        self.assertEqual(self.load(bank_root="/b", enrichment_config="/policy.json").enrichment_config,
+                         Path("/policy.json"))
 
     def test_refusals(self) -> None:
         for name, changes in {
@@ -572,6 +674,16 @@ class QueryChecks(Fixture):
     def ask(self, harness: RelayHarness, query: str, **extra) -> tuple[int, dict]:
         status, _, answer = harness.call("POST", "/world/query", {"query": query, "projection": self.version, **extra})
         return status, answer
+
+    def test_internal_request_records_are_one_complete_world_generation(self) -> None:
+        harness = self.harness(archive_root=self.archive_root, world_store=self.store)
+        generation, snapshot, records = harness.relay.queries.records(self.version)
+        expected = world._read_current(self.store)
+        self.assertEqual(snapshot, expected.snapshot)
+        self.assertEqual(generation, world.selected_generation(self.store, self.version))
+        projected = relay.view_records.records(expected)
+        self.assertEqual({r["revision_id"] for r in records}, {r["revision_id"] for r in projected})
+        self.assertTrue(all("head" in r for r in records))
 
     def test_select_answers_standard_results_from_the_selected_generation(self) -> None:
         harness = self.harness(archive_root=self.archive_root, world_store=self.store)

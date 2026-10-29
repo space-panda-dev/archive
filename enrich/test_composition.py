@@ -142,6 +142,7 @@ class Expansion(unittest.TestCase):
         b.entry_from.return_value = None
         b.measured_over.return_value = []
         b.default_entry.return_value = (None, None)
+        b.default_input.return_value = None
         context = p.Context(b, 'sha256:' + 'a' * 64, 44100, 441000)
         capabilities = dict.fromkeys(self.catalog.extractors, True)
         cases = {
@@ -149,6 +150,7 @@ class Expansion(unittest.TestCase):
             'bass-line': (p.FeatureTarget('stems'), p.FeatureTarget('tonal', 'stems/bass'),
                           p.FeatureTarget('f0-pesto', 'stems/bass')),
             'notes': (p.FeatureTarget('melody'),),
+            'vocal-notes': (p.FeatureTarget('stems'), p.FeatureTarget('vocal-contour', 'stems/vocals')),
         }
         for method, expected in cases.items():
             result = c.ResultTarget(p.PROPOSERS[method].requirement.contracts[0], (method,))

@@ -1496,6 +1496,163 @@
             "description": "How the relay was built: the Nix output's name, `export` (a `git archive` copy), `checkout` or `checkout-dirty`; null when unknown (ADR 0114)."
           }
         }
+      },
+      "EnrichmentRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source",
+          "stream",
+          "region"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/EnrichmentPin"
+          },
+          "stream": {
+            "$ref": "#/components/schemas/EnrichmentPin"
+          },
+          "region": {
+            "$ref": "#/components/schemas/EnrichmentRegion"
+          }
+        }
+      },
+      "EnrichmentResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "source",
+          "stream",
+          "region",
+          "inference_region",
+          "requests",
+          "diagnostics"
+        ],
+        "properties": {
+          "status": {
+            "enum": [
+              "ready",
+              "queued",
+              "blocked",
+              "not_configured",
+              "unavailable",
+              "ambiguous"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/EnrichmentPin"
+          },
+          "stream": {
+            "$ref": "#/components/schemas/EnrichmentPin"
+          },
+          "region": {
+            "$ref": "#/components/schemas/EnrichmentRegion"
+          },
+          "inference_region": {
+            "$ref": "#/components/schemas/EnrichmentRegion"
+          },
+          "notes": {
+            "$ref": "#/components/schemas/EnrichmentPin"
+          },
+          "requests": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "ready"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "notes"
+              ]
+            }
+          }
+        ]
+      },
+      "EnrichmentAnswer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "archive",
+          "result"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "archive": {
+            "$ref": "#/components/schemas/Archive"
+          },
+          "result": {
+            "$ref": "#/components/schemas/EnrichmentResult"
+          }
+        }
+      },
+      "EnrichmentPin": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "revision_id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "revision_id": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      },
+      "EnrichmentRegion": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "start",
+              "end",
+              "rate"
+            ],
+            "properties": {
+              "start": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "end": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "rate": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        ]
       }
     },
     "securitySchemes": {
@@ -4773,6 +4930,139 @@
             }
           }
         }
+      }
+    },
+    "/enrich/request": {
+      "post": {
+        "summary": "Request configured melody enrichment or read its status",
+        "security": [
+          {
+            "tailnet": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnrichmentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A standard answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrichmentAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "request_malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden_identity, forbidden_origin, operator_only, or not_disclosed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found, export_input_unknown, media_not_derived, or projection_not_served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "method_not_allowed; Allow names the method.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "411": {
+            "description": "length_required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "body_too_large.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "unsupported_media_type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "world_unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "query_timeout: World took too long.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "description": "Operator only. Files idempotent priority bank requests using the canonical enrichment policy. No model execution or archival mutation happens in this route. Ready identifies an exact admitted notes revision in the selected World generation."
       }
     }
   }

@@ -15,6 +15,7 @@ class Inputs(unittest.TestCase):
         b.entry.return_value = None
         b.measured_over.return_value = []
         b.default_entry.return_value = (None, None)
+        b.default_input.return_value = None
         return p.Context(b, "sha256:" + "a" * 64, 44100, 441000)
 
     def test_registry_all_declares_bounded_requirements(self):
