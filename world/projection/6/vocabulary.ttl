@@ -381,3 +381,14 @@ arch:direction_text a rdf:Property ; rdfs:comment "meter_layers 3: a direction's
 arch:direction_tempo a rdf:Property ; rdfs:comment "meter_layers 3: a direction's target tempo node, ADR 0106's shape; tempo stays derived for every timed claim (revision 8)." .
 arch:target_bpm a rdf:Property ; rdfs:comment "A target tempo's beats a minute, xsd:decimal: an intention (ADR 0106), on a direction since meter_layers 3 (revision 8)." .
 arch:target_beat a rdf:Property ; rdfs:comment "A target tempo's beat, the note value counted; absent, whatever beat the band counts (ADR 0106, revision 8)." .
+
+# Capture clocks (ADR 0107, specification 0.0.12)
+arch:capture_subject a rdf:Property ; rdfs:comment "capture_start 1: the Artifact revision whose capture began." .
+arch:capture_started a rdf:Property ; rdfs:comment "capture_start 1: device wall time, typed dateTime only for a stated offset." .
+arch:capture_clock a rdf:Property ; rdfs:comment "capture_start 1: local or zoned, present exactly with a stated start." .
+arch:capture_basis a rdf:Property ; rdfs:comment "capture_start 1: grammar, header, client or person." .
+
+arch:session_ensemble a rdf:Property ; rdfs:comment "session_ensemble 1: one organisation asserted by the operator for a recording session." .
+
+arch:translated_session a rdf:Property ; rdfs:comment "session_translation 1: the recording_session Entity revision produced from the source snapshot." .
+arch:translated_parts a rdf:Property ; rdfs:comment "session_translation 1: each produced session_parts Claim revision." .

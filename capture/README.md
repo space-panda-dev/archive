@@ -200,3 +200,12 @@ of the synthetic file, and the real cap with sparse files that occupy almost
 no disk. The end-to-end tests need Door, `archive`, ffmpeg, and the
 enrichment requirements, and are skipped without them unless
 `ARCHIVE_REQUIRE_INTEGRATION` is set (`make test-python`).
+
+## Capture clocks (0.0.12)
+
+A recognised recorder filename proposes one `capture_start` claim per
+new or adopted Artifact, pinning its exact revision with basis `grammar`. The local clock
+has no invented timezone. Files without a source reader have no proposed
+start; their named session label is not parsed. The importer requires the
+0.0.12 capture-start contract before it stages any content. Reruns still
+skip known content and do not backfill clocks.

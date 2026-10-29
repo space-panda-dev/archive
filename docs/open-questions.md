@@ -13,6 +13,10 @@ follow-ups, clean-ups) are in the [backlog](backlog.md).
 
 ## The archive contract
 
+- Which additive contract records the provenance of legacy session backfill
+  to both Entity and parts Claim revisions? [ADR 0124](decisions/0124-legacy-session-backfill.md)
+  accepts the grouping and ambiguity policy; the old translation contract's
+  closed rule list and Claim-only targets must not be silently broadened.
 - Specification 0.0.5 installs the V2 migration route contracts after the
   World releases ([ADR 0046](decisions/0046-world-release-before-v2-migration.md)).
   Which release carries the ADR 0036 bundle amendment in its text? (The run

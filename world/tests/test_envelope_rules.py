@@ -20,7 +20,7 @@ from world.world import ProjectionError, build_projection
 def declared(rule):
     """Each 0.0.11 contract whose bundle declares `rule` at its schema's
     root, with the declaration."""
-    catalog = json.loads((ROOT / "spec" / "0.0.11" / "contracts.json").read_text())["contracts"]
+    catalog = json.loads((ROOT / "spec" / "0.0.12" / "contracts.json").read_text())["contracts"]
     found = {}
     for entry in catalog:
         bundle = json.loads((ROOT / "spec" / "contracts" / (entry["digest"].replace(":", "-") + ".json")).read_text())

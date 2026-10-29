@@ -626,6 +626,81 @@ admissionRecheckChecks parent = do
   where
     isPrefixOfString prefix value = take (length prefix) value == prefix
 
+-- Reference guards are checked in the real planner and final recheck, while
+-- complete retries remain quiet even after the referenced object's head moves.
+referenceHeadChecks :: FilePath -> IO ()
+referenceHeadChecks parent = do
+  (root, archiveId, _) <- newProposalArchive parent "reference-heads"
+  target <- allocatedObjectId archiveId "archive.core/entity" "reference-target"
+  revision <- commitEntityFixture root target
+  objectId <- allocatedObjectId archiveId "archive.core/entity" "guarded-review"
+  second <- allocatedObjectId archiveId "archive.core/entity" "guarded-review-second"
+  pendingObject <- allocatedObjectId archiveId "archive.core/entity" "guarded-pending"
+  let pin = "{\"role\":\"subject\",\"id\":\"" <> target <> "\",\"revision_id\":\"" <> revision <> "\"}"
+      draft object = replace "\"refs\":[]" ("\"refs\":[" <> pin <> "]") (entityDraft object)
+      row object rev = "{\"object_id\":\"" <> object <> "\",\"revision_id\":" <> rev <> "}"
+      valid = row target (jsonString revision)
+      guarded manifest rows = init manifest <> ",\"expected_reference_heads\":" <> rows <> "}"
+      base = manifestFor ["records/review.json"] [(objectId, "archive.core/entity", "guarded-review")]
+               [(objectId, Nothing)] []
+  mapM_ (\(label, rows, problem) -> do
+    bad <- writeAdmissionProposal root ("reference-" <> label) (guarded base rows)
+      ["records/review.json", draft objectId]
+    proposalRefusesContaining label problem root bad)
+    [ ("null", "[" <> row target "null" <> "]", "non-null digest")
+    , ("duplicate", "[" <> valid <> "," <> valid <> "]", "must be unique")
+    , ("drafted", "[" <> row objectId (jsonString revision) <> "]", "must not name drafted objects")
+    , ("unrelated", "[" <> row pendingObject (jsonString revision) <> "]", "explicitly referenced objects")
+    , ("disagrees", "[" <> row target (jsonString zeroDigest) <> "]", "agree with every explicit pin")
+    ]
+  proposal <- writeAdmissionProposal root "guarded-batch" (guarded
+    (manifestFor ["records/review.json", "records/second.json"]
+      [(objectId, "archive.core/entity", "guarded-review"), (second, "archive.core/entity", "guarded-review-second")]
+      [(objectId, Nothing), (second, Nothing)] []) ("[" <> valid <> "]"))
+    ["records/review.json", draft objectId, "records/second.json", draft second]
+  expected <- mapM canonicalRevisionOf [draft objectId, draft second]
+  proposalAccepts "a guarded batch predicts both exact revisions" root proposal expected
+  pending <- writeAdmissionProposal root "guarded-pending" (guarded
+    (manifestFor ["records/pending.json"] [(pendingObject, "archive.core/entity", "guarded-pending")]
+      [(pendingObject, Nothing)] []) ("[" <> valid <> "]")) ["records/pending.json", draft pendingObject]
+  parsed <- readAdmissionProposal pending >>= either (ioError . userError . Text.unpack) pure
+  planned <- dryRunAdmissionForCommit root parsed >>= either (ioError . userError . show) pure
+  let manifestPath = pending </> "manifest.json"
+  original <- readFile manifestPath
+  length original `seq` writeFile manifestPath (replace revision zeroDigest original)
+  changed <- recheckAdmissionForCommit root parsed planned
+  assert "a guarded manifest remains subject to retained-byte recheck"
+    (case changed of Left (AdmissionProposalRejected _) -> True; _ -> False)
+    ExitSuccess (show changed) ""
+  writeFile manifestPath original
+  (saved, _, saveErrors, saveAnnex) <- persistentAdmissionCommandWithFakeAnnex parent "guard-save" root proposal
+  assert "a valid guarded batch commits atomically without annex"
+    (saved == ExitSuccess && not saveAnnex) saved "" saveErrors
+  competing <- writeAdmissionProposal root "guard-competing" (manifestFor
+    ["records/target.json"] [] [(target, Just revision)] [])
+    ["records/target.json", superseding target target revision]
+  (moved, _, moveErrors, _) <- persistentAdmissionCommandWithFakeAnnex parent "guard-move" root competing
+  assert "another writer advances the referenced object's head" (moved == ExitSuccess) moved "" moveErrors
+  beforeHead <- gitHead root
+  beforeRecords <- recordCount root
+  beforeCommits <- gitCommitCount root
+  rechecked <- recheckAdmissionForCommit root parsed planned
+  assert "a reference moved since dry run is refused by final recheck"
+    (rechecked == Left (AdmissionProposalStale "expected reference head is stale"))
+    ExitSuccess (show rechecked) ""
+  (stale, _, staleErrors, staleAnnex) <- persistentAdmissionCommandWithFakeAnnex parent "guard-stale" root pending
+  assert "a stale reference is refused before content handling"
+    (stale /= ExitSuccess && not staleAnnex && contains "expected reference head is stale" staleErrors)
+    stale "" staleErrors
+  (retried, retryOutput, retryErrors, retryAnnex) <- persistentAdmissionCommandWithFakeAnnex parent "guard-retry" root proposal
+  afterHead <- gitHead root
+  afterRecords <- recordCount root
+  afterCommits <- gitCommitCount root
+  assert "a complete guarded retry ignores later target heads and writes nothing"
+    (retried == ExitSuccess && not retryAnnex && contains "\"retry\":true" retryOutput
+      && (beforeHead, beforeRecords, beforeCommits) == (afterHead, afterRecords, afterCommits))
+    retried retryOutput retryErrors
+
 persistentAdmissionChecks :: FilePath -> IO ()
 persistentAdmissionChecks parent = do
   (root, archiveId, _) <- newProposalArchive parent "persistent-admission"
@@ -1246,6 +1321,7 @@ tests :: IO TestTree
 tests = fmap (testGroup "admission") $ sequence
   [ caseOf "proposalChecks" (withProposalTemporaryRoot proposalChecks)
   , caseOf "controlPlaneInputLimitChecks" (withProposalTemporaryRoot controlPlaneInputLimitChecks)
+  , caseOf "referenceHeadChecks" (withProposalTemporaryRoot referenceHeadChecks)
   , caseOf "persistentAdmissionChecks" (withProposalTemporaryRoot persistentAdmissionChecks)
   , caseOf "admissionRecheckChecks" (withProposalTemporaryRoot admissionRecheckChecks)
   , caseOf "contentAdmissionChecks" (withProposalTemporaryRoot contentAdmissionChecks)

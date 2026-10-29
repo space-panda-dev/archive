@@ -72,6 +72,7 @@ python -m enrich.bench validate | run | check <set>
                                  score note transcribers against a private evaluation set
 door verify                      full verification of HEAD and a fresh checkpoint
 archive init | status | doctor   setup, state, whole-archive check
+archive-upgrade plan | apply       pinned operational specification plan and Door receipt (ADR 0126)
 archive maintenance repack       coordinated packing of loose Git objects
 archive maintenance prune-packed  coordinated Git loose-object cleanup
 archive export [--since <commit>] the committed snapshot, or what was added after a commit
@@ -82,6 +83,8 @@ enrich/enrich.py probe           count an Artifact's audio streams and propose t
 enrich/enrich.py detect          suggest an audio stream's spans and propose them to Door
 enrich/enrich.py match           score a selection against each Work's linked occurrences and propose matches
 enrich/enrich.py propose         read a recording's feature bank entries as claims and propose them to Door
+python -m migration.legacy_sessions SNAPSHOT --archive ROOT --source-object ID --source-revision REV --operator ID --output DIR
+                                 inventory legacy grouping and prepare a Door proposal, without admission
 capture/capture.py import        admit a recorder card's new recordings as sessions, then enrich them
 documents/documents.py ireal     import an iReal Pro playlist's charts, list link candidates, propose the operator's links
 enrich/enrich.py align           place a chart's untimed claims on a recording's beats and chords

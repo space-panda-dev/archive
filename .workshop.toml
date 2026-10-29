@@ -125,7 +125,38 @@ timeout_seconds = 1800
 parser = "unittest"
 prelude = true
 tier = 30
-paths = ["migration/**", "door/**", "archive/**", "spec/**", "archive.cabal", "cabal.project"]
+paths = ["migration/**", "deployment/**", "door/**", "archive/**", "spec/**", "archive.cabal", "cabal.project"]
+
+# The actual pinned command and its runtime closure, separately from fast CLI tests.
+[suites.upgrade-package]
+run = """
+set -e
+# wf slots have an empty Git index and preserved build trees. Give Nix a
+# filtered filesystem source, so it sees the snapshot without importing caches.
+ARCHIVE_UPGRADE_TEST_PACKAGE="$(nix build --impure --no-link --print-out-paths --expr '
+  let
+    source = builtins.path {
+      path = ./.;
+      name = "archive-package-proof-source";
+      filter = path: type:
+        !(builtins.elem (builtins.baseNameOf path)
+          [ ".git" ".wf" ".claude" ".direnv" "result" "dist-newstyle"
+            "__pycache__" ".venv" ".store" "cabal.project.local" ])
+        && !(builtins.match ".*\\\\.pyc" (builtins.baseNameOf path) != null);
+    };
+  in (builtins.getFlake (builtins.unsafeDiscardStringContext ("path:" + toString source))).packages.${builtins.currentSystem}.deployment
+')"
+test -n "$ARCHIVE_UPGRADE_TEST_PACKAGE"
+for binary in archive door relay archive-upgrade archive-legacy-backfill; do test -x "$ARCHIVE_UPGRADE_TEST_PACKAGE/bin/$binary"; done
+"$ARCHIVE_UPGRADE_TEST_PACKAGE/bin/archive-legacy-backfill" --help >/dev/null
+export ARCHIVE_UPGRADE_TEST_PACKAGE
+"$PYTHON" -m unittest discover -s migration -p "test_upgrade.py" -k packaged_release "$@"
+"""
+timeout_seconds = 1800
+parser = "unittest"
+prelude = true
+tier = 300
+paths = ["migration/upgrade.py", "migration/test_upgrade.py", "enrich/adapter.py", "deployment/**", "flake.nix", "flake.lock", "spec/**", "door/**", "archive/**", "archive.cabal", "cabal.project"]
 
 # Measured: 88 s.
 [suites.fixture]
@@ -239,3 +270,11 @@ timeout = 600
 # shows commit and build once they run a relay with ADR 0114.
 [observe]
 services = ["archive-relay", "archive-door", "archive-scratch-trial-relay"]
+
+# Cross-platform consumers must evaluate target packages without native IFD.
+[suites.package-evaluation]
+run = 'bash deployment/check-package-evaluation.sh'
+where = "local"
+timeout_seconds = 180
+tier = 5
+paths = ["flake.nix", "flake.lock", "deployment/**", "archive.cabal"]

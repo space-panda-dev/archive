@@ -52,10 +52,11 @@ import adapter  # noqa: E402
 import grammar as grammars_module  # noqa: E402
 import propose_step  # noqa: E402
 
-BY = AGENT = "pkg:generic/archive-capture@0.1.0"
+BY = AGENT = "pkg:generic/archive-capture@0.2.0"
 ARTIFACT_NAMESPACE = adapter.ARTIFACT_NAMESPACE
 SESSION_NAMESPACE = "archive.audio/session"
 PARTS_CONTRACT = ("archive.claim/session_parts", "1")
+START_CONTRACT = ("archive.claim/capture_start", "1")
 SPANS_CONTRACT = ("archive.claim/span_suggestions", "1")
 WINDOW_MATCH_CONTRACT = ("archive.claim/work_match", "3")
 # The span detector's presets (enrich/detector.py), named here so a wrong one
@@ -369,11 +370,19 @@ def plan(session: Session, reader: adapter.ArchiveReader) -> tuple[list[dict], l
             record = session.adopted[item.digest]
             pins[item.digest] = {"object_id": record["object_id"], "revision_id": record["revision_id"]}
             adopted.append({"file": item.relative, "digest": item.digest, **pins[item.digest]})
-            continue
-        pin = add(ARTIFACT_NAMESPACE, "capture-" + item.hex, "artifact",
-                  {"content": {"digest": item.digest, "size": item.size}}, [])
-        pins[item.digest] = pin
-        artifacts.append({"file": item.relative, "digest": item.digest, **pin})
+        else:
+            pin = add(ARTIFACT_NAMESPACE, "capture-" + item.hex, "artifact",
+                      {"content": {"digest": item.digest, "size": item.size}}, [])
+            pins[item.digest] = pin
+            artifacts.append({"file": item.relative, "digest": item.digest, **pin})
+        pin = pins[item.digest]
+        if item.recognised is not None:
+            instant = item.recognised.started
+            start = {"basis": "grammar", "started": instant.isoformat(),
+                     "clock": "zoned" if instant.utcoffset() is not None else "local"}
+            add(START_CONTRACT[0], "capture-start-" + item.hex, "claim", start,
+                [{"role": "subject", "id": pin["object_id"], "revision_id": pin["revision_id"]}],
+                [reader.citation(START_CONTRACT)])
     entity = add(SESSION_NAMESPACE, session.name, "entity", {"kind": "recording_session", "label": session.label}, [])
     citation = reader.citation(PARTS_CONTRACT)
     parts = []
@@ -714,7 +723,7 @@ def _import_directory(args: argparse.Namespace, grammars: Sequence[Any]) -> dict
     # Refuse an archive the chain cannot finish in before anything is staged:
     # an import whose sessions are committed is not rerun.
     proposing = selected_contracts
-    for contract in (PARTS_CONTRACT, SPANS_CONTRACT, WINDOW_MATCH_CONTRACT, *proposing):
+    for contract in (PARTS_CONTRACT, START_CONTRACT, SPANS_CONTRACT, WINDOW_MATCH_CONTRACT, *proposing):
         reader.citation(contract)
     files, ignored = read_directory(args.directory)
     if not files:

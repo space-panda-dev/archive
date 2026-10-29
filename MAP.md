@@ -52,11 +52,34 @@ module is `wf check enrich -- -p test_bank.py` and one test name is
 | shadow | 300 | 1800s | `$PYTHON -m unittest discover -s shadow -p "test_*.py" "$@"` |
 | documents-door | 30 | 1800s | `$PYTHON -m unittest discover -s documents/tests "$@"` |
 | migration | 30 | 1800s | `$PYTHON -m unittest discover -s migration -p "test_*.py" "$@"` |
+| upgrade-package | 300 | 1800s | `set -e
+# wf slots have an empty Git index and preserved build trees. Give Nix a
+# filtered filesystem source, so it sees the snapshot without importing caches.
+ARCHIVE_UPGRADE_TEST_PACKAGE="$(nix build --impure --no-link --print-out-paths --expr '
+  let
+    source = builtins.path {
+      path = ./.;
+      name = "archive-package-proof-source";
+      filter = path: type:
+        !(builtins.elem (builtins.baseNameOf path)
+          [ ".git" ".wf" ".claude" ".direnv" "result" "dist-newstyle"
+            "__pycache__" ".venv" ".store" "cabal.project.local" ])
+        && !(builtins.match ".*\\.pyc" (builtins.baseNameOf path) != null);
+    };
+  in (builtins.getFlake (builtins.unsafeDiscardStringContext ("path:" + toString source))).packages.${builtins.currentSystem}.deployment
+')"
+test -n "$ARCHIVE_UPGRADE_TEST_PACKAGE"
+for binary in archive door relay archive-upgrade archive-legacy-backfill; do test -x "$ARCHIVE_UPGRADE_TEST_PACKAGE/bin/$binary"; done
+"$ARCHIVE_UPGRADE_TEST_PACKAGE/bin/archive-legacy-backfill" --help >/dev/null
+export ARCHIVE_UPGRADE_TEST_PACKAGE
+"$PYTHON" -m unittest discover -s migration -p "test_upgrade.py" -k packaged_release "$@"
+` |
 | fixture | 300 | 1800s | `$PYTHON -m unittest discover -s fixture -p "test_*.py" "$@"` |
 | enrich | night | 3600s | `$ENRICH_PYTHON -m unittest discover -s enrich -p "test_*.py" "$@"` |
 | capture | 300 | 1800s | `$ENRICH_PYTHON -m unittest discover -s capture -p "test_*.py" "$@"` |
 | bench | 30 | 300s | `P="$HOME/archive-bench/envs/harness/bin/python"; test -x "$P" \|\| { echo "bench: no $P; the bench runs on the x86-64 laptop (wf check --on laptop)"; exit 1; }; "$P" -m unittest discover -s enrich/bench -p "test_*.py" "$@"` |
 | bench-horn | night | 3600s | `P="$HOME/archive-bench/envs/harness/bin/python"; test -x "$P" \|\| { echo "bench-horn: no $P; the bench runs on the x86-64 laptop (wf check --on laptop)"; exit 1; }; ARCHIVE_BENCH_ROOT="$HOME/archive-bench" "$P" -m enrich.bench check horn-v1 "$@"` |
+| package-evaluation | 5 | 180s | `bash deployment/check-package-evaluation.sh` |
 <!-- /wf:gen -->
 
 `haskell` is `door-test` and `archive-test`, tasty trees whose cases are the
@@ -127,7 +150,7 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 | file | lines |
 |---|---|
 | `door/src/Archive/Door/AdmissionDryRun.hs` | 152 |
-| `door/src/Archive/Door/TransitionDryRun.hs` | 321 |
+| `door/src/Archive/Door/TransitionDryRun.hs` | 327 |
 | `door/src/Archive/Door/Contracts.hs` | 332 |
 | `door/src/Archive/Door/RecordCommit.hs` | 583 |
 | `door/src/Archive/Door/Bootstrap.hs` | 471 |
@@ -136,9 +159,9 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 | `door/src/Archive/ProcessPinned.c` | 799 |
 | `door/test/Main.hs` | 82 |
 | `door/test/Support.hs` | 503 |
-| `door/test/AdmissionChecks.hs` | 1252 |
+| `door/test/AdmissionChecks.hs` | 1328 |
 | `door/test/ContractAdmissionChecks.hs` | 1035 |
-| `door/test/UpgradeChecks.hs` | 963 |
+| `door/test/UpgradeChecks.hs` | 965 |
 | `archive/test/Main.hs` | 32 |
 | `archive/test/ReaderChecks.hs` | 492 |
 <!-- /wf:gen -->
@@ -150,11 +173,11 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 
 ## Spec: what every archive must satisfy, copied into each
 
-- `spec/VERSION` (current `0.0.11`); `spec/archive-spec.md`
-  is a byte copy of `spec/0.0.11/archive-spec.md`. Navigate by
+- `spec/VERSION` (current `0.0.12`); `spec/archive-spec.md`
+  is a byte copy of `spec/0.0.12/archive-spec.md`. Navigate by
   heading: `rg -n '^##' spec/archive-spec.md` (section 6, "Reading
   commands", is most of it; D-18 holds 0.0.10's contracts, D-19 0.0.11's).
-  Release notes: [docs/releases/0.0.11.md](docs/releases/0.0.11.md),
+  Release notes: [0.0.12](docs/releases/0.0.12.md), [docs/releases/0.0.11.md](docs/releases/0.0.11.md),
   [docs/releases/0.0.10.md](docs/releases/0.0.10.md).
 - `spec/<version>/contracts.json` lists
   `{id, version, digest}`; each digest names `spec/contracts/sha256-<hex>.json`.
@@ -163,7 +186,7 @@ run by `planTransition` on today's UTC date, never on replay; pure checks in
 <!-- wf:gen lines spec/archive-spec.md -->
 | file | lines |
 |---|---|
-| `spec/archive-spec.md` | 2758 |
+| `spec/archive-spec.md` | 2862 |
 <!-- /wf:gen -->
 
 Rules: never delete a version or a bundle an archive may cite; supersede it
@@ -198,7 +221,7 @@ full rebuild (ADR 0055).
 <!-- wf:gen lines world/world.py world/harmony.py world/contributions.py world/documents.py world/notes.py world/circle.py world/tests/test_world.py -->
 | file | lines |
 |---|---|
-| `world/world.py` | 2138 |
+| `world/world.py` | 2184 |
 | `world/harmony.py` | 1061 |
 | `world/contributions.py` | 810 |
 | `world/documents.py` | 1287 |
@@ -208,12 +231,12 @@ full rebuild (ADR 0055).
 <!-- /wf:gen -->
 
 <!-- wf:gen anchors world/world.py#_main world/world.py#_project world/world.py#_project_review_claim world/world.py#_project_derivation_claim world/world.py#_project_music_claim world/world.py#refresh_store -->
-- `world/world.py#_main`: line 2027
+- `world/world.py#_main`: line 2073
 - `world/world.py#_project`: line 273
-- `world/world.py#_project_review_claim`: line 606
-- `world/world.py#_project_derivation_claim`: line 852
-- `world/world.py#_project_music_claim`: line 1097
-- `world/world.py#refresh_store`: line 1808
+- `world/world.py#_project_review_claim`: line 625
+- `world/world.py#_project_derivation_claim`: line 898
+- `world/world.py#_project_music_claim`: line 1143
+- `world/world.py#refresh_store`: line 1854
 <!-- /wf:gen -->
 
 ## Relay (Python): HTTP for the browser; no state; loopback only
@@ -233,7 +256,7 @@ speed), 0069 (media by digest), 0114 (local health), 0118 (metrics).
 |---|---|
 | `relay/relay.py` | 1384 |
 | `relay/openapi.json` | 5069 |
-| `relay/tests/test_relay.py` | 1306 |
+| `relay/tests/test_relay.py` | 1361 |
 <!-- /wf:gen -->
 
 <!-- wf:gen anchors relay/relay.py#DOOR_ROUTES relay/relay.py#MEDIA_ROUTES relay/relay.py#ROUTES relay/relay.py#Relay relay/relay.py#make_handler relay/relay.py#main -->
@@ -354,8 +377,8 @@ Rules: ADR 0070; capture proposes, Door commits (INV-2).
 <!-- wf:gen lines capture/capture.py capture/test_capture.py -->
 | file | lines |
 |---|---|
-| `capture/capture.py` | 798 |
-| `capture/test_capture.py` | 943 |
+| `capture/capture.py` | 807 |
+| `capture/test_capture.py` | 974 |
 <!-- /wf:gen -->
 
 ## documents (Python)
@@ -417,7 +440,7 @@ catalog except the specification upgrade, so a new contract needs a plan step.
 <!-- wf:gen lines fixture/plan.json -->
 | file | lines |
 |---|---|
-| `fixture/plan.json` | 710 |
+| `fixture/plan.json` | 740 |
 <!-- /wf:gen -->
 
 ## Do not read
@@ -476,3 +499,37 @@ cache.
 7. **Add a transition kind.** `transitionDispatchTable` in
    `Transition/Dispatch.hs`, its rules in `Transition/Rules.hs`, and
    `TransitionCommit.hs`. Governs: ADR 0028, 0030.
+
+## Legacy session backfill
+
+`migration/legacy_backfill.py` is the retained dry-run/apply CLI. It checks
+published 0.0.12 pins, reuses or drafts source evidence and plans one atomic
+source-and-grouping admission. Default dry-run writes only its operational
+output package; explicit apply validates that same package before staging.
+`migration/test_legacy_backfill.py` proves the CLI through real Door with
+synthetic evidence: no dry-run archive/staging writes, partial missing-record
+results, stale guards, exact revisions and quiet retries; suite `migration`.
+The operator procedure is [docs/legacy-session-backfill.md](docs/legacy-session-backfill.md).
+
+`migration/legacy_sessions.py` inventories an admitted explicit grouping
+snapshot and writes a reviewed Door proposal (ADR 0124).
+`migration/test_legacy_sessions.py` covers ambiguity, exact pins, ordering,
+existing groups, deterministic retry and real Door provenance targets; suite
+`migration`. No archive mutation occurs in the planner.
+
+`migration/legacy_inventory.py` extracts explicit V2 session rows or persisted
+UI sidecar membership without rerunning grouping; it preserves raw source
+bytes and reports missing/conflicting coverage. Its tests are in
+`migration/test_legacy_inventory.py`, suite `migration`.
+
+`world/legacy_translation.py` re-checks the closed legacy translation payload,
+operator and exact provenance target types before World projects its records.
+
+## Pinned specification upgrade command
+
+`migration/upgrade.py` exposes `archive-upgrade plan|apply` (ADR 0126), packaged
+by `flake.nix` as `.#upgrade` and linked from `.#tools`. It binds exact release
+bytes, source HEAD and operator, validates through Door and returns operational
+receipts. `migration/test_upgrade.py` exercises the detached package command
+against synthetic real-Door archives; suite `migration`. Fleet owns services;
+this command never deploys or controls them. See [interface](docs/archive-upgrade.md).

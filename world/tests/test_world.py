@@ -667,12 +667,12 @@ class IncrementalRefreshTests(unittest.TestCase):
 
     def test_an_earlier_revision_rebuilds_in_full(self):
         # A store built before the latest addition to projection 6 (revision
-        # 8 projects specification 0.0.11's contracts, ADR 0113).
+        # 9 projects specification 0.0.12's session evidence contracts).
         # Extending it would leave its older records without what the
         # addition projects.
         store = self.tmp / "world"
         current = world_module.PROJECTION_REVISIONS[PROJECTION_VERSION]
-        self.assertEqual(current, 8)
+        self.assertEqual(current, 9)
         with patch.dict("world.world.PROJECTION_REVISIONS", {PROJECTION_VERSION: current - 1}):
             rebuild_store(self.archive_root, store, export_file=DOOR_CHAIN_CUT_EXPORT)
         selected = (store / f"CURRENT-p{PROJECTION_VERSION}").read_text().strip()

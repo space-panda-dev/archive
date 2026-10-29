@@ -139,6 +139,25 @@ class CaptureImport(unittest.TestCase):
 
     # -- sessions --------------------------------------------------------
 
+    def test_software_cannot_assert_a_person_basis_capture_start(self) -> None:
+        card_file(self.card, "010101_120000_TrLR.WAV", music(24))
+        original = capture.plan
+
+        def person_basis(*args):
+            drafts, identities, artifacts = original(*args)
+            for draft in drafts:
+                if any(c["id"] == "archive.claim/capture_start" for c in draft.get("contracts", [])):
+                    draft["payload"]["basis"] = "person"
+            return drafts, identities, artifacts
+
+        before = support.export(self.root)["snapshot"]
+        with patch.object(capture, "plan", side_effect=person_basis):
+            code, answer = self.run_import()
+        self.assertEqual((code, answer["status"]), (1, "failed"), answer)
+        self.assertEqual(support.export(self.root)["snapshot"], before)
+        self.assertIn("person", answer["detail"])
+        self.assertEqual(self.claims("archive.claim/capture_start"), [])
+
     def test_a_two_source_take_is_one_session_with_a_parts_claim_per_source(self) -> None:
         lr = card_file(self.card, "010101_120000_TrLR.WAV", music(24))
         mic_file = card_file(self.card, "010101_120000_TrMic.WAV", mic(24))
@@ -155,6 +174,14 @@ class CaptureImport(unittest.TestCase):
                                               {"source": "TrMic", "files": [mic_file.name]}])
 
         lr_artifact, mic_artifact = self.artifact_of(lr), self.artifact_of(mic_file)
+        starts = self.claims("archive.claim/capture_start")
+        self.assertEqual(len(starts), 2)
+        for artifact in (lr_artifact, mic_artifact):
+            [start] = self.about(starts, "subject", artifact["object_id"])
+            self.assertEqual(start["payload"], {"basis": "grammar", "clock": "local", "started": "2001-01-01T12:00:00"})
+            self.assertEqual(start["agent"], capture.AGENT)
+            self.assertEqual(start["refs"][0]["revision_id"], artifact["revision_id"])
+
         session_id = self.session_id(lr)
         [entity] = [r for r in self.records() if r["object_id"] == session_id]
         self.assertEqual(entity["payload"], {"kind": "recording_session", "label": session["label"]})
@@ -470,6 +497,10 @@ class CaptureImport(unittest.TestCase):
                                                "revision_id": lr_artifact["revision_id"],
                                                "digest": lr_artifact["payload"]["content"]["digest"]}])
         self.assertEqual(session["artifacts"], [])
+        [start] = self.about(self.claims("archive.claim/capture_start"), "subject", lr_artifact["object_id"])
+        self.assertEqual(start["payload"], {"basis": "grammar", "clock": "local", "started": "2001-01-01T12:00:00"})
+        self.assertEqual(start["refs"][0]["revision_id"], lr_artifact["revision_id"])
+
         self.assertEqual(self.parts_of(self.session_id(lr), session), {"TrLR": [lr_artifact["object_id"]]})
         self.assertEqual([r for r in self.records() if r["shape"] == "artifact"], artifacts)
         self.assertEqual(answer["chain"], [])  # nothing new to enrich

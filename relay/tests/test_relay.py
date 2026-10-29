@@ -942,6 +942,61 @@ class CoherentSaveChecks(Fixture):
         return list(relay.access.load(self.store, world.PROJECTION_VERSION, self.operator, None,
                                       date.today()).by_revision.values())
 
+    def test_a_new_review_claim_is_atomic_against_a_referenced_selection_head(self) -> None:
+        selection = next(r for r in self.records() if r["head"] and any(
+            c["id"] == "archive.claim/audio_selection" and c["version"] == "2"
+            for c in r.get("contracts", [])))
+        target, revision = selection["object_id"], selection["revision_id"]
+
+        def title(name: str) -> dict:
+            object_id = allocated(self.archive_id, "archive.claim/selection_title", name)
+            return {"manifest": {"protocol": "archive-admission/1", "records": ["records/title.json"],
+                    "identities": [{"object_id": object_id, "namespace": "archive.claim/selection_title", "name": name}],
+                    "contents": [], "expected_heads": [{"object_id": object_id, "revision_id": None}],
+                    "expected_reference_heads": [{"object_id": target, "revision_id": revision}]},
+                    "records": {"records/title.json": self.draft(object_id, "claim", {"title": name},
+                        [{"role": "selection", "id": target, "revision_id": revision}],
+                        ("archive.claim/selection_title", "1"))}}
+
+        saved, pending = title("guard-saved"), title("guard-pending")
+        status, _, predicted = self.relay.call("POST", "/door/admit-dry-run", saved)
+        self.assertEqual(status, 200, predicted)
+        status, _, committed = self.relay.call("POST", "/door/admit", saved)
+        self.assertEqual(status, 200, committed)
+        self.assertEqual(committed["result"]["door"]["revision_ids"], predicted["result"]["door"]["revision_ids"])
+        self.assertEqual(self.relay.call("POST", "/door/admit-dry-run", pending)[0], 200)
+
+        payload = json.loads(json.dumps(selection["payload"]))
+        payload["tracks"][0]["pieces"][0]["start_sample"] += 1
+        edit = self.draft(target, "claim", payload, selection["refs"],
+                          ("archive.claim/audio_selection", "2"), supersedes=revision)
+        edit["by"] = "pkg:generic/another-review-writer@0"
+        competing = {"manifest": {"protocol": "archive-admission/1", "records": ["records/edit.json"],
+                     "identities": [], "contents": [],
+                     "expected_heads": [{"object_id": target, "revision_id": revision}]},
+                     "records": {"records/edit.json": edit}}
+        status, _, changed = self.relay.call("POST", "/door/admit", competing)
+        self.assertEqual(status, 200, changed)
+        before = self.head(), len(self.records())
+        annex_before = subprocess.run(["git", "-C", str(self.root), "rev-parse", "refs/heads/git-annex"],
+                                      capture_output=True, text=True, check=True).stdout
+        for route in ("/door/admit-dry-run", "/door/admit"):
+            status, _, refused = self.relay.call("POST", route, pending)
+            self.assertEqual((status, refused["error"]["code"]), (409, "expected_head_stale"), refused)
+            self.assertNotIn(changed["result"]["door"]["revision_ids"][0], refused["error"]["message"])
+            self.assertEqual((self.head(), len(self.records())), before)
+        status, _, retried = self.relay.call("POST", "/door/admit", saved)
+        self.assertEqual(status, 200, retried)
+        self.assertTrue(retried["result"]["door"]["retry"])
+        self.assertEqual(retried["result"]["door"]["revision_ids"], committed["result"]["door"]["revision_ids"])
+        self.assertEqual((self.head(), len(self.records())), before)
+        annex_after = subprocess.run(["git", "-C", str(self.root), "rev-parse", "refs/heads/git-annex"],
+                                     capture_output=True, text=True, check=True).stdout
+        self.assertEqual(annex_after, annex_before)
+        # Omitting an optional guard intentionally retains historical-reference behavior.
+        del pending["manifest"]["expected_reference_heads"]
+        self.assertEqual(self.relay.call("POST", "/door/admit-dry-run", pending)[0], 200)
+
     def stale(self) -> list[dict]:
         status, _, answer = self.relay.call("POST", "/world/view", STALE_LYRIC_LINKS)
         self.assertEqual(status, 200, answer)

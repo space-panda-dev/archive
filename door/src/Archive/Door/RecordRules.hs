@@ -28,6 +28,7 @@ import Data.Aeson.RFC8785 (encodeCanonical)
 import Data.List (nub, sort)
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
+import Data.Time (LocalTime, ZonedTime, defaultTimeLocale, parseTimeM)
 import Data.Text qualified as Text
 
 -- | Check every record-level 0.0.10 and 0.0.11 rule at the root of @schema@ against a
@@ -54,6 +55,7 @@ validateRecordRules schema instanceValue = do
   with "x-archive-form-structure" formStructureRule (validateFormStructure payload)
   with "x-archive-placed-items" placedItemsRule (validatePlacedItems payload)
   with "x-archive-pass-lists" passListsRule (validatePassLists payload)
+  with "x-archive-capture-start" captureStartRule (const (captureStart payload))
 
 -- | No revision appears twice among the references in @roles@.
 distinctRevisions :: [InstanceRef] -> [Text] -> Either Text ()
@@ -209,3 +211,19 @@ exportKey payload rendered joined =
         , "joined" .= [[identifier, revision] | (identifier, revision) <- joined]
         ]
   in "sha256:" <> hexText (SHA256.hashlazy (encodeCanonical material))
+
+-- | Pair a stated start with its clock, and validate a real calendar time.
+captureStart :: KeyMap.KeyMap Value -> Either Text ()
+captureStart payload = case (textAt "started" payload, textAt "clock" payload) of
+  (Nothing, Nothing) -> Right ()
+  (Just started, Just clock) ->
+    let input = Text.unpack started
+        local = parseTimeM True defaultTimeLocale "%Y-%m-%dT%H:%M:%S%Q" input :: Maybe LocalTime
+        zoned = parseTimeM True defaultTimeLocale "%Y-%m-%dT%H:%M:%S%Q%z"
+          (if Text.isSuffixOf "Z" started then Text.unpack (Text.dropEnd 1 started) <> "+00:00" else input) :: Maybe ZonedTime
+        valid = case clock of
+          "local" -> maybe False (const True) local
+          "zoned" -> maybe False (const True) zoned
+          _ -> False
+    in if valid then Right () else Left "capture start must be a valid time with its stated clock"
+  _ -> Left "capture start and clock appear together"

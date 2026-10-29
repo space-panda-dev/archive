@@ -954,3 +954,18 @@ wsh:UnderlaySyllable a sh:NodeShape ;
   sh:property [ sh:path arch:start_char ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
   sh:property [ sh:path arch:end_char ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
   sh:property [ sh:path arch:carrying_items ; sh:minCount 1 ; sh:nodeKind sh:IRI ] .
+
+# Capture starts (revision 9): one exact statement per claim graph.
+wsh:CaptureStart a sh:NodeShape ;
+  sh:targetSubjectsOf arch:capture_subject ;
+  sh:closed true ;
+  sh:property [ sh:path arch:capture_subject ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:capture_basis ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "grammar" "header" "client" "person" ) ] ;
+  sh:property [ sh:path arch:capture_clock ; sh:maxCount 1 ; sh:in ( "local" "zoned" ) ] ;
+  sh:property [ sh:path arch:capture_started ; sh:maxCount 1 ; sh:or ( [ sh:datatype xsd:string ] [ sh:datatype xsd:dateTime ] ) ] .
+
+wsh:SessionEnsemble a sh:NodeShape ;
+  sh:targetSubjectsOf arch:session_ensemble ;
+  sh:closed true ;
+  sh:property [ sh:path arch:session ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+  sh:property [ sh:path arch:session_ensemble ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
