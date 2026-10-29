@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import rdflib
 from rdflib.compare import isomorphic
-from pyoxigraph import BlankNode, DefaultGraph, Literal, NamedNode, Quad, RdfFormat, Store
+from pyoxigraph import BaseDirection, BlankNode, DefaultGraph, Literal, NamedNode, Quad, RdfFormat, Store
 
 from world import conformance
 from world.world import PROJECTORS, PROJECTION_VERSION, build_projection
@@ -24,13 +24,27 @@ def serialized_dataset(store):
 
 
 def serialized_graphs(store):
-    return serialized_dataset(store).graphs()
+    for graph in serialized_dataset(store).graphs():
+        if graph:
+            yield ReferenceGraph(graph)
+
+
+class ReferenceGraph:
+    def __init__(self, graph):
+        self.identifier = graph.identifier
+        self.triples = list(graph)
+        self.predicates = {str(p) for p in graph.predicates()}
+        self.classes = {str(o) for o in graph.objects(None, rdflib.RDF.type)}
+        self._graph = graph
+
+    def graph(self):
+        return self._graph
 
 
 def transferred_dataset(store):
     dataset = rdflib.Dataset()
     for graph in conformance._graphs(store):
-        for triple in graph:
+        for triple in graph.graph():
             dataset.graph(graph.identifier).add(triple)
     return dataset
 
@@ -59,6 +73,50 @@ class DirectTermTransferTests(unittest.TestCase):
         reference_blank = next(g for g in reference.graphs() if isinstance(g.identifier, rdflib.BNode))
         self.assertTrue(isomorphic(actual_blank, reference_blank))
         self.assertEqual(sum(len(g) for g in actual.graphs()), sum(len(g) for g in reference.graphs()))
+
+    def test_normalized_collisions_and_type_metadata_match_rdflib(self):
+        store = Store()
+        subject = NamedNode("urn:test:subject")
+        predicate = NamedNode(str(rdflib.RDF.type))
+        for graph in (DefaultGraph(), NamedNode("urn:test:graph")):
+            for lexical in ("001", "1"):
+                store.add(Quad(subject, predicate,
+                    Literal(lexical, datatype=NamedNode(str(rdflib.XSD.integer))), graph))
+        for data in conformance._graphs(store):
+            graph = data.graph()
+            self.assertEqual(len(graph), 1)
+            self.assertEqual(data.classes, {"1"})
+        actual = conformance.check_store(store, "urn:test:archive", PROJECTION_VERSION)
+        with patch.object(conformance, "_graphs", serialized_graphs):
+            reference = conformance.check_store(store, "urn:test:archive", PROJECTION_VERSION)
+        self.assertEqual(sorted(actual.problems), sorted(reference.problems))
+        self.assertEqual(actual.classes, reference.classes)
+        self.assertIn("the default graph holds 1 triples; it must be empty", actual.problems)
+
+    def test_graphs_with_shared_blank_nodes_remain_isolated(self):
+        store = Store()
+        subject, predicate = BlankNode("shared"), NamedNode("urn:test:predicate")
+        for name, value in (("urn:test:first", "first"), ("urn:test:second", "second")):
+            store.add(Quad(subject, predicate, Literal(value), NamedNode(name)))
+        graphs = {str(data.identifier): data.graph() for data in conformance._graphs(store)}
+        self.assertEqual(list(graphs["urn:test:first"].objects()), [rdflib.Literal("first")])
+        self.assertEqual(list(graphs["urn:test:second"].objects()), [rdflib.Literal("second")])
+
+    def test_directional_literals_fail_closed(self):
+        store = Store()
+        store.add(Quad(NamedNode("urn:test:s"), NamedNode("urn:test:p"),
+            Literal("hello", language="en", direction=BaseDirection.LTR), NamedNode("urn:test:g")))
+        with self.assertRaisesRegex(ValueError, "directional literals"):
+            conformance.check_store(store, "urn:test:archive", PROJECTION_VERSION)
+
+    def test_worker_shapes_preserve_namespace_bindings(self):
+        shape = rdflib.Graph()
+        shape.bind("example", rdflib.Namespace("urn:test:example:"), replace=True)
+        shape.add((rdflib.BNode("fixed-shape"), rdflib.RDF.type, rdflib.SH.NodeShape))
+        conformance._worker_init({"revision": (list(shape), list(shape.namespaces()))})
+        copied = conformance._WORKER_SHAPES["revision"]
+        self.assertEqual(set(copied), set(shape))
+        self.assertEqual(dict(copied.namespaces()), dict(shape.namespaces()))
 
     def test_large_payload_never_serializes_the_store(self):
         projection = build_projection(json.loads(FIXTURE.read_text()))

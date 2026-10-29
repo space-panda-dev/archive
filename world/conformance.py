@@ -129,22 +129,83 @@ def _rdflib_term(term: Any) -> Any:
     raise ValueError(f"RDFLib conformance does not support RDF term {type(term).__name__}")
 
 
-def _graphs(store: Any):
-    """Transfer one isolated graph at a time, including the default graph.
+# Primitive tuples pickle cheaply. Literal normalization and graph deduplication
+# happen in the validating process, preserving RDFLib semantics.
+EncodedTerm = tuple[str, ...]
+EncodedTriple = tuple[EncodedTerm, EncodedTerm, EncodedTerm]
 
-    Nothing is retained across graph validation. This avoids both a whole
-    RDFLib dataset and its second per-graph copy. Every quad is still visited;
-    no validation results are cached and no historical graph is skipped.
+
+def _encode_term(term: Any) -> EncodedTerm:
+    if isinstance(term, NamedNode):
+        return ("uri", term.value)
+    if isinstance(term, BlankNode):
+        return ("blank", term.value)
+    if isinstance(term, Literal):
+        if term.direction is not None:
+            raise ValueError("RDFLib conformance does not support directional literals")
+        datatype = "" if term.language or term.datatype.value == str(rdflib.XSD.string) else term.datatype.value
+        return ("literal", term.value, term.language or "", datatype)
+    raise ValueError(f"RDFLib conformance does not support RDF term {type(term).__name__}")
+
+
+def _decode_term(term: EncodedTerm) -> Any:
+    if term[0] == "uri":
+        return rdflib.URIRef(term[1])
+    if term[0] == "blank":
+        return rdflib.BNode(term[1])
+    return rdflib.Literal(term[1], lang=term[2] or None,
+                          datatype=rdflib.URIRef(term[3]) if term[3] else None)
+
+
+@dataclass
+class _GraphData:
+    identifier: Any
+    triples: list[EncodedTriple]
+    predicates: set[str]
+    classes: set[str]
+
+    def graph(self) -> rdflib.Graph:
+        graph = rdflib.Graph(identifier=self.identifier)
+        cache: dict[EncodedTerm, Any] = {}
+        for triple in self.triples:
+            terms = []
+            for term in triple:
+                if term not in cache:
+                    cache[term] = _decode_term(term)
+                terms.append(cache[term])
+            graph.add(tuple(terms))
+        return graph
+
+
+def _graphs(store: Any):
+    """Read one isolated graph with a graph-local term cache.
+
+    This operational transfer data is discarded after validation. RDFLib is
+    built only in the process that validates it; every historical quad is read.
+    Literal normalization is deferred to validation except for rdf:type values
+    needed in report metadata. No validation result is cached.
     """
     from itertools import chain
 
     for name in chain((DefaultGraph(),), store.named_graphs()):
         identifier = rdflib.graph.DATASET_DEFAULT_GRAPH_ID if isinstance(name, DefaultGraph) else _rdflib_term(name)
-        graph = rdflib.Graph(identifier=identifier)
+        cache: dict[Any, EncodedTerm] = {}
+        triples: list[EncodedTriple] = []
+        predicates: set[str] = set()
+        classes: set[str] = set()
         for quad in store.quads_for_pattern(None, None, None, name):
-            graph.add(tuple(_rdflib_term(term) for term in (quad.subject, quad.predicate, quad.object)))
-        if graph:
-            yield graph
+            terms = []
+            for term in (quad.subject, quad.predicate, quad.object):
+                if term not in cache:
+                    cache[term] = _encode_term(term)
+                terms.append(cache[term])
+            triple = tuple(terms)
+            triples.append(triple)
+            predicates.add(triple[1][1])
+            if triple[1] == ("uri", str(RDF.type)):
+                classes.add(str(_rdflib_term(quad.object)))
+        if triples:
+            yield _GraphData(identifier, triples, predicates, classes)
 
 
 def _check_graph(graph: rdflib.Graph, kind: str, shape: rdflib.Graph) -> list[str]:
@@ -176,11 +237,8 @@ def _worker_init(shape_data: dict[str, tuple[list[Any], list[Any]]]) -> None:
         _WORKER_SHAPES[kind] = graph
 
 
-def _worker_check(identifier: Any, kind: str, triples: list[Any]) -> list[str]:
-    graph = rdflib.Graph(identifier=identifier)
-    for triple in triples:
-        graph.add(triple)
-    return _check_graph(graph, kind, _WORKER_SHAPES[kind])
+def _worker_check(data: _GraphData, kind: str) -> list[str]:
+    return _check_graph(data.graph(), kind, _WORKER_SHAPES[kind])
 
 
 def check_store(store: Any, archive_id: str, version: int, *, workers: int = 1) -> Report:
@@ -206,13 +264,11 @@ def check_store(store: Any, archive_id: str, version: int, *, workers: int = 1) 
                 if workers > 1 else nullcontext(None))
     with executor as pool:
         for graph in _graphs(store):
-            if not graph:
-                continue
             name = str(graph.identifier)
             if graph.identifier == rdflib.graph.DATASET_DEFAULT_GRAPH_ID:
                 while pending:
                     collect()
-                report.problems.append(f"the default graph holds {len(graph)} triples; it must be empty")
+                report.problems.append(f"the default graph holds {len(graph.graph())} triples; it must be empty")
                 continue
             matched = [kind for kind, pattern in patterns if pattern.fullmatch(name)]
             if len(matched) != 1:
@@ -222,16 +278,16 @@ def check_store(store: Any, archive_id: str, version: int, *, workers: int = 1) 
                 continue
             kind = matched[0]
             report.graphs[kind] = report.graphs.get(kind, 0) + 1
-            report.predicates.setdefault(kind, set()).update(str(p) for p in graph.predicates())
-            report.classes.setdefault(kind, set()).update(str(o) for o in graph.objects(None, RDF.type))
+            report.predicates.setdefault(kind, set()).update(graph.predicates)
+            report.classes.setdefault(kind, set()).update(graph.classes)
             if pool is not None and kind == "revision":
-                pending.append(pool.submit(_worker_check, graph.identifier, kind, list(graph)))
+                pending.append(pool.submit(_worker_check, graph, kind))
                 if len(pending) >= 2 * workers:
                     collect()
             else:
                 while pending:
                     collect()
-                report.problems.extend(_check_graph(graph, kind, shapes_by_kind[kind]))
+                report.problems.extend(_check_graph(graph.graph(), kind, shapes_by_kind[kind]))
         while pending:
             collect()
     if not report.graphs:
