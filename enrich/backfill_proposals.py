@@ -99,7 +99,8 @@ class Steps:
         refreshed = self.refresh_world()
         conforms = self.call("conformance", [a.conformance_python or a.world_python,
                                              str(HERE.parent / "world" / "conformance.py"), "--store",
-                                             a.world_store])[1]
+                                             a.world_store, "--workers",
+                                             str(getattr(a, "conformance_workers", 1))])[1]
         return refreshed and conforms
 
     def propose_words(self, target: list[str], extra: tuple[str, ...], proposers: str | None) -> list[str]:

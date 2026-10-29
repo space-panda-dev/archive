@@ -338,7 +338,7 @@ shipped extractors").
 <!-- wf:gen lines enrich/README.md enrich/enrich.py enrich/adapter.py enrich/proposers.py enrich/detector.py enrich/cover.py enrich/extract.py enrich/bank.py enrich/remote.py enrich/backfill.py enrich/backfill_queue.py enrich/extractors/stems/stems.py enrich/extractors/quality/quality.py enrich/extractors/tonal/tonal.py enrich/extractors/structure/structure.py enrich/extractors/rhythm/meter.py enrich/test_bank.py docs/feature-bank.md -->
 | file | lines |
 |---|---|
-| `enrich/README.md` | 1309 |
+| `enrich/README.md` | 1312 |
 | `enrich/enrich.py` | 738 |
 | `enrich/adapter.py` | 619 |
 | `enrich/proposers.py` | 1286 |
@@ -347,7 +347,7 @@ shipped extractors").
 | `enrich/extract.py` | 1095 |
 | `enrich/bank.py` | 1498 |
 | `enrich/remote.py` | 720 |
-| `enrich/backfill.py` | 1363 |
+| `enrich/backfill.py` | 1369 |
 | `enrich/backfill_queue.py` | 613 |
 | `enrich/extractors/stems/stems.py` | 755 |
 | `enrich/extractors/quality/quality.py` | 1317 |
