@@ -46,8 +46,8 @@ module is `wf check enrich -- -p test_bank.py` and one test name is
 | build | 300 | 1800s | `cabal build -v0 lib:archive exe:door exe:archive "$@"` |
 | documents | 5 | 60s | `python3 -m unittest discover -s documents/ireal -p "test_*.py" "$@"` |
 | haskell | night | 3600s | `n=$#; for a do set -- "$@" "--test-option=$a"; done; shift $n; cabal test all --test-show-details=direct "$@"` |
-| world | night | 3600s | `$PYTHON -m unittest discover -s world/tests "$@"` |
-| relay | 300 | 1800s | `$PYTHON -m unittest discover -s relay/tests "$@"` |
+| world | night | 3600s | `$PYTHON -m unittest discover --durations 20 -s world/tests "$@"` |
+| relay | 300 | 1800s | `$PYTHON -m unittest discover --durations 20 -s relay/tests "$@"` |
 | enrich-tests | 30 | 1800s | `$PYTHON -m unittest discover -s enrich/tests "$@"` |
 | shadow | 300 | 1800s | `$PYTHON -m unittest discover -s shadow -p "test_*.py" "$@"` |
 | documents-door | 30 | 1800s | `$PYTHON -m unittest discover -s documents/tests "$@"` |
@@ -75,7 +75,7 @@ export ARCHIVE_UPGRADE_TEST_PACKAGE
 "$PYTHON" -m unittest discover -s migration -p "test_upgrade.py" -k packaged_release "$@"
 ` |
 | fixture | 300 | 1800s | `$PYTHON -m unittest discover -s fixture -p "test_*.py" "$@"` |
-| enrich | night | 3600s | `$ENRICH_PYTHON -m unittest discover -s enrich -p "test_*.py" "$@"` |
+| enrich | night | 3600s | `$ENRICH_PYTHON -m unittest discover --durations 20 -s enrich -p "test_*.py" "$@"` |
 | capture | 300 | 1800s | `$ENRICH_PYTHON -m unittest discover -s capture -p "test_*.py" "$@"` |
 | bench | 30 | 300s | `P="$HOME/archive-bench/envs/harness/bin/python"; test -x "$P" \|\| { echo "bench: no $P; the bench runs on the x86-64 laptop (wf check --on laptop)"; exit 1; }; "$P" -m unittest discover -s enrich/bench -p "test_*.py" "$@"` |
 | bench-horn | night | 3600s | `P="$HOME/archive-bench/envs/harness/bin/python"; test -x "$P" \|\| { echo "bench-horn: no $P; the bench runs on the x86-64 laptop (wf check --on laptop)"; exit 1; }; ARCHIVE_BENCH_ROOT="$HOME/archive-bench" "$P" -m enrich.bench check horn-v1 "$@"` |
@@ -256,7 +256,7 @@ speed), 0069 (media by digest), 0114 (local health), 0118 (metrics).
 |---|---|
 | `relay/relay.py` | 1384 |
 | `relay/openapi.json` | 5069 |
-| `relay/tests/test_relay.py` | 1361 |
+| `relay/tests/test_relay.py` | 1364 |
 <!-- /wf:gen -->
 
 <!-- wf:gen anchors relay/relay.py#DOOR_ROUTES relay/relay.py#MEDIA_ROUTES relay/relay.py#ROUTES relay/relay.py#Relay relay/relay.py#make_handler relay/relay.py#main -->

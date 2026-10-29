@@ -311,8 +311,8 @@
           inherit archive;
 
           python = suite "python" ''
-            python -m unittest discover -s world/tests
-            python -m unittest discover -s relay/tests
+            python -m unittest discover --durations 20 -s world/tests
+            python -m unittest discover --durations 20 -s relay/tests
             python -m unittest discover -s enrich/tests
             python -m unittest discover -s shadow -p 'test_*.py'
             python -m unittest discover -s migration -p 'test_*.py'
@@ -322,7 +322,7 @@
           '';
           enrich = suite "enrich" ''
             ${requireEssentia}
-            ${enrichPython}/bin/python3 -m unittest discover -s enrich -p 'test_*.py'
+            ${enrichPython}/bin/python3 -m unittest discover --durations 20 -s enrich -p 'test_*.py'
           '';
           capture = suite "capture" ''
             ${requireEssentia}

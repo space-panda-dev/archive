@@ -74,7 +74,7 @@ paths = ["door/**", "archive/**", "spec/**", "archive.cabal", "cabal.project"]
 
 # Measured: 521 s.
 [suites.world]
-run = '$PYTHON -m unittest discover -s world/tests "$@"'
+run = '$PYTHON -m unittest discover --durations 20 -s world/tests "$@"'
 timeout_seconds = 3600
 parser = "unittest"
 prelude = true
@@ -83,7 +83,7 @@ paths = ["world/**", "enrich/**", "door/**", "archive/**", "spec/**", "archive.c
 
 # Measured: 195 s.
 [suites.relay]
-run = '$PYTHON -m unittest discover -s relay/tests "$@"'
+run = '$PYTHON -m unittest discover --durations 20 -s relay/tests "$@"'
 timeout_seconds = 1800
 parser = "unittest"
 prelude = true
@@ -169,7 +169,7 @@ paths = ["fixture/**", "relay/**", "world/**", "enrich/**", "door/**", "archive/
 
 # The longest suite; one module with `-- -p test_bank.py`. Measured: 2050 s.
 [suites.enrich]
-run = '$ENRICH_PYTHON -m unittest discover -s enrich -p "test_*.py" "$@"'
+run = '$ENRICH_PYTHON -m unittest discover --durations 20 -s enrich -p "test_*.py" "$@"'
 timeout_seconds = 3600
 parser = "unittest"
 prelude = true
