@@ -1,6 +1,6 @@
 # Archive Specification
 
-Version: 0.0.11
+Version: 0.0.12
 Status: draft
 
 This is the contract an archive is governed by. It is copied into every archive
@@ -379,6 +379,21 @@ referenced by a proposed artifact MUST be declared exactly once, and every
 declaration MUST be referenced. `expected_heads` MUST contain exactly one row
 for every object created or revised; its expected revision is null for a new
 object and an exact pin for an existing object.
+
+An admission MAY also supply `expected_reference_heads`, defaulting to an empty
+array when absent. Each row MUST name a distinct existing object with a non-null
+exact revision, MUST refer to an explicitly referenced object not drafted in the
+batch, and MUST agree with every explicit pin to that object. The ordinary
+`expected_heads` array MUST still contain exactly the drafted objects. Before
+admitting new revisions Door MUST compare these reference expectations with
+its authoritative heads under the archive write lock and recheck them with the
+retained proposal before commit. A changed or missing guarded head MUST refuse
+the whole batch as `expected_head_stale`, without a record, commit, or
+content-location write. Unguarded historical references remain permitted.
+Guard structure is validated before complete-batch retry recognition; a complete
+previously committed batch MUST return its existing revisions without checking
+reference expectations against later heads and without writing anything.
+These optional preconditions are operational, not admitted records (ADR 0125).
 
 Door MUST validate the complete proposal under one archive lock before writing
 a record. It MUST use git-annex to obtain each key from the configured staging
@@ -2756,3 +2771,92 @@ does:
 The version follows `MAJOR.MINOR.PATCH`. Until 1.0.0, any release may change the
 requirements. After 1.0.0, a change that makes a previously conforming archive
 non-conforming requires a MAJOR increment.
+
+
+## D-20. Capture starts (0.0.12)
+
+Specification 0.0.12 adds `archive.claim/capture_start` version 1, as
+accepted in ADR 0107, beside every 0.0.11 contract with its exact bytes.
+The core context and layout are unchanged; adoption is additive under D-15.
+
+A capture start pins exactly one Artifact revision in role `subject`. Its
+closed payload requires `basis`, one of `grammar`, `header`, `client`, or
+`person`, and optionally `started` and `clock`, which appear together.
+`clock` is `local` for device wall time with no offset, or `zoned` for
+RFC 3339 time with a stated offset. `started` uses a valid Gregorian date,
+`T`, hour, minute and second, optional fractional seconds, and, only when
+zoned, `Z` or an offset `+HH:MM`/`-HH:MM`. The time is not Door's `at`.
+A missing start explicitly states unknown; it is never replaced by an
+admission time or by parsing an Entity label.
+
+`x-archive-capture-start` is the boolean `true`. Door checks that pairing,
+the clock's syntax and calendar validity, and that a software agent asserts
+only a `grammar` or `header` basis. `x-archive-agent` with kind `software`
+also accepts a Package URL identifying software; its existing Entity
+behaviour is unchanged. A `person` or `client` basis requires a person
+Entity agent. The subject must be audio or MIDI; as with source facts,
+byte interpretation is the proposer's responsibility, not a filename test
+in Door.
+
+Claims coexist. A person correcting a recorder's clock asserts another
+capture start; no universal ranking is stored. World projects
+`arch:capture_started` typed `xsd:dateTime` for zoned time and as a string
+for local time, alongside `arch:capture_clock` and `arch:capture_basis`.
+The session-date reader uses the primary source's first part. With several
+starts, or none with `started`, it answers unavailable and gives a reason.
+The primary source and all joins retain ADR 0107's operator-established
+meaning; this release introduces no automatic session reconstruction.
+
+
+## D-21. Session ensembles (0.0.12)
+
+`archive.claim/session_ensemble` version 1 (ADR 0123) is an empty-payload
+Claim pinning exactly one `recording_session` Entity revision in role
+`session` and one `organisation` Entity revision in role `ensemble`.
+`x-archive-operator-agent`, the boolean `true`, requires that its agent is
+the archive's active operator. This is an assertion about the session,
+not billing credit for a selection. Multiple assertions coexist; unknown
+and disputed associations are never replaced by an inferred band. World
+projects `arch:session` and `arch:session_ensemble` inside each claim graph.
+The supersession rule may name an empty `objects` or `revisions` list;
+an empty list preserves no role of that kind. The session ensemble contract
+keeps its session object and agent, while allowing a corrected ensemble.
+A reader joins a renamed session by object identity while retaining the
+assertion's exact pins. The relay's member contracts are unchanged.
+
+### D-22. Legacy session provenance (ADR 0124)
+
+Specification 0.0.12 adds `archive.migration/session_translation` version 1.
+Its operator-asserted Claim pins one admitted source snapshot Artifact as
+`migration_source`, one `recording_session` Entity as `translated_session`,
+and one or more Claims citing `archive.claim/session_parts` version 1 as
+`translated_parts`. All references pin exact revisions. The closed payload
+identifies rule `legacy-session-grouping/1`, the snapshot JSON pointer
+`source_pointer` (`/groups/N`), its `source_id`, explicit `primary_source`,
+and the source-order list of `{id, parts_revision}` mappings. The snapshot
+retains the explicit per-source file order and content digests. This additive
+bundle does not change `archive.migration/translation` version 1.
+
+The explicit, read-only legacy planner consumes an admitted
+`archive.legacy-sessions/1` JSON snapshot: `groups` contain `id`, `label` and
+`sources`; each source contains `id`, `primary` (boolean) and ordered `files`
+with `path` and `digest`. It resolves content to exact current Artifact
+revisions and inventories existing parts before proposing missing sessions.
+Missing or ambiguous content, repeated membership, ambiguous primary source
+and conflicting existing grouping remain unresolved. Existing matching
+groupings are unchanged even when named differently. The primary source's
+first file establishes ADR 0048 identity. Labels never establish a date.
+Proposals use expected absent output heads and atomic referenced-head guards.
+The planner emits an operational inventory and proposal only; Door admission
+is a separate operator step. It copies no audio and makes no archive writes.
+
+The source adapter `migration.legacy_inventory` reads V2 `session` version 1
+records' explicit `source_artifact_ids` order and content digests. When
+requested it can translate persisted `session_identity_sidecar` version 1
+`parts` arrays verbatim, validating part indices/counts and content hashes;
+it never reruns their grouping algorithm. Their derived origin, tool/version,
+exact raw source bytes and source-record locators remain inside the admitted
+source snapshot. A translating operator asserts the translation, not human
+authorship of the source grouping. Conflicting memberships, unsupported
+revision histories and missing source evidence are reported for review.
+Dates and ensemble associations are not inferred from sidecars or labels.

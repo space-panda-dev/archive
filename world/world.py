@@ -45,7 +45,7 @@ if __name__ in ("__main__", "world"):
     # from the repository root, so the rule modules import one another alike.
     __path__ = [str(Path(__file__).resolve().parent)]
     sys.modules.setdefault("world", sys.modules[__name__])
-from world import contract_graphs, contributions, harmony  # noqa: E402
+from world import contract_graphs, contributions, envelope_rules, harmony  # noqa: E402
 
 
 PROV = "http://www.w3.org/ns/prov#"
@@ -61,7 +61,7 @@ PROJECTION_VERSION = 6
 # build writes, so each addition raises the version's revision. A generation
 # built at an earlier revision is rebuilt in full rather than extended, or its
 # older records would lack what the addition projects.
-PROJECTION_REVISIONS = {6: 8}
+PROJECTION_REVISIONS = {6: 9}
 XSD = "http://www.w3.org/2001/XMLSchema#"
 UTC_INSTANT = re.compile(r"([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.([0-9]+))?Z\Z")
 DECIMAL = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?\Z")
@@ -438,6 +438,25 @@ def _project(store: Store, data: ExportData, known_object: Any = None) -> None:
             continue
         claim_ref = _record_uri(archive_id, claim["revision_id"])
         cited = {(c.get("id"), c.get("version")) for c in claim.get("contracts", []) if isinstance(c, dict)}
+        if ("archive.claim/capture_start", "1") in cited:
+            try:
+                envelope_rules.check(claim, ("archive.claim/capture_start", "1"), lookups.entity_kind, records_by_revision)
+            except envelope_rules.EnvelopeRuleError as exc:
+                raise ProjectionError(str(exc)) from exc
+        if ("archive.claim/session_ensemble", "1") in cited:
+            try:
+                envelope_rules.check(claim, ("archive.claim/session_ensemble", "1"), lookups.entity_kind, records_by_revision)
+            except envelope_rules.EnvelopeRuleError as exc:
+                raise ProjectionError(str(exc)) from exc
+            if claim.get("agent") != lookups.operator():
+                raise ProjectionError("a session ensemble must be asserted by the active operator")
+        if ("archive.migration/session_translation", "1") in cited:
+            from world.legacy_translation import check as check_legacy_translation
+            try:
+                envelope_rules.check(claim, ("archive.migration/session_translation", "1"), lookups.entity_kind, records_by_revision)
+                check_legacy_translation(claim, records_by_revision, lookups.operator())
+            except (envelope_rules.EnvelopeRuleError, ValueError) as exc:
+                raise ProjectionError(str(exc)) from exc
         _project_review_claim(store, archive_id, core_terms, contract_contexts, claim, cited,
                               records_by_revision, domain_graph, kind_scheme)
         _project_derivation_claim(store, archive_id, core_terms, contract_contexts, claim, cited,
@@ -740,6 +759,33 @@ def _project_review_claim(store: Store, archive_id: str, core_terms: dict[str, A
             _add(store, claim_ref, selection, arch("credit"), credit)
             _add(store, claim_ref, credit, RDF + "value", Literal(index))
             _add(store, claim_ref, credit, term(contract, "artist"), _record_uri(archive_id, ref["revision_id"]))
+
+    if ("archive.claim/session_ensemble", "1") in cited:
+        contract = ("archive.claim/session_ensemble", "1")
+        by_role = _claim_refs_by_role(claim, {"session", "ensemble"})
+        if payload != {} or not _valid_pinned_entity(by_role["session"], records_by_revision, "recording_session") or not _valid_pinned_entity(by_role["ensemble"], records_by_revision, "organisation"):
+            raise ProjectionError(f"session ensemble {revision} requires a session and organisation and empty payload")
+        for previous in claim.get("supersedes", []):
+            target = records_by_revision.get(previous.get("revision_id"))
+            if target is None or target.get("agent") != claim.get("agent") or [r.get("id") for r in target.get("refs", []) if r.get("role") == "session"] != [by_role["session"]["id"]]:
+                raise ProjectionError("a session ensemble revision keeps its session and agent")
+        _add(store, claim_ref, claim_ref, term(contract, "session"), pin(by_role["session"], "entity"))
+        _add(store, claim_ref, claim_ref, term(contract, "ensemble"), pin(by_role["ensemble"], "entity"))
+
+    if ("archive.claim/capture_start", "1") in cited:
+        from world.capture_start import check as check_capture_start
+        contract = ("archive.claim/capture_start", "1")
+        by_role = _claim_refs_by_role(claim, {"subject"})
+        try:
+            check_capture_start(payload)
+        except ValueError as exc:
+            raise ProjectionError(f"capture start {revision}: {exc}") from exc
+        _add(store, claim_ref, claim_ref, term(contract, "subject"), pin(by_role["subject"], "artifact"))
+        for field in ("basis", "clock", "started"):
+            if field in payload:
+                value = (Literal(payload[field], datatype=nn(XSD + "dateTime"))
+                         if field == "started" and payload["clock"] == "zoned" else Literal(payload[field]))
+                _add(store, claim_ref, claim_ref, term(contract, field), value)
 
     if ("archive.claim/session_parts", "1") in cited:
         contract = ("archive.claim/session_parts", "1")

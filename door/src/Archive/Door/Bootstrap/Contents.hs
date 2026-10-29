@@ -67,7 +67,7 @@ data InitResult = InitResult
   } deriving (Eq, Show)
 
 archiveVersion :: Text
-archiveVersion = "archive/0.0.11"
+archiveVersion = "archive/0.0.12"
 
 archiveProgram :: Text
 archiveProgram = "pkg:hackage/archive@0.0.1.0"
@@ -103,13 +103,13 @@ loadResources :: IO Resources
 loadResources = do
   versionPath <- getDataFileName "spec/VERSION"
   specificationPath <- getDataFileName "spec/archive-spec.md"
-  contextPath <- getDataFileName "spec/0.0.11/context.jsonld"
+  contextPath <- getDataFileName "spec/0.0.12/context.jsonld"
   contractDirectory <- getDataFileName "spec/contracts"
   versionBytes <- LazyByteString.readFile versionPath
   specificationBytes <- LazyByteString.readFile specificationPath
   contextBytes <- LazyByteString.readFile contextPath
-  if versionBytes /= "0.0.11\n"
-    then failIO "installed VERSION does not select archive/0.0.11"
+  if versionBytes /= "0.0.12\n"
+    then failIO "installed VERSION does not select archive/0.0.12"
     else pure ()
   context <- decodeResource contextBytes
   _ <- ioEither (validateCoreContextForSpecification archiveVersion context)

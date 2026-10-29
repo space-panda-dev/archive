@@ -27,6 +27,8 @@ validateAgentRules :: RuleRecords -> DraftEnvelope -> KeyMap.KeyMap Value -> Eit
 validateAgentRules records draft schema = do
   let with name parse check = ruleAt name parse schema >>= maybe (Right ()) check
   with "x-archive-agent" agentRule (agentKind records draft)
+  with "x-archive-capture-start" captureStartRule (const (captureAgent records draft))
+  with "x-archive-operator-agent" operatorAgentRule (const (operatorAgent records draft))
   with "x-archive-supersession" supersessionRule (supersession records draft)
   with "x-archive-asserter-only" asserterOnlyRule (asserterOnly records draft)
   with "x-archive-adoption" adoptionRule (adoption records draft)
@@ -46,10 +48,12 @@ agentEntityKind records agent
       _ -> Nothing
 
 agentKind :: RuleRecords -> DraftEnvelope -> [Text] -> Either Text ()
-agentKind records draft kinds = case agentEntityKind records (agentOf draft) of
-  Just kind | kind `elem` kinds -> Right ()
-  _ -> Left ("the record's agent must be an Archive object identifying a "
-    <> Text.intercalate " or " kinds <> " Entity")
+agentKind records draft kinds
+  | "software" `elem` kinds && "pkg:" `Text.isPrefixOf` agentOf draft = Right ()
+  | otherwise = case agentEntityKind records (agentOf draft) of
+      Just kind | kind `elem` kinds -> Right ()
+      _ -> Left ("the record's agent must be an Archive object identifying a "
+        <> Text.intercalate " or " kinds <> " Entity")
 
 -- | A record that supersedes a revision keeps its agent, the objects it
 -- names in @objects@, and the revisions it pins in @revisions@.
@@ -168,3 +172,14 @@ validateMemberSupersession records draft
         else Left "a record under a member contract that supersedes a revision keeps its agent") (envelopeSupersedes draft)
   where
     earlier = ["archive/0.0." <> Text.pack (show minor) | minor <- [1 .. 9 :: Int]]
+
+captureAgent :: RuleRecords -> DraftEnvelope -> Either Text ()
+captureAgent records draft
+  | textAt "basis" (draftPayload draft) `elem` [Just "person", Just "client"] = agentKind records draft ["person"]
+  | otherwise = Right ()
+
+operatorAgent :: RuleRecords -> DraftEnvelope -> Either Text ()
+operatorAgent records draft = do
+  operator <- activeOperator records
+  if agentOf draft == operator then Right ()
+    else Left "this claim must be asserted by the active operator"

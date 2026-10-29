@@ -439,3 +439,11 @@ claims, assessments, audio selections and occurrences, performance links,
 competing MusicBrainz correspondences,
 conflicting contract contexts, deterministic projection, and unresolved
 references. MusicBrainz lookup behavior is tested without making network calls.
+
+## Capture starts
+
+Projection 6 revision 9 adds ADR 0107's capture start. Each claim revision
+projects `arch:capture_subject` to its exact Artifact revision,
+`arch:capture_basis`, and optional paired `arch:capture_started` and
+`arch:capture_clock`. A local time remains a string; a zoned time is
+`xsd:dateTime`. No projection selects a winning assertion or parses a label.

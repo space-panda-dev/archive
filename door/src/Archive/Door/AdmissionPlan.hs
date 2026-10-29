@@ -96,6 +96,7 @@ planAdmission snapshot proposal = do
     then pure ()
     else do
       validateExpectedHeads snapshot proposal prepared
+      validateExpectedReferenceHeads snapshot proposal
       refuseProblem (validateLinearHeads snapshot prepared)
   refuse (validateReferencesInOrder snapshot prepared)
   pure AdmissionPlan
@@ -185,6 +186,15 @@ validateExpectedHeads snapshot proposal _ = refuseProblem $ mapM_ check (manifes
       Just actual
         | expectedRevisionId expected == Just (revisionIdText actual) -> Right ()
         | otherwise -> Left (ExpectedHeadNotCurrent AdmissionPlanner)
+
+validateExpectedReferenceHeads :: AdmissionSnapshot -> Proposal -> Either PlanRefusal ()
+validateExpectedReferenceHeads snapshot proposal = refuseProblem $ mapM_ check guards
+  where
+    guards = manifestExpectedReferenceHeads (proposalManifest proposal)
+    heads = Map.mapKeysMonotonic objectIdText (snapshotHeads snapshot)
+    check guard = case Map.lookup (expectedObjectId guard) heads of
+      Just actual | expectedRevisionId guard == Just (revisionIdText actual) -> Right ()
+      _ -> Left ExpectedReferenceHeadNotCurrent
 
 validateReferencesInOrder :: AdmissionSnapshot -> [Prepared] -> Either Text ()
 validateReferencesInOrder snapshot = go (snapshotReferenceIndex snapshot)

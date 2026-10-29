@@ -161,6 +161,7 @@ validateCoreContextForSpecification specification value = do
         "archive/0.0.9" -> Set.fromList creditContextKeys
         "archive/0.0.10" -> Set.fromList creditContextKeys
         "archive/0.0.11" -> Set.fromList creditContextKeys
+        "archive/0.0.12" -> Set.fromList creditContextKeys
         _ -> Set.empty
   if not (Set.null expected) && keys == expected
     then Right ()

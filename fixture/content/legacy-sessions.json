@@ -1,0 +1,1 @@
+{"format":"archive.legacy-sessions/1","groups":[{"id":"fixture-group","label":"Fixture Session","sources":[{"id":"mix","primary":true,"files":[{"path":"take-a.bin","digest":"sha256:b6b4fca76cdc0db8191cb5316d5f1c8d8e8edbadf25158c77c55ebac701c3e6f"},{"path":"take-b.bin","digest":"sha256:8d84c58988b04ce8c95296c96fda9a6f6dd85e6bf5a1202a0cde46dfc9831b8b"}]}]}]}

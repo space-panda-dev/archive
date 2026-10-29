@@ -742,9 +742,9 @@ verifyAllocatedOperator output = case
 initLayoutCheck :: FilePath -> String
 initLayoutCheck root =
   "test -f " <> quote (root <> "/archive.json")
-  <> " && grep -Eq '^\\{\"archive_id\":\"urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\",\"layout\":\"archive/2\",\"spec\":\"archive/0.0.11\"\\}$' " <> quote (root <> "/archive.json")
-  <> " && test -f " <> quote (root <> "/spec/0.0.11/VERSION") <> " && test -f " <> quote (root <> "/spec/0.0.11/archive-spec.md") <> " && test -f " <> quote (root <> "/spec/0.0.11/context.jsonld")
-  <> " && test \"$(find " <> quote (root <> "/contracts") <> " -type f | wc -l | tr -d ' ')\" = 69"
+  <> " && grep -Eq '^\\{\"archive_id\":\"urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\",\"layout\":\"archive/2\",\"spec\":\"archive/0.0.12\"\\}$' " <> quote (root <> "/archive.json")
+  <> " && test -f " <> quote (root <> "/spec/0.0.12/VERSION") <> " && test -f " <> quote (root <> "/spec/0.0.12/archive-spec.md") <> " && test -f " <> quote (root <> "/spec/0.0.12/context.jsonld")
+  <> " && test \"$(find " <> quote (root <> "/contracts") <> " -type f | wc -l | tr -d ' ')\" = 72"
   <> " && test \"$(find " <> quote (root <> "/records") <> " -type f | wc -l | tr -d ' ')\" = 2"
   <> " && for f in " <> quote (root <> "/contracts") <> "/*.json; do test \"$(basename \"$f\" .json | cut -c8-)\" = \"$(shasum -a 256 \"$f\" | cut -d' ' -f1)\"; done"
   <> " && for f in " <> quote (root <> "/records") <> "/*/*/*.json; do grep -Eq '\"revision_id\":\"sha256:[0-9a-f]{64}\"' \"$f\"; done"
@@ -753,9 +753,9 @@ initLayoutCheck root =
 
 exactResourcesCheck :: FilePath -> String
 exactResourcesCheck root =
-  "cmp spec/VERSION " <> quote (root <> "/spec/0.0.11/VERSION")
-  <> " && cmp spec/archive-spec.md " <> quote (root <> "/spec/0.0.11/archive-spec.md")
-  <> " && cmp spec/0.0.11/context.jsonld " <> quote (root <> "/spec/0.0.11/context.jsonld")
+  "cmp spec/VERSION " <> quote (root <> "/spec/0.0.12/VERSION")
+  <> " && cmp spec/archive-spec.md " <> quote (root <> "/spec/0.0.12/archive-spec.md")
+  <> " && cmp spec/0.0.12/context.jsonld " <> quote (root <> "/spec/0.0.12/context.jsonld")
   <> " && diff -rq spec/contracts " <> quote (root <> "/contracts")
 
 shellAssert :: String -> String -> IO ()

@@ -144,7 +144,7 @@ field name value = case value of
 
 draft :: String -> Text.Text -> Aeson.Value -> [Aeson.Value] -> [Aeson.Value] -> Aeson.Value
 draft objectId shape payload refs contracts = Aeson.object
-  ([ "spec" .= ("archive/0.0.11" :: Text.Text)
+  ([ "spec" .= ("archive/0.0.12" :: Text.Text)
    , "object_id" .= objectId
    , "shape" .= shape
    , "by" .= ("pkg:hackage/archive@0.0.1.0" :: Text.Text)

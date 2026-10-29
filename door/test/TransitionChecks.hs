@@ -13,7 +13,9 @@ import Archive.Door.AdmissionDryRun
   , dryRunAdmissionForCommit
   )
 import Archive.Door.Json (decodeUnique)
-import Archive.Door.Proposal (readTransitionProposal)
+import Archive.Door.Proposal (readAdmissionProposal, readTransitionProposal)
+import Control.Monad (forM_)
+import qualified Data.Either as Either
 import Archive.Door.TransitionDryRun
   ( transitionDispatchTable
   , transitionContractsWithoutHandler
@@ -35,6 +37,72 @@ import System.Directory
 import System.Exit (ExitCode (ExitSuccess))
 import System.Process (readProcessWithExitCode)
 import Test.Tasty (TestTree, testGroup)
+
+-- A reviewed snapshot guards the whole archive, including unrelated admissions.
+snapshotGuardChecks :: FilePath -> IO ()
+snapshotGuardChecks parent = do
+  (root, archiveId, initOutput) <- newProposalArchive parent "snapshot-guard"
+  operator <- requiredField "operator_id" initOutput
+  operatorRevision <- recordRevisionForObject root operator
+  target <- allocatedObjectId archiveId "archive.core/entity" "guard-target"
+  targetRevision <- commitEntityFixture root target
+  object <- allocatedObjectId archiveId "archive.transition/retire" "guard-retire"
+  contract <- contractCitation root "archive.transition/retire"
+  reviewed <- gitHead root
+  let record = retireDraft object operator operatorRevision target targetRevision contract
+      manifest = transitionManifestFor ["records/retire.json"]
+        [(object, "archive.transition/retire", "guard-retire")]
+        [(object, Nothing), (operator, Just operatorRevision), (target, Just targetRevision)]
+      guarded value = "{\"expected_snapshot\":" <> value <> "," <> drop 1 manifest
+      write name value = writeTransitionProposal root name value ["records/retire.json", record]
+  old <- write "old" manifest >>= readTransitionProposal
+  assert "transition manifests without expected_snapshot remain valid" (Either.isRight old) ExitSuccess (show old) ""
+  forM_ ["null", "123", "\"\"", jsonString (replicate 40 'A'), jsonString (replicate 39 'a')] $ \value -> do
+    parsed <- write ("invalid-" <> show (length value)) (guarded value) >>= readTransitionProposal
+    assert "invalid expected_snapshot values are refused" (Either.isLeft parsed) ExitSuccess (show parsed) ""
+  proposal <- write "guarded" (guarded (jsonString reviewed))
+  admission <- readAdmissionProposal proposal
+  assert "admission manifests cannot carry expected_snapshot" (Either.isLeft admission) ExitSuccess (show admission) ""
+  -- This admission changes no object or reference named by the transition.
+  _ <- admitNew root archiveId "intervening unrelated admission" "archive.core/entity"
+    "guard-unrelated" (entityRecord "person" "Unrelated")
+  headBefore <- gitHead root
+  recordsBefore <- recordCount root
+  (staleCode, staleOut, staleErr, _) <- persistentCommandWithFakeAnnex parent "guard-stale" root proposal
+  headAfter <- gitHead root
+  recordsAfter <- recordCount root
+  assert "an intervening unrelated admission makes the reviewed snapshot stale before any write"
+    (headBefore /= reviewed && staleCode /= ExitSuccess
+      && contains "expected_snapshot" (staleOut <> staleErr)
+      && headAfter == headBefore && recordsAfter == recordsBefore) staleCode staleOut staleErr
+  fresh <- write "fresh" (guarded (jsonString headBefore))
+  (code, out, err, _) <- persistentCommandWithFakeAnnex parent "guard-fresh" root fresh
+  assert "the current exact snapshot commits the transition" (code == ExitSuccess) code out err
+  committed <- gitHead root
+  (retryCode, retryOut, retryErr, _) <- persistentCommandWithFakeAnnex parent "guard-retry" root fresh
+  retried <- gitHead root
+  assert "a complete identical retry bypasses its now stale snapshot without writing"
+    (retryCode == ExitSuccess && contains "\"retry\":true" retryOut && retried == committed)
+    retryCode retryOut retryErr
+  let changed = Text.unpack (Text.replace "test retirement" "changed retirement" (Text.pack record))
+  changedProposal <- writeTransitionProposal root "changed-retry" (guarded (jsonString reviewed))
+    ["records/retire.json", changed]
+  (changedCode, changedOut, changedErr, _) <- persistentCommandWithFakeAnnex parent "guard-changed" root changedProposal
+  changedHead <- gitHead root
+  assert "a changed retry cannot bypass a stale snapshot or write"
+    (changedCode /= ExitSuccess && changedHead == committed) changedCode changedOut changedErr
+  second <- allocatedObjectId archiveId "archive.transition/retire" "guard-second"
+  let secondRecord = retireDraft second operator operatorRevision target targetRevision contract
+      partialManifest = transitionManifestFor ["records/retire.json", "records/second.json"]
+        [(object, "archive.transition/retire", "guard-retire"), (second, "archive.transition/retire", "guard-second")]
+        [(object, Nothing), (second, Nothing), (operator, Just operatorRevision), (target, Just targetRevision)]
+      partialGuard = "{\"expected_snapshot\":" <> jsonString reviewed <> "," <> drop 1 partialManifest
+  partial <- writeTransitionProposal root "partial-retry" partialGuard
+    ["records/retire.json", record, "records/second.json", secondRecord]
+  (partialCode, partialOut, partialErr, _) <- persistentCommandWithFakeAnnex parent "guard-partial" root partial
+  partialHead <- gitHead root
+  assert "a partially committed batch cannot bypass a stale snapshot or write"
+    (partialCode /= ExitSuccess && partialHead == committed) partialCode partialOut partialErr
 
 persistentTransitionChecks :: FilePath -> IO ()
 persistentTransitionChecks parent = do
@@ -533,7 +601,8 @@ publicationTransitionChecks parent = do
 -- | The transitions checks, one case per check or row.
 tests :: IO TestTree
 tests = fmap (testGroup "transitions") $ sequence
-  [ caseOf "transitionDispatchCatalogChecks" transitionDispatchCatalogChecks
+  [ caseOf "snapshotGuardChecks" (withProposalTemporaryRoot snapshotGuardChecks)
+  , caseOf "transitionDispatchCatalogChecks" transitionDispatchCatalogChecks
   , caseOf "publicationTransitionChecks" (withProposalTemporaryRoot publicationTransitionChecks)
   , caseOf "historicalReplayChecks" (withProposalTemporaryRoot historicalReplayChecks)
   , caseOf "persistentTransitionChecks" (withProposalTemporaryRoot persistentTransitionChecks)

@@ -9,7 +9,7 @@ elsewhere and is governed by the specification kept here.
 > **Status.** Door, the `archive` reader commands, [World](world/README.md),
 > the relay, [`enrich/`](enrich/README.md) and [`capture/`](capture/README.md)
 > are implemented for specification 0.0.11; what each specification version
-> adds is in its [release notes](docs/releases/0.0.11.md) and the decision
+> adds is in its [release notes](docs/releases/0.0.12.md) and the decision
 > records they cite. Two limits matter: persistent admission and transitions
 > do not yet meet the accepted power-loss durability contract
 > ([ADR 0031](docs/decisions/0031-power-loss-durability.md)), so a success
@@ -166,8 +166,8 @@ repository.
 
 ## What is provisional
 
-- **The specification** is a small pre-1.0 contract at version 0.0.11
-  ([current spec](spec/archive-spec.md), [0.0.11 release copy](spec/0.0.11/archive-spec.md), [0.0.10 release copy](spec/0.0.10/archive-spec.md), [0.0.9 release copy](spec/0.0.9/archive-spec.md), [0.0.8 release copy](spec/0.0.8/archive-spec.md), [0.0.7 release copy](spec/0.0.7/archive-spec.md), [0.0.6 release copy](spec/0.0.6/archive-spec.md), [0.0.5 release copy](spec/0.0.5/archive-spec.md), [0.0.4 release copy](spec/0.0.4/archive-spec.md), [0.0.3 release copy](spec/0.0.3/archive-spec.md); release notes for [0.0.11](docs/releases/0.0.11.md) and [0.0.10](docs/releases/0.0.10.md)); unresolved subjects remain explicitly outside
+- **The specification** is a small pre-1.0 contract at version 0.0.12
+  ([current spec](spec/archive-spec.md), [0.0.12 release copy](spec/0.0.12/archive-spec.md), [0.0.11 release copy](spec/0.0.11/archive-spec.md), [0.0.10 release copy](spec/0.0.10/archive-spec.md), [0.0.9 release copy](spec/0.0.9/archive-spec.md), [0.0.8 release copy](spec/0.0.8/archive-spec.md), [0.0.7 release copy](spec/0.0.7/archive-spec.md), [0.0.6 release copy](spec/0.0.6/archive-spec.md), [0.0.5 release copy](spec/0.0.5/archive-spec.md), [0.0.4 release copy](spec/0.0.4/archive-spec.md), [0.0.3 release copy](spec/0.0.3/archive-spec.md); release notes for [0.0.11](docs/releases/0.0.11.md) and [0.0.10](docs/releases/0.0.10.md)); unresolved subjects remain explicitly outside
   its normative protocols.
 - The unresolved V2 audio migration gates are recorded in the
   [release readiness note](docs/proposals/v2-migration-release-readiness.md).
@@ -229,7 +229,9 @@ The Nix flake pins the Nixpkgs release used to build and test the Haskell
 package. Run `nix develop` for its compiler and command-line tools, `nix build`
 to build Archive and run its Cabal test suites, or `nix flake check` to run the
 same build as a flake check. `make check` remains a separate repository
-structure check.
+structure check. `nix build .#upgrade` builds the self-contained
+[`archive-upgrade` command](docs/archive-upgrade.md); fleet pins that package
+for an explicitly approved specification upgrade.
 
 ## Licence
 

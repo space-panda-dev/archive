@@ -91,7 +91,7 @@ import Archive.Door.Types
 import qualified Archive.GitSnapshot as Git
 import Control.Monad (foldM)
 import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, withExceptT)
+import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, throwE, withExceptT)
 import Data.Bifunctor (first)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -133,6 +133,12 @@ dryRunTransitionVerified root proposal = runExceptT $ do
   (planning, files) <- ExceptT (prepareUpgrade gitSnapshot snapshot proposal)
   withExceptT TransitionProposalRejected (ExceptT (validateProposalContracts planning proposal))
   plan <- except (first planningRefusal (planTransition today planning proposal))
+  -- Commit calls this inside the archive write lock, and again immediately
+  -- before its ref update. Only a complete identical batch is a quiet retry.
+  case manifestExpectedSnapshot (proposalManifest proposal) of
+    Just expected | not (transitionRetry plan) && expected /= Git.snapshotCommit gitSnapshot ->
+      throwE (TransitionProposalStale "archive snapshot differs from expected_snapshot")
+    _ -> pure ()
   withExceptT TransitionProposalRejected (ExceptT (recheckProposal proposal))
   pure
     ( plan

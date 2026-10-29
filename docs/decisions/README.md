@@ -135,3 +135,7 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0118](0118-relay-metrics.md) | The relay answers aggregate metrics to a local probe |
 | [0119](0119-door-in-house-evaluators.md) | Door evaluates contract schemas, patterns and canonical numbers with its own code, so its behaviour is part of the specification |
 | [0120](0120-internal-enrichment-composition.md) | Enrichment composes inside Archive through declared proposer inputs |
+| [0123](0123-session-ensemble-association.md) | A session's ensemble is an explicit operator assertion, separate from selection billing |
+| [0124](0124-legacy-session-backfill.md) | Backfill missing sessions from legacy grouping and file order, preserving source provenance and reviewing ambiguity |
+| [0125](0125-admission-reference-heads.md) | An admission can require referenced objects’ heads to stay unchanged |
+| [0126](0126-fleet-specification-upgrade-boundary.md) | Fleet applies a pinned Archive upgrade plan |

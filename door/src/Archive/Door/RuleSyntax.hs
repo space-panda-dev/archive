@@ -9,6 +9,9 @@
 module Archive.Door.RuleSyntax
   ( releaseRuleNames
   , release011RuleNames
+  , release012RuleNames
+  , captureStartRule
+  , operatorAgentRule
   , validateReleaseRules
   , ruleAt
     -- * Typed rules
@@ -124,7 +127,7 @@ validateReleaseRules
   :: (Text -> e) -> (KeyMap.KeyMap Value -> Either e a) -> KeyMap.KeyMap Value -> Either e (Maybe (Text, a, a))
 validateReleaseRules refuse nested schema = do
   first refuse $ mapM_ (\(name, parse) -> maybe (Right ()) parse (KeyMap.lookup (Key.fromText name) schema))
-    (parsers <> parsers011)
+    (parsers <> parsers011 <> [("x-archive-capture-start", captureStartRule), ("x-archive-operator-agent", operatorAgentRule)])
   case KeyMap.lookup "x-archive-when-pinned" schema of
     Nothing -> Right Nothing
     Just value -> do
@@ -324,7 +327,10 @@ supersessionRule value = do
   case KeyMap.lookup "agent" fields of
     Just (Bool True) -> Right ()
     _ -> Left (label <> " agent must be true")
-  rule <- SupersessionRule <$> textsField label "objects" fields <*> textsField label "revisions" fields
+  let roles name = case KeyMap.lookup (Key.fromText name) fields of
+        Just (Array values) | null values -> Right []
+        _ -> textsField label name fields
+  rule <- SupersessionRule <$> roles "objects" <*> roles "revisions"
   if any (`elem` supersessionRevisions rule) (supersessionObjects rule)
     then Left (label <> " must not name a role in both objects and revisions")
     else Right rule
@@ -350,3 +356,15 @@ operatorWritersRule = namedFields "operator writers rule" ["field", "role"]
 
 consentingWriterRule :: Value -> Either Text NamedFields
 consentingWriterRule = namedFields "consenting writer rule" ["role", "writers"]
+
+-- | D-20's capture clock validation is enabled only by literal true.
+release012RuleNames :: [Text]
+release012RuleNames = ["x-archive-capture-start", "x-archive-operator-agent"]
+
+captureStartRule :: Value -> Either Text ()
+captureStartRule (Bool True) = Right ()
+captureStartRule _ = Left "capture start rule must be true"
+
+operatorAgentRule :: Value -> Either Text ()
+operatorAgentRule (Bool True) = Right ()
+operatorAgentRule _ = Left "operator agent rule must be true"

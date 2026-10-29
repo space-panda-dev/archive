@@ -32,6 +32,10 @@ data ProposalProblem
   | TransitionArraysEmpty
   | DuplicateManifestPath
   | RecordCountMismatch
+  | ReferenceHeadNull
+  | ReferenceHeadDrafted
+  | ReferenceHeadNotReferenced
+  | ReferenceHeadPinDisagrees
   | HeadsOmitDraft
   | HeadsNotExactlyDrafts
   | IdentitiesOutsideDrafts
@@ -56,6 +60,7 @@ data ProposalProblem
   | PathNotNormalized
   | AllocationNotObject
   | DeclarationNotObject
+  | ExpectedSnapshotInvalid
   | ExpectedRevisionInvalid
   | ExpectedHeadNotObject
   | DeclaredSizeNotInteger
@@ -85,6 +90,10 @@ proposalProblemMessage problem = case problem of
   TransitionArraysEmpty -> "transition manifest arrays must be non-empty"
   DuplicateManifestPath -> "manifest records contains a duplicate path"
   RecordCountMismatch -> "proposal record count does not match manifest"
+  ReferenceHeadNull -> "expected_reference_heads revision_id must be a non-null digest"
+  ReferenceHeadDrafted -> "expected_reference_heads must not name drafted objects"
+  ReferenceHeadNotReferenced -> "expected_reference_heads must name explicitly referenced objects"
+  ReferenceHeadPinDisagrees -> "expected_reference_heads must agree with every explicit pin to the object"
   HeadsOmitDraft -> "expected_heads must include every drafted object"
   HeadsNotExactlyDrafts -> "expected_heads must contain exactly the drafted objects"
   IdentitiesOutsideDrafts -> "identities must refer to drafted objects"
@@ -109,6 +118,7 @@ proposalProblemMessage problem = case problem of
   PathNotNormalized -> "proposal path is not normalized"
   AllocationNotObject -> "identity allocation must be an object"
   DeclarationNotObject -> "content declaration must be an object"
+  ExpectedSnapshotInvalid -> "expected_snapshot must be a Git commit of 40 lowercase hexadecimal characters"
   ExpectedRevisionInvalid -> "expected_heads revision_id must be null or a digest"
   ExpectedHeadNotObject -> "expected head must be an object"
   DeclaredSizeNotInteger -> "size must be a non-negative integer"
