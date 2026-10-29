@@ -205,6 +205,7 @@ upgrades: ADR 0068.
 | `world/documents.py`, `notes.py`, `circle.py` | documents, timed lyrics and syllables, sensitivity and rights, `Reacher` (0085); notes, melody, `tune_notes`, `written_rhythm` (0086); sharing gate, readable set, `beyond_circle`, `may_publish` (0088, 0085) |
 | `world/record_views.py`, `contract_graphs.py` | the record views (`VIEWS` at the end); `RECHECKS`, contract to checker |
 | `world/conformance.py` | checks a store against `world/projection/6/` |
+| `world/tests/fixture_exports.py` | immutable process-local real-writer export for JSON-only tests; archive-mutating tests keep fresh fixtures |
 | `world/projection/6/*.ttl`, `projection.json` | named graphs, SHACL shapes, vocabulary |
 | `world/examples/*.sparql` | example queries, checked by tests |
 

@@ -7,7 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from world.tests.test_conformance import ROOT, build_fixture_archive, integration_binaries, remove_tree
+from world.tests.fixture_exports import fixture_export
+from world.tests.test_conformance import ROOT, integration_binaries, remove_tree
 from world.world import build_projection, query, ProjectionError
 
 ARCH = "urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#"
@@ -18,7 +19,7 @@ class SessionEnsemble(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = Path(tempfile.mkdtemp())
-        cls.manifest, cls.export = build_fixture_archive(cls.tmp)
+        cls.manifest, cls.export = fixture_export()
 
     @classmethod
     def tearDownClass(cls):
