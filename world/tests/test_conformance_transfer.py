@@ -1,4 +1,5 @@
 """Differential and cost regressions for World's RDF representation transfer."""
+import copy
 import json
 import unittest
 from pathlib import Path
@@ -79,10 +80,20 @@ class DirectTermTransferTests(unittest.TestCase):
                 self.assertEqual(actual, reference)
 
     def test_invalid_history_is_still_rejected(self):
-        projection = build_projection(json.loads(FIXTURE.read_text()))
-        # Change a historical revision graph; checking only current records
-        # would miss this undeclared predicate.
-        graph = next(q.graph_name for q in projection.store if "#revision=" in str(q.graph_name))
+        exported = json.loads(FIXTURE.read_text())
+        previous = next(record for record in exported["records"] if record["shape"] == "claim")
+        successor = copy.deepcopy(previous)
+        successor["revision_id"] = "sha256:" + "0" * 64
+        self.assertNotEqual(successor["revision_id"], previous["revision_id"])
+        successor["supersedes"] = [{"role": "supersedes", "id": previous["object_id"],
+                                    "revision_id": previous["revision_id"]}]
+        exported["records"].append(successor)
+        projection = build_projection(exported)
+        # The invalid graph belongs to an explicitly superseded revision;
+        # checking only the successor would miss this undeclared predicate.
+        graph = NamedNode(projection.archive_id + "#revision=" + previous["revision_id"])
+        self.assertTrue(conformance.check_store(projection.store, projection.archive_id,
+                                                PROJECTION_VERSION).conforms)
         quad = next(projection.store.quads_for_pattern(None, None, None, graph))
         projection.store.add(Quad(quad.subject, NamedNode(ARCH + "undeclared"), Literal("bad"), graph))
         actual = conformance.check_store(projection.store, projection.archive_id, PROJECTION_VERSION)
