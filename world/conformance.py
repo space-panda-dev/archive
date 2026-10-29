@@ -18,8 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import multiprocessing
-from collections import deque
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from contextlib import nullcontext
 import re
 import sys
@@ -250,12 +249,22 @@ def check_store(store: Any, archive_id: str, version: int, *, workers: int = 1) 
     patterns = [(entry["kind"], re.compile(entry["pattern"].replace("{archive}", re.escape(archive_id))))
                 for entry in entries]
     shapes_by_kind = {entry["kind"]: shapes(version, entry["kind"]) for entry in entries}
-    pending: deque[Any] = deque()
+    pending: dict[Any, int] = {}
+    # Retain only diagnostics, not successful results or graph payloads.
+    problems: dict[int, list[str]] = {}
+
+    def remember(sequence: int, result: list[str]) -> None:
+        if not isinstance(result, list) or any(not isinstance(problem, str) for problem in result):
+            raise TypeError("conformance worker returned an invalid result")
+        if result:
+            problems[sequence] = result
 
     def collect() -> None:
         # Exceptions, including a dead worker, propagate; a partial report
         # cannot declare conformance when a revision was not checked.
-        report.problems.extend(pending.popleft().result())
+        done, _ = wait(pending, return_when=FIRST_COMPLETED)
+        for future in done:
+            remember(pending.pop(future), future.result())
 
     executor = (ProcessPoolExecutor(max_workers=workers,
                     mp_context=multiprocessing.get_context("spawn"), initializer=_worker_init,
@@ -263,33 +272,31 @@ def check_store(store: Any, archive_id: str, version: int, *, workers: int = 1) 
                                for kind, graph in shapes_by_kind.items()},))
                 if workers > 1 else nullcontext(None))
     with executor as pool:
-        for graph in _graphs(store):
+        for sequence, graph in enumerate(_graphs(store)):
             name = str(graph.identifier)
             if graph.identifier == rdflib.graph.DATASET_DEFAULT_GRAPH_ID:
-                while pending:
-                    collect()
-                report.problems.append(f"the default graph holds {len(graph.graph())} triples; it must be empty")
+                remember(sequence, [f"the default graph holds {len(graph.graph())} triples; it must be empty"])
                 continue
             matched = [kind for kind, pattern in patterns if pattern.fullmatch(name)]
             if len(matched) != 1:
-                while pending:
-                    collect()
-                report.problems.append(f"graph {name} matches {len(matched)} declared graph patterns")
+                remember(sequence, [f"graph {name} matches {len(matched)} declared graph patterns"])
                 continue
             kind = matched[0]
             report.graphs[kind] = report.graphs.get(kind, 0) + 1
             report.predicates.setdefault(kind, set()).update(graph.predicates)
             report.classes.setdefault(kind, set()).update(graph.classes)
             if pool is not None and kind == "revision":
-                pending.append(pool.submit(_worker_check, graph, kind))
+                pending[pool.submit(_worker_check, graph, kind)] = sequence
                 if len(pending) >= 2 * workers:
                     collect()
             else:
                 while pending:
                     collect()
-                report.problems.extend(_check_graph(graph.graph(), kind, shapes_by_kind[kind]))
+                remember(sequence, _check_graph(graph.graph(), kind, shapes_by_kind[kind]))
         while pending:
             collect()
+    for sequence in sorted(problems):
+        report.problems.extend(problems[sequence])
     if not report.graphs:
         report.problems.append("the projection holds no named graphs")
     return report

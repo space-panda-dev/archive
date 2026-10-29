@@ -4,7 +4,7 @@ import json
 import os
 import unittest
 import rdflib
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import Future as ConcurrentFuture, ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from unittest.mock import patch
@@ -61,8 +61,11 @@ class ParallelConformanceTests(unittest.TestCase):
     def test_bounded_queue_keeps_every_revision(self):
         p = self.projection()
         state = {'pending': 0, 'peak': 0, 'checked': 0}
-        class Future:
-            def __init__(self, fn, args): self.fn, self.args = fn, args
+        class Future(ConcurrentFuture):
+            def __init__(self, fn, args):
+                super().__init__()
+                self.fn, self.args = fn, args
+                self.set_result(None)
             def result(self):
                 state['pending'] -= 1
                 state['checked'] += 1
@@ -94,6 +97,51 @@ class ParallelConformanceTests(unittest.TestCase):
         self.assertEqual(state['peak'], 4)
         self.assertEqual(state['pending'], 0)
 
+    def test_refills_before_slow_first_result_and_preserves_problem_order(self):
+        p = self.projection()
+        data = [conformance._GraphData(rdflib.URIRef(p.archive_id + "#revision=sha256:" + f"{i:064x}"),
+                [], set(), set()) for i in range(15)]
+        submitted, completed, active = [], [], []
+
+        class Future:
+            def __init__(self, name):
+                self.name = name
+            def result(self):
+                active.remove(self)
+                completed.append(self.name)
+                return [self.name]
+
+        class Pool:
+            def __init__(self, **kwargs): pass
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def submit(self, fn, graph, kind):
+                if len(submitted) == 4:
+                    # A full window refilled before the first, slow graph ended.
+                    if str(data[0].identifier) in completed:
+                        raise AssertionError("head-of-line wait blocked refill")
+                future = Future(str(graph.identifier))
+                submitted.append(future.name)
+                active.append(future)
+                if len(active) > 4:
+                    raise AssertionError("unbounded pending graph payloads")
+                return future
+
+        def complete_latest(pending, **kwargs):
+            self.assertEqual(kwargs["return_when"], conformance.FIRST_COMPLETED)
+            return {next(reversed(pending))}, set()
+
+        with patch.object(conformance, "_graphs", side_effect=lambda store: iter(data)), \
+             patch.object(conformance, "_check_graph", side_effect=lambda graph, *args: [str(graph.identifier)]):
+            serial = conformance.check_store(p.store, p.archive_id, PROJECTION_VERSION)
+            with patch.object(conformance, "ProcessPoolExecutor", Pool), \
+                 patch.object(conformance, "wait", complete_latest):
+                parallel = conformance.check_store(p.store, p.archive_id, PROJECTION_VERSION, workers=2)
+        self.assertEqual(serial, parallel)
+        self.assertEqual(len(submitted), 15)
+        self.assertEqual(completed[-1], str(data[0].identifier))
+        self.assertFalse(active)
+
     def test_worker_crash_fails_closed(self):
         p = self.projection()
         def pool(**kwargs):
@@ -105,9 +153,12 @@ class ParallelConformanceTests(unittest.TestCase):
 
     def test_worker_exception_and_missing_result_fail_closed(self):
         p = self.projection()
-        for result in [RuntimeError('worker failed'), None]:
+        for result in [RuntimeError('worker failed'), None, {}, '', 0, [42]]:
             with self.subTest(result=result):
-                class Future:
+                class Future(ConcurrentFuture):
+                    def __init__(self):
+                        super().__init__()
+                        self.set_result(None)
                     def result(self):
                         if isinstance(result, Exception): raise result
                         return result
