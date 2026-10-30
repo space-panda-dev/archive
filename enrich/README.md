@@ -793,7 +793,7 @@ For selecting features, opportunistic methods or result production, see
 ```sh
 enrich/enrich.py backfill --archive <dir> --bank <root> [--config <file>]
     [--mode songs|eager|on-demand | --songs | --eager | --on-demand] [--cores <n>] [--memory-gb <n>] [--spool "<spool> --dir <dir>"] [--commit [--follow [--follow-seconds <s>]]] [--retry-failed]
-    [--proposers <name,...>] [--world-store <dir> [--world-python <python>] [--conformance-python <python>]]
+    [--proposers <name,...>] [--world-store <dir> [--world-python <python>] [--conformance-python <python>] [--conformance-workers <n>]]
     [--log <file>] [--staging <annex>] [--door door] [--archive-command archive]
 ```
 
@@ -803,7 +803,10 @@ Fills the feature bank for every recording and proposes what it holds
 probes the audio and video Artifacts `propose --all` lists as unprobed,
 plans, runs the plan, proposes `--all` (dry run, commit, and a rerun that
 must answer `unchanged`), and, with `--world-store`, refreshes World and
-checks its conformance. A dry run probes and proposes with `--dry-run` and
+checks its conformance after the extractor pool drains. Revision SHACL checks
+use up to four processes, bounded by `--cores`; `--conformance-workers` explicitly
+overrides this final-stage budget. At most twice that many revision graphs are
+queued, while context, domain and records graphs remain serial. A dry run probes and proposes with `--dry-run` and
 runs no extractor. A part of a session's later source (a twin kept beside its
 take, [ADR 0070's amendment](../docs/decisions/0070-capture-import.md))
 is left out and counted in the log: each take is analysed once, from the

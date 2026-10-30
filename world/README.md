@@ -377,6 +377,39 @@ the newest; `refresh` and `rebuild` build every served version
 states the projection's version and the archive's specification:
 `<{archive}#world> arch:projection_version 6`.
 
+### Conformance cost
+
+The checker transfers every quad directly from Oxigraph to RDFLib, then runs
+all of the same SHACL shapes and undeclared-subject checks on every graph,
+including historical revisions. By default it materializes and validates one
+isolated graph before reading the next. `--workers N` validates revision graphs
+in N spawned processes, with at most 2N graph tasks pending; context, domain
+and records graphs remain serial. Only individual graphs and shape terms
+cross the process boundary. Worker failures abort the check, and problems
+retain graph traversal order. Both paths avoid a whole RDFLib dataset and
+its second per-graph copy. The checker does not cache results or check only
+current records. Plain strings, datatypes, language tags and blank-node identity are
+preserved; unsupported RDF terms fail rather than disappearing.
+
+The [synthetic benchmark](tests/benchmark_conformance.py) compares complete
+reports against the former N-Quads serialization/parsing path. Run it with the
+World test Python from the repository root:
+
+```sh
+python -m world.tests.benchmark_conformance --payload-items 100000 --repeat 3
+```
+
+Measured on 2026-10-29, macOS 15.5 ARM64, Python 3.13.12, Oxigraph 0.5.2,
+RDFLib 7.2.1 and pySHACL 0.30.1: the published Door-chain fixture (967 quads,
+18 graphs), with one synthetic 3,000,010-byte JSON payload, took 62.794 seconds
+through the former path and 0.688 seconds through direct transfer (one pair,
+91.25 times faster). Profiling attributed 55.6 of 56.6 seconds to the former
+parser, almost entirely its repeated line-matching regular expression. With
+that payload reduced to 12 bytes, three-run medians were 0.385 and 0.328
+seconds. These are fixture measurements, not a measured speedup for a personal
+archive or the complete test suite. The cost regression forbids serializing
+the store; differential tests cover all served projections and invalid history.
+
 ## Unsupported behavior
 
 `world current` and `world promote` return `status: unsupported`. No per-kind

@@ -4,9 +4,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from world.tests.fixture_exports import fixture_export
 from world.capture_start import check
 from world.world import build_projection, query, ProjectionError
-from world.tests.test_conformance import build_fixture_archive, remove_tree
+from world.tests.test_conformance import remove_tree
 
 ARCH = "urn:uuid:3e8b29f8-70c9-403e-bb4c-2280d59eca7f#"
 
@@ -34,7 +35,7 @@ class CaptureProjection(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = Path(tempfile.mkdtemp())
-        cls.manifest, cls.export = build_fixture_archive(cls.tmp)
+        cls.manifest, cls.export = fixture_export()
 
     @classmethod
     def tearDownClass(cls):

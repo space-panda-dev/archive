@@ -18,6 +18,7 @@ from pathlib import Path
 from pyoxigraph import NamedNode
 
 import world.world as world_module
+from world.tests.fixture_exports import fixture_export
 from world.tests.test_conformance import build_fixture_archive, integration_binaries, remove_tree
 # The examples the fixture archive answers; the Door chain export answers the
 # others (test_world.py).
@@ -320,7 +321,7 @@ class DerivationRefusalTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = Path(tempfile.mkdtemp())
-        cls.manifest, cls.base = build_fixture_archive(cls.tmp)
+        cls.manifest, cls.base = fixture_export()
 
     @classmethod
     def tearDownClass(cls):

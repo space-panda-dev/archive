@@ -46,8 +46,8 @@ module is `wf check enrich -- -p test_bank.py` and one test name is
 | build | 300 | 1800s | `cabal build -v0 lib:archive exe:door exe:archive "$@"` |
 | documents | 5 | 60s | `python3 -m unittest discover -s documents/ireal -p "test_*.py" "$@"` |
 | haskell | night | 3600s | `n=$#; for a do set -- "$@" "--test-option=$a"; done; shift $n; cabal test all --test-show-details=direct "$@"` |
-| world | night | 3600s | `$PYTHON -m unittest discover -s world/tests "$@"` |
-| relay | 300 | 1800s | `$PYTHON -m unittest discover -s relay/tests "$@"` |
+| world | night | 3600s | `$PYTHON -m unittest discover --durations 20 -s world/tests "$@"` |
+| relay | 300 | 1800s | `$PYTHON -m unittest discover --durations 20 -s relay/tests "$@"` |
 | enrich-tests | 30 | 1800s | `$PYTHON -m unittest discover -s enrich/tests "$@"` |
 | shadow | 300 | 1800s | `$PYTHON -m unittest discover -s shadow -p "test_*.py" "$@"` |
 | documents-door | 30 | 1800s | `$PYTHON -m unittest discover -s documents/tests "$@"` |
@@ -75,7 +75,7 @@ export ARCHIVE_UPGRADE_TEST_PACKAGE
 "$PYTHON" -m unittest discover -s migration -p "test_upgrade.py" -k packaged_release "$@"
 ` |
 | fixture | 300 | 1800s | `$PYTHON -m unittest discover -s fixture -p "test_*.py" "$@"` |
-| enrich | night | 3600s | `$ENRICH_PYTHON -m unittest discover -s enrich -p "test_*.py" "$@"` |
+| enrich | night | 3600s | `$ENRICH_PYTHON -m unittest discover --durations 20 -s enrich -p "test_*.py" "$@"` |
 | capture | 300 | 1800s | `$ENRICH_PYTHON -m unittest discover -s capture -p "test_*.py" "$@"` |
 | bench | 30 | 300s | `P="$HOME/archive-bench/envs/harness/bin/python"; test -x "$P" \|\| { echo "bench: no $P; the bench runs on the x86-64 laptop (wf check --on laptop)"; exit 1; }; "$P" -m unittest discover -s enrich/bench -p "test_*.py" "$@"` |
 | bench-horn | night | 3600s | `P="$HOME/archive-bench/envs/harness/bin/python"; test -x "$P" \|\| { echo "bench-horn: no $P; the bench runs on the x86-64 laptop (wf check --on laptop)"; exit 1; }; ARCHIVE_BENCH_ROOT="$HOME/archive-bench" "$P" -m enrich.bench check horn-v1 "$@"` |
@@ -205,6 +205,7 @@ upgrades: ADR 0068.
 | `world/documents.py`, `notes.py`, `circle.py` | documents, timed lyrics and syllables, sensitivity and rights, `Reacher` (0085); notes, melody, `tune_notes`, `written_rhythm` (0086); sharing gate, readable set, `beyond_circle`, `may_publish` (0088, 0085) |
 | `world/record_views.py`, `contract_graphs.py` | the record views (`VIEWS` at the end); `RECHECKS`, contract to checker |
 | `world/conformance.py` | checks a store against `world/projection/6/` |
+| `world/tests/fixture_exports.py` | immutable process-local real-writer export for JSON-only tests; archive-mutating tests keep fresh fixtures |
 | `world/projection/6/*.ttl`, `projection.json` | named graphs, SHACL shapes, vocabulary |
 | `world/examples/*.sparql` | example queries, checked by tests |
 
@@ -256,7 +257,7 @@ speed), 0069 (media by digest), 0114 (local health), 0118 (metrics).
 |---|---|
 | `relay/relay.py` | 1384 |
 | `relay/openapi.json` | 5069 |
-| `relay/tests/test_relay.py` | 1361 |
+| `relay/tests/test_relay.py` | 1364 |
 <!-- /wf:gen -->
 
 <!-- wf:gen anchors relay/relay.py#DOOR_ROUTES relay/relay.py#MEDIA_ROUTES relay/relay.py#ROUTES relay/relay.py#Relay relay/relay.py#make_handler relay/relay.py#main -->
@@ -337,7 +338,7 @@ shipped extractors").
 <!-- wf:gen lines enrich/README.md enrich/enrich.py enrich/adapter.py enrich/proposers.py enrich/detector.py enrich/cover.py enrich/extract.py enrich/bank.py enrich/remote.py enrich/backfill.py enrich/backfill_queue.py enrich/extractors/stems/stems.py enrich/extractors/quality/quality.py enrich/extractors/tonal/tonal.py enrich/extractors/structure/structure.py enrich/extractors/rhythm/meter.py enrich/test_bank.py docs/feature-bank.md -->
 | file | lines |
 |---|---|
-| `enrich/README.md` | 1309 |
+| `enrich/README.md` | 1312 |
 | `enrich/enrich.py` | 738 |
 | `enrich/adapter.py` | 619 |
 | `enrich/proposers.py` | 1286 |
@@ -346,7 +347,7 @@ shipped extractors").
 | `enrich/extract.py` | 1095 |
 | `enrich/bank.py` | 1498 |
 | `enrich/remote.py` | 720 |
-| `enrich/backfill.py` | 1363 |
+| `enrich/backfill.py` | 1369 |
 | `enrich/backfill_queue.py` | 613 |
 | `enrich/extractors/stems/stems.py` | 755 |
 | `enrich/extractors/quality/quality.py` | 1317 |

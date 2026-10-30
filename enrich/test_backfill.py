@@ -1524,6 +1524,21 @@ class StepsEnvironment(unittest.TestCase):
             self.assertEqual([event["step"] for event in events], ["World refresh", "conformance"])
             self.assertEqual([event["answer"] for event in events], [expected, expected])
 
+    def test_final_conformance_receives_explicit_worker_budget(self):
+        import backfill_proposals
+        args = argparse.Namespace(world_python="world-python", conformance_python="conformance-python",
+                                  archive="archive", world_store="store", archive_command="archive-command",
+                                  conformance_workers=6)
+        steps = backfill_proposals.Steps(args, lambda **event: None, {})
+        calls = []
+        def dispatch(command, **kwargs):
+            calls.append(command)
+            return subprocess.CompletedProcess(command, 0, "{}", "")
+        with patch.object(backfill_proposals.subprocess, "run", dispatch):
+            self.assertTrue(steps.world())
+        self.assertEqual(calls[-1][-2:], ["--workers", "6"])
+        self.assertEqual(Path(calls[-1][1]).name, "conformance.py")
+
     def test_progress_refresh_skips_conformance_but_final_world_checks_it(self):
         import backfill_proposals
         args = argparse.Namespace(world_python="world-python", conformance_python="conformance-python",

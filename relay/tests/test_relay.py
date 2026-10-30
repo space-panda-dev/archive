@@ -107,7 +107,10 @@ class RelayHarness:
         # The server the relay itself runs, so tests see its threading.
         self.server = relay.make_server(self.relay, "127.0.0.1", 0)
         self.server.RequestHandlerClass.log_message = lambda *args: None
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        # Keep the real threaded server and shutdown handshake; only shorten
+        # its idle shutdown polling (stdlib default: 500 ms per harness).
+        self.thread = threading.Thread(target=self.server.serve_forever,
+                                       kwargs={"poll_interval": 0.01}, daemon=True)
         self.thread.start()
         self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
 

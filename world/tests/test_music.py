@@ -15,8 +15,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from world.tests.fixture_exports import fixture_export
 from world import contributions
-from world.tests.test_conformance import build_fixture_archive, remove_tree
+from world.tests.test_conformance import remove_tree
 from world.world import SPARQL_RESULTS_JSON, build_projection, query
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -37,7 +38,7 @@ class MusicProjectionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = Path(tempfile.mkdtemp())
-        cls.manifest, cls.export = build_fixture_archive(cls.tmp)
+        cls.manifest, cls.export = fixture_export()
         cls.projection = build_projection(cls.export)
 
     @classmethod

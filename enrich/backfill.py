@@ -1045,6 +1045,8 @@ def add_arguments(command: argparse.ArgumentParser) -> None:
     command.add_argument("--world-store", help="refresh this World store and check its conformance at the end")
     command.add_argument("--world-python", default=sys.executable)
     command.add_argument("--conformance-python")
+    command.add_argument("--conformance-workers", type=int,
+                         help="final SHACL processes after extractors drain (default: min(cores, 4))")
     command.add_argument("--log", help="append every event, one JSON line each, to this file")
     command.add_argument("--follow", action="store_true",
                          help="keep running: make bank requests as they arrive and new admissions (needs --commit)")
@@ -1217,6 +1219,10 @@ def _main(args: argparse.Namespace, env: dict[str, str] | None = None,
     memory_gb = args.memory_gb or max(1.0, machine_memory_gb() - schedule.memory_reserve_gb)
     if cores < 1 or memory_gb <= 0:
         raise BackfillError("--cores and --memory-gb must be positive")
+    conformance_workers = getattr(args, "conformance_workers", None)
+    if conformance_workers is not None and conformance_workers < 1:
+        raise BackfillError("--conformance-workers must be positive")
+    args.conformance_workers = conformance_workers if conformance_workers is not None else min(cores, 4)
     spool = remote.Spool(args.spool) if args.spool else None
     commit = args.commit
     steps = Steps(args, note, dict(os.environ if env is None else env))

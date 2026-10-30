@@ -16,6 +16,7 @@ from pathlib import Path
 
 from pyoxigraph import Literal, NamedNode, Quad, Store
 
+from world.tests.fixture_exports import fixture_export
 from world import conformance
 from world.tests.plan0010 import drafted_export
 from world.world import PROJECTION_VERSION, PROJECTORS, build_projection
@@ -87,7 +88,7 @@ class FixtureArchiveConformanceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.mkdtemp()
-        cls.manifest, cls.export = build_fixture_archive(cls.tmp)
+        cls.manifest, cls.export = fixture_export()
 
     @classmethod
     def tearDownClass(cls):
