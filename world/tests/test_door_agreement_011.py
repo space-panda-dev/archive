@@ -27,9 +27,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 from world import exports, form, lead_sheets, notes
+from world.tests import test_door_agreement as agreement
 from world.tests.test_door_agreement import (
     ROOT,
-    Agreement,
     Change,
     both,
     delete_in,
@@ -176,9 +176,9 @@ class Agreement011(unittest.TestCase):
     def tearDownClass(cls):
         remove_tree(cls.tmp)
 
-    pinned = Agreement.pinned
-    record = Agreement.record
-    door_admits = Agreement.door_admits
+    pinned = agreement.Agreement.pinned
+    record = agreement.Agreement.record
+    door_admits = agreement.Agreement.door_admits
 
     def view(self, revision: str) -> dict[str, Any]:
         found = self.by_revision[revision]
