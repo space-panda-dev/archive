@@ -1,6 +1,7 @@
 """Discovery-only CI shards; unittest and unittest-parallel own execution."""
 
 import argparse
+import hashlib
 import os
 import sys
 from pathlib import Path
@@ -26,7 +27,7 @@ def cases(suite):
 
 
 def partition(suite, index, count, phase="parallel", suite_name="enrich"):
-    """Keep each discovered module intact and automatically assign new modules."""
+    """Keep modules intact with stable assignments when unrelated modules change."""
     if count < 1 or not 0 <= index < count:
         raise ValueError("SHARD_INDEX must be in [0, SHARD_COUNT), count positive")
     if phase not in {"parallel", "serial"}:
@@ -67,7 +68,9 @@ def partition(suite, index, count, phase="parallel", suite_name="enrich"):
         if classes:
             modules.setdefault(name, []).append(unittest.TestSuite(
                 unittest.TestSuite(items) for items in classes.values()))
-    selected = sorted(modules)[index::count]
+    selected = [name for name in sorted(modules)
+                if int.from_bytes(hashlib.sha1(name.encode(), usedforsecurity=False).digest(),
+                                  "big") % count == index]
     return unittest.TestSuite(group for name in selected for group in modules[name])
 
 

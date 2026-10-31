@@ -34,6 +34,16 @@ class Shards(unittest.TestCase):
         self.assertCountEqual(sum((ids(partition(corpus(["a", "new"]), i, 3))
                                   for i in range(3)), []), ids(corpus(["a", "new"])))
 
+    def test_unrelated_module_does_not_reshuffle_existing_assignments(self):
+        names = ["b", "c", "d", "e", "f", "g"]
+        for count in [2, 3, 5]:
+            for index in range(count):
+                with self.subTest(count=count, index=index):
+                    before = ids(partition(corpus(names), index, count))
+                    after = ids(partition(corpus(["a"] + names), index, count))
+                    self.assertEqual(before, [identifier for identifier in after
+                                              if not identifier.startswith("a.")])
+
     def test_default_partition_is_whole_corpus(self):
         self.assertCountEqual(ids(partition(corpus(["a", "b"]), 0, 1)),
                               ids(corpus(["a", "b"])))
