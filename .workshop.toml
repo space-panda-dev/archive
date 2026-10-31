@@ -278,3 +278,11 @@ where = "local"
 timeout_seconds = 180
 tier = 5
 paths = ["flake.nix", "flake.lock", "deployment/**", "archive.cabal"]
+
+# CI partitions discovery only; upstream unittest-parallel owns execution.
+[suites.ci-discovery]
+run = 'python3 -m unittest discover -s scripts -p test_ci_enrich.py "$@"'
+where = "local"
+timeout_seconds = 60
+tier = 5
+paths = ["scripts/ci_enrich.py", "scripts/test_ci_enrich.py", "flake.nix"]
