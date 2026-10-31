@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
-from ci_enrich import cases, partition
+from ci_tests import cases, partition
 
 
 def corpus(names):
@@ -99,7 +99,7 @@ class Shards(unittest.TestCase):
             partition(corpus(["ordinary"]), 0, 1, suite_name="typo")
 
     def test_load_tests_forwards_pattern_and_name_filter(self):
-        import ci_enrich
+        import ci_tests
         from unittest.mock import Mock
         discovered = Mock(errors=[])
         discovered.discover.return_value = corpus(["ordinary"])
@@ -108,7 +108,7 @@ class Shards(unittest.TestCase):
                                        "CI_TEST_SUITE": "enrich",
                                        "CI_TEST_PHASE": "parallel",
                                        "SHARD_COUNT": "1", "SHARD_INDEX": "0"}), \
-                patch.object(ci_enrich.unittest, "TestLoader", return_value=discovered):
-            self.assertEqual(len(ids(ci_enrich.load_tests(loader, None, None))), 2)
+                patch.object(ci_tests.unittest, "TestLoader", return_value=discovered):
+            self.assertEqual(len(ids(ci_tests.load_tests(loader, None, None))), 2)
         self.assertEqual(discovered.testNamePatterns, ["*needle*"])
         self.assertEqual(discovered.discover.call_args.kwargs["pattern"], "test_bank.py")

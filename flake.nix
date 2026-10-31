@@ -268,6 +268,13 @@
           # an Essentia wheel exists).
           enrich-python = enrichPythonFor pkgs;
           enrich-test-python = testEnrichPythonFor pkgs;
+          # The current checkout owns selection; Nix owns the test interpreter.
+          enrich-tests = pkgs.writeShellApplication {
+            name = "enrich-tests";
+            text = ''
+              export ENRICH_TEST_PYTHON=${testEnrichPythonFor pkgs}/bin/python3
+            '' + builtins.readFile ./scripts/run-enrich-tests.sh;
+          };
           # Stable roots for CI cache warming, without any source test result.
           ci-dependencies = pkgs.linkFarm "archive-ci-dependencies" [
             { name = "archive"; path = archive; }
@@ -351,11 +358,11 @@
           suites = {
             world-parallel = suite "world-parallel" ''
               export CI_TEST_SUITE=world
-              ${python}/bin/python3 -m unittest_parallel -j 4 --level module --disable-process-pooling -s scripts -p ci_enrich.py
+              ${python}/bin/python3 -m unittest_parallel -j 4 --level module --disable-process-pooling -s scripts -p ci_tests.py
             '';
             world-serial = suite "world-serial" ''
               export CI_TEST_SUITE=world CI_TEST_PHASE=serial
-              ${python}/bin/python3 -m unittest discover -s scripts -p ci_enrich.py
+              ${python}/bin/python3 -m unittest discover -s scripts -p ci_tests.py
             '';
             relay = suite "relay" (run python "module" "relay/tests");
             enrich-tests = suite "enrich-tests" (run python "module" "enrich/tests");
@@ -366,14 +373,14 @@
             documents-door = suite "documents-door" (run python "module" "documents/tests");
             enrich-serial = suite "enrich-serial" (requireEssentia + "\n"
               + "export CI_TEST_PHASE=serial\n"
-              + "${enrichPython}/bin/python3 -m unittest discover -s scripts -p ci_enrich.py");
+              + "${enrichPython}/bin/python3 -m unittest discover -s scripts -p ci_tests.py");
             ci-discovery = suite "ci-discovery" (run python "module" "scripts");
             capture = suite "capture" (requireEssentia + "\n" + run enrichPython "module" "capture");
           } // builtins.listToAttrs (map (i: {
             name = "enrich-${toString i}";
             value = suite "enrich-${toString i}" (requireEssentia + "\n"
               + "export SHARD_INDEX=${toString i} SHARD_COUNT=${toString (builtins.length enrichShards)}\n"
-              + "${enrichPython}/bin/python3 -m unittest_parallel -j 4 --level class --disable-process-pooling -s scripts -p ci_enrich.py");
+              + "${enrichPython}/bin/python3 -m unittest_parallel -j 4 --level class --disable-process-pooling -s scripts -p ci_tests.py");
           }) enrichShards);
         in suites // {
           inherit archive;
