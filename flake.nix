@@ -364,7 +364,9 @@
               export CI_TEST_SUITE=world CI_TEST_PHASE=serial
               ${python}/bin/python3 -m unittest discover -s scripts -p ci_tests.py
             '';
-            relay = suite "relay" (run python "module" "relay/tests");
+            # Relay service workers create child processes; keep unittest as
+            # their non-daemonic parent rather than nesting native pools.
+            relay = suite "relay" "${python}/bin/python3 -m unittest discover -s relay/tests -p 'test_*.py'";
             enrich-tests = suite "enrich-tests" (run python "module" "enrich/tests");
             shadow = suite "shadow" (run python "module" "shadow");
             migration = suite "migration" (run python "module" "migration");
