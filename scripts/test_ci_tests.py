@@ -186,7 +186,7 @@ class SelectionPreflight(unittest.TestCase):
                 'exit "$SERIAL_EXIT"\n')
             interpreter.chmod(0o700)
             for preflight, parallel, serial, expected in [
-                    (0, 0, 5, 0), (0, 5, 0, 0), (5, 0, 0, 5),
+                    (0, 0, 5, 0), (0, 5, 0, 1), (5, 0, 0, 5),
                     (0, 5, 1, 1), (0, 1, 5, 1)]:
                 with self.subTest(preflight=preflight, parallel=parallel, serial=serial):
                     result = subprocess.run(
@@ -213,3 +213,34 @@ class UpstreamGrouping(unittest.TestCase):
         selected = [identifier for group in groups for identifier in ids(group)]
         self.assertCountEqual(selected, ids(bootstrap))
         self.assertEqual(len(selected), len(set(selected)))
+
+
+class MaintainedRunnerFailures(unittest.TestCase):
+    def test_exactly_five_parallel_failures_cannot_pass_the_wrapper(self):
+        import importlib.util
+        import os
+        from pathlib import Path
+        import shutil
+        import subprocess
+        import sys
+        import tempfile
+        if importlib.util.find_spec("unittest_parallel") is None:
+            if os.environ.get("ARCHIVE_REQUIRE_INTEGRATION"):
+                self.fail("the pinned unittest-parallel integration dependency is required")
+            self.skipTest("the pinned unittest-parallel interpreter is needed")
+        root = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory() as temporary:
+            checkout = Path(temporary)
+            (checkout / "scripts").mkdir()
+            (checkout / "enrich").mkdir()
+            shutil.copyfile(root / "scripts/ci_tests.py", checkout / "scripts/ci_tests.py")
+            methods = "".join(f"    def test_{i}(self): self.fail('expected failure')\n"
+                              for i in range(5))
+            (checkout / "enrich/test_five.py").write_text(
+                "import unittest\nclass Five(unittest.TestCase):\n" + methods)
+            answer = subprocess.run(
+                ["bash", str(root / "scripts/run-enrich-tests.sh")], cwd=checkout,
+                env={**os.environ, "ENRICH_TEST_PYTHON": sys.executable},
+                capture_output=True, text=True, timeout=30)
+            self.assertIn("failures=5", answer.stdout + answer.stderr)
+            self.assertEqual(answer.returncode, 1, answer.stdout + answer.stderr)
