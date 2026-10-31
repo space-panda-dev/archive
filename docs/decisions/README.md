@@ -139,3 +139,4 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0124](0124-legacy-session-backfill.md) | Backfill missing sessions from legacy grouping and file order, preserving source provenance and reviewing ambiguity |
 | [0125](0125-admission-reference-heads.md) | An admission can require referenced objects’ heads to stay unchanged |
 | [0126](0126-fleet-specification-upgrade-boundary.md) | Fleet applies a pinned Archive upgrade plan |
+| [0127](0127-ci-uses-native-parallel-runners-and-complete-shards.md) | CI uses native parallel runners and complete test shards |
