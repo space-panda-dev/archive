@@ -12,7 +12,7 @@ def corpus(names):
         cls = type("Example", (unittest.TestCase,), {
             "__module__": name, "test_one": lambda self: None,
             "test_two": lambda self: None})
-        groups.append(unittest.defaultTestLoader.loadTestsFromTestCase(cls))
+        groups.append(unittest.TestLoader().loadTestsFromTestCase(cls))
     return unittest.TestSuite(groups)
 
 
@@ -52,7 +52,7 @@ class Shards(unittest.TestCase):
         suite = corpus(names)
         optional = type("RealModel", (unittest.TestCase,), {
             "__module__": "test_notes", "test_model": lambda self: None})
-        suite.addTest(unittest.defaultTestLoader.loadTestsFromTestCase(optional))
+        suite.addTest(unittest.TestLoader().loadTestsFromTestCase(optional))
         expected = ids(suite)
         selected = sum((ids(partition(suite, i, 3)) for i in range(3)), [])
         serial = ids(partition(suite, 0, 1, "serial"))
@@ -89,10 +89,10 @@ class Shards(unittest.TestCase):
         self.assertCountEqual(parallel + serial, ids(suite))
         self.assertTrue(set(parallel).isdisjoint(serial))
 
-    def test_world_module_mode_preserves_module_fixtures(self):
+    def test_world_class_mode_rejects_module_fixtures(self):
         with patch.dict("sys.modules", {"test_other": SimpleNamespace(setUpModule=lambda: None)}):
-            self.assertEqual(len(ids(partition(corpus(["test_other"]), 0, 1,
-                                               suite_name="world"))), 2)
+            with self.assertRaisesRegex(ValueError, "module fixtures"):
+                partition(corpus(["test_other"]), 0, 1, suite_name="world")
 
     def test_unknown_suite_fails(self):
         with self.assertRaisesRegex(ValueError, "CI_TEST_SUITE"):
@@ -185,3 +185,21 @@ class SelectionPreflight(unittest.TestCase):
                              "PREFLIGHT_EXIT": str(preflight), "PARALLEL_EXIT": str(parallel),
                              "SERIAL_EXIT": str(serial)}, capture_output=True, text=True)
                     self.assertEqual(result.returncode, expected, result.stderr)
+
+
+class UpstreamGrouping(unittest.TestCase):
+    def test_bootstrap_uses_multiple_class_groups_without_losing_tests(self):
+        import os
+        try:
+            from unittest_parallel.main import _iter_class_suites
+        except ImportError:
+            if os.environ.get("ARCHIVE_REQUIRE_INTEGRATION"):
+                self.fail("the pinned unittest-parallel integration dependency is required")
+            self.skipTest("the pinned unittest-parallel interpreter is needed")
+        bootstrap = unittest.TestSuite([
+            partition(corpus(["test_first", "test_second"]), 0, 1, suite_name="world")])
+        groups = list(_iter_class_suites(bootstrap))
+        self.assertEqual(len(groups), 2)
+        selected = [identifier for group in groups for identifier in ids(group)]
+        self.assertCountEqual(selected, ids(bootstrap))
+        self.assertEqual(len(selected), len(set(selected)))

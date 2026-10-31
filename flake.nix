@@ -358,7 +358,7 @@
           suites = {
             world-parallel = suite "world-parallel" ''
               export CI_TEST_SUITE=world
-              ${python}/bin/python3 -m unittest_parallel -j 4 --level module --disable-process-pooling -s scripts -p ci_tests.py
+              ${python}/bin/python3 -m unittest_parallel -j 4 --level class --disable-process-pooling -s scripts -p ci_tests.py
             '';
             world-serial = suite "world-serial" ''
               export CI_TEST_SUITE=world CI_TEST_PHASE=serial

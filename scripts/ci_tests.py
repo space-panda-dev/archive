@@ -58,7 +58,7 @@ def partition(suite, index, count, phase="parallel", suite_name="enrich"):
             serial = name in serial_modules or f"{name}.{cls.__name__}" in serial_classes
             if serial != (phase == "serial"):
                 continue
-            if not serial and suite_name == "enrich":
+            if not serial:
                 module = sys.modules.get(name)
                 if any(callable(getattr(module, fixture, None))
                        for fixture in ("setUpModule", "tearDownModule")):
