@@ -169,12 +169,12 @@ paths = ["fixture/**", "relay/**", "world/**", "enrich/**", "door/**", "archive/
 
 # The longest suite; one module with `-- -p test_bank.py`. Measured: 2050 s.
 [suites.enrich]
-run = '$ENRICH_PYTHON -m unittest discover --durations 20 -s enrich -p "test_*.py" "$@"'
+run = 'NIX=$(command -v nix || printf %s /nix/var/nix/profiles/default/bin/nix); "$NIX" run .#enrich-tests -- "$@"'
 timeout_seconds = 3600
 parser = "unittest"
 prelude = true
 tier = "night"
-paths = ["enrich/**", "world/**", "fixture/**", "door/**", "archive/**", "spec/**", "archive.cabal", "cabal.project"]
+paths = ["scripts/**", "flake.nix", "flake.lock", "enrich/**", "world/**", "fixture/**", "door/**", "archive/**", "spec/**", "archive.cabal", "cabal.project"]
 
 # Measured: 255 s.
 [suites.capture]
@@ -278,3 +278,11 @@ where = "local"
 timeout_seconds = 180
 tier = 5
 paths = ["flake.nix", "flake.lock", "deployment/**", "archive.cabal"]
+
+# CI partitions discovery only; upstream unittest-parallel owns execution.
+[suites.ci-discovery]
+run = 'python3 -m unittest discover -s scripts -p test_ci_tests.py "$@"'
+where = "local"
+timeout_seconds = 60
+tier = 5
+paths = ["scripts/ci_tests.py", "scripts/test_ci_tests.py", "flake.nix"]

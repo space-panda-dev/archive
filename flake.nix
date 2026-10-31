@@ -9,6 +9,7 @@
       linuxSystems = [ "aarch64-linux" "x86_64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
       forLinux = nixpkgs.lib.genAttrs linuxSystems;
+      enrichShards = [ 0 1 2 ];
       fleetArchive = builtins.fromJSON (builtins.readFile ./deployment/release.json) // { source = self.outPath; };
 
       gitIdentity = ''
@@ -45,7 +46,8 @@
       # are not in nixpkgs; these are the newest releases that accept its rdflib.
       # numpy is the span detector's, the work matcher's, and derived
       # media's; scipy the matcher's (enrich/requirements.txt).
-      pythonFor = pkgs: pkgs.python3.withPackages (ps:
+      pythonFor = pkgs: pythonWithTestsFor pkgs false;
+      pythonWithTestsFor = pkgs: tests: pkgs.python3.withPackages (ps:
         let
           wheel = { pname, version, sha256, dependencies }: ps.buildPythonPackage {
             inherit pname version dependencies;
@@ -67,7 +69,26 @@
             sha256 = "d7e0c21b25e948bb643dbc5db6258da64a90a8ac89055c1fe562b469031072aa";
             dependencies = [ ps.rdflib owlrl ps.packaging ps.prettytable ];
           };
-        in [ ps.pyoxigraph ps.rdflib ps.jsonschema pyshacl ps.numpy ps.scipy ]);
+        in [ ps.pyoxigraph ps.rdflib ps.jsonschema pyshacl ps.numpy ps.scipy ]
+          ++ pkgs.lib.optionals tests (testRunnerPackages pkgs ps));
+
+      # Test-only, public upstream runner. Keep its dependencies out of deployed
+      # interpreters; both Python versions use the same portable wheels.
+      testRunnerPackages = pkgs: ps:
+        let
+          wheel = pname: version: sha256: dependencies: ps.buildPythonPackage {
+            inherit pname version dependencies;
+            format = "wheel";
+            src = pkgs.fetchurl {
+              url = "https://files.pythonhosted.org/packages/py3/${builtins.substring 0 1 pname}/${pname}/${pname}-${version}-py3-none-any.whl";
+              inherit sha256;
+            };
+          };
+          coverage = wheel "coverage" "7.17.0"
+            "bac487dce0d2aff28ddf1a533a916f771416eee0e493960f611e49037b878e9d" [ ];
+          runner = wheel "unittest_parallel" "1.8.6"
+            "7f04b0ada502f6b3d655ef49ea2a785f0e37869f9d0ce7a075c1a18ec204ac93" [ coverage ];
+        in [ runner ];
 
       # The matcher's interpreter (ADR 0071): CPython 3.14 with Essentia
       # 2.1b6.dev1438, the build the V2 system calibrated its thresholds with,
@@ -118,7 +139,8 @@
         };
       };
       hasMatcher = system: builtins.hasAttr system matchWheels;
-      matchPythonFor = pkgs:
+      matchPythonFor = pkgs: matchPythonWithTestsFor pkgs false;
+      matchPythonWithTestsFor = pkgs: tests:
         let
           python = pkgs.python314;
           wheels = matchWheels.${pkgs.stdenv.hostPlatform.system};
@@ -143,7 +165,8 @@
           pyyaml = wheel "pyyaml" [ ];
           essentia = wheel "essentia" [ numpy pyyaml six ];
           pyoxigraph = wheel "pyoxigraph" [ ];
-        in python.withPackages (_: [ numpy scipy essentia pyoxigraph ]);
+        in python.withPackages (ps: [ numpy scipy essentia pyoxigraph ]
+          ++ pkgs.lib.optionals tests (testRunnerPackages pkgs ps));
       # The interpreter enrich and capture run on.
       enrichPythonFor = pkgs:
         if hasMatcher pkgs.stdenv.hostPlatform.system then matchPythonFor pkgs else pythonFor pkgs;
@@ -168,6 +191,11 @@
             --set ARCHIVE_GIT_EXECUTABLE ${pkgs.git}/bin/git \
             --set ARCHIVE_GIT_ANNEX_EXECUTABLE ${pkgs.git-annex}/bin/git-annex
         '';
+
+      testPythonFor = pkgs: pythonWithTestsFor pkgs true;
+      testEnrichPythonFor = pkgs:
+        if hasMatcher pkgs.stdenv.hostPlatform.system
+        then matchPythonWithTestsFor pkgs true else testPythonFor pkgs;
 
       # The Python parts and commands for World, the relay, enrichment, and
       # the fixture. The relay reads enrich/derived.py, the derived-media layout,
@@ -217,6 +245,10 @@
         '';
     in
     {
+      # Every executable check is hosted; exclude only aggregate aliases and
+      # the separately prepared Haskell package. New suites join automatically.
+      lib.ciChecks = builtins.attrNames (builtins.removeAttrs self.checks.x86_64-linux
+        [ "archive" "world" "enrich" "python" ]);
       packages = forAllSystems (system:
         let
           pkgs = import nixpkgs { inherit system; };
@@ -235,6 +267,22 @@
           # The interpreter enrich and capture run on (matchPythonFor where
           # an Essentia wheel exists).
           enrich-python = enrichPythonFor pkgs;
+          enrich-test-python = testEnrichPythonFor pkgs;
+          # The current checkout owns selection; Nix owns the test interpreter.
+          enrich-tests = pkgs.writeShellApplication {
+            name = "enrich-tests";
+            text = ''
+              export ENRICH_TEST_PYTHON=${testEnrichPythonFor pkgs}/bin/python3
+            '' + builtins.readFile ./scripts/run-enrich-tests.sh;
+          };
+          # Stable roots for CI cache warming, without any source test result.
+          ci-dependencies = pkgs.linkFarm "archive-ci-dependencies" [
+            { name = "archive"; path = archive; }
+            { name = "python"; path = testPythonFor pkgs; }
+            { name = "enrich-python"; path = testEnrichPythonFor pkgs; }
+            { name = "ffmpeg"; path = pkgs.ffmpeg-headless; }
+            { name = "git-annex"; path = pkgs.git-annex; }
+          ];
 
           # What a client builds against, published with each release
           # (ADR 0062): the specification's catalogs and bundles, World's
@@ -284,11 +332,10 @@
         let
           pkgs = import nixpkgs { inherit system; };
           archive = archiveFor pkgs;
-          python = pythonFor pkgs;
-          enrichPython = enrichPythonFor pkgs;
-          # Each Python suite against the Door and Archive built above; a
-          # missing binary fails rather than skips. Three checks, so CI runs
-          # them side by side (ADR 0117).
+          python = testPythonFor pkgs;
+          enrichPython = testEnrichPythonFor pkgs;
+          # Separate derivations let CI run suites on independent machines.
+          # Their aggregate remains checks.python for existing callers.
           suite = name: script: pkgs.runCommand "archive-${name}-tests"
             { nativeBuildInputs = [ python archive pkgs.git pkgs.git-annex pkgs.ffmpeg-headless ]; } ''
             cp -r ${self} source
@@ -300,34 +347,54 @@
             export ARCHIVE_REQUIRE_INTEGRATION=1
             export ARCHIVE_GIT_EXECUTABLE=${pkgs.git}/bin/git
             export ARCHIVE_GIT_ANNEX_EXECUTABLE=${pkgs.git-annex}/bin/git-annex
+            export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
+            export NUMEXPR_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 BLIS_NUM_THREADS=1
             ${script}
             touch $out
           '';
-          # enrich and capture run on their own interpreter, which must hold
-          # the pinned Essentia build wherever one exists.
+          run = interpreter: level: directory:
+            "${interpreter}/bin/python3 -m unittest_parallel -j 4 --level ${level} --disable-process-pooling -s ${directory} -p 'test_*.py'";
           requireEssentia = pkgs.lib.optionalString (hasMatcher system) "export ARCHIVE_REQUIRE_ESSENTIA=1";
-        in
-        {
+          suites = {
+            world-parallel = suite "world-parallel" ''
+              export CI_TEST_SUITE=world
+              ${python}/bin/python3 -m unittest_parallel -j 4 --level class --disable-process-pooling -s scripts -p ci_tests.py
+            '';
+            world-serial = suite "world-serial" ''
+              export CI_TEST_SUITE=world CI_TEST_PHASE=serial
+              ${python}/bin/python3 -m unittest discover -s scripts -p ci_tests.py
+            '';
+            # Relay service workers create child processes; keep unittest as
+            # their non-daemonic parent rather than nesting native pools.
+            relay = suite "relay" "${python}/bin/python3 -m unittest discover -s relay/tests -p 'test_*.py'";
+            enrich-tests = suite "enrich-tests" (run python "module" "enrich/tests");
+            shadow = suite "shadow" (run python "module" "shadow");
+            migration = suite "migration" (run python "module" "migration");
+            fixture = suite "fixture" (run python "module" "fixture");
+            documents = suite "documents" (run python "module" "documents/ireal");
+            documents-door = suite "documents-door" (run python "module" "documents/tests");
+            enrich-serial = suite "enrich-serial" (requireEssentia + "\n"
+              + "export CI_TEST_PHASE=serial\n"
+              + "${enrichPython}/bin/python3 -m unittest discover -s scripts -p ci_tests.py");
+            ci-discovery = suite "ci-discovery" (run python "module" "scripts");
+            capture = suite "capture" (requireEssentia + "\n" + run enrichPython "module" "capture");
+          } // builtins.listToAttrs (map (i: {
+            name = "enrich-${toString i}";
+            value = suite "enrich-${toString i}" (requireEssentia + "\n"
+              + "export SHARD_INDEX=${toString i} SHARD_COUNT=${toString (builtins.length enrichShards)}\n"
+              + "${enrichPython}/bin/python3 -m unittest_parallel -j 4 --level class --disable-process-pooling -s scripts -p ci_tests.py");
+          }) enrichShards);
+        in suites // {
           inherit archive;
-
-          python = suite "python" ''
-            python -m unittest discover --durations 20 -s world/tests
-            python -m unittest discover --durations 20 -s relay/tests
-            python -m unittest discover -s enrich/tests
-            python -m unittest discover -s shadow -p 'test_*.py'
-            python -m unittest discover -s migration -p 'test_*.py'
-            python -m unittest discover -s fixture -p 'test_*.py'
-            python -m unittest discover -s documents/ireal -p 'test_*.py'
-            python -m unittest discover -s documents/tests
-          '';
-          enrich = suite "enrich" ''
-            ${requireEssentia}
-            ${enrichPython}/bin/python3 -m unittest discover --durations 20 -s enrich -p 'test_*.py'
-          '';
-          capture = suite "capture" ''
-            ${requireEssentia}
-            ${enrichPython}/bin/python3 -m unittest discover -s capture -p 'test_*.py'
-          '';
+          world = pkgs.linkFarm "archive-world-tests" [
+            { name = "parallel"; path = suites.world-parallel; }
+            { name = "serial"; path = suites.world-serial; }
+          ];
+          enrich = pkgs.linkFarm "archive-enrich-tests" ((map (i: {
+            name = "enrich-${toString i}"; path = suites."enrich-${toString i}";
+          }) enrichShards) ++ [ { name = "serial"; path = suites.enrich-serial; } ]);
+          python = pkgs.linkFarm "archive-python-tests"
+            (pkgs.lib.mapAttrsToList (name: path: { inherit name path; }) suites);
         });
 
       devShells = forAllSystems (system:

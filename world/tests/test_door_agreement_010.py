@@ -31,11 +31,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from world import catalogue, circle, documents, exports, form, harmony, judgments, lead_sheets, notes, tonality
+from world.tests import test_door_agreement as agreement
 from world.tests.test_door_agreement import (
     BY,
     ROOT,
     _canonical,
-    Agreement,
     Change,
     both,
     delete_in,
@@ -430,9 +430,9 @@ class Agreement010(unittest.TestCase):
     def tearDownClass(cls):
         remove_tree(cls.tmp)
 
-    pinned = Agreement.pinned
-    record = Agreement.record
-    door_admits = Agreement.door_admits
+    pinned = agreement.Agreement.pinned
+    record = agreement.Agreement.record
+    door_admits = agreement.Agreement.door_admits
 
     # -- World's verdict, from its modules' checks ---------------------------
 
