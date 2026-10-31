@@ -10,9 +10,6 @@
       forAllSystems = nixpkgs.lib.genAttrs systems;
       forLinux = nixpkgs.lib.genAttrs linuxSystems;
       enrichShards = [ 0 1 2 ];
-      ciChecks = [ "world-parallel" "world-serial" "relay" "enrich-tests" "shadow" "migration"
-        "fixture" "documents" "documents-door" "capture" "ci-discovery" "enrich-serial" ]
-        ++ map (i: "enrich-${toString i}") enrichShards;
       fleetArchive = builtins.fromJSON (builtins.readFile ./deployment/release.json) // { source = self.outPath; };
 
       gitIdentity = ''
@@ -248,7 +245,10 @@
         '';
     in
     {
-      lib.ciChecks = ciChecks;
+      # Every executable check is hosted; exclude only aggregate aliases and
+      # the separately prepared Haskell package. New suites join automatically.
+      lib.ciChecks = builtins.attrNames (builtins.removeAttrs self.checks.x86_64-linux
+        [ "archive" "world" "enrich" "python" ]);
       packages = forAllSystems (system:
         let
           pkgs = import nixpkgs { inherit system; };

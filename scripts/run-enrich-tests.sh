@@ -26,7 +26,9 @@ fi
 export CI_TEST_SUITE=enrich CI_TEST_PATTERN="$pattern" SHARD_INDEX=0 SHARD_COUNT=1
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 export VECLIB_MAXIMUM_THREADS=1 NUMEXPR_NUM_THREADS=1 BLIS_NUM_THREADS=1
+status=0
 CI_TEST_PHASE=parallel "$ENRICH_TEST_PYTHON" -m unittest_parallel \
-  -j 6 --level class --disable-process-pooling -s scripts -p ci_tests.py "${args[@]}"
+  -j 6 --level class --disable-process-pooling -s scripts -p ci_tests.py "${args[@]}" || status=1
 CI_TEST_PHASE=serial "$ENRICH_TEST_PYTHON" -m unittest discover \
-  -s scripts -p ci_tests.py "${args[@]}"
+  -s scripts -p ci_tests.py "${args[@]}" || status=1
+exit "$status"

@@ -112,3 +112,27 @@ class Shards(unittest.TestCase):
             self.assertEqual(len(ids(ci_tests.load_tests(loader, None, None))), 2)
         self.assertEqual(discovered.testNamePatterns, ["*needle*"])
         self.assertEqual(discovered.discover.call_args.kwargs["pattern"], "test_bank.py")
+
+
+class LocalWrapper(unittest.TestCase):
+    def test_serial_phase_still_runs_when_parallel_phase_fails(self):
+        import os
+        from pathlib import Path
+        import subprocess
+        import tempfile
+
+        root = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory() as temporary:
+            interpreter = Path(temporary) / "interpreter"
+            phases = Path(temporary) / "phases"
+            interpreter.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' \"$CI_TEST_PHASE\" >> \"$PHASE_LOG\"\n"
+                "test \"$CI_TEST_PHASE\" = serial\n")
+            interpreter.chmod(0o700)
+            result = subprocess.run(
+                ["bash", str(root / "scripts/run-enrich-tests.sh")], cwd=root,
+                env={**os.environ, "ENRICH_TEST_PYTHON": str(interpreter),
+                     "PHASE_LOG": str(phases)}, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertEqual(phases.read_text().splitlines(), ["parallel", "serial"])
