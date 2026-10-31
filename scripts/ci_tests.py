@@ -1,5 +1,6 @@
 """Discovery-only CI shards; unittest and unittest-parallel own execution."""
 
+import argparse
 import os
 import sys
 from pathlib import Path
@@ -70,10 +71,7 @@ def partition(suite, index, count, phase="parallel", suite_name="enrich"):
     return unittest.TestSuite(group for name in selected for group in modules[name])
 
 
-def load_tests(loader, tests, pattern):
-    del tests, pattern
-    count = int(os.environ.get("SHARD_COUNT", "1"))
-    index = int(os.environ.get("SHARD_INDEX", "0"))
+def discover_tests(loader):
     suite_name = os.environ.get("CI_TEST_SUITE", "enrich")
     directories = {"enrich": "enrich", "world": "world/tests"}
     if suite_name not in directories:
@@ -85,4 +83,33 @@ def load_tests(loader, tests, pattern):
                               pattern=os.environ.get("CI_TEST_PATTERN", "test_*.py"))
     if discover.errors:
         raise RuntimeError(suite_name + " discovery failed: " + "\n".join(discover.errors))
+    return suite, suite_name
+
+
+def load_tests(loader, tests, pattern):
+    del tests, pattern
+    suite, suite_name = discover_tests(loader)
+    count = int(os.environ.get("SHARD_COUNT", "1"))
+    index = int(os.environ.get("SHARD_INDEX", "0"))
     return partition(suite, index, count, os.environ.get("CI_TEST_PHASE", "parallel"), suite_name)
+
+
+def main(argv=None):
+    """Check the combined selection; execution remains entirely upstream."""
+    parser = argparse.ArgumentParser(description="Check that a test selection is nonempty")
+    parser.add_argument("-k", action="append", default=[])
+    args = parser.parse_args(argv)
+    loader = unittest.TestLoader()
+    loader.testNamePatterns = [value if "*" in value else "*" + value + "*"
+                               for value in args.k] or None
+    suite, suite_name = discover_tests(loader)
+    count = sum(partition(suite, 0, 1, phase, suite_name).countTestCases()
+                for phase in ("parallel", "serial"))
+    if not count:
+        print("No tests match the requested selection", file=sys.stderr)
+        return 5
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

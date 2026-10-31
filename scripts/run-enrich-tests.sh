@@ -2,6 +2,7 @@
 set -euo pipefail
 pattern='test_*.py'
 args=()
+selection_args=()
 while (($#)); do
   case "$1" in
     -p|--pattern)
@@ -10,7 +11,7 @@ while (($#)); do
     --pattern=*) pattern=${1#*=}; shift ;;
     -k)
       if (($# < 2)); then echo '-k requires a test name pattern' >&2; exit 2; fi
-      args+=("$1" "$2"); shift 2 ;;
+      args+=("$1" "$2"); selection_args+=("$1" "$2"); shift 2 ;;
     -v|--verbose|-q|--quiet|-f|--failfast|-b|--buffer)
       args+=("$1"); shift ;;
     -h|--help)
@@ -26,9 +27,12 @@ fi
 export CI_TEST_SUITE=enrich CI_TEST_PATTERN="$pattern" SHARD_INDEX=0 SHARD_COUNT=1
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 export VECLIB_MAXIMUM_THREADS=1 NUMEXPR_NUM_THREADS=1 BLIS_NUM_THREADS=1
+# Python 3.14 unittest returns 5 for an empty phase. Check the union first
+# so a legitimate empty phase passes while a wholly unmatched selection fails.
+"$ENRICH_TEST_PYTHON" scripts/ci_tests.py "${selection_args[@]}"
 status=0
 CI_TEST_PHASE=parallel "$ENRICH_TEST_PYTHON" -m unittest_parallel \
-  -j 6 --level class --disable-process-pooling -s scripts -p ci_tests.py "${args[@]}" || status=1
+  -j 6 --level class --disable-process-pooling -s scripts -p ci_tests.py "${args[@]}" || { code=$?; if ((code != 5)); then status=1; fi; }
 CI_TEST_PHASE=serial "$ENRICH_TEST_PYTHON" -m unittest discover \
-  -s scripts -p ci_tests.py "${args[@]}" || status=1
+  -s scripts -p ci_tests.py "${args[@]}" || { code=$?; if ((code != 5)); then status=1; fi; }
 exit "$status"

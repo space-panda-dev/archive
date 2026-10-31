@@ -127,6 +127,7 @@ class LocalWrapper(unittest.TestCase):
             phases = Path(temporary) / "phases"
             interpreter.write_text(
                 "#!/bin/sh\n"
+                "if [ \"$1\" = scripts/ci_tests.py ]; then exit 0; fi\n"
                 "printf '%s\\n' \"$CI_TEST_PHASE\" >> \"$PHASE_LOG\"\n"
                 "test \"$CI_TEST_PHASE\" = serial\n")
             interpreter.chmod(0o700)
@@ -136,3 +137,51 @@ class LocalWrapper(unittest.TestCase):
                      "PHASE_LOG": str(phases)}, capture_output=True, text=True)
             self.assertEqual(result.returncode, 1, result.stderr)
             self.assertEqual(phases.read_text().splitlines(), ["parallel", "serial"])
+
+
+class SelectionPreflight(unittest.TestCase):
+    def test_parallel_only_selection_succeeds(self):
+        import ci_tests
+        with patch.object(ci_tests, "discover_tests", return_value=(corpus(["ordinary"]), "enrich")):
+            self.assertEqual(ci_tests.main([]), 0)
+
+    def test_serial_only_selection_succeeds(self):
+        import ci_tests
+        with patch.object(ci_tests, "discover_tests", return_value=(corpus(["test_windows"]), "enrich")):
+            self.assertEqual(ci_tests.main([]), 0)
+
+    def test_no_matches_returns_five(self):
+        import ci_tests
+        with patch.object(ci_tests, "discover_tests", return_value=(unittest.TestSuite(), "enrich")):
+            self.assertEqual(ci_tests.main([]), 5)
+
+    def test_name_filter_uses_unittest_substring_and_glob_rules(self):
+        import ci_tests
+        with patch.object(ci_tests, "discover_tests", return_value=(corpus(["ordinary"]), "enrich")) as discover:
+            self.assertEqual(ci_tests.main(["-k", "needle", "-k", "prefix*end"]), 0)
+        self.assertEqual(discover.call_args.args[0].testNamePatterns, ["*needle*", "prefix*end"])
+
+    def test_wrapper_allows_empty_phases_but_preserves_other_failures(self):
+        import os
+        from pathlib import Path
+        import subprocess
+        import tempfile
+        root = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory() as temporary:
+            interpreter = Path(temporary) / "interpreter"
+            interpreter.write_text(
+                '#!/bin/sh\n'
+                'if [ "$1" = scripts/ci_tests.py ]; then exit "$PREFLIGHT_EXIT"; fi\n'
+                'if [ "$CI_TEST_PHASE" = parallel ]; then exit "$PARALLEL_EXIT"; fi\n'
+                'exit "$SERIAL_EXIT"\n')
+            interpreter.chmod(0o700)
+            for preflight, parallel, serial, expected in [
+                    (0, 0, 5, 0), (0, 5, 0, 0), (5, 0, 0, 5),
+                    (0, 5, 1, 1), (0, 1, 5, 1)]:
+                with self.subTest(preflight=preflight, parallel=parallel, serial=serial):
+                    result = subprocess.run(
+                        ["bash", str(root / "scripts/run-enrich-tests.sh")], cwd=root,
+                        env={**os.environ, "ENRICH_TEST_PYTHON": str(interpreter),
+                             "PREFLIGHT_EXIT": str(preflight), "PARALLEL_EXIT": str(parallel),
+                             "SERIAL_EXIT": str(serial)}, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, expected, result.stderr)
