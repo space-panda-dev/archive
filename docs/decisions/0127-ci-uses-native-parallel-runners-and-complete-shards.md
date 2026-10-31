@@ -21,9 +21,9 @@ continues to use Cabal's existing test runner.
 **Execution belongs to maintained runners.** Nix pins the public
 `unittest-parallel` wheel and its dependency by hash, in test-only Python
 environments. Production interpreters do not gain these dependencies. Whole
-modules are the default grouping; enrichment uses classes after checking that
-it has no module setup/teardown fixtures and that its cached synthetic audio
-survives fresh processes per class. Scientific libraries use one thread per
+modules are the default grouping. Enrichment and World use classes after
+checking for module setup/teardown fixtures; enrichment also checks that its
+cached synthetic audio survives fresh processes per class. Scientific libraries use one thread per
 worker, and the worker count is explicit.
 
 **Existing suite boundaries run independently.** World, relay, enrichment's
@@ -33,7 +33,9 @@ The release still builds every check and validates the image and bundle.
 
 **Enrichment shards select tests; they do not execute them.** A small native
 unittest `load_tests` adapter discovers the original corpus, rejects discovery
-errors and duplicate IDs, and partitions sorted module names by shard index.
+errors and duplicate IDs, and assigns whole modules by a stable digest modulo shard count. This digest
+serves distribution, with no security role; unrelated modules do not reshuffle
+existing assignments.
 Modules stay intact during selection, and new modules are assigned
 automatically. Contract tests check exact, disjoint coverage, deterministic
 assignment, and invalid shard bounds. The maintained runner owns process
@@ -63,7 +65,7 @@ cache restoration, image construction, and smoke testing. A cold compiler
 build or hosted queue delay can exceed that budget. Record actual hosted
 measurements before claiming the goal is met.
 
-A future module-level fixture in enrichment must be kept as one scheduling
+A future module-level fixture in a class-grouped suite must be kept as one scheduling
 unit or run with module grouping. Optional real-model tests require exclusive
 execution when their external tools are enabled; parallel CI must not silently
 replace an environment that exercises those tools with one that skips them.
