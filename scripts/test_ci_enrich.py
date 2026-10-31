@@ -1,6 +1,8 @@
 """Contract checks for discovery partitioning, without running enrichment."""
 
 import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
 from ci_enrich import cases, partition
 
 
@@ -44,3 +46,36 @@ class Shards(unittest.TestCase):
     def test_duplicate_ids_fail(self):
         with self.assertRaisesRegex(ValueError, "duplicate"):
             partition(corpus(["a", "a"]), 0, 3)
+
+    def test_both_phases_partition_full_corpus_exactly(self):
+        names = ["test_cover", "test_profile_cache", "test_windows", "ordinary"]
+        suite = corpus(names)
+        optional = type("RealModel", (unittest.TestCase,), {
+            "__module__": "test_notes", "test_model": lambda self: None})
+        suite.addTest(unittest.defaultTestLoader.loadTestsFromTestCase(optional))
+        expected = ids(suite)
+        selected = sum((ids(partition(suite, i, 3)) for i in range(3)), [])
+        serial = ids(partition(suite, 0, 1, "serial"))
+        self.assertEqual(len(serial), 7)
+        self.assertCountEqual(selected + serial, expected)
+        self.assertTrue(set(selected).isdisjoint(serial))
+
+    def test_serial_phase_is_unsharded(self):
+        for index, count in [(0, 3), (1, 3)]:
+            with self.assertRaisesRegex(ValueError, "unsharded"):
+                partition(corpus(["test_windows"]), index, count, "serial")
+
+    def test_unknown_phase_fails(self):
+        with self.assertRaisesRegex(ValueError, "CI_TEST_PHASE"):
+            partition(corpus(["ordinary"]), 0, 1, "typo")
+
+    def test_parallel_module_fixtures_fail_closed(self):
+        for fixture in ["setUpModule", "tearDownModule"]:
+            with self.subTest(fixture=fixture), patch.dict(
+                    "sys.modules", {"new_module": SimpleNamespace(**{fixture: lambda: None})}):
+                with self.assertRaisesRegex(ValueError, "module fixtures"):
+                    partition(corpus(["new_module"]), 0, 1)
+
+    def test_serial_module_keeps_module_fixture(self):
+        with patch.dict("sys.modules", {"test_windows": SimpleNamespace(setUpModule=lambda: None)}):
+            self.assertEqual(len(ids(partition(corpus(["test_windows"]), 0, 1, "serial"))), 2)

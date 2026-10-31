@@ -11,7 +11,7 @@
       forLinux = nixpkgs.lib.genAttrs linuxSystems;
       enrichShards = [ 0 1 2 ];
       ciChecks = [ "world" "relay" "enrich-tests" "shadow" "migration"
-        "fixture" "documents" "documents-door" "capture" "ci-discovery" ]
+        "fixture" "documents" "documents-door" "capture" "ci-discovery" "enrich-serial" ]
         ++ map (i: "enrich-${toString i}") enrichShards;
       fleetArchive = builtins.fromJSON (builtins.readFile ./deployment/release.json) // { source = self.outPath; };
 
@@ -356,6 +356,9 @@
             fixture = suite "fixture" (run python "module" "fixture");
             documents = suite "documents" (run python "module" "documents/ireal");
             documents-door = suite "documents-door" (run python "module" "documents/tests");
+            enrich-serial = suite "enrich-serial" (requireEssentia + "\n"
+              + "export CI_TEST_PHASE=serial\n"
+              + "${enrichPython}/bin/python3 -m unittest discover -s scripts -p ci_enrich.py");
             ci-discovery = suite "ci-discovery" (run python "module" "scripts");
             capture = suite "capture" (requireEssentia + "\n" + run enrichPython "module" "capture");
           } // builtins.listToAttrs (map (i: {
@@ -366,9 +369,9 @@
           }) enrichShards);
         in suites // {
           inherit archive;
-          enrich = pkgs.linkFarm "archive-enrich-tests" (map (i: {
+          enrich = pkgs.linkFarm "archive-enrich-tests" ((map (i: {
             name = "enrich-${toString i}"; path = suites."enrich-${toString i}";
-          }) enrichShards);
+          }) enrichShards) ++ [ { name = "serial"; path = suites.enrich-serial; } ]);
           python = pkgs.linkFarm "archive-python-tests"
             (pkgs.lib.mapAttrsToList (name: path: { inherit name path; }) suites);
         });
