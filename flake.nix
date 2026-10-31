@@ -10,7 +10,7 @@
       forAllSystems = nixpkgs.lib.genAttrs systems;
       forLinux = nixpkgs.lib.genAttrs linuxSystems;
       enrichShards = [ 0 1 2 ];
-      ciChecks = [ "world" "relay" "enrich-tests" "shadow" "migration"
+      ciChecks = [ "world-parallel" "world-serial" "relay" "enrich-tests" "shadow" "migration"
         "fixture" "documents" "documents-door" "capture" "ci-discovery" "enrich-serial" ]
         ++ map (i: "enrich-${toString i}") enrichShards;
       fleetArchive = builtins.fromJSON (builtins.readFile ./deployment/release.json) // { source = self.outPath; };
@@ -267,6 +267,7 @@
           # The interpreter enrich and capture run on (matchPythonFor where
           # an Essentia wheel exists).
           enrich-python = enrichPythonFor pkgs;
+          enrich-test-python = testEnrichPythonFor pkgs;
           # Stable roots for CI cache warming, without any source test result.
           ci-dependencies = pkgs.linkFarm "archive-ci-dependencies" [
             { name = "archive"; path = archive; }
@@ -348,7 +349,14 @@
             "${interpreter}/bin/python3 -m unittest_parallel -j 4 --level ${level} --disable-process-pooling -s ${directory} -p 'test_*.py'";
           requireEssentia = pkgs.lib.optionalString (hasMatcher system) "export ARCHIVE_REQUIRE_ESSENTIA=1";
           suites = {
-            world = suite "world" (run python "module" "world/tests");
+            world-parallel = suite "world-parallel" ''
+              export CI_TEST_SUITE=world
+              ${python}/bin/python3 -m unittest_parallel -j 4 --level module --disable-process-pooling -s scripts -p ci_enrich.py
+            '';
+            world-serial = suite "world-serial" ''
+              export CI_TEST_SUITE=world CI_TEST_PHASE=serial
+              ${python}/bin/python3 -m unittest discover -s scripts -p ci_enrich.py
+            '';
             relay = suite "relay" (run python "module" "relay/tests");
             enrich-tests = suite "enrich-tests" (run python "module" "enrich/tests");
             shadow = suite "shadow" (run python "module" "shadow");
@@ -369,6 +377,10 @@
           }) enrichShards);
         in suites // {
           inherit archive;
+          world = pkgs.linkFarm "archive-world-tests" [
+            { name = "parallel"; path = suites.world-parallel; }
+            { name = "serial"; path = suites.world-serial; }
+          ];
           enrich = pkgs.linkFarm "archive-enrich-tests" ((map (i: {
             name = "enrich-${toString i}"; path = suites."enrich-${toString i}";
           }) enrichShards) ++ [ { name = "serial"; path = suites.enrich-serial; } ]);

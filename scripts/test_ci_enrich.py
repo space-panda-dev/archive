@@ -79,3 +79,36 @@ class Shards(unittest.TestCase):
     def test_serial_module_keeps_module_fixture(self):
         with patch.dict("sys.modules", {"test_windows": SimpleNamespace(setUpModule=lambda: None)}):
             self.assertEqual(len(ids(partition(corpus(["test_windows"]), 0, 1, "serial"))), 2)
+
+    def test_world_nested_pool_is_serial_and_union_exact(self):
+        suite = corpus(["test_conformance_parallel", "test_other"])
+        parallel = ids(partition(suite, 0, 1, suite_name="world"))
+        serial = ids(partition(suite, 0, 1, "serial", "world"))
+        self.assertEqual(len(serial), 2)
+        self.assertEqual(len(parallel), 2)
+        self.assertCountEqual(parallel + serial, ids(suite))
+        self.assertTrue(set(parallel).isdisjoint(serial))
+
+    def test_world_module_mode_preserves_module_fixtures(self):
+        with patch.dict("sys.modules", {"test_other": SimpleNamespace(setUpModule=lambda: None)}):
+            self.assertEqual(len(ids(partition(corpus(["test_other"]), 0, 1,
+                                               suite_name="world"))), 2)
+
+    def test_unknown_suite_fails(self):
+        with self.assertRaisesRegex(ValueError, "CI_TEST_SUITE"):
+            partition(corpus(["ordinary"]), 0, 1, suite_name="typo")
+
+    def test_load_tests_forwards_pattern_and_name_filter(self):
+        import ci_enrich
+        from unittest.mock import Mock
+        discovered = Mock(errors=[])
+        discovered.discover.return_value = corpus(["ordinary"])
+        loader = SimpleNamespace(testNamePatterns=["*needle*"])
+        with patch.dict("os.environ", {"CI_TEST_PATTERN": "test_bank.py",
+                                       "CI_TEST_SUITE": "enrich",
+                                       "CI_TEST_PHASE": "parallel",
+                                       "SHARD_COUNT": "1", "SHARD_INDEX": "0"}), \
+                patch.object(ci_enrich.unittest, "TestLoader", return_value=discovered):
+            self.assertEqual(len(ids(ci_enrich.load_tests(loader, None, None))), 2)
+        self.assertEqual(discovered.testNamePatterns, ["*needle*"])
+        self.assertEqual(discovered.discover.call_args.kwargs["pattern"], "test_bank.py")

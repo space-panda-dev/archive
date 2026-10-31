@@ -24,7 +24,7 @@ def cases(suite):
             yield item
 
 
-def partition(suite, index, count, phase="parallel"):
+def partition(suite, index, count, phase="parallel", suite_name="enrich"):
     """Keep each discovered module intact and automatically assign new modules."""
     if count < 1 or not 0 <= index < count:
         raise ValueError("SHARD_INDEX must be in [0, SHARD_COUNT), count positive")
@@ -32,6 +32,10 @@ def partition(suite, index, count, phase="parallel"):
         raise ValueError("CI_TEST_PHASE must be parallel or serial")
     if phase == "serial" and (index, count) != (0, 1):
         raise ValueError("serial phase must be unsharded")
+    if suite_name not in {"enrich", "world"}:
+        raise ValueError("CI_TEST_SUITE must be enrich or world")
+    serial_modules = SERIAL_MODULES if suite_name == "enrich" else {"test_conformance_parallel"}
+    serial_classes = SERIAL_CLASSES if suite_name == "enrich" else set()
     modules = {}
     identifiers = set()
     for group in suite:
@@ -50,10 +54,10 @@ def partition(suite, index, count, phase="parallel"):
         classes = {}
         for item in items:
             cls = type(item)
-            serial = name in SERIAL_MODULES or f"{name}.{cls.__name__}" in SERIAL_CLASSES
+            serial = name in serial_modules or f"{name}.{cls.__name__}" in serial_classes
             if serial != (phase == "serial"):
                 continue
-            if not serial:
+            if not serial and suite_name == "enrich":
                 module = sys.modules.get(name)
                 if any(callable(getattr(module, fixture, None))
                        for fixture in ("setUpModule", "tearDownModule")):
@@ -70,11 +74,15 @@ def load_tests(loader, tests, pattern):
     del tests, pattern
     count = int(os.environ.get("SHARD_COUNT", "1"))
     index = int(os.environ.get("SHARD_INDEX", "0"))
+    suite_name = os.environ.get("CI_TEST_SUITE", "enrich")
+    directories = {"enrich": "enrich", "world": "world/tests"}
+    if suite_name not in directories:
+        raise ValueError("CI_TEST_SUITE must be enrich or world")
     # A separate loader avoids reusing discovery's scripts/ top-level directory.
     discover = unittest.TestLoader()
     discover.testNamePatterns = loader.testNamePatterns
-    suite = discover.discover(str(Path(__file__).resolve().parent.parent / "enrich"),
-                              pattern="test_*.py")
+    suite = discover.discover(str(Path(__file__).resolve().parent.parent / directories[suite_name]),
+                              pattern=os.environ.get("CI_TEST_PATTERN", "test_*.py"))
     if discover.errors:
-        raise RuntimeError("enrichment discovery failed: " + "\n".join(discover.errors))
-    return partition(suite, index, count, os.environ.get("CI_TEST_PHASE", "parallel"))
+        raise RuntimeError(suite_name + " discovery failed: " + "\n".join(discover.errors))
+    return partition(suite, index, count, os.environ.get("CI_TEST_PHASE", "parallel"), suite_name)
