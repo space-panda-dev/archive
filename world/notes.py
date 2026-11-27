@@ -904,6 +904,9 @@ class RhythmRule:
     version: str
     parameters: dict[str, Fraction]
     switches: dict[str, dict[str, bool]] = field(default_factory=dict)
+    # What an adaptive version measured of the sounded onsets, and what it set
+    # from that (version 3); described with the rule, so an answer says why.
+    measured: dict[str, Any] | None = None
 
     def __getattr__(self, name: str) -> float:
         try:
@@ -917,6 +920,8 @@ class RhythmRule:
             "parameters": {name: _decimal_text(value) for name, value in sorted(self.parameters.items())}}
         if switches is not None:
             described["switches"] = dict(sorted(switches.items()))
+        if self.measured is not None:
+            described["measured"] = self.measured
         return described
 
     def switched(self, line: str, **given: bool | None) -> dict[str, bool]:
@@ -998,6 +1003,86 @@ RHYTHM_RULES = {"2": RhythmRule("2", {name: Fraction(value) for name, value in {
     "bass": {"fold_octaves": False, "fill_syllables": False},
 })}
 
+
+# Version 3 (ADR 0086, amendment of 2026-11-26, proposed): version 2's costs
+# chosen per melody from what its onsets show, because fidelity to how the
+# tune is written is the goal and simplicity the tie-breaker. Version 2 writes
+# a melody that moves in sixteenths onto eighths even from exact timing (a
+# sixteenth costs more than moving the note), reads sixteenth syncopation as
+# swing, and seldom writes a triplet. Version 3 measures three things on the
+# onsets that fall in quarter beats, before any offset or swing:
+#  - the timing spread: the robust spread (1.4826 times the median) of each
+#    onset's distance from its nearest sixteenth, in beats. Trust in the
+#    timing is 1 at `trust_full_beats` or less and falls linearly to 0 at twice
+#    that; with trust t, `cost_sixteenth` and `cost_sixteenth_gap` move a share t
+#    of the way to their `_trusted` values, and `sigma_beats` a share t of the
+#    way to `sigma_spread_factor` times the spread, at least `sigma_floor_beats`.
+#    With no trust the costs are version 2's;
+#  - sixteenth syncopation: onsets within `first_sixteenth_window` of a beat's
+#    first sixteenth. A swung melody has none there, so when they are at least
+#    `syncopation_share` of the onsets in the offbeat range, swing is not
+#    called (`swing_min` becomes `swing_min_syncopated`);
+#  - triplets: onsets within `triplet_window_beats` of a beat's thirds, against
+#    those as near the points between the thirds and the offbeat eighth
+#    (`triplet_neighbour_beats` from the beat). Timing noise around an offbeat
+#    eighth thins out towards the thirds; a melody in triplets peaks there. At
+#    least `triplet_share` of the onsets, and `triplet_over_neighbour` times as
+#    many as near the neighbours, sets `cost_triplet` to `cost_triplet_moving`.
+RHYTHM_RULES["3"] = RhythmRule("3", {**RHYTHM_RULES["2"].parameters, **{name: Fraction(value) for name, value in {
+    "trust_full_beats": "0.05", "cost_sixteenth_trusted": "0.8", "cost_sixteenth_gap_trusted": "0.5",
+    "sigma_spread_factor": "3", "sigma_floor_beats": "0.08",
+    "first_sixteenth_window": "0.1", "syncopation_share": "0.2", "swing_min_syncopated": "0.95",
+    "triplet_window_beats": "0.03", "triplet_neighbour_beats": "0.41", "triplet_share": "0.08",
+    "triplet_over_neighbour": "2", "cost_triplet_moving": "0.8",
+}.items()}}, RHYTHM_RULES["2"].switches)
+
+
+def _adapted(rule: RhythmRule, onsets: list[int], grid: _Grid) -> RhythmRule:
+    """Version 3's costs for these onsets (sounded samples): what they show of
+    the timing, of syncopation and of triplets, and what that sets."""
+    p = dict(rule.parameters)
+    positions = []
+    for onset in onsets:
+        i = grid.beat_of_sample(onset)
+        if grid.values[i] == QUARTER:   # where in its quarter beat, exactly, as a share of the beat
+            positions.append(Fraction(onset - grid.samples[i], max(grid.ends[i] - grid.samples[i], 1)))
+    if not positions:
+        return RhythmRule(rule.version, p, rule.switches, {"onsets": 0})
+    distances = sorted(abs(f * 4 - round(f * 4)) / 4 for f in positions)
+    spread = Fraction(14826, 10000) * _median_fraction(distances)
+    full = p["trust_full_beats"]
+    trust = max(Fraction(0), min(Fraction(1), 2 - spread / full))
+
+    def toward(name: str, value: Fraction) -> Fraction:
+        return p[name] + (value - p[name]) * trust
+    p["cost_sixteenth"] = toward("cost_sixteenth", p["cost_sixteenth_trusted"])
+    p["cost_sixteenth_gap"] = toward("cost_sixteenth_gap", p["cost_sixteenth_gap_trusted"])
+    p["sigma_beats"] = toward("sigma_beats", max(p["sigma_floor_beats"], p["sigma_spread_factor"] * spread))
+
+    window = p["first_sixteenth_window"]
+    first = sum(1 for f in positions if abs(f - Fraction(1, 4)) <= window)
+    offbeats = sum(1 for f in positions if p["offbeat_from"] <= f <= p["offbeat_to"])
+    syncopated = offbeats > 0 and first >= p["syncopation_share"] * offbeats
+    if syncopated:
+        p["swing_min"] = p["swing_min_syncopated"]
+
+    near = p["triplet_window_beats"]
+    thirds = sum(1 for f in positions if min(abs(f - Fraction(1, 3)), abs(f - Fraction(2, 3))) < near)
+    neighbour = p["triplet_neighbour_beats"]
+    beside = sum(1 for f in positions if min(abs(f - neighbour), abs(f - (1 - neighbour))) < near)
+    triplets = thirds >= p["triplet_share"] * len(positions) and thirds >= p["triplet_over_neighbour"] * beside
+    if triplets:
+        p["cost_triplet"] = p["cost_triplet_moving"]
+    measured = {"onsets": len(positions), "spread_beats": _decimal_text(spread), "trust": _decimal_text(trust),
+                "first_sixteenths": first, "offbeats": offbeats, "syncopated": syncopated,
+                "triplet_onsets": thirds, "near_triplet_onsets": beside, "triplets": triplets}
+    return RhythmRule(rule.version, p, rule.switches, measured)
+
+
+def _median_fraction(values: list[Fraction]) -> Fraction:
+    """The median of sorted values, exactly."""
+    n = len(values)
+    return values[n // 2] if n % 2 else (values[n // 2 - 1] + values[n // 2]) / 2
 
 def _decimal_text(value: Fraction) -> str:
     """A non-negative fraction as exact decimal text, to four places."""
@@ -1498,6 +1583,8 @@ def written_rhythm(notes: list[dict[str, Any]], meter_payload: dict[str, Any], *
     inside = sorted(((i, n) for i, n in enumerate(notes) if beats[0].sample <= n["onset_sample"] < end),
                     key=lambda pair: (pair[1]["onset_sample"], pair[1]["pitch"]))
     left_out = len(notes) - len(inside)
+    if "trust_full_beats" in rule.parameters:   # version 3: costs chosen from these onsets
+        rule = _adapted(rule, [n["onset_sample"] for _, n in inside], grid)
     counts = {"octave_folded": 0, "syllables": 0, "syllables_on_notes": 0, "syllables_split": 0,
               "syllables_inferred": 0, "syllables_unplaced": 0}
 
