@@ -16,7 +16,7 @@ and new rehearsals enter the V2 system and, with approval per run, the shadow
 This plan lists what must be true first, the order of the remaining steps, how
 to roll back, and where Archive stands against the V2 system's capabilities.
 It was last refreshed for specification 0.0.12; a first go/no-go was held and
-answered no, and no new date is set.
+answered no. The operator set the next go for 2026-11-28.
 
 ## What must be true before cutover
 
@@ -58,9 +58,12 @@ condition that only a person can settle says so.
    listening copies from the relay instead of the V2 streams, and takes dates
    and ensembles from World. Its commit path passes its end-to-end suite
    against a scratch relay, and that build is deployed. *Not done:* the
-   operator's own sign-in, saving against a scratch relay (role `scratch`),
-   which is the only proof with a real identity
-   ([ADR 0088](../decisions/0088-bandmates.md)). *Settled by the operator.*
+   operator's own sign-in, the only proof with a real identity
+   ([ADR 0088](../decisions/0088-bandmates.md)). *Decided:* a save with the
+   operator's sign-in through the real relay while it is still `dry-run`
+   stands in for a save against a scratch relay, because the deployed client
+   reaches only the real relay; the relay's log must name the operator's
+   person and commit nothing. *Settled by the operator.*
 7. **Migrated recordings have sessions.** Recordings migrated without a
    session get one from the V2 grouping and file order
    ([ADR 0124](../decisions/0124-legacy-session-backfill.md)). *Done:* the
@@ -86,9 +89,13 @@ condition that only a person can settle says so.
     [ADR 0051](../decisions/0051-publication-transition-dispatch.md)); the act
     of publishing is not built, and hosted placement is only proposed
     ([ADR 0039](../decisions/0039-proposed-hosted-plaintext-placement.md)).
-    *Recommended:* the V2 system keeps serving what it already published,
-    read-only, and nothing new is published until Archive's path exists. This
-    loses nothing. *Settled by the operator.*
+    *Decided:* the V2 system keeps serving what it already published,
+    read-only. The operator still listens to new rehearsals, and shares them,
+    in the music folder on the seedbox, so until Archive's path exists an
+    interim feed copies each new session's listening copies there. The feed
+    is an operator-approved projection outside the evidence: it writes no
+    records, makes no managed copy, and replaces nothing V2 already sent.
+    *Settled by the operator.*
 11. **The relay commits.** A relay for the real archive runs with `role`
     `live` and `writes` `commit`, refreshes World after each commit, and has a
     `media_root` and callers bound to the operator's person
@@ -119,7 +126,8 @@ Each step is separately approved and leaves the previous state recoverable.
 Steps 1-5 can run in any order; 6 waits for all of them.
 
 1. Redeploy the current build on the shadow, still `dry-run` (condition 3).
-2. The operator's sign-in test of saving against a scratch relay (condition 6).
+2. The operator's sign-in test: one save through the `dry-run` relay
+   (condition 6).
 3. Dry-run the legacy session backfill on the shadow, review it, then apply it
    (condition 7).
 4. Confirm the first nightly backup with the archive in scope (condition 9).
@@ -128,7 +136,9 @@ Steps 1-5 can run in any order; 6 waits for all of them.
    (condition 8); stop the V2 import, keeping the V2 system installed for
    rollback; switch the relay to `live` and `commit` (condition 11); import the
    first card into the real archive, and wipe it only once a backup holds it.
-7. Publication stays in the V2 system, read-only, until Archive's path exists.
+7. What V2 published stays there, read-only. The interim feed sends new
+   sessions to the seedbox's music folder, first as a dry run, then with the
+   operator's approval, until Archive's path exists.
 
 ## Rollback
 
