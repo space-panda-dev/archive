@@ -932,6 +932,9 @@ def frozen_config(args: argparse.Namespace, attribute: str):
 
     Nested adapters reuse it. The snapshot is operational scratch, never bank
     evidence; its identity identifies effective configuration for diagnostics.
+    Its directory holds a shared BSD lock while bound: systemd-tmpfiles skips
+    locked paths when it ages /tmp, so a backfill that follows for weeks keeps
+    its snapshot (it lost it after 10 days, and every later child failed).
     """
     marker = "_enrichment_config_snapshot"
     present = getattr(args, marker, None)
@@ -942,6 +945,8 @@ def frozen_config(args: argparse.Namespace, attribute: str):
     config = load_config(original)
     encoded = bank.canonical(config)
     with tempfile.TemporaryDirectory(prefix="enrichment-config-") as directory:
+        held = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+        fcntl.flock(held, fcntl.LOCK_SH)
         snapshot = Path(directory) / "config.json"
         snapshot.write_bytes(encoded)
         record = {"attribute": attribute, "original": str(original) if original else None,
@@ -951,6 +956,7 @@ def frozen_config(args: argparse.Namespace, attribute: str):
         try:
             yield record
         finally:
+            os.close(held)
             setattr(args, attribute, original)
             if present is None:
                 delattr(args, marker)

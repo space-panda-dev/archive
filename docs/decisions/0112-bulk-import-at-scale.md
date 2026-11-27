@@ -719,3 +719,29 @@ leased: the next renew answers withdrawn and the worker stops it), leasing
 in put order, a per-task status read, and prefetch (lease and fetch the
 next task while the current one runs). Prefetch and a deeper
 `spool_in_flight` wait for withdraw, and for disk on the Mac.
+
+## Amendment, 2026-11-27: a stopped follow leaves the end of the run to the next start
+
+Accepted by the operator, 2026-11-27.
+
+A `--follow` backfill ends when its unit is stopped, and a stop is a restart
+or an upgrade waiting on the unit. Until now a stopped run still did what a
+finished one does: `propose --all` three times (dry run, commit, rerun) and
+the final World refresh and full conformance. On the shadow (2026-11-27) that
+held an upgrade for over twenty minutes, most of it conformance, with no
+bound.
+
+A stop now waits only for what is under way: the running jobs, the proposal
+in flight and the spool collect. It records `stopped` and leaves the rest to
+the next start, which loses nothing: on start every recording with no fast
+job left waits for its proposal, and a rerun on unchanged inputs writes
+nothing. A run that ends on its own (`--follow-seconds`, or no `--follow`)
+still ends with the proposals and the World check. Under an unbounded
+follow, then, the World check runs only when someone runs it
+(`world/conformance.py --store`).
+
+The backfill's configuration snapshot (`extract.frozen_config`) also holds a
+shared BSD lock on its directory while bound. systemd-tmpfiles skips locked
+paths when it ages `/tmp`; without the lock a follow running past ten days
+lost its snapshot, and every later child (the stop's proposals here) failed
+with the configuration unreadable.

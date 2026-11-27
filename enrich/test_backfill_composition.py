@@ -1,6 +1,7 @@
 """Composition through backfill's existing placement and scheduling adapter."""
 import argparse
 import json
+import os
 import gc
 import io
 import warnings
@@ -155,6 +156,21 @@ class CompositionCaller(unittest.TestCase):
         self.assertFalse(snapshot.exists())
         self.assertFalse(hasattr(args, "_enrichment_config_snapshot"))
 
+
+    def test_config_snapshot_is_locked_against_tmp_ageing_while_bound(self):
+        # systemd-tmpfiles skips flock'd paths; a weeks-long follow lost its
+        # snapshot after ten days without this, and every later child failed.
+        import fcntl
+        path = self.root / "config.json"
+        path.write_text(json.dumps({"parameters": {}}))
+        args = argparse.Namespace(config=path)
+        with backfill.extract.frozen_config(args, "config"):
+            directory = os.open(Path(args.config).parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(directory, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(directory)
 
 class LogLifetime(unittest.TestCase):
     def test_backfill_closes_log_on_success_and_failure(self):

@@ -1468,6 +1468,35 @@ class EndToEnd(unittest.TestCase):
         self.assertIsNotNone(reader.entry(mix, "rhythm"))
         self.assertFalse(bank.request_path(self.bank, asked[0][1]).exists())
 
+    def test_a_stopped_follow_leaves_the_end_of_the_run_to_the_next_start(self) -> None:
+        # A stop is a restart or an upgrade waiting on the unit: it must not
+        # run propose --all three times and a full World check first.
+        self.mode = "--on-demand"
+        world = self.tmp / "world-store"
+        default, done = signal.getsignal(signal.SIGTERM), threading.Event()
+        self.addCleanup(done.set)
+
+        def stop_once_following() -> None:  # as systemd would, once the unit's handler is in place
+            while not done.wait(0.02):
+                if signal.getsignal(signal.SIGTERM) is not default:
+                    done.wait(0.5)
+                    os.kill(os.getpid(), signal.SIGTERM)
+                    return
+        threading.Thread(target=stop_once_following, daemon=True).start()
+        code, events = self.backfill("--commit", "--follow", "--world-store", str(world))
+        done.set()
+        steps = [e["step"] for e in events]
+        self.assertEqual(code, 0, [e for e in events if e["step"] == "failed"])
+        self.assertIn("stopped", steps)
+        self.assertFalse([s for s in steps if s.startswith("propose --all") or s in ("World refresh", "conformance")],
+                         steps)
+        self.assertEqual(steps[-1], "done")
+        # A run that ends on its own still ends with them.
+        code, events = self.backfill("--commit", "--follow", "--follow-seconds", "1", "--world-store", str(world))
+        steps = [e["step"] for e in events]
+        self.assertNotIn("stopped", steps)
+        self.assertIn("World refresh", steps)
+
     def test_a_killed_backfill_resumes_and_files_each_entry_once(self) -> None:
         log = self.tmp / "first.jsonl"
         process = subprocess.Popen([sys.executable, str(HERE / "enrich.py"), *self.arguments("--commit", "--log",

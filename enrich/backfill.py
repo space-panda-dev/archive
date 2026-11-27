@@ -1276,6 +1276,7 @@ def _main(args: argparse.Namespace, env: dict[str, str] | None = None,
     failures = sum(1 for _, _, state, _ in planned.held if state in (DAMAGED,))
     proposals = Proposals(steps, args, note, started, schedule.propose_every_seconds, bool(names))
     handlers: dict[int, Any] = {}
+    stopped_early = False  # SIGTERM/SIGINT under --follow: leave the end of the run to the next start
     if commit and (planned.jobs or args.follow):
         follow = Follow(planned.planning, args, env, steps, note, root, {r.digest: r for r in present}, present,
                         discover, prioritise, report, request_ready=proposals.request_ready) if args.follow else None
@@ -1315,6 +1316,7 @@ def _main(args: argparse.Namespace, env: dict[str, str] | None = None,
         finally:
             for signum, handler in handlers.items():
                 signal.signal(signum, handler)
+        stopped_early = follow is not None and follow.stopped
         wall = time.monotonic() - made_from
         failures += sum(1 for j in planned.jobs if j.status in ("failed", "blocked"))
         complete = {j.recording.object_id: j.recording.seconds for j in planned.jobs}  # recordings all of whose jobs ran
@@ -1333,7 +1335,7 @@ def _main(args: argparse.Namespace, env: dict[str, str] | None = None,
              background_started_s=None if runner.first_background is None
              else round(runner.first_background - started, 1),
              cpu_seconds_per_audio_second={k: round(v["cpu_s"] / v["audio_s"], 4) for k, v in cost.items()})
-    proposals.finish()
+    proposals.finish(stopping=stopped_early)
     if spool is not None and commit:
         # Files what a worker finished after its job ran here instead.
         try:
@@ -1343,7 +1345,12 @@ def _main(args: argparse.Namespace, env: dict[str, str] | None = None,
         except (remote.RemoteError, bank.BankError, OSError) as exc:
             note(step="spool collect failed", error=str(exc)[-600:])
 
-    if names:
+    if stopped_early:
+        # A stop is a restart or an upgrade waiting on this unit. The next start
+        # queues every settled recording for its proposal, and an unchanged
+        # rerun writes nothing, so nothing is lost (ADR 0112 amendment).
+        note(step="stopped", detail="end-of-run proposals and World check are left to the next start")
+    elif names:
         if commit:
             steps.propose("propose --all (dry run)", "--dry-run")
             committed = steps.proposed("propose --all (commit)", None)
@@ -1358,7 +1365,7 @@ def _main(args: argparse.Namespace, env: dict[str, str] | None = None,
                 note(step="rerun was not quiet", status=rerun.get("status"))
         else:
             steps.propose("propose --all (dry run)", "--dry-run")
-    if commit and args.world_store:
+    if commit and args.world_store and not stopped_early:
         steps.world()
     failures += steps.failures
     finished = round(time.monotonic() - started, 1)

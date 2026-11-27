@@ -274,12 +274,13 @@ class Proposals:
         self.note(step="usable", s=at, first=first, proposals=len(self.proposed_s),
                   proposal_s=round(sum(self.proposed_s), 1))
 
-    def finish(self) -> None:
+    def finish(self, stopping: bool = False) -> None:
         """Wait for the proposal under way, and for the usable round to end
-        when the pool has stopped first (a plan with no background)."""
+        when the pool has stopped first (a plan with no background); when
+        stopping, only for the proposal under way."""
         if self.thread is not None:
             self.thread.join()
-        while self.runner is not None and (self.waiting or self.requested_waiting or self.outstanding):
+        while not stopping and self.runner is not None and (self.waiting or self.requested_waiting or self.outstanding):
             before = self.thread
             self.tick()
             if self.thread is before:  # nothing began (a fast job is still open): no round to end
