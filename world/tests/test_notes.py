@@ -691,9 +691,9 @@ class WrittenRhythm(unittest.TestCase):
         self.assertIsNone(answer["written"][0]["bar"])
 
     def test_the_rule_is_named_by_version(self):
-        self.assertEqual(set(RHYTHM_RULES), {"2"})
+        self.assertEqual(set(RHYTHM_RULES), {"2", "3"})
         rule = self.write([note(0, 1, 60)])["rule"]
-        self.assertEqual(rule["version"], "2")
+        self.assertEqual(rule["version"], "2")   # version 3 is chosen explicitly, never the default
         self.assertEqual((rule["parameters"]["sigma_beats"], rule["parameters"]["cost_sixteenth"]), ("0.2", "3"))
         with self.assertRaises(NotesError):
             self.write([note(0, 1, 60)], version="1")
@@ -704,6 +704,81 @@ class WrittenRhythm(unittest.TestCase):
 def needs_fine_values(chord: dict) -> bool:
     """A written note needing a sixteenth, a dot, or a triplet."""
     return chord["position"]["unit"] > 8 or chord["duration"]["unit"] > 8 or chord["duration"]["count"] == 3
+
+
+def played(beats: list, bars: int = 6, jitter: list | None = None) -> list:
+    """A one-bar melody (onsets in beats) played for `bars` bars at half a
+    second a beat, each note held to 90% of the way to the next; `jitter`
+    (seconds) is added to the onsets in turn."""
+    onsets = [Fraction(b) + 4 * bar for bar in range(bars) for b in beats]
+    sung = []
+    for i, beat in enumerate(onsets):
+        nxt = onsets[i + 1] if i + 1 < len(onsets) else beat + 1
+        start = float(beat) / 2 + (jitter[i % len(jitter)] if jitter else 0)
+        sung.append(note(start, start + float(nxt - beat) / 2 * 0.9, 60 + i % 5))
+    return sung
+
+
+def onset_beats(answer: dict) -> list:
+    return [Fraction(w["position"]["count"], w["position"]["unit"]) * 4 for w in answer["written"] if w["kind"] == "chord"]
+
+
+# A bar of sixteenth syncopation: the first and third sixteenths of beats
+# 2 and 3, and the last of beat 4, as a funk vocal line has them.
+FUNK = ["0", "3/4", "5/4", "2", "5/2", "11/4", "13/4"]
+
+
+class WrittenRhythmVersion3(unittest.TestCase):
+    """Written rhythm version 3 (ADR 0086, amendment of 2026-11-26,
+    proposed): version 2's costs chosen per melody from how precisely its
+    onsets sit on the sixteenth grid, whether it syncopates on sixteenths,
+    and whether it moves in triplets; selected explicitly, never the default."""
+
+    def write(self, sung, version, **fields):
+        return written_rhythm(sung, timed_meter(bars=8), sample_rate=RATE, version=version,
+                              fold_octaves=False, fill_syllables=False, **fields)
+
+    def test_sixteenth_syncopation_with_clean_timing_is_written_where_it_sounds(self):
+        sung = played(FUNK)
+        want = [Fraction(b) + 4 * bar for bar in range(6) for b in FUNK]
+        three = self.write(sung, "3")
+        self.assertEqual(onset_beats(three), want)
+        self.assertEqual(three["rule"]["measured"]["trust"], "1")
+        self.assertNotEqual(onset_beats(self.write(sung, "2")), want)
+
+    def test_sixteenth_syncopation_is_not_called_swing(self):
+        three = self.write(played(FUNK), "3")
+        self.assertEqual(three["feel"], "straight")
+        self.assertTrue(three["rule"]["measured"]["syncopated"])
+
+    def test_noisy_timing_falls_back_to_version_two(self):
+        # Onsets 70 ms early or late in turn: a seventh of a beat, too loose
+        # to tell a sixteenth from an eighth.
+        sung = played(["0", "1/2", "1", "3/2", "2", "5/2", "3", "7/2"], jitter=[0.07, -0.07, 0.05, -0.06])
+        three = self.write(sung, "3")
+        self.assertEqual(three["rule"]["measured"]["trust"], "0")
+        self.assertEqual(onset_beats(three), onset_beats(self.write(sung, "2")))
+        self.assertEqual(three["rule"]["parameters"]["cost_sixteenth"], RHYTHM_RULES["2"].describe()["parameters"]["cost_sixteenth"])
+
+    def test_a_melody_in_triplets_is_written_in_triplets(self):
+        beats = ["0", "1/3", "2/3", "1", "4/3", "5/3", "2", "3"]
+        want = [Fraction(b) + 4 * bar for bar in range(6) for b in beats]
+        three = self.write(played(beats), "3")
+        self.assertTrue(three["rule"]["measured"]["triplets"])
+        self.assertEqual(onset_beats(three), want)
+
+    def test_an_eighth_note_melody_is_written_as_version_two_writes_it(self):
+        sung = played(["0", "1/2", "1", "2", "5/2", "3", "7/2"])
+        three, two = self.write(sung, "3"), self.write(sung, "2")
+        self.assertEqual([(w["position"], w["duration"]) for w in three["written"]],
+                         [(w["position"], w["duration"]) for w in two["written"]])
+
+    def test_version_two_is_unchanged_and_three_says_what_it_measured(self):
+        self.assertNotIn("measured", self.write(played(FUNK), "2")["rule"])
+        self.assertNotIn("trust_full_beats", RHYTHM_RULES["2"].parameters)
+        self.assertEqual(set(self.write(played(FUNK), "3")["rule"]["measured"]),
+                         {"onsets", "spread_beats", "trust", "first_sixteenths", "offbeats", "syncopated",
+                          "triplet_onsets", "near_triplet_onsets", "triplets"})
 
 
 class WrittenRhythmOfARecording(unittest.TestCase):

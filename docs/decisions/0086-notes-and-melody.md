@@ -1,7 +1,7 @@
 # 0086. Note events per part, and melody at two levels
 
 Status: accepted (operator, 2026-10-18); amended 2026-10-19 (articulation,
-written rhythm, and the bass line; accepted by the operator, 2026-10-19)
+written rhythm, and the bass line; accepted by the operator, 2026-10-19); amendment of 2026-11-26 proposed (written rhythm version 3)
 
 ## Context
 
@@ -614,3 +614,88 @@ disagrees with this section, this section holds.
 - Placing a Work's melody on a recording note by note is an `exact`
   passage alignment (ADR 0113), which answers the alignment this record
   left open.
+
+## Amendment, 2026-11-26 (proposed): written rhythm version 3, fidelity first
+
+Status of this amendment: proposed. It adds a rule version and changes no
+contract; version 2 stays as it is and stays the default.
+
+### Context of the 2026-11-26 amendment
+
+Written rhythm version 2 chooses each onset's written position by its timing
+error plus a notation cost in which an eighth is cheap and a sixteenth, a
+sixteenth gap and a triplet are dear, so that sung timing noise does not
+become busy notation. Measured against professionally transcribed melodies,
+that prior is the main error: given exact timing, it moves a sixteenth onset
+to the nearest eighth whenever writing the sixteenth costs more than the
+move, it reads sixteenth syncopation as swing, and it seldom writes a
+triplet.
+
+The measurements, on five professionally transcribed pop vocal melodies
+(136 to 437 notes each) played back as sounded notes on a timed meter and
+written again:
+
+- With exact timing, version 2 wrote 50 to 86% of onsets where the
+  transcription has them on the four melodies that use sixteenths or
+  triplets, and 99% on the one that moves in eighths.
+- With the rule chosen per melody (the decision below), 97 to 100% on all
+  five with exact timing, and 87 to 100% with onsets moved about 20 ms at
+  random. With noisier timing (40 to 60 ms) it falls back towards version
+  2's behaviour and was never more than a point or so worse than version 2.
+- On the machine vocal notes of the same five recordings, matched to the
+  transcriptions, the share of onsets written at the transcribed position
+  rose from 40 and 57% to 64 and 78% on the two melodies that syncopate in
+  sixteenths, and changed by -3 to +6 points on the other three.
+
+The operator decided on 2026-11-26 that fidelity is the goal: the written
+rhythm should be the rhythm a published engraving or a careful transcription
+of the performance writes, with simplicity as the tie-breaker rather than the
+aim.
+
+### Decision of the 2026-11-26 amendment
+
+**Written rhythm version 3** keeps version 2's mechanism and parameters and
+chooses three groups of them per melody, from the sounded onsets that fall in
+quarter beats, before any offset or swing mapping:
+
+- **Trust in the timing.** The robust spread of each onset's distance from
+  its nearest sixteenth (1.4826 times the median, in beats) says how well the
+  timing can tell a sixteenth from an eighth. Trust is full at 0.05 beat or
+  less and none at twice that, linearly between; with trust *t*, the
+  sixteenth and sixteenth-gap costs move a share *t* of the way to 0.8 and
+  0.5, and `sigma_beats` a share *t* of the way to three times the spread (at
+  least 0.08). With no trust, version 2's costs stand.
+- **Sixteenth syncopation is not swing.** A swung melody has no onsets on a
+  beat's first sixteenth. When onsets within 0.1 beat of it are at least a
+  fifth of those in the offbeat range, swing is not called.
+- **Triplets when the melody moves in them.** Timing noise around an
+  offbeat eighth thins out towards the beat's thirds; a melody in triplets
+  peaks there. Onsets within 0.03 beat of a third, at least 8% of all and
+  twice as many as near the points between the thirds and the offbeat
+  eighth, make a triplet as cheap as a trusted sixteenth.
+
+The answer's `rule` carries what was measured and so why the parameters are
+what they are (`measured`: onsets, spread, trust, syncopation and triplet
+counts). Two readings of one claim at version 3 agree, as at any version.
+
+Version 3 is chosen by name (`written_rhythm(..., version="3")`); the views
+and every existing reader keep version 2 until a person changes the default.
+
+### Consequences of the 2026-11-26 amendment
+
+- Melodies sung with precise timing are written as they were sung,
+  sixteenths and triplets included; loosely timed singing is written as
+  version 2 writes it.
+- The measured gap that remains is in the notes, not the rhythm: given the
+  machine's notes rather than a transcription's, most of the loss is which
+  notes exist and their pitches.
+
+### Rejected in the 2026-11-26 amendment
+
+- **Cheaper sixteenths for every melody.** With noisy timing it writes timing
+  noise as sixteenths: measured, an eighth-note melody with 60 ms of noise
+  fell from 91% to 72% of onsets right.
+- **Turning swing detection off.** Swung melodies need it; the guard decides
+  from the onsets which kind of offbeat a melody has.
+- **A different rule per artist or genre.** The same artist writes both
+  straight sixteenths and swung eighths; the onsets say which.
