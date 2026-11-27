@@ -12,6 +12,9 @@
                    [--proposers <name,...>] [--bank <root>] [--config <file>] [--staging <annex>] [--dry-run]
     enrich align --archive <dir> --artifact <object id> --meter <untimed meter claim> [--stream <claim id>]
                  [--beats <claim id>] [--chords <claim id>] [--staging <annex>] [--dry-run]
+    enrich align-lyrics --archive <dir> --artifact <object id> --document <object id> [--scheme text|lrc]
+                        [--notes <claim id>] [--stem stems/vocals] [--bank <root>] [--program <name>=<path>]...
+                        [--staging <annex>] [--dry-run]
     enrich backfill --archive <dir> --bank <root> [--config <file>] [--mode songs|eager|on-demand] [--cores <n>]
                     [--spool <command>] [--commit] [--retry-failed] [--world-store <dir>] [--log <file>]
 
@@ -640,6 +643,13 @@ def run_align(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     return align_command.run(args, env, reader_of(args, env), staging_of(args, env), choose_stream, pinned)
 
 
+def run_align_lyrics(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
+    import lyrics_align  # a lyric document forced onto a vocal stem (ADR 0085); see lyrics_align.py
+    env = environment()
+    return lyrics_align.run(args, env, reader_of(args, env), staging_of(args, env), choose_stream, stream_claims,
+                            content_path)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="enrich", description="Propose enrichment results to Door")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -693,6 +703,11 @@ def main(argv: list[str] | None = None) -> int:
     import align_command
     align_command.add_arguments(aligning)
     common(aligning)
+    lyrics = commands.add_parser("align-lyrics", help="force a lyric document onto a recording's vocal stem with an "
+                                                     "aligner and propose the timed lyrics (ADR 0085)")
+    import lyrics_align
+    lyrics_align.add_arguments(lyrics)
+    common(lyrics)
     backfilling = commands.add_parser("backfill", help="fill the feature bank for every recording and propose "
                                                        "what it holds (ADR 0112); a dry run unless --commit")
     import backfill
@@ -724,6 +739,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "align":
             errors += (align_command.AlignCommandError, ValueError)
             code, answer = run_align(args)
+        elif args.command == "align-lyrics":
+            errors += (lyrics_align.AlignLyricsError,)
+            code, answer = run_align_lyrics(args)
         else:
             code, answer = run_match_windows(args)
     except errors as exc:

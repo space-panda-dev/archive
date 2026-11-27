@@ -278,7 +278,7 @@ class Missing(unittest.TestCase):
                                       "tonal/bass_chroma from stems/bass", "tonal/pitched from stems/bass"]},
             "sections": {"missing": ["structure/sections"]},
             "timed-lyrics": {"code": "not_yet", "missing": list(proposers.ALIGNMENT_NEEDS),
-                             "detail": "forced alignment of a lyric document to the vocal stem is not built yet"},
+                             "detail": proposers.ALIGNMENT_DETAIL},
         })
 
     def test_the_default_proposers_are_registered_and_reach_their_functions(self) -> None:

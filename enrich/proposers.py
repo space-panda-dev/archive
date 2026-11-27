@@ -1202,7 +1202,9 @@ def propose_sections(context: Context) -> Proposal | Lacking:
 
 # -- timed lyrics by forced alignment (ADR 0085, amended 2026-10-19) -------
 #
-# Declared, not built. A machine's timed lyrics claim comes from aligning the
+# Not a bank feature: `enrich align-lyrics` (lyrics_align.py; ADR 0085,
+# amendment of 2026-11-27, proposed) runs an aligner by request, and this
+# proposer refuses. A machine's timed lyrics claim comes from aligning the
 # known lyric document to the vocal stem, never from ASR text. Its run uses
 # the lyric document's revision and stems/vocals by bank key, and its
 # parameters name the aligner, its version, the language, and the
@@ -1222,18 +1224,20 @@ ALIGNMENT_REQUEST = {
     "notes": "optional: the vocal notes claim whose onsets may carry syllables",
 }
 ALIGNMENT_NEEDS = (
-    "an aligner extractor (ADR 0074 manifest) run under its own interpreter with a pinned acoustic model",
-    "a way to give an extractor the lyric document's text beside the stem",
-    "a pinned syllabification rule",
-    "enrich propose given the lyric document's revision to pin",
+    "the lyric document's revision, which enrich propose is not given",
+    "an aligner run by request on the document's words and the stem (enrich align-lyrics), not a bank entry",
 )
 
 
+ALIGNMENT_DETAIL = ("forced alignment of a lyric document to the vocal stem is not a bank feature; it runs "
+                    "by request through enrich align-lyrics")
+
+
 def propose_timed_lyrics(context: Context) -> Proposal | Lacking:
-    """Refuses: forced alignment is declared (ALIGNMENT_REQUEST) but no
-    aligner is installed (ALIGNMENT_NEEDS)."""
+    """Refuses: forced alignment is declared (ALIGNMENT_REQUEST) but reads
+    more than the bank (ALIGNMENT_NEEDS); `enrich align-lyrics` runs it."""
     return Lacking(missing=ALIGNMENT_NEEDS, code="not_yet",
-                   detail="forced alignment of a lyric document to the vocal stem is not built yet")
+                   detail=ALIGNMENT_DETAIL)
 
 
 _TUNING_READ = FeatureRead("tonal", ("tuning_confidence", "tuning_cents"))

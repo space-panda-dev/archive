@@ -279,8 +279,9 @@ bank. Doc: [enrich/README.md](enrich/README.md) (one section per command,
 |---|---|
 | `enrich/enrich.py` | `main`: `probe`, `detect`, `match`, `match-windows` (`run_probe`, `run_detect`, `run_match`, `run_match_windows`) |
 | `enrich/adapter.py` | `propose`: a tool result to a Door proposal (ADR 0064) |
-| `enrich/propose.py`, `proposers.py` | `enrich propose` (per-region runs where the whole read lacks a feature; `Context.region`, `shift_of`); `PROPOSERS` (registry at the end): bank features as claims, the bass line and vocal bleed filter (`bass_line`, `read_bass_line`, `drop_bleed`), lines built from `f0-pesto` (`build_line`), forced alignment declared and refused `not_yet` |
+| `enrich/propose.py`, `proposers.py` | `enrich propose` (per-region runs where the whole read lacks a feature; `Context.region`, `shift_of`); `PROPOSERS` (registry at the end): bank features as claims, the bass line and vocal bleed filter (`bass_line`, `read_bass_line`, `drop_bleed`), lines built from `f0-pesto` (`build_line`), forced alignment declared and refused `not_yet` (it runs through `enrich align-lyrics`) |
 | `enrich/align.py`, `align_command.py` | `enrich align` (ADR 0116 section 6): `chart_of` (World's played bars, `beats_of`), `machine_of`, `place` (DP over played bar and beat, twelve transpositions, `Refused` when unsure), `payloads` (timed meter, chord stacks, form spans); the command reads the archive and proposes one run; tests `enrich/tests/test_align.py` (suite `enrich-tests`) |
+| `enrich/lyrics_align.py`, `aligners/align-wav2vec2/` | `enrich align-lyrics` (ADR 0085, amendment of 2026-11-27 proposed): `load_aligner` (an `archive-extractor/1` manifest outside the catalog), `run_aligner` (the extractor request plus `document`, run and checked as an extractor, nothing banked), `timed_payload` (locators and samples on the stream), `carry` (carried-by rule); the aligner program `align_wav2vec2.py` (`tokens`, `syllables_of`, `assemble`; torch only in `Model`); tests `enrich/test_lyrics_align.py` (suite `enrich`) |
 | `enrich/enrichment_requests.py` | configured scoped requests through composition and Bank, exact admitted-note readiness; tests `enrich/test_enrichment_requests.py` |
 | `enrich/vocal_contour.py` | audio-only gesture contour, moving-pitch replacement, learned articulation qualification and provisional note projection; runtime in `enrich/extractors/vocal-contour/`; tests `enrich/test_vocal_contour.py`, `enrich/test_vocal_extractor.py`, `enrich/tests/test_vocal_proposal.py` |
 | `enrich/note_builder.py` | `build`: one note per held pitch from a pitch track and its level (ADR 0086); settings `VOICE`, `BASS`; tests `enrich/test_note_builder.py` |
@@ -339,10 +340,10 @@ shipped extractors").
 <!-- wf:gen lines enrich/README.md enrich/enrich.py enrich/adapter.py enrich/proposers.py enrich/detector.py enrich/cover.py enrich/extract.py enrich/bank.py enrich/remote.py enrich/backfill.py enrich/backfill_queue.py enrich/extractors/stems/stems.py enrich/extractors/quality/quality.py enrich/extractors/tonal/tonal.py enrich/extractors/structure/structure.py enrich/extractors/rhythm/meter.py enrich/test_bank.py docs/feature-bank.md -->
 | file | lines |
 |---|---|
-| `enrich/README.md` | 1332 |
-| `enrich/enrich.py` | 738 |
+| `enrich/README.md` | 1347 |
+| `enrich/enrich.py` | 756 |
 | `enrich/adapter.py` | 619 |
-| `enrich/proposers.py` | 1286 |
+| `enrich/proposers.py` | 1290 |
 | `enrich/detector.py` | 674 |
 | `enrich/cover.py` | 1073 |
 | `enrich/extract.py` | 1095 |
@@ -360,7 +361,7 @@ shipped extractors").
 <!-- /wf:gen -->
 
 <!-- wf:gen anchors enrich/enrich.py#main enrich/bank.py#Catalog enrich/bank.py#Bank enrich/bank.py#check_equivalence enrich/test_bank.py#SHIPPED -->
-- `enrich/enrich.py#main`: line 643
+- `enrich/enrich.py#main`: line 653
 - `enrich/bank.py#Catalog`: line 452
 - `enrich/bank.py#Bank`: line 1106
 - `enrich/bank.py#check_equivalence`: line 909

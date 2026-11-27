@@ -4,7 +4,8 @@ Status: accepted (operator, 2026-10-18); amended 2026-10-19 (syllables,
 their notes, and forced alignment; the check beyond the circle; both
 accepted by the operator, 2026-10-19); amended 2026-10-19 by
 [ADR 0092](0092-internet-exposure.md) (the "circle" setting writes `GREEN`;
-accepted by the operator, 2026-10-19)
+accepted by the operator, 2026-10-19); amendment of 2026-11-27 proposed (how
+the forced-alignment extractor is run)
 
 A lead sheet joins chords, meter, form, melody, and lyrics. Specification
 0.0.9 holds chords and meter ([ADR 0077](0077-chord-stacks-and-meter.md)),
@@ -753,3 +754,117 @@ disagrees with this section, this section holds.
   `document_source` claim `derived_from` the document they were edited
   from. A member stages one under ADR 0094's `admit`, which already opened
   `/documents/stage` to members holding it.
+
+## Amendment, 2026-11-27: how the forced-alignment extractor is run
+
+Status: proposed with the build of contract change 4 of the amendment of
+2026-10-19 (branch `forced-align-extractor`); nothing here is accepted until
+the operator accepts it. Where this section and the text above differ, this
+section holds once accepted.
+
+### Context of this amendment
+
+Contract change 4 asks for "a forced-alignment extractor with a manifest
+(ADR 0074), whose run records the document, the stem, and its parameters".
+[ADR 0074](0074-extractor-contract.md) left two things in the way. An
+extractor measures one content and the features it needs; nothing gives it
+a second input, and an aligner needs the lyric document's words beside the
+stem. And the feature-bank runner runs every extractor of its catalog over
+every content (`run all`, the backfill), while the amendment above makes
+alignment "a run by request, not part of every import", with an input only
+a person can name (which document, which recording).
+
+An operator-local trial on 2026-11-27 measured the method on the shadow's
+stems and references: torchaudio's `WAV2VEC2_ASR_BASE_960H` (fairseq
+weights, MIT) in one pass with a free token at every line boundary placed
+78% of line starts within ±300 ms once each reference's constant offset was
+removed (the references themselves are off by up to 1.1 s), at about 13 s per
+active minute on two threads; Pyphen `en_US` 2/2 with a vowel-group fallback
+matched an OMR book's syllable splits on 85.8% of 7,248 words; the rule
+below gave 78% of syllables a note, 29% a melisma; and a mean letter
+probability below 0.10 caught the 5 of 121 alignments that were lost. The
+trial's earlier aligner, `MMS_FA`, has CC-BY-NC-4.0 weights.
+
+### Decision of this amendment
+
+**An aligner is an extractor kept outside the catalog.** Its manifest is an
+`archive-extractor/1` manifest, checked as any other, in
+`enrich/aligners/<id>/` rather than `enrich/extractors/`, so the runner and
+the backfill never load it. Its command names programs the operator
+configures, as a model extractor's does: `${align-python}` (an interpreter
+with its libraries) and `${align-weights}` (the directory holding its
+checkpoint). The manifest pins the checkpoint by digest and the program
+refuses any other, so weights are never bundled, and an aligner whose
+weights may not be shipped is operator-local by configuration alone. The
+first is `align-wav2vec2` version 1, the method above.
+
+**`enrich align-lyrics` runs it by request.** A person names the mix, the
+lyric document, its scheme, and optionally a vocal notes claim. The command
+gives the aligner the extractor request (`archive-extractor-request/1`) with
+one member more, `document`: the path of the document's words by line, as
+World's `document_lines` counts them, with the document's digest and
+scheme. The stem is the bank's `stems/vocals` of the mix (or another stem
+named), of the whole recording. The aligner runs as an extractor runs (its
+own process group, a timeout) and its output directory is checked as one
+is (`check_result`), but nothing is filed in the bank: its answer becomes a
+claim at once, and a rerun aligns again. The words file lives only in a
+scratch directory, removed when the aligner exits.
+
+**The aligner says locators and times, never words.** Its `alignment`
+output holds lines by number, words by number in their line, syllables by
+code point offsets into their word, each with samples at the aligner's
+rate and a mean letter probability. The command places them on the
+stream's samples, checks every locator against the document, and checks
+the claim with World's `check_timed_lyrics` and `check_locators` before
+proposing it.
+
+**What the run records.** The run `used` the document, the mix, its stream
+claim, and the notes claim when one is given; its method is the aligner's
+id and version; its software is the command's, the stem entry's, and the
+aligner's. Its parameters Artifact names the aligner with every setting of
+its manifest (model, weights digest, language, syllabification rule, the
+silence gate), the stem by bank key (ADR 0079), the document's scheme, the
+carried-by rule, the confidence gate, and how samples are placed. The claim
+pins `document`, `source`, `stream`, and the notes claim when some syllable
+names it; `alignment.method` is `forced alignment`, without
+`max_error_samples`; `confidence_scale` names the aligner's mean letter
+probability, given on every line, word, and syllable.
+
+**Carried by.** A note carries the syllable sounding at its onset: from
+0.1 s before the syllable's start to 0.1 s before the next syllable's start,
+all syllables in time order, at most 3 s after its own start. Two or more
+are a melisma. The rule is the command's and is recorded in each run.
+
+**A lost alignment proposes nothing.** Below a mean letter probability of
+0.10 the command answers `nothing_proposed` with `code` `low_confidence`.
+
+### Consequences of this amendment
+
+- `enrich propose`'s `timed-lyrics` proposer still refuses with `not_yet`:
+  it reads the bank only, and alignment is not a bank feature.
+- An aligner's run is repeated on every request; it is a few seconds per
+  minute of sung audio, and a rerun on unchanged inputs and settings is
+  `unchanged` (INV-5).
+- Lyric text crosses into the aligner's process as a scratch file on the
+  operator's machine, never into the bank or the archive.
+- `align-wav2vec2` is English only; another language is another aligner.
+- No invariant changes.
+
+### Left open by this amendment
+
+- A document's own syllables (a MusicXML lyric's `<syllabic>`, a book's
+  hyphens) are not read: plain text and LRC are split by the aligner's rule.
+- Section labels or chord lines inside a plain-text lyric document are
+  aligned as words; a document meant for alignment holds the sung words.
+- `max_error_samples` still waits on word-level references on stems.
+
+### Alternatives considered in this amendment
+
+- **A bank extractor over `stems/vocals` with the document's digest as a
+  parameter.** Its key would name the document, but the request still could
+  not carry the words, `run all` would run it with no document, and its
+  entries would hold derived lyric timings in a cache that is swept.
+- **An enrich proposer.** Proposers never run a program and read the bank
+  only (ADR 0079).
+- **The aligner inside the archive's environment.** It needs PyTorch, which
+  ADR 0074 keeps out.

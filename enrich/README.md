@@ -640,7 +640,7 @@ proposes nothing and says which features it lacked.
 | `notes` (version 3) | on melody's default input when it is a vocal stem, `f0-pesto/f0` and `f0-pesto/level_db` of it (`extract.py run f0-pesto --from stems/vocals`), with `tonal/tuning_cents` and `rhythm/pulse` of the recording when the bank holds them; else `melody/notes` of that input (the vocal stem where its measure is voiced enough, else the mix; never the bass); on the vocal stem also `level_db` and `loud_db` of the entry the notes came from, and the bass line's inputs below | one `notes` claim, `part` the stem's output (citing the stem) or `mix`. From PESTO's track the note builder ([`note_builder.py`](note_builder.py), `VOICE`) makes one note per held pitch: slides, scoops and vibrato stay inside the note, a gap under 100 ms on one pitch is bridged, a plateau shorter than 70 ms or 0.4 of an eighth note is no note, and a note's pitch is the mean of its central rows less the tuning, rounded to a MIDI note; otherwise each `melody/notes` span is a note at its value rounded to a MIDI note. A vocal line drops separation bleed (ADR 0086): a note more than 7 semitones below the duration-weighted 10th percentile of the run's pitches, and a note sounding for at least half its length with bass line notes of its class within an octave of its pitch (12 semitones; never G4 over a G2) while the vocal stem's median level over it is more than 20 dB below its loud level. Without the bass line in the bank only the first rule applies; the run's settings say which source and rules applied and how many notes each rule dropped |
 | `bass-line` (version 2) | `stems/bass`; `f0-pesto/f0` and `f0-pesto/level_db` of that stem (`--from stems/bass`), or `notes-basic-pitch/notes` of it, or both; `tonal/bass_chroma` and `tonal/pitched` of that stem; `tonal/tuning_cents` of the recording when present | one `notes` claim, `part` `bass`, `bass: true`, citing the bass stem. From PESTO's track the note builder (`BASS`, measured on real separated single lines: no gap bridged, a 3 dB level dip splits a held pitch, notes and plateaus from 30 ms) makes the notes, onsets unshifted; without PESTO's track, Basic Pitch's notes. A note is kept when the frames within it are at least half pitched and, where the strongest bass class leads by 0.2, it is the note's class (the `bass` proposer's thresholds); then one note at a time, the lowest on an onset, a lower note cutting the one it starts under. Never a melody |
 | `sections` | `structure/sections` of the mix | one `form_spans` claim with the extractor's labels |
-| `timed-lyrics` | nothing yet | refuses: `nothing_proposed` with `code` `not_yet` and what forced alignment needs (an aligner run under its own interpreter with a pinned acoustic model, the lyric document's text given to it, a pinned syllabification rule, and the document's revision to pin). `proposers.ALIGNMENT_REQUEST` declares its inputs (ADR 0085) |
+| `timed-lyrics` | nothing | refuses: `nothing_proposed` with `code` `not_yet`: forced alignment is not a bank feature; it runs by request through [`enrich align-lyrics`](#enrich-align-lyrics). `proposers.ALIGNMENT_REQUEST` declares its inputs (ADR 0085) |
 
 `--proposers` defaults to the first four, which `capture import` runs; the
 others run only when named. No proposer makes a `melody` or `melody_spans`
@@ -787,6 +787,41 @@ The answer adds `transposition`, `placed_bars`, `placed_beats`, `passes`,
 
 For selecting features, opportunistic methods or result production, see
 [composing enrichment](../docs/enrichment-composition.md).
+
+## `enrich align-lyrics`
+
+```sh
+enrich/enrich.py align-lyrics --archive <dir> --artifact <mix> --document <lyric document> [--scheme text|lrc]
+                 [--notes <vocal notes claim>] [--stem stems/vocals] [--bank <root>] [--config <file>]
+                 --program align-python=<interpreter> --program align-weights=<directory>
+                 [--timeout <seconds>] [--staging <annex>] [--dry-run]
+```
+
+Forces a lyric document onto a recording's vocal stem and proposes one
+`timed_lyrics` claim under one run ([ADR 0085](../docs/decisions/0085-documents-lyrics-rights.md),
+amended 2026-10-19; how the aligner is run is its amendment of 2026-11-27,
+proposed). The stem is the bank's `stems/vocals` of the mix (whole
+recording only): separate it first. The aligner is
+[`aligners/align-wav2vec2`](aligners/align-wav2vec2/align_wav2vec2.py), an
+`archive-extractor/1` manifest kept outside the catalog so `run all` never
+runs it; it runs under the operator's `align-python` (torch 2.14.1+cpu,
+torchaudio 2.11.0, pyphen, numpy) with `align-weights` naming the directory
+that holds `wav2vec2_fairseq_base_ls960_asr_ls960.pth` (MIT; pinned by
+digest, never shipped). Its request is an extractor request with
+`document`: the document's words by line, as World counts them, in a
+scratch file removed when it exits. Every setting is the manifest's.
+
+The claim pins the document, the mix, its stream, and the notes claim when
+a syllable is carried by it (`--notes`: a notes claim about the same mix
+revision); `alignment.method` is `forced alignment`, and every line, word,
+and syllable carries the aligner's mean letter probability. A note carries
+the syllable sounding at its onset (from 0.1 s before its start to 0.1 s
+before the next syllable's, at most 3 s). Below a mean letter probability of
+0.10 the command answers `nothing_proposed`, `code` `low_confidence`; a
+bank without the stem answers `nothing_proposed`, `code` `missing`. The
+answer gives the counts of lines, words, syllables, carried syllables and
+melismas, and the aligner's seconds. Tests: `enrich/test_lyrics_align.py`
+(suite `enrich`), with a stand-in aligner.
 
 ## `enrich backfill`
 
