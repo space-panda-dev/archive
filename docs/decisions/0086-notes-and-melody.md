@@ -1,7 +1,7 @@
 # 0086. Note events per part, and melody at two levels
 
 Status: accepted (operator, 2026-10-18); amended 2026-10-19 (articulation,
-written rhythm, and the bass line; accepted by the operator, 2026-10-19); amendment of 2026-11-26 proposed (written rhythm version 3)
+written rhythm, and the bass line; accepted by the operator, 2026-10-19); amended 2026-11-26 (written rhythm version 3; accepted by the operator, 2026-11-27)
 
 ## Context
 
@@ -615,9 +615,9 @@ disagrees with this section, this section holds.
   passage alignment (ADR 0113), which answers the alignment this record
   left open.
 
-## Amendment, 2026-11-26 (proposed): written rhythm version 3, fidelity first
+## Amendment, 2026-11-26: written rhythm version 3, fidelity first
 
-Status of this amendment: proposed. It adds a rule version and changes no
+Status of this amendment: accepted by the operator, 2026-11-27. It adds a rule version and changes no
 contract; version 2 stays as it is and stays the default.
 
 ### Context of the 2026-11-26 amendment

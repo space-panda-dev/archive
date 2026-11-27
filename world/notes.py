@@ -1004,7 +1004,7 @@ RHYTHM_RULES = {"2": RhythmRule("2", {name: Fraction(value) for name, value in {
 })}
 
 
-# Version 3 (ADR 0086, amendment of 2026-11-26, proposed): version 2's costs
+# Version 3 (ADR 0086, amendment of 2026-11-26): version 2's costs
 # chosen per melody from what its onsets show, because fidelity to how the
 # tune is written is the goal and simplicity the tie-breaker. Version 2 writes
 # a melody that moves in sixteenths onto eighths even from exact timing (a

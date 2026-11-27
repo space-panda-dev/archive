@@ -481,7 +481,7 @@ def written_rhythm(world: list[dict[str, Any]], subject: dict[str, Any], params:
 
 
 def written_rhythm_3(world: list[dict[str, Any]], subject: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
-    """`written_rhythm` version 3 (ADR 0086 amendment, proposed): the same
+    """`written_rhythm` version 3 (ADR 0086 amendment of 2026-11-26): the same
     question, subject and parameters as version 2, written by rule version 3,
     which chooses version 2's costs per melody from its measured timing.
     Version 2 stays as it was, so a reader can ask both and compare."""
