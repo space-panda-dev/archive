@@ -295,6 +295,7 @@ bank. Doc: [enrich/README.md](enrich/README.md) (one section per command,
 | `enrich/backfill_queue.py` | the backfill's pool: `Job`, `Runner` (by `Job.priority`, the background held until usable, the Spool window), `choose`/`shadow` (backfilling behind a head waiting for cores or memory; reserved outright after `reserve_after_seconds`), `take_here` (overflow of routed work when it ends here sooner), `remote_parameters` |
 | `enrich/backfill_proposals.py` | the backfill's archive-side steps: `Steps` (each `call` knows its outcome), `Proposals` (usable per recording, one `--all` when more than two wait), `Follow` (`--follow` intake) |
 | `enrich/media.py`, `waveform.py`, `derived.py` | derived media (ADR 0069) |
+| `enrich/media_backfill.py` | the derived media every recording lacks, from an export (`recordings`, `plan`, `run`; proposed ADR 0129); tests `enrich/tests/test_media_backfill.py` (suite `enrich-tests`) |
 | `enrich/extractors/stems/stems.py` | `separate`; `cpu-inductor` (`compile_network`, `htdemucs_core`); a region run separates the source over a window on the whole run's grid (`aligned`, `context_of`, `trimmed`) so its stems are the whole's; tests `enrich/test_stems.py` |
 | `enrich/support.py` | test support: synthetic audio, scratch archives |
 | `enrich/extractors/<id>/` | `extractor.json` + program; the longest are below |
@@ -307,7 +308,7 @@ For adding proposers or selecting methods, read the
 Tests: suite `enrich`, `enrich/test_<topic>.py` by command or extractor
 family (`git ls-files 'enrich/test_*'`; `test_bank` is the longest, `test_extractors`
 runs all extractors together); suite `enrich-tests` is
-`enrich/tests/` (`test_media.py`, `test_align.py`).
+`enrich/tests/` (`test_media.py`, `test_media_backfill.py`, `test_align.py`).
 The bench (`enrich/bench/`, [README](enrich/bench/README.md)) scores note
 transcribers against private sets outside the repository, and gates the
 backfill's CPU seconds per audio-second (`cost.py`, `python -m enrich.bench cost`), and checks a region's
@@ -338,7 +339,7 @@ shipped extractors").
 <!-- wf:gen lines enrich/README.md enrich/enrich.py enrich/adapter.py enrich/proposers.py enrich/detector.py enrich/cover.py enrich/extract.py enrich/bank.py enrich/remote.py enrich/backfill.py enrich/backfill_queue.py enrich/extractors/stems/stems.py enrich/extractors/quality/quality.py enrich/extractors/tonal/tonal.py enrich/extractors/structure/structure.py enrich/extractors/rhythm/meter.py enrich/test_bank.py docs/feature-bank.md -->
 | file | lines |
 |---|---|
-| `enrich/README.md` | 1312 |
+| `enrich/README.md` | 1332 |
 | `enrich/enrich.py` | 738 |
 | `enrich/adapter.py` | 619 |
 | `enrich/proposers.py` | 1286 |

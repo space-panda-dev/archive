@@ -64,6 +64,8 @@ door serve --socket <path>       the same commands for applications, on a privat
 relay/relay.py --config <file>   Door's service, World's query and views, and derived media over HTTP, for the tailnet
 enrich/media.py --root <dir> --digest <d> <file>
                                  waveform peaks and a listening copy: regenerable derived media
+enrich/media_backfill.py --archive <dir> --root <dir> [--dry-run]
+                                 the same for every recording that lacks them (proposed ADR 0129)
 enrich/extract.py list | run <extractor|all> --content <file> --bank <dir>
                                  extract features into the regenerable feature bank (proposed)
 enrich/remote.py put | work | collect

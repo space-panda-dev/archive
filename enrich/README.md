@@ -1070,6 +1070,26 @@ is `written` or `present`; a failure prints `{"status": "failed", "detail"}`
 to stderr and exits 1. It needs `ffmpeg` and `ffprobe` (`--ffmpeg` and
 `--ffprobe` name others) and numpy ([`requirements.txt`](requirements.txt)).
 
+
+### Backfilling derived media
+
+[`media_backfill.py`](media_backfill.py) makes the derived media every
+recording lacks: each current Artifact an `audio_stream` claim is about,
+whatever admitted it ([proposed ADR 0129](../docs/decisions/0129-proposed-derived-media-for-every-recording.md)):
+
+```sh
+enrich/media_backfill.py --archive <archive> --root <derived-media> --dry-run
+enrich/media_backfill.py --archive <archive> --root <derived-media> --kind listen --jobs 1
+```
+
+It reads `archive export` (or `--export <file>`) and writes only into the
+root. Destroyed content and content not present here are left out, and
+Artifacts sharing content share one set. `--dry-run` writes nothing and
+reports the counts, each missing recording by digest, and an estimate of the
+seconds to encode and bytes to write. Each recording made prints one line to
+stderr; a failure does not stop the others, and the command then exits 1. A
+rerun on complete outputs writes nothing.
+
 ## `extract.py`: the feature bank
 
 ```sh
