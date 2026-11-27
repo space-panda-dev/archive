@@ -1075,7 +1075,7 @@ to stderr and exits 1. It needs `ffmpeg` and `ffprobe` (`--ffmpeg` and
 
 [`media_backfill.py`](media_backfill.py) makes the derived media every
 recording lacks: each current Artifact an `audio_stream` claim is about,
-whatever admitted it ([proposed ADR 0129](../docs/decisions/0129-proposed-derived-media-for-every-recording.md)):
+whatever admitted it ([ADR 0129](../docs/decisions/0129-derived-media-for-every-recording.md)):
 
 ```sh
 enrich/media_backfill.py --archive <archive> --root <derived-media> --dry-run

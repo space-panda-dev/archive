@@ -1,7 +1,8 @@
 # 0129. Every admitted recording gets its derived media
 
-Status: proposed (amends [ADR 0069](0069-derived-media.md)'s consequences and
-[ADR 0112](0112-bulk-import-at-scale.md)'s backfill)
+Status: accepted (operator, 2026-11-27; amends [ADR 0069](0069-derived-media.md)'s
+consequences and [ADR 0112](0112-bulk-import-at-scale.md)'s backfill). The
+backfill's `--follow` part is accepted but not built.
 
 [ADR 0069](0069-derived-media.md) makes waveform peaks and a listening copy
 regenerable derived media, made by `enrich/` and served by the relay by
@@ -33,12 +34,12 @@ complete outputs writes nothing. It is built with this record, because it is
 mechanism under ADR 0069 and makes nothing a person could not already make
 with `enrich/media.py` one file at a time.
 
-**Proposed, not built: the enrichment backfill keeps them made.** With
+**Accepted, not built: the enrichment backfill keeps them made.** With
 `--follow`, `enrich backfill` (ADR 0112) would make a newly admitted
 recording's peaks with its fast tier, and its listening copy in the
 background tier, through the same `media.derive`, so a recording becomes
 playable as it becomes usable. That changes the running service's work and
-its CPU and disk budget, so it waits for this record's acceptance.
+its CPU and disk budget, so it is built and deployed on its own.
 
 **The relay does not derive on request.** A missing derivative stays a
 refusal with its own code (`media_not_derived`), and a client degrades on

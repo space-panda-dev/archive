@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Make the derived media every admitted recording is missing (ADR 0069, proposed 0129).
+"""Make the derived media every admitted recording is missing (ADR 0069, 0129).
 
     enrich/media_backfill.py --archive <dir> --root <derived-media root>
                              [--export <file>] [--archive-command archive]

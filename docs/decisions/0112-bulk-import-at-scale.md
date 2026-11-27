@@ -3,7 +3,10 @@
 Status: accepted (operator, 2026-10-19) for the modes, the stand-in stems,
 the scale-out without rented GPUs, and keeping `chords-jiang`; the
 mechanics the operator did not state are listed under
-[For the operator to confirm](#for-the-operator-to-confirm).
+[For the operator to confirm](#for-the-operator-to-confirm). Amended
+2026-11-27 by [ADR 0129](0129-derived-media-for-every-recording.md) (a media
+backfill makes every recording's missing derived media; accepted by the
+operator, 2026-11-27).
 
 ## Context
 

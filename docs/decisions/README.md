@@ -83,7 +83,7 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0066](0066-span-suggestions.md) | Machine-suggested spans are admitted claims |
 | [0067](0067-matches-and-alignments-pin-runs.md) | Matches and alignments pin a derivation run |
 | [0068](0068-specification-upgrade.md) | An archive upgrades its specification by a transition |
-| [0069](0069-derived-media.md) | Waveform peaks and listening copies are derived media, served by digest |
+| [0069](0069-derived-media.md) | Waveform peaks and listening copies are derived media, served by digest (amended 2026-11-27 by 0129: every recording, by a media backfill) |
 | [0070](0070-capture-import.md) | New recordings are imported natively |
 | [0071](0071-essentia-cover-similarity.md) | Cover similarity is measured with Essentia, as the V2 system calibrated it (amended 2026-10-18, accepted) |
 | [0072](0072-windowed-work-matches.md) | A work match can suggest a window of a recording (amended 2026-10-18, accepted) |
@@ -139,4 +139,4 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0124](0124-legacy-session-backfill.md) | Backfill missing sessions from legacy grouping and file order, preserving source provenance and reviewing ambiguity |
 | [0125](0125-admission-reference-heads.md) | An admission can require referenced objects’ heads to stay unchanged |
 | [0126](0126-fleet-specification-upgrade-boundary.md) | Fleet applies a pinned Archive upgrade plan |
-| [0129 proposed](0129-proposed-derived-media-for-every-recording.md) | Every admitted recording gets its derived media; a media backfill makes what is missing |
+| [0129](0129-derived-media-for-every-recording.md) | Every admitted recording gets its derived media; a media backfill makes what is missing |

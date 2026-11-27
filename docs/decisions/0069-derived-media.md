@@ -1,6 +1,9 @@
 # 0069. Waveform peaks and listening copies are derived media, served by digest
 
-Status: accepted
+Status: accepted; amended 2026-11-27 by
+[ADR 0129](0129-derived-media-for-every-recording.md) (every admitted
+recording gets its derived media, by a media backfill; accepted by the
+operator, 2026-11-27)
 
 A review client drags edges on a waveform and plays recordings in a browser.
 Today both come from the V2 system: a "waveform" of one loudness value per ten
