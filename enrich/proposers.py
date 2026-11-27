@@ -1203,7 +1203,7 @@ def propose_sections(context: Context) -> Proposal | Lacking:
 # -- timed lyrics by forced alignment (ADR 0085, amended 2026-10-19) -------
 #
 # Not a bank feature: `enrich align-lyrics` (lyrics_align.py; ADR 0085,
-# amendment of 2026-11-27, proposed) runs an aligner by request, and this
+# amendment of 2026-11-27) runs an aligner by request, and this
 # proposer refuses. A machine's timed lyrics claim comes from aligning the
 # known lyric document to the vocal stem, never from ASR text. Its run uses
 # the lyric document's revision and stems/vocals by bank key, and its

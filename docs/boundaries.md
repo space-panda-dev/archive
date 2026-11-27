@@ -90,7 +90,7 @@ python -m migration.legacy_sessions SNAPSHOT --archive ROOT --source-object ID -
 capture/capture.py import        admit a recorder card's new recordings as sessions, then enrich them
 documents/documents.py ireal     import an iReal Pro playlist's charts, list link candidates, propose the operator's links
 enrich/enrich.py align           place a chart's untimed claims on a recording's beats and chords
-enrich/enrich.py align-lyrics    force a lyric document onto a vocal stem and propose timed lyrics (proposed)
+enrich/enrich.py align-lyrics    force a lyric document onto a vocal stem and propose timed lyrics
 ```
 
 `door serve --socket <path>` runs Door for one archive (the working

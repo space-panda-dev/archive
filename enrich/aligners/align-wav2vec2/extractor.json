@@ -2,7 +2,7 @@
  "contract": "archive-extractor/1",
  "id": "align-wav2vec2",
  "version": "1",
- "description": "A known lyric document's words forced onto a vocal stem (--stem stems/vocals) by torchaudio's WAV2VEC2_ASR_BASE_960H CTC character model, in one pass with a free token at every line boundary, and each word split into syllables by Pyphen en_US 2/2 with a vowel-group fallback. Run by request by `enrich align-lyrics`, never by the feature-bank runner (ADR 0085, amendment of 2026-11-27, proposed). Runs under the operator's align-python with the checkpoint in the operator's align-weights directory, so the archive's environment never imports PyTorch and ships no weights.",
+ "description": "A known lyric document's words forced onto a vocal stem (--stem stems/vocals) by torchaudio's WAV2VEC2_ASR_BASE_960H CTC character model, in one pass with a free token at every line boundary, and each word split into syllables by Pyphen en_US 2/2 with a vowel-group fallback. Run by request by `enrich align-lyrics`, never by the feature-bank runner (ADR 0085, amendment of 2026-11-27). Runs under the operator's align-python with the checkpoint in the operator's align-weights directory, so the archive's environment never imports PyTorch and ships no weights.",
  "command": [
   "${align-python}",
   "align_wav2vec2.py",
@@ -29,6 +29,7 @@
   "language": "en",
   "rate": 16000,
   "frame": 320,
+  "threads": 2,
   "chunk_seconds": 30,
   "context_seconds": 2,
   "pass": "the whole document in one pass over the whole stem, no line anchors; a free * token (log probability 0) at every line boundary, | between words",

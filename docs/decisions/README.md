@@ -88,7 +88,7 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0071](0071-essentia-cover-similarity.md) | Cover similarity is measured with Essentia, as the V2 system calibrated it (amended 2026-10-18, accepted) |
 | [0072](0072-windowed-work-matches.md) | A work match can suggest a window of a recording (amended 2026-10-18, accepted) |
 | [0073](0073-feature-bank.md) | A feature bank holds regenerable features, keyed by content and method |
-| [0074](0074-extractor-contract.md) | An extractor is any program with a manifest, run by request (amended 2026-10-19, accepted; extended 2026-10-19 by 0108: a streaming mode) |
+| [0074](0074-extractor-contract.md) | An extractor is any program with a manifest, run by request (amended 2026-10-19, accepted; extended 2026-10-19 by 0108: a streaming mode; noted 2026-11-27 by 0085: an aligner's request holds a document) |
 | [0075](0075-stems-as-content.md) | Stems are separated outside the archive's environment, and a stem is content to every extractor |
 | [0076](0076-preferred-inputs.md) | An extractor may prefer a file feature of its content as its default input (accepted 2026-10-19, amended: a mostly unvoiced stem falls back; proposed: a probe passes a stem over unmeasured) |
 | [0077](0077-chord-stacks-and-meter.md) | Chords are stacks and meter is a timeline, each asserted by someone |
@@ -99,7 +99,7 @@ matters belong in [open-questions.md](../open-questions.md), not here.
 | [0082](0082-views-and-current.md) | Named views: the first current rule, correction overlay, differences, and chord names over the relay |
 | [0083](0083-form-and-work-meter.md) | Form is a claim, and a Work can have meter without a recording (amended 2026-10-20 by 0113: open repeats, passes, departures) |
 | [0084](0084-lead-sheets.md) | A lead sheet is a claim that pins the parts it chose (amended 2026-10-20 by 0113: lead sheet version 2) |
-| [0085](0085-documents-lyrics-rights.md) | Documents arrive through the relay; lyrics are timed by reference; sensitivity and rights are claims (amended 2026-10-19: syllables and their notes; Door checks an approval beyond the circle, World's `may_publish`; by 0092: the "circle" setting writes `GREEN`; by 0113: underlays, edited lyrics; proposed 2026-11-27: the forced-alignment extractor, `enrich align-lyrics`) |
+| [0085](0085-documents-lyrics-rights.md) | Documents arrive through the relay; lyrics are timed by reference; sensitivity and rights are claims (amended 2026-10-19: syllables and their notes; Door checks an approval beyond the circle, World's `may_publish`; by 0092: the "circle" setting writes `GREEN`; by 0113: underlays, edited lyrics; 2026-11-27: the forced-alignment extractor, `enrich align-lyrics`) |
 | [0086](0086-notes-and-melody.md) | Note events per part, and melody at two levels (amended 2026-10-19: articulation, written rhythm, the bass line; 2026-10-20 by 0113: sketches; proposed 2026-11-26: written rhythm version 3) |
 | [0087](0087-tracklists-and-correspondence.md) | Releases list their tracks; artists, releases and recordings correspond to MusicBrainz and Discogs |
 | [0088](0088-bandmates.md) | Bandmates read their circle and assert their own claims (amended 2026-10-19 by 0092, 0093 and 0094: internet members, audiences, members' writes) |

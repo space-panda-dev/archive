@@ -129,7 +129,11 @@ and keyed by everything that decides them; tools *read* it. **Extractor**: a
 program in any language, with a manifest, that *extracts* features into the
 bank under the extractor contract. (Proposed:
 [ADR 0073](decisions/0073-feature-bank.md),
-[ADR 0074](decisions/0074-extractor-contract.md).)
+[ADR 0074](decisions/0074-extractor-contract.md).) An **aligner** is an
+extractor kept outside the catalog that forces a lyric document's words
+onto a vocal stem; `enrich align-lyrics` runs it by request and nothing is
+banked ([ADR 0085](decisions/0085-documents-lyrics-rights.md), amended
+2026-11-27).
 **Region entry**: a bank entry over `[start, end)` of its content (a song
 span, widened), keyed by the region as well; a whole-content entry covers
 every region. A **bank request** asks the bank for one key a reader found

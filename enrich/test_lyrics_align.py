@@ -1,5 +1,5 @@
 """A lyric document forced onto a vocal stem (`enrich align-lyrics`, ADR 0085
-amended 2026-10-19, its amendment of 2026-11-27 proposed): the aligner's text
+amended 2026-10-19 and 2026-11-27): the aligner's text
 and syllable rules without its model, the claim the command builds against
 World's checks, and the command end to end through the real Door with a stem
 from a stand-in separator and a stand-in aligner program that runs the real
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import unittest
@@ -135,9 +136,21 @@ class AlignerText(unittest.TestCase):
         self.assertNotIn("align-wav2vec2", bank.Catalog.load().extractors)
         aligner = lyrics_align.load_aligner(HERE / "aligners", "align-wav2vec2")
         self.assertEqual(aligner.manifest["parameters"]["language"], "en")
+        # Threads change the floats, so they are a setting the program uses, not the environment's.
+        self.assertEqual(aligner.manifest["parameters"]["threads"], program.THREADS)
         # No weights are kept beside the program: the operator's directory holds them.
         self.assertEqual(sorted(p.name for p in (HERE / "aligners" / "align-wav2vec2").iterdir()
                                 if p.name != "__pycache__"), ["align_wav2vec2.py", "extractor.json"])
+
+    def test_an_aligner_that_does_not_state_its_threads_is_refused(self) -> None:
+        directory = support.scratch(self, "aligner-") / "align-wav2vec2"
+        shutil.copytree(HERE / "aligners" / "align-wav2vec2", directory,
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        manifest = json.loads((directory / "extractor.json").read_text())
+        del manifest["parameters"]["threads"]
+        (directory / "extractor.json").write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(lyrics_align.AlignLyricsError, "threads"):
+            lyrics_align.load_aligner(directory.parent, "align-wav2vec2")
 
 
 SOURCE = {"id": "urn:uuid:00000000-0000-4000-8000-000000000001", "revision_id": "sha256:" + "1" * 64}
@@ -210,6 +223,33 @@ class Claim(unittest.TestCase):
         counts = lyrics_align.carry(payload, [last + 3 * RATE + 1], NOTE["revision_id"])
         self.assertEqual(counts["carried"], 0)
 
+    def test_an_overlapping_line_is_another_voice_and_never_shortens_a_window(self) -> None:
+        def line(start: int, end: int, *syllables: int) -> dict:
+            return {"start_sample": start, "end_sample": end,
+                    "words": [{"syllables": [{"start_sample": s} for s in syllables]}]}
+        # Line one holds from 10000 to 80000; line two is sung over it from 20000 to 50000; line three
+        # follows line one.
+        payload = {"sample_rate": RATE, "lines": [line(10000, 80000, 10000, 60000), line(20000, 50000, 20000),
+                                                  line(90000, 95000, 90000)]}
+        lyrics_align.carry(payload, [40000, 85000], NOTE["revision_id"])
+        first, later = payload["lines"][0]["words"][0]["syllables"]
+        [other] = payload["lines"][1]["words"][0]["syllables"]
+        # By time order alone line two's start would end the first syllable's window before 40000.
+        self.assertEqual(first["carried_by"]["onsets"], [40000])
+        self.assertIn(40000, other["carried_by"]["onsets"])
+        # A line's last syllable runs to the next line after it, not into it.
+        self.assertEqual(later["carried_by"]["onsets"], [85000])
+        self.assertNotIn("carried_by", payload["lines"][2]["words"][0]["syllables"][0])
+
+    def test_a_syllable_placing_empties_is_dropped_alone(self) -> None:
+        alignment = fake_alignment()
+        syllables = alignment["lines"][0]["words"][0]["syllables"]
+        self.assertEqual(len(syllables), 3)
+        syllables[1]["end"] = syllables[1]["start"]
+        payload = lyrics_align.timed_payload(alignment, lines_of(DOCUMENT), RATE, RATE * 8, "s", "text")
+        self.assertEqual([s["syllable"] for s in payload["lines"][0]["words"][0]["syllables"]], [1, 3])
+        documents.check_timed_lyrics({"payload": payload, "refs": refs(False)}, targets([]))
+
     def test_spans_past_the_stream_are_clamped_and_empty_words_dropped(self) -> None:
         alignment = fake_alignment()
         cut = alignment["lines"][1]["words"][1]["start"] * RATE // 16000
@@ -252,6 +292,13 @@ class Command(unittest.TestCase):
         self.mix = reader.head(self.objects["mix"]["object_id"])
         [self.stream] = [r for r in reader.records if r["shape"] == "claim" and any(
             c["id"] == "archive.claim/audio_stream" for c in r.get("contracts", []))]
+        self.reader = reader
+        self.notes = self.notes_claim("vocals")
+        self.weights = self.tmp / "weights"
+        self.weights.mkdir()
+
+    def notes_claim(self, part: str, **fields: object) -> str:
+        """A notes claim about the mix, as a notes extractor would propose one."""
         notes = [{"onset_sample": o, "offset_sample": o + 2000, "pitch": 62} for o in range(0, RATE * 8, RATE // 4)]
         pins = (adapter.Pin("source", self.mix["object_id"], self.mix["revision_id"]),
                 adapter.Pin("stream", self.stream["object_id"], self.stream["revision_id"]))
@@ -259,12 +306,10 @@ class Command(unittest.TestCase):
             agent="pkg:generic/test-notes@1", method_id="test-notes", method_version="1",
             software=(("test-notes", "1"),), started_at=adapter.now(), ended_at=adapter.now(),
             used=(adapter.Pin("used", self.mix["object_id"], self.mix["revision_id"]),),
-            outputs=(adapter.Output(("archive.claim/notes", "1"), "vocals",
-                                    {"sample_rate": RATE, "part": "vocals", "notes": notes}, pins),))
-        made = adapter.propose(reader, result, door=support.DOOR, staging=None, dry_run=False, env=self.env)
-        self.notes = made.outputs[0]["object_id"]
-        self.weights = self.tmp / "weights"
-        self.weights.mkdir()
+            outputs=(adapter.Output(("archive.claim/notes", "1"), part,
+                                    {"sample_rate": RATE, "part": part, **fields, "notes": notes}, pins),))
+        made = adapter.propose(self.reader, result, door=support.DOOR, staging=None, dry_run=False, env=self.env)
+        return made.outputs[0]["object_id"]
 
     def enrich(self, command: str, *extra: str, env: dict | None = None) -> tuple[int, dict]:
         completed = subprocess.run(
@@ -305,6 +350,7 @@ class Command(unittest.TestCase):
         self.assertEqual(claim["payload"]["alignment"], {"method": "forced alignment"})
         self.assertEqual(parameters["stem"]["key"], stems.manifest["key"])
         self.assertEqual((parameters["language"], parameters["aligner"]["id"]), ("en", "align-wav2vec2"))
+        self.assertEqual(parameters["aligner"]["code"], bank.code_digest(HERE / "aligners" / "align-wav2vec2"))
         self.assertIn("Pyphen en_US", parameters["syllabification"])
         # World's own checks, against the committed revisions.
         targets = {}
@@ -326,6 +372,20 @@ class Command(unittest.TestCase):
     def test_without_notes_no_syllable_is_carried(self) -> None:
         code, answer = self.align()
         self.assertEqual((code, answer["status"], answer["carried"]), (0, "committed", 0), answer)
+
+    def test_a_dry_run_aligns_and_checks_but_commits_nothing(self) -> None:
+        before = support.head(self.root)
+        code, answer = self.align("--notes", self.notes, "--dry-run")
+        self.assertEqual((code, answer["status"]), (0, "predicted"), answer)
+        self.assertGreater(answer["carried"], 0)
+        self.assertEqual(support.head(self.root), before)
+
+    def test_only_the_stems_voice_carries_syllables(self) -> None:
+        for part, fields in (("bass", {"bass": True}), ("mix", {})):
+            with self.subTest(part=part):
+                code, answer = self.align("--notes", self.notes_claim(part, **fields))
+                self.assertEqual((code, answer["status"]), (1, "failed"), answer)
+                self.assertIn("vocals", answer["detail"])
 
     def test_a_lost_alignment_proposes_nothing(self) -> None:
         before = support.head(self.root)

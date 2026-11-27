@@ -5,7 +5,9 @@ amended 2026-10-19, accepted the same day (seven model extractors join the
 catalog and `chords` is retired; heavy dependencies are pinned; runs travel
 through Spool by ADR 0090); extended 2026-10-19 by
 [ADR 0108](0108-live-analysis.md) (a streaming mode; accepted by the
-operator, 2026-10-19)
+operator, 2026-10-19); noted 2026-11-27 by
+[ADR 0085](0085-documents-lyrics-rights.md) (an aligner's request holds a
+document; accepted by the operator, 2026-11-27)
 
 The feature bank ([ADR 0073](0073-feature-bank.md)) needs writers,
 and the operator wants adding one to be easy and independent of language:
@@ -337,3 +339,14 @@ JSON Lines to a named pipe, each streamed output declaring whether it agrees
 with batch `exact`ly or is `provisional`. Results still never go on an
 extractor's standard output. Streaming never writes the feature bank, and
 the batch contract above is unchanged.
+
+## Note, 2026-11-27: an aligner's request holds a document
+
+Made on the acceptance of [ADR 0085](0085-documents-lyrics-rights.md)'s
+amendment of 2026-11-27, which gives the reasons and the rules. An
+**aligner** is an `archive-extractor/1` manifest in `enrich/aligners/`,
+outside the catalog, run by request by `enrich align-lyrics` and never by
+the runner. Its request is `archive-extractor-request/1` with one optional
+member more, `document`: the path of a lyric document's words by line, with
+the document's digest and scheme. A catalog extractor's request never holds
+it, so every request this contract described is unchanged.

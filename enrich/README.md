@@ -799,8 +799,8 @@ enrich/enrich.py align-lyrics --archive <dir> --artifact <mix> --document <lyric
 
 Forces a lyric document onto a recording's vocal stem and proposes one
 `timed_lyrics` claim under one run ([ADR 0085](../docs/decisions/0085-documents-lyrics-rights.md),
-amended 2026-10-19; how the aligner is run is its amendment of 2026-11-27,
-proposed). The stem is the bank's `stems/vocals` of the mix (whole
+amended 2026-10-19; how the aligner is run is its amendment of 2026-11-27).
+The stem is the bank's `stems/vocals` of the mix (whole
 recording only): separate it first. The aligner is
 [`aligners/align-wav2vec2`](aligners/align-wav2vec2/align_wav2vec2.py), an
 `archive-extractor/1` manifest kept outside the catalog so `run all` never
@@ -809,19 +809,28 @@ torchaudio 2.11.0, pyphen, numpy) with `align-weights` naming the directory
 that holds `wav2vec2_fairseq_base_ls960_asr_ls960.pth` (MIT; pinned by
 digest, never shipped). Its request is an extractor request with
 `document`: the document's words by line, as World counts them, in a
-scratch file removed when it exits. Every setting is the manifest's.
+scratch file removed when it exits. Every setting is the manifest's,
+including its threads (2): another count gives other floats.
 
 The claim pins the document, the mix, its stream, and the notes claim when
 a syllable is carried by it (`--notes`: a notes claim about the same mix
-revision); `alignment.method` is `forced alignment`, and every line, word,
-and syllable carries the aligner's mean letter probability. A note carries
-the syllable sounding at its onset (from 0.1 s before its start to 0.1 s
-before the next syllable's, at most 3 s). Below a mean letter probability of
-0.10 the command answers `nothing_proposed`, `code` `low_confidence`; a
-bank without the stem answers `nothing_proposed`, `code` `missing`. The
-answer gives the counts of lines, words, syllables, carried syllables and
-melismas, and the aligner's seconds. Tests: `enrich/test_lyrics_align.py`
-(suite `enrich`), with a stand-in aligner.
+revision whose `part` is the stem's output, `vocals` for `stems/vocals`;
+a bass line or the mix's notes is refused); `alignment.method` is `forced
+alignment`, and every line, word, and syllable carries the aligner's mean
+letter probability. A note carries the syllable sounding at its onset (from
+0.1 s before its start to 0.1 s before the next syllable's in its voice, at
+most 3 s): the next syllable in its line, or for a line's last, the first of
+the next line that starts at or after its line ends, so a line that overlaps
+it (another voice) never shortens its windows. A syllable that placing
+empties is dropped alone. The run's parameters name the aligner's code
+digest, so an edited aligner makes a new run rather than `unchanged`. Below
+a mean letter probability of 0.10 the command answers `nothing_proposed`,
+`code` `low_confidence`; a bank without the stem answers
+`nothing_proposed`, `code` `missing`. `--dry-run` runs the aligner and
+checks the claim with World's rules, then proposes nothing: it costs the
+alignment. The answer gives the counts of lines, words, syllables, carried
+syllables and melismas, and the aligner's seconds. Tests:
+`enrich/test_lyrics_align.py` (suite `enrich`), with a stand-in aligner.
 
 ## `enrich backfill`
 

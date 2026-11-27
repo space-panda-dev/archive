@@ -357,6 +357,22 @@ def cut_region(ffmpeg: str, source: Path, region: dict[str, int], target: Path,
     return bank.file_digest(target)
 
 
+def launch(extractor: bank.Extractor, programs: dict[str, str], work: Path, request: dict[str, Any],
+           timeout: float) -> tuple[int | None, bytes]:
+    """Write an extractor request into `work` and run the extractor's command
+    on it (run_program); its exit code (None past the timeout) and its log.
+    Raises BankError when the command cannot start."""
+    (work / "request.json").write_bytes(bank.canonical(request))
+    command = resolve_command(extractor, programs) + [str(work / "request.json")]
+    environment = {**os.environ, "ARCHIVE_EXTRACTOR_REQUEST": str(work / "request.json"),
+                   "ARCHIVE_EXTRACTOR_INPUT": request["input"]["path"],
+                   "ARCHIVE_EXTRACTOR_OUTPUT": request["output_dir"]}
+    try:
+        return run_program(command, work, environment, timeout)
+    except OSError as exc:
+        raise bank.BankError(f"{extractor.id} could not start: {exc}") from exc
+
+
 class Run:
     """One `run`: the content, the catalog, the bank, and what happened."""
 
@@ -556,15 +572,7 @@ class Run:
         log = b""
         try:
             request = self.request(extractor_id, keys, output_dir)
-            (work / "request.json").write_bytes(bank.canonical(request))
-            command = resolve_command(extractor, self.programs) + [str(work / "request.json")]
-            environment = {**os.environ, "ARCHIVE_EXTRACTOR_REQUEST": str(work / "request.json"),
-                           "ARCHIVE_EXTRACTOR_INPUT": request["input"]["path"],
-                           "ARCHIVE_EXTRACTOR_OUTPUT": str(output_dir)}
-            try:
-                returncode, log = run_program(command, work, environment, self.timeout)
-            except OSError as exc:
-                raise bank.BankError(f"{extractor_id} could not start: {exc}") from exc
+            returncode, log = launch(extractor, self.programs, work, request, self.timeout)
             if returncode is None:
                 raise bank.BankError(f"{extractor_id} ran past {self.timeout} seconds")
             if returncode != 0:

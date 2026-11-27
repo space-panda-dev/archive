@@ -4,8 +4,8 @@ Status: accepted (operator, 2026-10-18); amended 2026-10-19 (syllables,
 their notes, and forced alignment; the check beyond the circle; both
 accepted by the operator, 2026-10-19); amended 2026-10-19 by
 [ADR 0092](0092-internet-exposure.md) (the "circle" setting writes `GREEN`;
-accepted by the operator, 2026-10-19); amendment of 2026-11-27 proposed (how
-the forced-alignment extractor is run)
+accepted by the operator, 2026-10-19); amended 2026-11-27 (how the
+forced-alignment extractor is run; accepted by the operator, 2026-11-27)
 
 A lead sheet joins chords, meter, form, melody, and lyrics. Specification
 0.0.9 holds chords and meter ([ADR 0077](0077-chord-stacks-and-meter.md)),
@@ -757,10 +757,9 @@ disagrees with this section, this section holds.
 
 ## Amendment, 2026-11-27: how the forced-alignment extractor is run
 
-Status: proposed with the build of contract change 4 of the amendment of
-2026-10-19 (branch `forced-align-extractor`); nothing here is accepted until
-the operator accepts it. Where this section and the text above differ, this
-section holds once accepted.
+Status: accepted by the operator, 2026-11-27, with the merge of contract
+change 4 of the amendment of 2026-10-19 and the fixes of its review. Where
+this section and the text above differ, this section holds.
 
 ### Context of this amendment
 
@@ -779,7 +778,9 @@ stems and references: torchaudio's `WAV2VEC2_ASR_BASE_960H` (fairseq
 weights, MIT) in one pass with a free token at every line boundary placed
 78% of line starts within ±300 ms once each reference's constant offset was
 removed (the references themselves are off by up to 1.1 s), at about 13 s per
-active minute on two threads; Pyphen `en_US` 2/2 with a vowel-group fallback
+active minute on two threads (the text above, "About 29 seconds of wall
+time per sung minute", measured `MMS_FA`; the cost is lower, and alignment
+stays by request for the reason above, an input only a person can name); Pyphen `en_US` 2/2 with a vowel-group fallback
 matched an OMR book's syllable splits on 85.8% of 7,248 words; the rule
 below gave 78% of syllables a note, 29% a melisma; and a mean letter
 probability below 0.10 caught the 5 of 121 alignments that were lost. The
@@ -796,7 +797,9 @@ with its libraries) and `${align-weights}` (the directory holding its
 checkpoint). The manifest pins the checkpoint by digest and the program
 refuses any other, so weights are never bundled, and an aligner whose
 weights may not be shipped is operator-local by configuration alone. The
-first is `align-wav2vec2` version 1, the method above.
+first is `align-wav2vec2` version 1, the method above. Its threads are
+one of its settings (2): another count gives other floats, so it is
+another run.
 
 **`enrich align-lyrics` runs it by request.** A person names the mix, the
 lyric document, its scheme, and optionally a vocal notes claim. The command
@@ -820,7 +823,8 @@ proposing it.
 
 **What the run records.** The run `used` the document, the mix, its stream
 claim, and the notes claim when one is given; its method is the aligner's
-id and version; its software is the command's, the stem entry's, and the
+id and version, and its parameters carry the digest of the aligner's files,
+so an edited aligner is a new run rather than `unchanged`; its software is the command's, the stem entry's, and the
 aligner's. Its parameters Artifact names the aligner with every setting of
 its manifest (model, weights digest, language, syllabification rule, the
 silence gate), the stem by bank key (ADR 0079), the document's scheme, the
@@ -830,20 +834,40 @@ names it; `alignment.method` is `forced alignment`, without
 `max_error_samples`; `confidence_scale` names the aligner's mean letter
 probability, given on every line, word, and syllable.
 
-**Carried by.** A note carries the syllable sounding at its onset: from
-0.1 s before the syllable's start to 0.1 s before the next syllable's start,
-all syllables in time order, at most 3 s after its own start. Two or more
-are a melisma. The rule is the command's and is recorded in each run.
+**Carried by.** The notes claim given is the stem's voice: its `part` is
+the stem's output (`vocals` for `stems/vocals`), never a bass line or the
+mix's notes. A note carries the syllable sounding at its onset: from 0.1 s
+before the syllable's start to 0.1 s before the next syllable's start in its
+voice, at most 3 s after its own start. A syllable's voice is its line: the
+next syllable is the next in its line, or for a line's last, the first of
+the next line starting at or after its line ends, so a line overlapping it
+(two voices at once) never shortens its windows. Two or more notes are a
+melisma. The rule is the command's and is recorded in each run.
 
 **A lost alignment proposes nothing.** Below a mean letter probability of
-0.10 the command answers `nothing_proposed` with `code` `low_confidence`.
+0.10 the command answers `nothing_proposed` with `code` `low_confidence`. A
+syllable whose placed span is empty is dropped alone; its word keeps the
+others. `--dry-run` aligns and checks the claim but proposes nothing.
+
+### Contract changes of this amendment
+
+1. `archive-extractor-request/1` ([ADR 0074](0074-extractor-contract.md)):
+   a request may hold one member more, `document` (`path`, `digest`,
+   `scheme`), which only an aligner is given. An extractor of the catalog
+   never receives it, and a request without it is unchanged, so the
+   version stays 1 (ADR 0074's note of 2026-11-27).
+2. `enrich align-lyrics`: a new command (docs/boundaries.md).
+3. `enrich/aligners/`: a directory of `archive-extractor/1` manifests that
+   the catalog never loads.
+4. No claim, run, or World contract changes: the claim is
+   `archive.claim/timed_lyrics` version 1 as amended 2026-10-19.
 
 ### Consequences of this amendment
 
 - `enrich propose`'s `timed-lyrics` proposer still refuses with `not_yet`:
   it reads the bank only, and alignment is not a bank feature.
-- An aligner's run is repeated on every request; it is a few seconds per
-  minute of sung audio, and a rerun on unchanged inputs and settings is
+- An aligner's run is repeated on every request, about 13 s per active
+  minute; a rerun on unchanged inputs, settings, and aligner code is
   `unchanged` (INV-5).
 - Lyric text crosses into the aligner's process as a scratch file on the
   operator's machine, never into the bank or the archive.

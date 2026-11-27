@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The align-wav2vec2 aligner: a known lyric document's words forced onto a
 vocal stem by a CTC character model, in its own environment (ADR 0085,
-amendment of 2026-11-27, proposed).
+amendment of 2026-11-27).
 
 `enrich align-lyrics` starts this program with the interpreter the operator
 configured as `align-python` (ADR 0074), so the archive's environment never
@@ -58,6 +58,7 @@ RATE = 16000
 FRAME = 320                       # samples a model frame: 20 ms at 16 kHz
 CHUNK_SECONDS = 30
 CONTEXT_SECONDS = 2
+THREADS = 2                       # a setting: another count gives other floats, so another run
 BUNDLE = "WAV2VEC2_ASR_BASE_960H"
 WEIGHTS_FILE = "wav2vec2_fairseq_base_ls960_asr_ls960.pth"
 WEIGHTS = "sha256:488fd4f16de84438ffc945334278c1b9fb9b7159a806c1080b16111a958c945d"
@@ -92,7 +93,7 @@ def parameters() -> dict[str, Any]:
     """The settings, which the manifest must declare exactly."""
     return {"aligner": f"torchaudio=={TORCHAUDIO} pipelines.{BUNDLE}, functional.forced_align",
             "model": BUNDLE, "weights": WEIGHTS, "weights_file": WEIGHTS_FILE, "language": LANGUAGE,
-            "rate": RATE, "frame": FRAME, "chunk_seconds": CHUNK_SECONDS, "context_seconds": CONTEXT_SECONDS,
+            "rate": RATE, "frame": FRAME, "threads": THREADS, "chunk_seconds": CHUNK_SECONDS, "context_seconds": CONTEXT_SECONDS,
             "pass": "the whole document in one pass over the whole stem, no line anchors; a free * token "
                     "(log probability 0) at every line boundary, | between words",
             "gate": GATE, "text": "NFKD, combining marks dropped, lower case a-z and the apostrophe (a leading or "
@@ -324,7 +325,7 @@ class Model:
             raise AlignError(f"this interpreter cannot load torchaudio ({exc}); configure align-python") from exc
         if torchaudio.__version__.split("+")[0] != TORCHAUDIO:
             raise AlignError(f"torchaudio {torchaudio.__version__} is not the pinned {TORCHAUDIO}")
-        torch.set_num_threads(max(1, int(__import__("os").environ.get("OMP_NUM_THREADS", "2"))))
+        torch.set_num_threads(THREADS)
         bundle = getattr(torchaudio.pipelines, BUNDLE)
         # The checked file is the one loaded: torch.hub finds it in model_dir
         # and downloads nothing.
