@@ -427,12 +427,13 @@ def _machine(world: list[dict[str, Any]], claim: dict[str, Any]) -> bool:
 
 
 def _write(world: list[dict[str, Any]], sounded: list[dict[str, Any]], sample_rate: int,
-           params: dict[str, Any], *, line: str, claims: list[str], machine_claims: set[str]) -> dict[str, Any]:
-    """Sounded notes written on the named meter's grid, or why nothing is.
-    `claims` is each note's notes claim revision; `machine_claims` those
-    that are a machine's."""
+           params: dict[str, Any], *, line: str, claims: list[str], machine_claims: set[str],
+           version: str = RHYTHM) -> dict[str, Any]:
+    """Sounded notes written on the named meter's grid by the rule of
+    `version`, or why nothing is. `claims` is each note's notes claim
+    revision; `machine_claims` those that are a machine's."""
     switches = {name: params.get(name) for name in SWITCHES}
-    rule = notes.RHYTHM_RULES[RHYTHM].describe(notes.RHYTHM_RULES[RHYTHM].switched(line, **switches))
+    rule = notes.RHYTHM_RULES[version].describe(notes.RHYTHM_RULES[version].switched(line, **switches))
     if params["meter"] is None:
         return {"rule": rule, "written": [], "left_out": len(sounded),
                 "why": "no meter claim was named, so there is no beat grid to write on"}
@@ -441,13 +442,14 @@ def _write(world: list[dict[str, Any]], sounded: list[dict[str, Any]], sample_ra
              for pin in params["lyrics"]]
     try:
         return notes.written_rhythm(sounded, meter["payload"], sample_rate=sample_rate, layer=params["layer"],
-                                    lyrics=lines, version=RHYTHM, line=line, claims=claims,
+                                    lyrics=lines, version=version, line=line, claims=claims,
                                     machine_claims=machine_claims, **switches)
     except (ValueError, KeyError, TypeError, IndexError) as error:
         raise _fail(ValueError(str(error))) from None
 
 
-def written_rhythm(world: list[dict[str, Any]], subject: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+def written_rhythm(world: list[dict[str, Any]], subject: dict[str, Any], params: dict[str, Any],
+                   version: str = RHYTHM) -> dict[str, Any]:
     """Sounded notes written on a meter's beat grid as a musician writes them
     (ADR 0086, amended 2026-10-19; `notes.written_rhythm`): a notes claim's
     notes, or a recording's tune. Onsets are placed by timing error plus a
@@ -471,10 +473,19 @@ def written_rhythm(world: list[dict[str, Any]], subject: dict[str, Any], params:
                           and _machine(world, _record(world, {"id": ref["id"], "revision_id": ref["revision_id"]},
                                                       {NOTES}, "a notes claim"))}
         line = "vocal"
-    answer = _write(world, sounded, rate, params, line=line, claims=claims, machine_claims=machine_claims)
+    answer = _write(world, sounded, rate, params, line=line, claims=claims, machine_claims=machine_claims,
+                    version=version)
     if left:
         answer["tune_left_out"] = left
     return answer
+
+
+def written_rhythm_3(world: list[dict[str, Any]], subject: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    """`written_rhythm` version 3 (ADR 0086 amendment, proposed): the same
+    question, subject and parameters as version 2, written by rule version 3,
+    which chooses version 2's costs per melody from its measured timing.
+    Version 2 stays as it was, so a reader can ask both and compare."""
+    return written_rhythm(world, subject, params, version="3")
 
 
 # ---------------------------------------------------------------------------
@@ -644,6 +655,9 @@ VIEWS: dict[tuple[str, str], dict[str, Any]] = {
     (VIEW + "written_rhythm", RHYTHM): {
         "question": "How are these sounded notes written on this meter's beats?",
         "subject": _rhythm_subject, "parameters": _rhythm_parameters},
+    (VIEW + "written_rhythm", "3"): {
+        "question": "How are these sounded notes written on this meter's beats, with the rule's costs chosen from their timing?",
+        "subject": _rhythm_subject, "parameters": _rhythm_parameters},
     (VIEW + "bass_line", RHYTHM): {
         "question": "What is this recording's bass line, written on its beats?",
         "subject": _bass_subject, "parameters": _bass_parameters},
@@ -668,6 +682,7 @@ HANDLERS: dict[tuple[str, str], Callable[[list, dict, dict], dict]] = {
     (VIEW + "tune", "1"): tune,
     (VIEW + "track_credits", "1"): track_credits,
     (VIEW + "written_rhythm", RHYTHM): written_rhythm,
+    (VIEW + "written_rhythm", "3"): written_rhythm_3,
     (VIEW + "bass_line", RHYTHM): bass_line,
     (VIEW + "may_publish", "1"): may_publish,
     (VIEW + "stale_lyric_links", "1"): stale_lyric_links,

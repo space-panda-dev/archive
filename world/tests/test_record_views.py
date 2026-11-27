@@ -209,6 +209,18 @@ class RecordViews(unittest.TestCase):
         self.assertEqual((nothing["written"], nothing["left_out"]), ([], 3))
         self.assertIn("no meter", nothing["why"])
 
+    def test_written_rhythm_version_3_answers_beside_version_2(self):
+        # A reader compares the rules by asking both versions the same question.
+        bass = self.pin("archive.claim/notes", "world-w-notes-bass")
+        meter = self.pin("archive.claim/meter_layers", "world-fixture-meter-placed")
+        two = self.answer(request("written_rhythm", {"notes": bass}, meter=meter))["answer"]
+        three = self.answer(dict(request("written_rhythm", {"notes": bass}, meter=meter), version="3"))["answer"]
+        self.assertEqual((two["rule"]["version"], three["rule"]["version"]), ("2", "3"))
+        self.assertIn("measured", three["rule"])
+        # Notes on the beats are written the same by both.
+        self.assertEqual([(w["kind"], w["position"]) for w in three["written"]],
+                         [(w["kind"], w["position"]) for w in two["written"]])
+
     def test_the_bass_line_is_a_line_of_its_own(self):
         bass = self.record("archive.claim/notes", "world-w-notes-bass")
         other = self.record("archive.claim/notes", "world-fixture-notes")      # a part named bass, not marked
